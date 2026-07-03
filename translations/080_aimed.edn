@@ -1,0 +1,104 @@
+;; Translation of dmk-corpus/080_aimed.bdsl
+;;
+;; BDSL original (24 lines), for ergonomics comparison:
+;;
+;;   pattern { } {
+;;   phase 0 {
+;;       roott(1, 0, 0)
+;;   } {
+;;       paction 0 {
+;;           async "amulet-*" <-7;:> gcrepeat {
+;;               wait(2.5s)
+;;               times(inf)
+;;               sfx("x-fire-burst-1")
+;;               color({ "*/", "*/w", "*/b" })
+;;           } gsrepeat {
+;;               target(ang, Lplayer)
+;;               times(7)
+;;               bindArrow
+;;               colorf({ "purple", "blue", "yellow", "red" }, aixd)
+;;               frv2(rxy(-1 * aixd, 0.5 * aiyd))
+;;           } gsrepeat {
+;;               times(9)
+;;               bindArrow
+;;               frv2(rxy(-0.15 * aixd, 0.08 * aiyd))
+;;           } s(rvelocity(px(lerp(0.4, 0.8, t, 12, 2))))
+;;       }
+;;   }
+;;   }
+;;
+;; Decoded against source (deps/danmokou + suzunoya):
+;;   <-7;:>      short V2RV2 = <rx;ry:angle> (SimpleParser.cs) => rotational
+;;               x-offset -7: bullets originate 7 units BEHIND the aim
+;;               direction and sweep through the emitter toward the player.
+;;   bindArrow   binds aixd = HMod(n, n-1-i) (mirrored distance-from-center)
+;;               and aiyd = HNMod(n, n-1-i) (signed) -- Patterner.cs:607,
+;;               Math.cs HMod/HNMod. With frv2(rxy(-a*aixd, b*aiyd)) this
+;;               builds a chevron: center at origin, wings swept back.
+;;   lerp(a,b,t,v1,v2)  as t goes a->b seconds, value v1->v2, clamped.
+;;
+;; DMK semantics: every 2.5s, aim at the player (snapshot) and fire a chevron
+;; of 7 arms, each arm itself a mini-chevron of 9 amulets (63 total), starting
+;; 7 units behind the aim line, decelerating 12 -> 2 over t in [0.4, 0.8]s.
+;; Arm color by distance from center; volley style variant cycles /, /w, /b.
+
+(defpattern aimed-demo []
+  ((pose #cart [0 0])
+    (loop [vol 0]
+      (event :sfx "x-fire-burst-1")
+      (spawn ((aim player)                        ; injected signal in spawn args
+               ((offset #cart [-7 0])             ;   => implicit snap (SS3, class a)
+                 (arrow 7 1.0 0.5                 ; chevron of arms
+                   (arrow 9 0.15 0.08             ; each arm a mini-chevron
+                     (vel #cart [#math "lerp(0.4, 0.8, t, 12, 2)" 0])))))
+             {:style (nth ["amulet-*/" "amulet-*/w" "amulet-*/b"] (mod vol 3))
+              :color ["red" "yellow" "blue" "purple" "blue" "yellow" "red"]})
+      (wait 2.5)
+      (recur (inc vol)))))
+
+;; (arrow n back side) is stock formation vocabulary: Array Pose of n offsets
+;; {(-back*|j|, side*j) : j in -(n-1)/2 .. (n-1)/2}, canonical left-to-right
+;; order. It is the image of DMK's bindArrow + frv2(rxy(-a*aixd, b*aiyd))
+;; idiom (SS1: keep the vocabulary). DMK's ordering is center-out; ordering is
+;; only observable through indexed meta, hence the mirrored :color literal.
+;;
+;; ---------------------------------------------------------------------------
+;; Canonical desugared tree (spawn argument)
+;;
+;;   (in-frame (pose #cart [0 0])
+;;     (in-frame (rot (snap (angle-to player)))          ; (aim player)
+;;       (in-frame (pose #cart [-7 0])
+;;         (map (fn [arm]
+;;                (in-frame arm
+;;                  (map (fn [sub]
+;;                         (in-frame sub
+;;                           (vel #cart [(math "lerp(0.4,0.8,t,12,2)") 0])))
+;;                       (arrow 9 0.15 0.08))))
+;;              (arrow 7 1.0 0.5)))))
+;;
+;; Multiplicity = 7 x 9 = 63, the SS5 root-to-leaf product, statically readable.
+;;
+;; ---------------------------------------------------------------------------
+;; Rate / constructor audit
+;;
+;;   (aim player)              snap of injected signal: ir constant per
+;;                             volley (class (a) reactivity -- the
+;;                             overwhelmingly common case, SS3) ......... ir
+;;   (offset ...), (arrow ...) constant poses / pose arrays ............. ir
+;;   (vel #cart [lerp..t.. 0]) SCANNED -- integral of a t-varying speed.
+;;                             F1 lint case: integrand is piecewise-affine,
+;;                             closed-form integrable; kept as vel because
+;;                             designers think in speed (design.md SS2).
+;;                             The lint should offer the closed rewrite. .. ar
+;;   :style variant            control-layer constant per volley ........ ir
+;;   :color 7-vector           zips against the LEADING axis (7 arms) of
+;;                             the 7x9 product; broadcast within arm
+;;                             (finding F9) ............................. ir
+;;   timeline                  constant waits => statically computable,
+;;                             but the pattern samples an injected signal:
+;;                             scrub-safe RELATIVE TO THE INPUT TAPE, not
+;;                             input-independent (first corpus script to
+;;                             cross that line; exactly SS3 class (a))
+;;
+;; New vocabulary needed: (arrow n back side) formation combinator (stock,
+;; not core). New finding: F9 leading-axis meta broadcast.

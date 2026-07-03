@@ -1,0 +1,90 @@
+;; Translation of dmk-corpus/040_spread.bdsl
+;;
+;; BDSL original (22 lines), for ergonomics comparison:
+;;
+;;   pattern { } {
+;;   phase 0 {
+;;       roott(1, 0, 1)
+;;   } {
+;;       paction 0 {
+;;       async("arrow-*/w", <90>, girepeat({
+;;               wait(70)
+;;               times(inf)
+;;               color({ "red", "green", "blue" })
+;;               rv2incr(<120>)
+;;           },  gcrepeat({
+;;                   times(8)
+;;                   wait(10)
+;;                   spread(<40>)
+;;                   preloop b{
+;;                       hvar loop = i
+;;                   }
+;;               }, s(rvelocity(px(2 + 0.3 * loop)))
+;;           )))
+;;       }
+;;   }
+;;   }
+;;
+;; DMK semantics: base aim 90deg (up). Every 70 frames, start a volley of 8 shots
+;; fired 10 frames apart; within a volley the angle fans by 40deg total
+;; (increment = 40/(8-1) per shot -- GenCtxProperties.cs:277) and speed grows
+;; 2, 2.3, .. 4.1 per shot. Across volleys the base angle steps +120deg
+;; (rv2incr, cumulative -> 120*vol: same dissolution family as BoWaP, trivially
+;; telescoping) and color cycles red/green/blue.
+;;
+;; Timing note: a volley lasts ~80 frames but volleys start every 70 -- DMK
+;; girepeat does not wait for its child (no `waitchild`), so iterations
+;; overlap. Structured concurrency makes that explicit: `fork` (finding F8).
+
+(defpattern spread-demo [volley-gap (frames 70)
+                         shot-gap   (frames 10)]
+  ((pose #cart [0 1])
+    ((rot #deg 90)
+      (loop [vol 0]
+        (fork
+          (dotimes [shot 8 :every shot-gap]
+            (spawn ((rot #deg #math "120*vol + shot*40/7")
+                     (linear #cart [#math "2 + 0.3*shot" 0]))
+                   {:style "arrow-*/w"
+                    :color (nth ["red" "green" "blue"] (mod vol 3))})))
+        (wait volley-gap)
+        (recur (inc vol))))))
+
+;; ---------------------------------------------------------------------------
+;; Canonical desugared tree (spawn argument, volley `vol`, shot `shot`)
+;;
+;;   (in-frame (pose #cart [0 1])
+;;     (in-frame (rot #deg 90)
+;;       (in-frame (rot #deg (math "120*vol + shot*40/7"))
+;;         (linear #cart [(math "2 + 0.3*shot") 0]))))
+;;
+;; (dotimes [shot 8 :every d] body) desugars to
+;;   (loop [shot 0] body (when (< shot 7) (wait d) (recur (inc shot))))
+;;
+;; DMK dissolutions exercised here:
+;;   rv2incr(<120>)  -> 120*vol      (cumulative angle, telescopes -- BoWaP-lite)
+;;   spread(<40>)    -> shot*40/7    (pure fn of shot index; /(times-1) semantics)
+;;   hvar loop = i   -> `shot` is just the loop binding; no hoisting construct
+;;   girepeat overlap-> explicit (fork ...) into the enclosing scope (F8)
+;;
+;; ---------------------------------------------------------------------------
+;; Rate / constructor audit
+;;
+;;   anchor + base rot            constant poses, Closed-const .......... ir
+;;   volley/shot rot              control-layer constant per spawn ...... ir
+;;   (linear ...)                 Closed, constant speed per bullet
+;;                                (speed is an ir constant; only tau
+;;                                varies in flight) ..................... ar
+;;   :color / :style              ir
+;;   loop/dotimes state           control layer; recur bindings only
+;;   timeline                     constant waits, no event-waits, no
+;;                                injected signals => input-independent:
+;;                                scrubbable, extractable
+;;
+;; Both inner and outer iterations are SEQUENTIAL IN TIME (waits between), so
+;; both are control-layer loops -- unlike 020/130 where the ring is a
+;; simultaneous array. The 8 shots are 8 separate one-bullet spawns with
+;; birth-time columns 10 frames apart, per SS3 (emission over time is
+;; birth-time data).
+;;
+;; Nothing lacks a clean image; `fork` is new control vocabulary (F8).

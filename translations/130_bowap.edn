@@ -1,0 +1,112 @@
+;; Translation of dmk-corpus/130_bowap.bdsl -- "Bullets over Which a Prayer"
+;;
+;; BDSL original (24 lines), for ergonomics comparison:
+;;
+;;   pattern { } {
+;;   phase 0 {
+;;       roott(1, 0, 2)
+;;   } {
+;;       paction 0 {
+;;           async "gem-*/w" <> gcrepeat {
+;;               wait(8)
+;;               times(inf)
+;;               start b{
+;;                   hvar increment = 0
+;;               }
+;;               preloop b{
+;;                   increment += 0.4
+;;                   rv2.angle += increment
+;;               }
+;;           } gsrepeat {
+;;               times(5)
+;;               color({ "yellow", "orange", "red",
+;;                   "pink", "purple" })
+;;               circle
+;;           } s(rvelocity(px(4)))
+;;       }
+;;   }
+;;   }
+;;
+;; DMK semantics: every 8 frames, fire a 5-arm ring of gems (one color per arm),
+;; each flying straight outward at speed 4; the ring's base angle advances by
+;; `increment` each shot, and `increment` grows by 0.4 each shot. This is
+;; language.md SS1's central claim in its hardest form: a sequential accumulator
+;; threaded across an infinite repeater.
+
+;; ---------------------------------------------------------------------------
+;; Version A -- accumulator dissolved to a pure function of shot index.
+;;
+;; preloop runs before each shot, so at shot i (0-based):
+;;   increment(i) = 0.4 * (i + 1)
+;;   base(i)      = 0.4 * (1 + 2 + ... + (i+1)) = 0.2 * (i+1) * (i+2)   degrees
+;; check: base(0) = 0.4  ✓  (first shot already offset -- DMK increments first)
+
+(defpattern bowap [speed 4.0
+                   arms  5
+                   period (frames 8)]
+  ((pose #cart [0 2])                       ; DMK roott(1, 0, 2): lexical anchor
+    (loop [i 0]
+      (spawn ((rot #deg #math "0.2*(i+1)*(i+2)")
+               (circle arms (linear #cart [speed 0])))
+             {:style "gem-*/w"
+              :color ["yellow" "orange" "red" "pink" "purple"]}) ; F4: merge DSL
+      (wait period)
+      (recur (inc i)))))
+
+;; ---------------------------------------------------------------------------
+;; Version B -- the honest fold, for when the recurrence does NOT telescope.
+;;
+;; The control layer is Turing-complete (SS8); the accumulator simply lives there
+;; as loop state. The semantic point of SS1 survives either way: the accumulator
+;; belongs to the PATTERN, never to bullets -- each spawned bullet still receives
+;; a pure (ir) constant. Version A is a simplification a rewriter may apply when
+;; the fold telescopes; the semantics must not require it (finding F3).
+
+(defpattern bowap-fold [speed 4.0
+                        arms  5
+                        period (frames 8)]
+  ((pose #cart [0 2])
+    (loop [increment 0.4
+           base      0.4]
+      (spawn ((rot #deg base)
+               (circle arms (linear #cart [speed 0])))
+             {:style "gem-*/w"
+              :color ["yellow" "orange" "red" "pink" "purple"]})
+      (wait period)
+      (recur #math "increment + 0.4"
+             #math "base + increment + 0.4"))))
+
+;; Both loops are infinite, as in DMK (`times(inf)`); they terminate by scope
+;; cancellation when the enclosing phase/race ends (SS8).
+
+;; ---------------------------------------------------------------------------
+;; Canonical desugared tree (spawn argument, shot i)
+;;
+;;   (in-frame (rot #deg <ir angle>)                 ; whole-volley rotation
+;;     (map (fn [p] (in-frame p (linear #cart [4 0])))
+;;          (circle 5)))
+;;
+;; :color [c0 .. c4] zips against the 5-element pose array (SS5 length-matching);
+;; DMK's indexed color list is exactly this zip.
+;;
+;; ---------------------------------------------------------------------------
+;; Rate / constructor audit
+;;
+;;   base angle (either version)   control-layer constant per shot ....... ir
+;;   (rot #deg base)               constant pose, promoted Closed-const .. ir
+;;   (circle 5)                    Array Pose ............................ ir
+;;   (linear #cart [4 0])          Closed, bullet-local tau .............. ar
+;;                                 (F6 cohort note applies: 5 per cohort)
+;;   :color vector                 ir per element (zip) .................. ir
+;;   loop state (Version B)        pattern state, control layer -- never a
+;;                                 bullet column; bullets see ir constants
+;;   pattern timeline              constant waits, no event-waits, no
+;;                                 injected signals => input-independent:
+;;                                 scrubbable + extractable EVEN in Version B
+;;                                 (this is finding F3 -- "closed pattern"
+;;                                 should mean input-independent, not
+;;                                 closed-form)
+;;
+;; DMK's s(rvelocity(px(4))) -> (linear ...) per finding F1.
+;;
+;; No construct lacked an image; the finding is definitional (F3), not a gap.
