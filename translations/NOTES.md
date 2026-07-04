@@ -30,7 +30,10 @@ refusing radians); a radians default would wrap every angle literal in every car
 Pattern-level trig takes canonical degrees (`sin(90) = 1`); θ-column storage
 (radians / unit vectors, open decision 7) is the compiler's business — conversions
 constant-fold. (`#deg` is gone twice over: a tagged literal was the wrong shape,
-and the unit it tagged is now the default.)
+and the unit it tagged is now the default.) Canonical degrees also deletes
+DMK's parallel degree-variant function family (`cosdeg`, `sindeg`,
+`cossindeg`, …): `sin`/`cos` take canonical degrees, and angle→unit-vector
+needs no function at all — it is `p[1 θ]`.
 
 **Time stays seconds-canonical** (asked and answered): unlike degrees/radians — a
 pure scale change — tick-canonical would bake the timestep constant into card
@@ -42,6 +45,28 @@ hot-layer `t` in seconds). Two amendments: the conversion is renamed `(ticks n)`
 — "frame" implies rendering; the sim owns physics ticks — and note that
 `(wait (ticks 8))` is *exact* on the grid while a seconds literal rounds to it,
 which is the honest reason control code authors in ticks.
+
+**Type discipline: Signal / Function / Action (clarified).** `Signal a` is not
+a function type — a first-class time-varying value, composed pointwise and
+sampled (`snap`), never applied; BOTH constructors are pure (`Closed` a pure
+fn of t; `Scanned`'s step a pure `(s, Inputs) → (s, a)` transition — a
+"procedural" signal waits by *state*, a countdown in s, never by `wait`).
+Functions are ordinary pure lambdas; there is no separate procedure arrow —
+a procedure is a function whose *codomain* is `Action` (manipulate
+callbacks). `Action` is an inert first-class effect description
+(`wait : Float → Action`; spawn/event/manipulate/fork construct, seq/par/
+race/loop compose); only the control-layer scheduler executes them.
+Enforcement of signal purity is structural, not analytical: no signal slot
+accepts an Action, no primitive evaluates an Action inside a signal, and
+possessing an Action does nothing (inertness backstop) — no effect system
+needed. Patterns are NOT signals-of-effects: signals have no privileged
+evaluation schedule (why effects are banned in them — scrub/hoist/plot would
+fire them incoherently); actions have order and extent, stepped once. The
+§10 statement is the correct nearby truth: input-independent patterns
+*denote* closed data (spawn log + installed signals) — they evaluate TO
+signal-like data without BEING signals. SC's Patterns ≠ UGens ≠ commands is
+the same three-way split. The layers meet at exactly two points: `snap` and
+`spawn`.
 
 Control layer borrows Clojure shapes: `(defpattern name [param default …] body)`,
 `(loop [binding init …] … (recur …))`, `seq`/`par`/`race`/`wait`. An infinite `loop`
