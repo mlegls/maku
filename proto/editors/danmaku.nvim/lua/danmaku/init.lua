@@ -132,19 +132,28 @@ local function strip_comment(line)
   return table.concat(out)
 end
 
---- Send text (possibly multi-line) as (run ...): one wire line.
-function M.run_text(text)
+--- Send text (possibly multi-line) as a one-line (cmd ...) form.
+local function send_forms(cmd, text)
   local parts = {}
   for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
     parts[#parts + 1] = strip_comment(l)
   end
   local one = vim.trim(table.concat(parts, " "))
   if one == "" then
-    return notify("nothing to run", vim.log.levels.WARN)
+    return notify("nothing to " .. cmd, vim.log.levels.WARN)
   end
   write_if_modified()
-  M.send("(run " .. one .. ")")
-  notify("run " .. one:sub(1, 40))
+  M.send("(" .. cmd .. " " .. one .. ")")
+  notify(cmd .. " " .. one:sub(1, 40))
+end
+
+function M.run_text(text)
+  send_forms("run", text)
+end
+
+--- Generational hot-swap: in-flight bullets keep their old code.
+function M.swap_text(text)
+  send_forms("swap", text)
 end
 
 local function text_in_range(srow, scol, erow, ecol) -- 1-indexed, inclusive
@@ -199,20 +208,38 @@ function M.run_inner_form()
   M.run_text(text_in_range(open[1], open[2], close[1], close[2]))
 end
 
---- Root (top-level) form around the cursor (conjure's er).
-function M.run_root_form()
+--- Text of the root (top-level) form around the cursor, or nil.
+local function root_form_text()
   local save = vim.fn.getcurpos()
   local start = vim.fn.search([[^(]], "bcnW")
   if start == 0 then
-    return notify("no top-level form", vim.log.levels.WARN)
+    notify("no top-level form", vim.log.levels.WARN)
+    return nil
   end
   vim.fn.cursor(start, 1)
   local close = vim.fn.searchpairpos("(", "", ")", "nW")
   vim.fn.setpos(".", save)
   if close[1] == 0 then
-    return notify("unbalanced form", vim.log.levels.WARN)
+    notify("unbalanced form", vim.log.levels.WARN)
+    return nil
   end
-  M.run_text(text_in_range(start, 1, close[1], close[2]))
+  return text_in_range(start, 1, close[1], close[2])
+end
+
+--- Root (top-level) form around the cursor (conjure's er).
+function M.run_root_form()
+  local t = root_form_text()
+  if t then
+    M.run_text(t)
+  end
+end
+
+--- Hot-swap the root form: bullets in flight keep their old code.
+function M.swap_root_form()
+  local t = root_form_text()
+  if t then
+    M.swap_text(t)
+  end
 end
 
 function M.setup(opts)
@@ -261,6 +288,7 @@ function M.setup(opts)
       map("x", "<localleader>e", M.run_visual, "run selection")
       map("n", "<localleader>ee", M.run_inner_form, "run innermost form")
       map("n", "<localleader>er", M.run_root_form, "run root form")
+      map("n", "<localleader>es", M.swap_root_form, "hot-swap root form (bullets keep old code)")
       -- fixed commands (not selection-sensitive)
       map("n", "<leader>dl", M.load, "load card (no play)")
       map("n", "<leader>dr", M.restart, "restart")

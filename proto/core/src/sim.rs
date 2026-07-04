@@ -113,6 +113,40 @@ impl Sim {
         Ok(Sim { world, tasks: vec![task], ctx })
     }
 
+    /// Generational hot-swap (design.md §11): replace the program, KEEP the
+    /// world — in-flight bullets keep the delegates they spawned with; the
+    /// new pattern's control tree starts now. Cells persist.
+    pub fn swap_forms(&mut self, card_src: &str, form_src: &str) -> Result<(), String> {
+        let card_forms = read_all(card_src).map_err(|e| e.to_string())?;
+        let mut card = load_card(&card_forms)?;
+        let body_forms = read_all(form_src).map_err(|e| e.to_string())?;
+        let (body, env): (Rc<[Form]>, Env) = match body_forms.first() {
+            Some(Form::List(items))
+                if matches!(items.first(), Some(Form::Sym(s)) if &**s == "defpattern") =>
+            {
+                let sent = load_card(&body_forms)?;
+                let first = sent.order.first().cloned().ok_or("no defpattern")?;
+                card.patterns.extend(sent.patterns);
+                card.defs.extend(sent.defs);
+                self.ctx.sig.defs = Rc::new(card.defs.clone());
+                let pat = &card.patterns[&first];
+                let mut env = Env::empty();
+                let mut w = World::default();
+                for (pname, default) in &pat.params {
+                    let v = evaluate(default, &env, &mut self.ctx, &mut w)?;
+                    env = env.bind(pname.clone(), v);
+                }
+                (pat.body.clone(), env)
+            }
+            _ => {
+                self.ctx.sig.defs = Rc::new(card.defs.clone());
+                (body_forms.into(), Env::empty())
+            }
+        };
+        self.tasks = vec![new_task(vec![TF::Seq { items: body, idx: 0, env }])];
+        Ok(())
+    }
+
     fn from_pattern(card: &Card, name: &str) -> Result<Sim, String> {
         let pat = card
             .patterns
@@ -141,9 +175,15 @@ impl Sim {
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         let mut ch = (*self.ctx.sig.channels).clone();
         ch.insert("player".into(), Val::Vec2 { x: inputs.player.0, y: inputs.player.1 });
+        // $nearest-enemy is DERIVED when :team :enemy entities exist (F20:
+        // a spatial query over tagged entities, taped like any channel);
+        // the host-provided value is the mock fallback.
         ch.insert(
             "nearest-enemy".into(),
-            Val::Vec2 { x: inputs.nearest_enemy.0, y: inputs.nearest_enemy.1 },
+            match self.nearest("enemy", inputs.player) {
+                Some((x, y)) => Val::Vec2 { x, y },
+                None => Val::Vec2 { x: inputs.nearest_enemy.0, y: inputs.nearest_enemy.1 },
+            },
         );
         self.ctx.sig.channels = Rc::new(ch);
         // control layer
@@ -207,6 +247,29 @@ impl Sim {
             Some(e) => Err(e),
             None => Ok(()),
         }
+    }
+
+    /// Nearest alive entity with the given team tag, by position.
+    fn nearest(&self, team: &str, to: (f64, f64)) -> Option<(f64, f64)> {
+        let sig = &self.ctx.sig;
+        let mut best: Option<((f64, f64), f64)> = None;
+        for b in &self.world.bullets {
+            if !b.alive || b.team.as_deref() != Some(team) {
+                continue;
+            }
+            let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
+            let Ok(p) = dyn_pose(&b.motion, tau, &b.state, sig) else { continue };
+            let d2 = (p.x - to.0).powi(2) + (p.y - to.1).powi(2);
+            if best.map(|(_, bd)| d2 < bd).unwrap_or(true) {
+                best = Some(((p.x, p.y), d2));
+            }
+        }
+        best.map(|(p, _)| p)
+    }
+
+    /// Current value of a channel (for host UI, e.g. scrub indicators).
+    pub fn channel_val(&self, name: &str) -> Option<Val> {
+        self.ctx.sig.channel(name)
     }
 
     fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
@@ -735,6 +798,50 @@ mod tests {
                 py
             );
         }
+    }
+
+    /// F20: $nearest-enemy derives from :team :enemy entities when present.
+    #[test]
+    fn derived_nearest_enemy() {
+        const CARD: &str = r#"
+(defpattern hunt []
+  (seq
+    (spawn (pose c[2 3]) {:style {:family :dummy} :team :enemy})
+    (spawn (vel p[3 (slew 720 90 (angle-of (- (live $nearest-enemy) pos)))])
+           {:style {:family :amulet}})))
+"#;
+        let mut sim = Sim::load(CARD, Some("hunt")).unwrap();
+        for _ in 0..120 {
+            sim.step().unwrap(); // mock target defaults to (0, 3)
+        }
+        match sim.channel_val("nearest-enemy") {
+            Some(Val::Vec2 { x, y }) => {
+                assert!((x - 2.0).abs() < 1e-9 && (y - 3.0).abs() < 1e-9, "derived: {} {}", x, y);
+            }
+            v => panic!("bad channel: {:?}", v),
+        }
+        let sig = SigEnv::default();
+        let b = sim.world.bullets.iter().find(|b| b.style.family == "amulet").unwrap();
+        let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
+        let p = dyn_pose(&b.motion, tau, &b.state, &sig).unwrap();
+        assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
+    }
+
+    /// Generational hot-swap: bullets persist, program changes.
+    #[test]
+    fn swap_keeps_world() {
+        const CARD: &str = r#"
+(defpattern a [] (spawn (circle 6 (linear c[0.5 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("a")).unwrap();
+        for _ in 0..60 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.world.bullets.len(), 6);
+        sim.swap_forms(CARD, "(spawn (circle 3 (linear c[0.2 0])))").unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.bullets.len(), 9, "old 6 keep flying + new 3");
+        assert_eq!(sim.tick(), 61, "clock continues");
     }
 
     /// Anonymous forms run with the card's defs in scope (the REPL path).

@@ -9,7 +9,10 @@
 //! send-form-to-socket shims:
 //!
 //!   (run <forms...>)                 run forms as an anonymous pattern
-//!                                     (current card's defs in scope)
+//!                                     (current card's defs in scope; the
+//!                                     input tape replays through new code)
+//!   (swap <forms...>)                generational hot-swap: in-flight
+//!                                     bullets keep their old code
 //!   (load "path/to/card.dmk")        reload from disk (does NOT play)
 //!   (load "path" "pattern-name")     reload and play the named pattern
 //!   (pattern "name")                 switch pattern in the current card
@@ -22,6 +25,7 @@
 
 use danmaku_core::edn::{read_all, Form};
 use danmaku_core::interp::{load_card, TICK_RATE};
+use danmaku_core::interp::Val;
 use danmaku_core::sim::{Inputs, RenderItem, Sim};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
@@ -249,6 +253,24 @@ impl Player {
                         };
                     }
                     Err(e) => self.status = format!("run error: {}", e),
+                }
+            }
+            "swap" => {
+                // generational hot-swap: keep the world, replace the program
+                let src = items[1..]
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                match &mut self.sim {
+                    Some(sim) => match sim.swap_forms(&self.card_src, &src) {
+                        Ok(()) => {
+                            let preview: String = src.chars().take(40).collect();
+                            self.status = format!("swap {}…", preview);
+                        }
+                        Err(e) => self.status = format!("swap error: {}", e),
+                    },
+                    None => self.status = "swap: nothing running (use run)".into(),
                 }
             }
             "seek" => {
@@ -615,6 +637,21 @@ async fn main() {
                             let (bx, by) = to_screen(seg[1].0, seg[1].1);
                             draw_line(ax, ay, bx, by, w, col);
                         }
+                    }
+                }
+            }
+            // scrub indicators: where the position channels ARE at this tick
+            // (while paused they diverge from the live mouse)
+            if player.paused {
+                for (name, col) in
+                    [("player", Color::new(1.0, 1.0, 1.0, 0.9)), ("nearest-enemy", ORANGE)]
+                {
+                    if let Some(Val::Vec2 { x, y }) = sim.channel_val(name) {
+                        let (sx, sy) = to_screen(x, y);
+                        draw_line(sx - 10.0, sy, sx + 10.0, sy, 1.5, col);
+                        draw_line(sx, sy - 10.0, sx, sy + 10.0, 1.5, col);
+                        draw_circle_lines(sx, sy, 6.0, 1.5, col);
+                        draw_text(&format!("${}", name), sx + 12.0, sy - 8.0, 16.0, col);
                     }
                 }
             }

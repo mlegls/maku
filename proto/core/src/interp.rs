@@ -420,6 +420,9 @@ pub struct MetaSig {
 #[derive(Clone)]
 pub struct Bullet {
     pub id: u64,
+    /// Gameplay team tag (F20: derived channels like $nearest-enemy are
+    /// queries over tagged entities).
+    pub team: Option<Rc<str>>,
     pub kind: Kind,
     pub motion: Rc<DynNode>,
     pub birth: u64,
@@ -541,7 +544,12 @@ pub enum ActionV {
     /// Bindings whose values are actions execute at scheduler reach-time
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
-    Spawn { dyns: Vec<SpawnMade>, styles: Vec<Style>, hues: Vec<Option<MetaSig>> },
+    Spawn {
+        dyns: Vec<SpawnMade>,
+        styles: Vec<Style>,
+        hues: Vec<Option<MetaSig>>,
+        team: Option<Rc<str>>,
+    },
     Manipulate { targets: Vec<u64>, callback: Val },
     Cull { target: u64 },
     Wait { ticks: u64 },
@@ -1246,7 +1254,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, hues } => {
+        ActionV::Spawn { dyns, styles, hues, team } => {
             let mut handles = Vec::new();
             for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
                 let motion = if ctx.ambient == Pose::IDENTITY {
@@ -1262,6 +1270,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 world.next_id += 1;
                 world.bullets.push(Bullet {
                     id,
+                    team: team.clone(),
                     kind: d.kind.clone(),
                     motion,
                     birth: world.tick,
@@ -1740,11 +1749,15 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     }
     let styles = resolve_styles(&meta, &elems)?;
     let hues = resolve_hue(items.get(2), &meta, env, elems.len());
+    let team: Option<Rc<str>> = match map_get(&meta, "team") {
+        Some(Val::Kw(k)) => Some(Rc::from(&*k)),
+        _ => None,
+    };
     let dyns = elems
         .into_iter()
         .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
         .collect();
-    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues })))
+    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team })))
 }
 
 fn flatten_elems(
