@@ -169,6 +169,11 @@ impl<'a> Reader<'a> {
                 let s = self.read_symbol_chars()?;
                 Ok(Form::Kw(s.into()))
             }
+            b'$' => {
+                self.bump();
+                let s = self.read_symbol_chars()?;
+                Ok(Form::Sym(format!("${}", s).into()))
+            }
             b'c' | b'p' if self.peek2() == b'[' => {
                 let head = if self.bump() == b'c' { "cart" } else { "polar" };
                 let items = self.read_seq(b']')?;
@@ -371,6 +376,17 @@ pub mod math {
                     }
                     let text = &src[start..i];
                     out.push(Tok::Num(text.parse().map_err(|_| format!("bad number '{}'", text))?));
+                }
+                b'$' => {
+                    if i + 1 < b.len() && b[i + 1] == b'(' {
+                        return Err("$(...) splice not yet implemented in math".into());
+                    }
+                    let start = i + 1;
+                    i += 1;
+                    while i < b.len() && (b[i].is_ascii_alphanumeric() || matches!(b[i], b'_' | b'-')) {
+                        i += 1;
+                    }
+                    out.push(Tok::Ident(format!("${}", &src[start..i])));
                 }
                 _ if c.is_ascii_alphabetic() || c == b'_' || c == b':' => {
                     let start = i;

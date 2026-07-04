@@ -62,14 +62,14 @@
           (fork (seq (wait 1)                       ; DMK delay 1s
                   (loop []
                     (wait-for (= mode 1))           ; whiletrue == pause
-                    (spawn ((aim player)
+                    (spawn ((aim $player)
                              (laser {:warn 1 :active 0.2 :u-max 20}))
                            {:style {:family :gdlaser :color :blue}})
                     (wait (ticks (/ 280 factor)))
                     (recur))))
           (fork (loop []
                   (wait-for (= mode 2))
-                  (spawn ((aim player)
+                  (spawn ((aim $player)
                            (laser {:warn 1 :active 0.2 :u-max 20 :width 2}))
                          {:style {:family :gdlaser :color :blue :variant :w}})
                   (wait (ticks (/ 180 factor)))
@@ -79,7 +79,7 @@
 
 ;; dl is DMK's rank: an injected channel (SS3), not a parameter -- ambient in
 ;; the read-only direction, so no threading through defns.
-(def factor (pow rank 0.3))
+(def factor (pow $rank 0.3))
 
 (defpattern spell-2 []
   (defvar mode 1)                          ; F16: pattern-scoped control cell
@@ -91,7 +91,7 @@
       ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
       (loop [k 0, cell (rand-cell)]
         (move (if (= k 0) 1.6 0.7) :out-sine (grid-cell :enemy cell))
-        (spawn ((aim player)
+        (spawn ((aim $player)
                  (map (fn [v]
                         ((fan 5 18)                       ; centered 5-fan, 18deg
                           (linear p[(* factor (lerp 0 2 v 4 2.4))
@@ -161,7 +161,7 @@
 ;;                            factor PARAM free (defns are lexical). Root
 ;;                            cause: difficulty was misclassified -- dl is
 ;;                            rank, an injected channel (SS3), ambient in the
-;;                            read-only direction. (def factor (pow rank 0.3))
+;;                            read-only direction. (def factor (pow $rank 0.3))
 ;;                            and the threading disappears.
 ;;
 ;; Approximations (intent-level):

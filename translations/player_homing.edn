@@ -35,7 +35,7 @@
     (when (>= power opt)                      ; DMK clip <= powerf p
       (event :sfx "x-pc-fire-1")
       (spawn (vel p[10 (slew 60 90
-                             (angle-of (- (live nearest-enemy) pos)))])
+                             (angle-of (- (live $nearest-enemy) pos)))])
              {:style {:family :amulet :color (nth [:red :black] opt)}
               :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
 
@@ -64,19 +64,19 @@
       (spawn (pather 0.5
                (vel p[(lerp3 0 0.3 1.1 1.3 t 9 2 10)
                       (slew (lerp 0.8 1.5 t 120 0) 90
-                            (angle-of (- (live nearest-enemy) pos)))]))
+                            (angle-of (- (live $nearest-enemy) pos)))]))
              {:style {:family :gpather :color :black :variant :b}
               :width 2
               :damage {:hit 120 :graze 400 :on-hit :oh1-red}}))
     ;; the tracking laser: aim = slew toward a SMOOTHED target. Two scans
     ;; compose (smooth |> slew); `target` is let-bound = one shared instance
     ;; feeding the laser's frame.
-    (let [target (smooth 0.02 (live nearest-enemy))]
+    (let [target (smooth 0.02 (live $nearest-enemy))]
       (spawn ((rot (slew (lerp 3 8 t 0.7 0) 90
                          (angle-of (- target pos))))
                (laser {:active inf
                        :u-max (min 15 m"30*t")     ; varLength: grows, capped
-                       :while (live focus-firing)})) ; deactivate w/ fire key
+                       :while (live $focus-firing)})) ; deactivate w/ fire key
              {:style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
                       :variant :b}
               :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
@@ -103,7 +103,7 @@
     ;; orbit stage: riding the LIVE player frame (continuous tracking is the
     ;; point of a bomb that sweeps around you) -- class (b), pointwise.
     (stage 4.0
-      ((live player)
+      ((live $player)
         (polar (lerpsmooth eoutsine 0 1 t 0.5 2.2)
                m"90 + 350*t + 60*k")))
     ;; chase stage: slew from the orbit's exit heading toward the nearest
@@ -113,7 +113,7 @@
         (vel p[(* (mag (:vel exit)) (lerp3 0 0.1 0.2 0.4 t 1 0.2 0.8))
                (slew (lerp 0.4 0.6 t 400 30)
                      (angle-of (:vel exit))
-                     (angle-of (- (live nearest-enemy) pos)))])))))
+                     (angle-of (- (live $nearest-enemy) pos)))])))))
 
 (defpattern fantasy-seal []
   (dotimes [k 6, col [:red :green :yellow :blue] :every (ticks 24)]

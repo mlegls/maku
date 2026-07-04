@@ -97,8 +97,13 @@ impl Sim {
     }
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
-        self.ctx.sig.player = inputs.player;
-        self.ctx.sig.nearest_enemy = inputs.nearest_enemy;
+        let mut ch = (*self.ctx.sig.channels).clone();
+        ch.insert("player".into(), Val::Vec2 { x: inputs.player.0, y: inputs.player.1 });
+        ch.insert(
+            "nearest-enemy".into(),
+            Val::Vec2 { x: inputs.nearest_enemy.0, y: inputs.nearest_enemy.1 },
+        );
+        self.ctx.sig.channels = Rc::new(ch);
         // control layer
         let mut i = 0;
         while i < self.tasks.len() {

@@ -216,7 +216,7 @@ pub fn dyn_pose_u(
             Ok(Pose { x, y, th: vy.atan2(vx).to_degrees() })
         }
         DynNode::Live { channel } => {
-            let (x, y) = sig.channel(channel);
+            let (x, y) = sig.channel_pos(channel);
             Ok(Pose { x, y, th: 0.0 })
         }
         DynNode::RotExpr { form, env } => {
@@ -678,10 +678,9 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
 #[derive(Clone)]
 pub struct SigEnv {
     pub defs: Rc<HashMap<String, Form>>,
-    pub player: (f64, f64),
-    pub nearest_enemy: (f64, f64),
-    /// Injected scalar channel: difficulty/rank (DMK's dl). Read-only ambient.
-    pub rank: f64,
+    /// Injected + derived channels, by bare name (read as `$name`). The host
+    /// passes by name; a card's channel manifest derives from its tree.
+    pub channels: Rc<HashMap<String, Val>>,
     /// Pattern-scoped control cells (F16): written by set! (control layer),
     /// read live by signals; shared between world and signal contexts.
     pub cells: Rc<std::cell::RefCell<HashMap<String, Val>>>,
@@ -689,21 +688,27 @@ pub struct SigEnv {
 
 impl Default for SigEnv {
     fn default() -> Self {
+        let mut ch = HashMap::new();
+        ch.insert("player".into(), Val::Vec2 { x: 0.0, y: -4.0 });
+        ch.insert("nearest-enemy".into(), Val::Vec2 { x: 0.0, y: 3.0 });
+        ch.insert("rank".into(), Val::Num(1.0));
+        ch.insert("focus-firing".into(), Val::Bool(true));
         SigEnv {
             defs: Rc::new(HashMap::new()),
-            player: (0.0, -4.0),
-            nearest_enemy: (0.0, 3.0),
-            rank: 1.0,
+            channels: Rc::new(ch),
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
         }
     }
 }
 
 impl SigEnv {
-    pub fn channel(&self, name: &str) -> (f64, f64) {
-        match name {
-            "nearest-enemy" => self.nearest_enemy,
-            _ => self.player,
+    pub fn channel(&self, name: &str) -> Option<Val> {
+        self.channels.get(name).cloned()
+    }
+    pub fn channel_pos(&self, name: &str) -> (f64, f64) {
+        match self.channels.get(name) {
+            Some(Val::Vec2 { x, y }) => (*x, *y),
+            _ => (0.0, 0.0),
         }
     }
 }
@@ -733,12 +738,11 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Kw(k) => Ok(Val::Kw(k.clone())),
         Form::Sym(s) => match &**s {
             "inf" => Ok(Val::Num(f64::INFINITY)),
-            "player" => Ok(Val::Vec2 { x: ctx.sig.player.0, y: ctx.sig.player.1 }),
-            "nearest-enemy" => {
-                Ok(Val::Vec2 { x: ctx.sig.nearest_enemy.0, y: ctx.sig.nearest_enemy.1 })
-            }
             "phi" => Ok(Val::Num(1.618_033_988_749_895)),
-            "rank" => Ok(Val::Num(ctx.sig.rank)),
+            name if name.starts_with('$') => ctx
+                .sig
+                .channel(&name[1..])
+                .ok_or_else(|| format!("host does not provide channel {}", name)),
             name => {
                 if let Some(v) = env.lookup(name) {
                     // a deferred signal (shared scan) forces inside scan contexts
@@ -931,21 +935,25 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // in a scan context: the channel's current value (class b/d);
                 // at control level: a live pose signal usable as a frame
                 if let Some(Form::Sym(ch)) = items.get(1) {
-                    match ch.as_ref() {
-                        "player" | "nearest-enemy" => {
-                            return if ctx.scan.is_some() {
-                                let (x, y) = ctx.sig.channel(ch);
-                                Ok(Val::Vec2 { x, y })
-                            } else {
-                                Ok(Val::Dyn(Rc::new(DynNode::Live { channel: ch.clone() })))
-                            };
-                        }
-                        other => {
-                            if let Some(v) = ctx.sig.cells.borrow().get(other) {
-                                return Ok(v.clone());
+                    if let Some(name) = ch.strip_prefix('$') {
+                        let cur = ctx
+                            .sig
+                            .channel(name)
+                            .ok_or_else(|| format!("host does not provide channel {}", ch))?;
+                        return if ctx.scan.is_some() {
+                            Ok(cur)
+                        } else {
+                            match cur {
+                                Val::Vec2 { .. } | Val::Pose(_) => Ok(Val::Dyn(Rc::new(
+                                    DynNode::Live { channel: Rc::from(name) },
+                                ))),
+                                v => Ok(v),
                             }
-                            return Ok(Val::Bool(true)); // unknown host channel stub
-                        }
+                        };
+                    }
+                    // cells read live by name
+                    if let Some(v) = ctx.sig.cells.borrow().get(ch.as_ref()) {
+                        return Ok(v.clone());
                     }
                 }
                 return evaluate(&items[1], env, ctx, world);
@@ -1046,7 +1054,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
     if let Form::Sym(name) = head {
         if env.lookup(name).is_none()
             && !ctx.sig.defs.contains_key(&**name)
-            && &**name != "player"
+            && !name.starts_with('$')
         {
             let args = items[1..]
                 .iter()
@@ -2364,10 +2372,9 @@ mod tests {
 
     #[test]
     fn aim_is_ambient_relative() {
-        let mut ctx = Ctx::default();
-        ctx.sig.player = (0.0, -4.0);
-        let f = read_one("(aim player)").unwrap();
-        let Val::Pose(p) = evaluate(&f, &Env::empty(), &mut ctx, &mut World::default()).unwrap()
+        let ctx = &mut Ctx::default();
+        let f = read_one("(aim $player)").unwrap();
+        let Val::Pose(p) = evaluate(&f, &Env::empty(), ctx, &mut World::default()).unwrap()
         else {
             panic!()
         };
