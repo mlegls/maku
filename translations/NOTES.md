@@ -154,6 +154,18 @@ sequenced after the loop and by par/race/phase completion.
 Image of DMK's `bindArrow` + `frv2(rxy(-a*aixd, b*aiyd))` idiom. More of these
 will accumulate (§1: keep the vocabulary); they are library, not core.
 
+**Stock stream vocabulary**: `(stutter n xs)` — each element repeated n times,
+still cycling (SC `Pstutter`); image of DMK's `colorf(xs, i/2)` floored-index
+idiom. Seq-binding sources compose as streams; this is the §8 pattern algebra
+arriving one combinator at a time.
+
+**Slot-bound time (F12, adopted).** `t` (and the laser axis `u`) never appear
+free: a signal-typed argument slot *binds* them — an expression referencing
+`t`/`u` in such a slot denotes the `Closed` signal λt.(…), exactly BDSL's
+movement-function model. Outside signal slots, `t` is an unresolved-symbol
+error. This is what makes `(polar m"2*t" m"lr*20*t")` well-formed with `lr` an
+ordinary lexical capture and `t` the signal parameter.
+
 **Broadcast zips cycle (adopted).** Shorter arrays cycle rather than error —
 SC multichannel expansion (our §5 source) cycles, and DMK color lists cycle by
 `i mod len`; 060/110 exploit it deliberately. Scalar lifting stops being a
@@ -285,5 +297,8 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
 - `080_aimed.edn` — complete. First script to touch an injected signal (implicit
   snap, §3 class (a)); chevron idiom → `arrow` combinator (F10); F9; the
   decelerating `vel` is the F1 lint case in the wild.
-- Next per README order: 060 (polar + signal-valued color), 070 (lasers / axis
-  materialization).
+- `060_polar.edn` — complete. Every DMK modifier became a seq binding
+  (`colorf`→`stutter`, `bindLR`→`[1 -1]`, parent-index `colorf`→outer binding);
+  first nonlinear Closed dyn; slot-bound `t` formalized (F12).
+- Next per README order: 070 (lasers / axis materialization), 110 (manipulate),
+  200 (guides).

@@ -1,0 +1,85 @@
+;; Translation of dmk-corpus/060_polar.bdsl
+;;
+;; BDSL original (24 lines), for ergonomics comparison:
+;;
+;;   pattern { } {
+;;   phase 0 {
+;;       roott(1, 0, 1.5)
+;;   } {
+;;       paction 0 {
+;;       async "sakura-**" <> gcrepeat {
+;;               wait(40)
+;;               times(inf)
+;;               colorf({ "red", "pink", "purple", "blue",
+;;                   "teal", "green", "yellow", "orange" },
+;;                       i / 2)
+;;               bindLR
+;;               sfx("x-fire-burst-1")
+;;           } gsrepeat {
+;;               times(15)
+;;               circle
+;;               colorf({ "/", "/b" }, pi)
+;;           } s(polar(
+;;               2 * t,
+;;               lr * 20 * t
+;;           ))
+;;       }
+;;   }
+;;   }
+;;
+;; Decoded against source:
+;;   pi          autovar: parent repeater's iteration index (DMKAutoVars.cs:35)
+;;               -- so the "/"-vs-"/b" variant alternates per VOLLEY, not per arm.
+;;   bindLR      lr = +1 on even volleys, -1 on odd (PM1Mod) -- a [1 -1] cycle.
+;;   colorf(xs, i/2)  floored indexing: each color held for 2 volleys = stutter.
+;;
+;; DMK semantics: every 40 ticks, fire a 15-arm ring of sakura petals spiraling
+;; outward -- radius 2t, angle drifting 20 deg/s, direction alternating per
+;; volley. Color walks an 8-palette at half rate; variant suffix alternates
+;; per volley; every volley has a fire sound.
+
+(defpattern polar-demo [period (ticks 40)]
+  ((pose c[0 1.5])
+    (dotimes [vol inf
+              col (stutter 2 ["red" "pink" "purple" "blue"
+                              "teal" "green" "yellow" "orange"])
+              lr  [1 -1]
+              vrt ["/" "/b"]
+              :every period]
+      (event :sfx "x-fire-burst-1")
+      (spawn (circle 15 (polar m"2*t" m"lr*20*t"))
+             {:style "sakura-**" :color col :variant vrt}))))
+
+;; Every DMK modifier in this script became a seq binding:
+;;   colorf(xs, i/2) -> col (stutter 2 xs)     (SC Pstutter; streams compose)
+;;   bindLR          -> lr [1 -1]              (F10: auto-bindings are data)
+;;   colorf(vs, pi)  -> vrt ["/" "/b"]         (parent-index = outer loop binding)
+;;
+;; ---------------------------------------------------------------------------
+;; Canonical desugared tree (spawn argument)
+;;
+;;   (in-frame (pose (cart 0 1.5))
+;;     (map (fn [p] (in-frame p
+;;            (polar (* 2 t) (* lr 20 t))))     ; t is SLOT-BOUND (F12)
+;;          (circle 15)))
+;;
+;; `polar` is the first corpus dyn that is Closed and nonlinear: DMK's
+;; roffset family, pos = polar point of the local frame at time t. Spirals
+;; scrub for free; no integration anywhere in this script.
+;;
+;; ---------------------------------------------------------------------------
+;; Rate / constructor audit
+;;
+;;   col / lr / vrt            seq bindings: control-layer constants
+;;                             per volley ............................... ir
+;;   (circle 15)               Array Pose ............................... ir
+;;   (polar m"2*t" m"lr*20*t") Closed (t slot-bound; lr an ir constant
+;;                             captured per volley) ..................... ar
+;;   {:style ...}              "sakura-**" has TWO merge slots (color +
+;;                             variant) -- F4's merge DSL is three-axis
+;;                             (base x color x variant) ................. ir
+;;   timeline                  constant waits, no injected signals =>
+;;                             input-independent: scrubbable, extractable
+;;
+;; New vocabulary: (stutter n xs) stream op (SC Pstutter). New convention
+;; formalized: t in signal-typed slots is bound by the slot (F12).
