@@ -86,6 +86,12 @@ function draw() {
   ctx.fillStyle = '#12121a';
   ctx.fillRect(0, 0, cv.width, cv.height);
 
+  // the rig's movement bounds (reimu_vs_mima clamps to ±3.8 × −4.4..4.4)
+  // — drawn so the walls are visible; a different rig has different walls
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(sx(-3.8), sy(4.4), 7.6 * PPU, 8.8 * PPU);
+
   // beams: [active, r, g, b, n, pts…]
   const bm = dk.beams();
   for (let i = 0; i < bm.length;) {
@@ -154,15 +160,22 @@ function draw() {
     scrub.value = tl[0];
     document.getElementById('tick').textContent = `${tl[0]} / ${tl[1]}`;
   }
+  // menu: rebuild only when it changes — rebuilding per frame replaces
+  // the element mid-click and the click never lands
   const cur = dk.current_pattern();
-  const menu = document.getElementById('menu');
-  menu.replaceChildren(...dk.patterns().split('\n').map((p, i) => {
-    const el = document.createElement('div');
-    el.textContent = `${i + 1} ${p}`;
-    el.className = p === cur ? 'sel' : '';
-    el.onclick = () => dk.select(i);
-    return el;
-  }));
+  const menuKey = dk.patterns() + '|' + cur;
+  if (menuKey !== lastMenuKey) {
+    lastMenuKey = menuKey;
+    const menu = document.getElementById('menu');
+    menu.replaceChildren(...dk.patterns().split('\n').map((p, i) => {
+      const el = document.createElement('div');
+      el.textContent = `${i + 1} ${p}`;
+      el.className = p === cur ? 'sel' : '';
+      el.onclick = () => dk.select(i);
+      return el;
+    }));
+  }
 }
+let lastMenuKey = '';
 
 boot();
