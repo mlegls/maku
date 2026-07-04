@@ -96,7 +96,7 @@ Only (d) breaks closed form. The typing rule: an expression is `Scanned` iff it 
 
 1. read-only ambient = **channels** (single writer, taped, readable anywhere without threading);
 2. read-write ambient = **control cells** (below; pattern-scoped, adapter-gated);
-3. **scoped overrides**: `(with {rank 0.5} body)` — dynamic *binding*, not mutation: channel values overridden for a lexical subtree. Delimited writes, tree-visible provenance, card-macro friendly ("this card at half rank" = wrap the subtree). Exact semantics **[decide]** (see §13).
+3. **scoped overrides**: `(with {rank 0.5} body)` — dynamic *binding*, not mutation. **`with` is to channels what `in-frame` is to poses**: the same distribution law over the action tree (pushes through control combinators, lands on spawns, which capture it for their signals' lifetimes — including `live` reads, long after the body's evaluation), the same boundary (stops at pattern-embedding adapters), the same capture rules. The ambient frame is the special case for the "where am I" channel; `with` generalizes the mechanism. `let` cannot substitute: lexical scope reaches only text you *contain*, not code you *cause* (callees resolve channels in their own definitions; spawned signals outlive the body) — and **channel names are reserved** (unbindable by `let`/`fn` params, like `t`/`u`), so the let-vs-with ambiguity is unrepresentable. Overrides are ordinary card data (tree nodes; they serialize). Residual **[decide]**: nesting/shadowing details and which derived channels are overridable (§13).
 
 **The host↔pattern surface is four constructs, all on named channels** — raw engine-object access does not exist:
 
@@ -303,7 +303,7 @@ Arithmetic `+ - * /` is variadic (n-ary fold; unary `-`/`/` negate/reciprocate) 
 5. Facing override semantics: frame-relative vs absolute (§4 orientation policy; the cradle translation reads as frame-relative).
 6. `(on-axis k xs)` meta-targeting sugar vs the explicit-length convention (§5).
 7. Blocking-laser feedback contract (world geometry → extent; necessarily `Scanned`) — the last unresolved piece of the extended-entity surface.
-8. `(with {channel value} body)` scoped-override semantics: which channels are overridable, interaction with `snap`/tape recording (an override is itself card data, so it must serialize), nesting/shadowing rules.
+8. `(with {channel value} body)` residual details (the core semantics are settled in §3 — the in-frame-for-channels distribution law): which *derived* channels are overridable, nesting/shadowing rules, override values that are themselves signals of taped inputs.
 9. Derived-channel vocabulary (§3): which queries the sim exposes as taped channels (`nearest-enemy`, counts, thresholds) and their cost model.
 
 Settled since the first draft (see translations/NOTES.md for the record): snap-by-default boundary + `live` marker; construction-vs-reference of scans (`shared` nodes); scanned-state limits (fixed `Bullet` + escape); extended-entity surface (`laser` options, `:resolution` as render hint); style/color merge (structured records); phase transitions (`phases` + scoped goto); iteration/vocabulary surface (EDN, `m""`, units, `dotimes` seq bindings, formation/stream stock). Settled by the prototype: let-deferral of action bindings (F17); frames stop at lambdas (F18); difficulty is the rank channel + pure loops fold inline (F19); derived channels (F20); def-resolution hygiene under slot binding.
