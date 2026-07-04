@@ -21,8 +21,10 @@ language.md.
 - Pathers render as points; laser collision uses a constant beam half-width
   (`:width` should feed it, §13.7).
 - Trigger predicates: single-column `≤` crossings only (§13.13).
-- Interaction matrix rows engine-fixed; hit effect knows the `lives` column
-  by name (§13.10).
+- Interaction matrix rows engine-fixed; hit effect knows the `lives` and
+  `iframe-until` columns by name (§13.10). Iframes and inputs are no longer
+  global/fixed (per-entity column; named-channel Inputs) — the matrix rows
+  are the last hardcoding.
 - RNG is sequential splitmix, not counter-keyed by spawn path (§5) — replay
   determinism holds, order-independence does not.
 - Scrub-back across a swap/add boundary restores the pre-change program

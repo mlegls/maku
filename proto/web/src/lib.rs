@@ -11,13 +11,14 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct Danmaku {
     inst: Instance,
+    pending: Inputs,
 }
 
 #[wasm_bindgen]
 impl Danmaku {
     #[wasm_bindgen(constructor)]
     pub fn new(rig: Option<String>) -> Danmaku {
-        Danmaku { inst: Instance::new(rig) }
+        Danmaku { inst: Instance::new(rig), pending: Inputs::default() }
     }
 
     /// Register a card file in the virtual filesystem (path → text).
@@ -38,21 +39,25 @@ impl Danmaku {
         self.inst.command_line(line);
     }
 
-    /// Advance up to `n` ticks with these inputs (host accumulates frame
-    /// time; 120 ticks = 1 s).
-    pub fn step(&mut self, n: u32, px: f64, py: f64, ax: f64, ay: f64, focus: bool, bomb: bool) {
-        let inputs = Inputs {
-            player: (px, py),
-            nearest_enemy: (px, py),
-            axes: (ax, ay),
-            focus,
-            bomb,
-        };
+    /// Set a numeric input channel for subsequent steps ($move-x,
+    /// $p2-move-x, $focus-firing, $bomb — an open vocabulary, by name).
+    pub fn input_num(&mut self, name: &str, v: f64) {
+        self.pending.set_num(name, v);
+    }
+
+    /// Set a Vec2 input channel ($player mock, $nearest-enemy mock, …).
+    pub fn input_vec2(&mut self, name: &str, x: f64, y: f64) {
+        self.pending.set_vec2(name, x, y);
+    }
+
+    /// Advance up to `n` ticks with the pending inputs (host accumulates
+    /// frame time; 120 ticks = 1 s).
+    pub fn step(&mut self, n: u32) {
         for _ in 0..n {
             if self.inst.paused() {
                 break;
             }
-            self.inst.advance(inputs);
+            self.inst.advance(self.pending.clone());
         }
     }
 

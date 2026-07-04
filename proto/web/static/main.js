@@ -5,6 +5,7 @@ import init, { Danmaku } from './pkg/danmaku_web.js';
 
 const FILES = [
   'cards/player-rig.dmk',
+  'cards/coop.dmk',
   'cards/reimu_vs_mima.dmk',
   'cards/duel.dmk',
   'cards/translations/ph_boss2_spell2.dmk',
@@ -77,10 +78,22 @@ function frame(now) {
            + (!dk.paused() ? (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0) : 0);
   const ay = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0)
            + (!dk.paused() ? (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0) : 0);
-  const m = Math.hypot(ax, ay);
-  const nx = m > 1 ? ax / m : ax, ny = m > 1 ? ay / m : ay;
-  dk.step(steps, mouse[0], mouse[1], nx, ny,
-          keys.has('ShiftLeft') || keys.has('ShiftRight'), keys.has('KeyX'));
+  // channels by name: merged axes for single-pilot cards, plus WASD-only
+  // ($p1-move-*) and arrows-only ($p2-move-*) for co-op rigs
+  const wadx = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  const wady = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+  const arx = !dk.paused() ? (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0) : 0;
+  const ary = !dk.paused() ? (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0) : 0;
+  const norm = (x, y) => { const m = Math.hypot(x, y); return m > 1 ? [x / m, y / m] : [x, y]; };
+  const [mx2, my2] = norm(ax, ay), [p1x, p1y] = norm(wadx, wady), [p2x, p2y] = norm(arx, ary);
+  dk.input_vec2('player', mouse[0], mouse[1]);
+  dk.input_vec2('nearest-enemy', mouse[0], mouse[1]);
+  dk.input_num('move-x', mx2); dk.input_num('move-y', my2);
+  dk.input_num('p1-move-x', p1x); dk.input_num('p1-move-y', p1y);
+  dk.input_num('p2-move-x', p2x); dk.input_num('p2-move-y', p2y);
+  dk.input_num('focus-firing', keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1 : 0);
+  dk.input_num('bomb', keys.has('KeyX') ? 1 : 0);
+  dk.step(steps);
   draw();
   requestAnimationFrame(frame);
 }
@@ -133,10 +146,11 @@ function draw() {
     ctx.stroke();
   }
 
-  // player marker: hitbox + graze ring (+ iframe flicker)
-  const pp = dk.player_pos();
-  if (pp.length) {
-    const X = sx(pp[0]), Y = sy(pp[1]);
+  // player markers: every piloted rig (or the $player mock)
+  const pilots = dk.positions('pilot');
+  const pp = pilots.length ? pilots : dk.player_pos();
+  for (let pi = 0; pi < pp.length; pi += 2) {
+    const X = sx(pp[pi]), Y = sy(pp[pi + 1]);
     ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(X, Y, 0.35 * PPU, 0, 7); ctx.stroke();
     ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2;
@@ -148,6 +162,7 @@ function draw() {
       ctx.beginPath(); ctx.arc(X, Y, 13, 0, 7); ctx.stroke();
     }
   }
+
 
   // HUD / timeline / menu (DOM built with textContent — no innerHTML)
   const lives = dk.lives();

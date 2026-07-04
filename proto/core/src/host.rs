@@ -511,7 +511,7 @@ mod tests {
 
         let inputs = Inputs::default();
         for _ in 0..240 {
-            inst.advance(inputs);
+            inst.advance(inputs.clone());
         }
         assert_eq!(inst.tick(), Some(240));
         assert!(!inst.render().is_empty(), "bullets to draw");
@@ -519,7 +519,7 @@ mod tests {
 
         // wire dispatch: hot-eval an anonymous pattern (tape replays)
         inst.command_line("(run (spawn (circle 4 (linear c[1 0]))))");
-        inst.advance(inputs);
+        inst.advance(inputs.clone());
         assert!(inst.entity_count() >= 4);
 
         // scrub through the facade

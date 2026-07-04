@@ -108,9 +108,13 @@ impl Session {
             }
         }
         let ti = t as usize;
-        let inputs = if ti < self.tape.len() { self.tape[ti] } else { self.last_inputs };
+        let inputs = if ti < self.tape.len() {
+            self.tape[ti].clone()
+        } else {
+            self.last_inputs.clone()
+        };
         if ti >= self.tape.len() {
-            self.tape.push(inputs);
+            self.tape.push(inputs.clone());
         }
         sim.step_with(&inputs)?;
         let now = sim.tick();

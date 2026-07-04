@@ -245,31 +245,41 @@ async fn main() {
             ((mx - cx) / PIXELS_PER_UNIT) as f64,
             ((cy - my) / PIXELS_PER_UNIT) as f64,
         );
-        // raw input side of the host contract: WASD/arrows -> axes,
-        // Shift -> focus, X -> bomb. The mouse remains the mock $player
-        // for mouse-rig cards and the mock nearest-enemy fallback.
+        // raw input side of the host contract, passed by name: WASD and
+        // arrows merge into $move-x/-y for single-pilot cards, and are ALSO
+        // injected separately as $p1-move-* (WASD) / $p2-move-* (arrows)
+        // for co-op rigs. Shift -> $focus-firing, X -> $bomb. The mouse
+        // remains the mock $player / $nearest-enemy fallback.
         let key = |k: KeyCode| is_key_down(k);
-        let ax = (key(KeyCode::D) as i8 - key(KeyCode::A) as i8) as f64
-            + if !app.inst.paused() {
-                (key(KeyCode::Right) as i8 - key(KeyCode::Left) as i8) as f64
-            } else {
-                0.0
-            };
-        let ay = (key(KeyCode::W) as i8 - key(KeyCode::S) as i8) as f64
-            + if !app.inst.paused() {
-                (key(KeyCode::Up) as i8 - key(KeyCode::Down) as i8) as f64
-            } else {
-                0.0
-            };
-        let mag = (ax * ax + ay * ay).sqrt();
-        let axes = if mag > 1.0 { (ax / mag, ay / mag) } else { (ax, ay) };
-        let inputs = Inputs {
-            player: mouse_world,
-            nearest_enemy: mouse_world,
-            axes,
-            focus: key(KeyCode::LeftShift) || key(KeyCode::RightShift),
-            bomb: key(KeyCode::X),
+        let arrows_live = !app.inst.paused(); // paused arrows belong to scrubbing
+        let wx = (key(KeyCode::D) as i8 - key(KeyCode::A) as i8) as f64;
+        let wy = (key(KeyCode::W) as i8 - key(KeyCode::S) as i8) as f64;
+        let arx = if arrows_live {
+            (key(KeyCode::Right) as i8 - key(KeyCode::Left) as i8) as f64
+        } else {
+            0.0
         };
+        let ary = if arrows_live {
+            (key(KeyCode::Up) as i8 - key(KeyCode::Down) as i8) as f64
+        } else {
+            0.0
+        };
+        let norm = |x: f64, y: f64| {
+            let m = (x * x + y * y).sqrt();
+            if m > 1.0 { (x / m, y / m) } else { (x, y) }
+        };
+        let (mx_, my_) = norm(wx + arx, wy + ary);
+        let (p1x, p1y) = norm(wx, wy);
+        let (p2x, p2y) = norm(arx, ary);
+        let mut inputs = Inputs::classic(mouse_world, mouse_world);
+        inputs.set_num("move-x", mx_);
+        inputs.set_num("move-y", my_);
+        inputs.set_num("p1-move-x", p1x);
+        inputs.set_num("p1-move-y", p1y);
+        inputs.set_num("p2-move-x", p2x);
+        inputs.set_num("p2-move-y", p2y);
+        inputs.set_flag("focus-firing", key(KeyCode::LeftShift) || key(KeyCode::RightShift));
+        inputs.set_flag("bomb", key(KeyCode::X));
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !app.inst.paused() {
@@ -277,7 +287,7 @@ async fn main() {
             let dt = 1.0 / TICK_RATE;
             while app.accum >= dt {
                 app.accum -= dt;
-                app.inst.advance(inputs);
+                app.inst.advance(inputs.clone());
                 if app.inst.paused() {
                     break; // sim error pauses
                 }

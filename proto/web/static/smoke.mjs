@@ -20,7 +20,13 @@ dk.boot('cards/reimu_vs_mima.dmk', undefined);
 if (!dk.running()) throw new Error('boot failed: ' + dk.status());
 
 // play 5 seconds with slight movement
-for (let k = 0; k < 600; k++) dk.step(1, 0, -3, k % 100 < 50 ? 0.5 : -0.5, 0, false, false);
+dk.input_vec2('player', 0, -3);
+dk.input_vec2('nearest-enemy', 0, -3);
+for (let k = 0; k < 600; k++) {
+  dk.input_num('move-x', k % 100 < 50 ? 0.5 : -0.5);
+  dk.step(1);
+}
+console.log('status:', dk.status(), '| entities', dk.entity_count(), '| tick', dk.tick());
 const dots = dk.dots(), pp = dk.player_pos();
 console.log('tick', dk.tick(), 'dots', dots.length / 6, 'beams', dk.beams().length,
             'player', pp[0].toFixed(2), pp[1].toFixed(2),
@@ -29,7 +35,7 @@ if (dots.length === 0) throw new Error('nothing rendered');
 
 // wire protocol: hot-eval + scrub
 dk.command('(run (spawn (circle 6 (linear c[1 0]))))');
-dk.step(1, 0, -3, 0, 0, false, false);
+dk.input_num('move-x', 0); dk.step(1);
 if (dk.entity_count() < 6) throw new Error('run failed: ' + dk.status());
 dk.seek(100);
 if (dk.tick() !== 100 || !dk.paused()) throw new Error('seek failed');

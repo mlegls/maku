@@ -959,7 +959,9 @@ impl Default for SigEnv {
         ch.insert("player".into(), Val::Vec2 { x: 0.0, y: -4.0 });
         ch.insert("nearest-enemy".into(), Val::Vec2 { x: 0.0, y: 3.0 });
         ch.insert("rank".into(), Val::Num(1.0));
-        ch.insert("focus-firing".into(), Val::Bool(true));
+        // truthy default so :while (live $focus-firing) lasers run headless;
+        // numeric so rigs can do arithmetic on it (hosts override per tick)
+        ch.insert("focus-firing".into(), Val::Num(1.0));
         SigEnv {
             defs: Rc::new(HashMap::new()),
             channels: Rc::new(ch),

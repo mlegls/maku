@@ -47,7 +47,7 @@ shared append-only structure; snapshots hold only a cursor.
 | input | channel / effect |
 |---|---|
 | mouse | mock `$player` (mouse-rig cards) and mock `$nearest-enemy` fallback |
-| WASD / arrows | `$move-x` / `$move-y` raw axes (piloted rigs integrate them) |
+| WASD / arrows | merged `$move-x`/`$move-y`, plus `$p1-move-*` (WASD only) and `$p2-move-*` (arrows only) for co-op rigs (`cards/coop.dmk`) |
 | Shift | `$focus-firing` |
 | X | `$bomb` |
 | 1–9 | pattern menu |

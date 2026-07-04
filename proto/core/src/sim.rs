@@ -120,26 +120,48 @@ fn new_task(stack: Vec<TF>) -> Task {
     Task { stack, wait: 0, wait_pred: None, guards: Vec::new() }
 }
 
-#[derive(Clone, Copy)]
+/// Host inputs, passed BY NAME (§3's channel principle applied to the input
+/// tape): an open vocabulary of named values, not a fixed struct. Names are
+/// interned (Rc<str>), so tape entries clone cheaply. Conventional names —
+/// "player", "nearest-enemy", "move-x"/"move-y", "focus-firing", "bomb",
+/// "p1-move-x"/"p2-move-x"… — are just names; the sim defaults the classic
+/// set when the host omits them and derivations override where world
+/// sources exist.
+#[derive(Clone, Default)]
 pub struct Inputs {
-    pub player: (f64, f64),
-    pub nearest_enemy: (f64, f64),
-    /// Raw movement axes (−1..1) — the OTHER side of the host contract:
-    /// cards with a piloted rig integrate these themselves ($move-x/-y).
-    pub axes: (f64, f64),
-    pub focus: bool,
-    pub bomb: bool,
+    pub vals: Vec<(Rc<str>, Val)>,
 }
 
-impl Default for Inputs {
-    fn default() -> Self {
-        Inputs {
-            player: (0.0, -4.0),
-            nearest_enemy: (0.0, 3.0),
-            axes: (0.0, 0.0),
-            focus: false,
-            bomb: false,
+impl Inputs {
+    /// The classic mock pair (tests, simple hosts).
+    pub fn classic(player: (f64, f64), nearest_enemy: (f64, f64)) -> Inputs {
+        let mut i = Inputs::default();
+        i.set_vec2("player", player.0, player.1);
+        i.set_vec2("nearest-enemy", nearest_enemy.0, nearest_enemy.1);
+        i
+    }
+
+    pub fn set(&mut self, name: &str, v: Val) {
+        match self.vals.iter_mut().find(|(k, _)| &**k == name) {
+            Some((_, slot)) => *slot = v,
+            None => self.vals.push((name.into(), v)),
         }
+    }
+
+    pub fn set_num(&mut self, name: &str, v: f64) {
+        self.set(name, Val::Num(v));
+    }
+
+    pub fn set_vec2(&mut self, name: &str, x: f64, y: f64) {
+        self.set(name, Val::Vec2 { x, y });
+    }
+
+    pub fn set_flag(&mut self, name: &str, b: bool) {
+        self.set_num(name, if b { 1.0 } else { 0.0 });
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Val> {
+        self.vals.iter().find(|(k, _)| &**k == name).map(|(_, v)| v)
     }
 }
 
@@ -279,51 +301,70 @@ impl Sim {
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         let mut ch = (*self.ctx.sig.channels).clone();
-        // raw input channels: the card decides what they mean
-        ch.insert("move-x".into(), Val::Num(inputs.axes.0));
-        ch.insert("move-y".into(), Val::Num(inputs.axes.1));
-        ch.insert("focus-firing".into(), Val::Num(if inputs.focus { 1.0 } else { 0.0 }));
-        ch.insert("bomb".into(), Val::Num(if inputs.bomb { 1.0 } else { 0.0 }));
-        // $player: DERIVED from a piloted rig entity (:cols {:pilot 1}) when
-        // one exists — card-integrated movement; host position is the
-        // mouse-rig fallback
-        let piloted = self.world.bullets.iter().find(|b| {
-            b.alive
-                && b.team.as_deref() == Some("player-body")
-                && b.col_get("pilot").is_some()
-        });
-        let player_pos = match piloted {
-            Some(b) => {
-                let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
-                dyn_pose(&b.motion, tau, &b.state, &self.ctx.sig)
-                    .map(|p| (p.x, p.y))
-                    .unwrap_or(inputs.player)
-            }
-            None => inputs.player,
-        };
-        ch.insert("player".into(), Val::Vec2 { x: player_pos.0, y: player_pos.1 });
-        // boss anchor + boss hp as channels (entities with a :boss col)
-        ch.insert("boss".into(), Val::Vec2 { x: self.world.boss.x, y: self.world.boss.y });
-        let boss_hp = self
-            .world
-            .bullets
-            .iter()
-            .find(|b| b.alive && b.col_get("boss").is_some())
-            .and_then(|b| b.col_get("hp"))
-            .unwrap_or(0.0);
-        ch.insert("boss-hp".into(), Val::Num(boss_hp));
-        // gameplay-derived channels: counters as signals, so patterns can
-        // adapt ((live $graze), (wait-for m"$enemies == 0"), ...)
-        ch.insert("graze".into(), Val::Num(self.world.graze as f64));
-        if let Some(l) = self
-            .world
-            .bullets
-            .iter()
-            .find(|b| b.alive && b.team.as_deref() == Some("player-body"))
-            .and_then(|b| b.col_get("lives"))
-        {
-            ch.insert("lives".into(), Val::Num(l));
+        // host channels verbatim — passed by name (§3)
+        for (k, v) in &inputs.vals {
+            ch.insert(k.to_string(), v.clone());
         }
+        // defaults for the conventional names when the host omits them
+        // (once present — from host, default, or a previous tick — they stay)
+        for (name, v) in [
+            ("move-x", Val::Num(0.0)),
+            ("move-y", Val::Num(0.0)),
+            ("focus-firing", Val::Num(0.0)),
+            ("bomb", Val::Num(0.0)),
+            ("player", Val::Vec2 { x: 0.0, y: -4.0 }),
+            ("nearest-enemy", Val::Vec2 { x: 0.0, y: 3.0 }),
+        ] {
+            ch.entry(name.to_string()).or_insert(v);
+        }
+        // $player-k DERIVES from piloted rig entities keyed by the :pilot
+        // column's VALUE; $player aliases pilot 1 (card-integrated movement
+        // overrides the host mock). Per-pilot homing targets too.
+        let mut pilots: Vec<(i64, (f64, f64))> = Vec::new();
+        for b in &self.world.bullets {
+            if !b.alive {
+                continue;
+            }
+            if let Some(k) = b.col_get("pilot") {
+                let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
+                if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &self.ctx.sig) {
+                    pilots.push((k as i64, (p.x, p.y)));
+                }
+            }
+        }
+        for (k, (x, y)) in &pilots {
+            ch.insert(format!("player-{}", k), Val::Vec2 { x: *x, y: *y });
+            if let Some((nx, ny)) = self.nearest("enemy", (*x, *y)) {
+                ch.insert(format!("nearest-enemy-{}", k), Val::Vec2 { x: nx, y: ny });
+            }
+            if *k == 1 {
+                ch.insert("player".into(), Val::Vec2 { x: *x, y: *y });
+            }
+        }
+        let player_pos = match ch.get("player") {
+            Some(Val::Vec2 { x, y }) => (*x, *y),
+            _ => (0.0, -4.0),
+        };
+        // $nearest-enemy relative to $player (derived when :enemy entities
+        // exist; the host-provided value is the mock fallback)
+        if let Some((x, y)) = self.nearest("enemy", player_pos) {
+            ch.insert("nearest-enemy".into(), Val::Vec2 { x, y });
+        }
+        // $nearest-pilot: nearest player entity to the boss anchor (for
+        // boss aim in multi-pilot cards)
+        if let Some((x, y)) = pilots
+            .iter()
+            .map(|(_, p)| *p)
+            .min_by(|a, b| {
+                let da = (a.0 - self.world.boss.x).powi(2) + (a.1 - self.world.boss.y).powi(2);
+                let db = (b.0 - self.world.boss.x).powi(2) + (b.1 - self.world.boss.y).powi(2);
+                da.partial_cmp(&db).unwrap()
+            })
+        {
+            ch.insert("nearest-pilot".into(), Val::Vec2 { x, y });
+        }
+        // gameplay counters as signals
+        ch.insert("graze".into(), Val::Num(self.world.graze as f64));
         ch.insert(
             "enemies".into(),
             Val::Num(
@@ -334,16 +375,35 @@ impl Sim {
                     .count() as f64,
             ),
         );
-        // $nearest-enemy is DERIVED when :team :enemy entities exist (F20:
-        // a spatial query over tagged entities, taped like any channel);
-        // the host-provided value is the mock fallback.
-        ch.insert(
-            "nearest-enemy".into(),
-            match self.nearest("enemy", player_pos) {
-                Some((x, y)) => Val::Vec2 { x, y },
-                None => Val::Vec2 { x: inputs.nearest_enemy.0, y: inputs.nearest_enemy.1 },
-            },
-        );
+        // lives: per pilot ($lives-k), plus $lives from the first
+        // player-body (compat with pilotless mouse rigs)
+        for b in &self.world.bullets {
+            if !b.alive {
+                continue;
+            }
+            if let (Some(k), Some(l)) = (b.col_get("pilot"), b.col_get("lives")) {
+                ch.insert(format!("lives-{}", k as i64), Val::Num(l));
+            }
+        }
+        if let Some(l) = self
+            .world
+            .bullets
+            .iter()
+            .find(|b| b.alive && b.team.as_deref() == Some("player-body"))
+            .and_then(|b| b.col_get("lives"))
+        {
+            ch.insert("lives".into(), Val::Num(l));
+        }
+        // boss anchor + boss hp (entities with a :boss col)
+        ch.insert("boss".into(), Val::Vec2 { x: self.world.boss.x, y: self.world.boss.y });
+        let boss_hp = self
+            .world
+            .bullets
+            .iter()
+            .find(|b| b.alive && b.col_get("boss").is_some())
+            .and_then(|b| b.col_get("hp"))
+            .unwrap_or(0.0);
+        ch.insert("boss-hp".into(), Val::Num(boss_hp));
         self.ctx.sig.channels = Rc::new(ch);
         // control layer
         let mut i = 0;
@@ -556,9 +616,11 @@ impl Sim {
             }
         }
 
-        // phase 2: resolve, canonical order
+        // phase 2: resolve, canonical order. iframes are a PER-ENTITY
+        // column (two pilots dodge independently), not a world global.
         for (i, pj) in hit_contacts {
-            if tick < self.world.iframe_until {
+            let until = self.world.bullets[pj].col_get("iframe-until").unwrap_or(0.0);
+            if (tick as f64) < until {
                 continue;
             }
             let b = &mut self.world.bullets[i];
@@ -569,10 +631,10 @@ impl Sim {
                 b.alive = false; // beams persist through a hit
             }
             self.world.player_hits += 1;
-            self.world.iframe_until = tick + IFRAMES;
-            // the hit effect is a column write too; game-over is the
-            // player entity's trigger, not the contact's business
+            // the hit effect is column writes; game-over is the player
+            // entity's trigger, not the contact's business
             let player = &mut self.world.bullets[pj];
+            player.col_set(&"iframe-until".into(), (tick + IFRAMES) as f64);
             let lives = player.col_get("lives").unwrap_or(0.0);
             player.col_set(&"lives".into(), lives - 1.0);
             self.world.push_event(Event { tick, name: "player-hit".into(), pos: pos[i] });
@@ -1191,7 +1253,7 @@ mod tests {
             a.step().unwrap();
         }
         let mut b = a.clone();
-        let inputs = Inputs { player: (1.5, -3.0), nearest_enemy: (-2.0, 2.0), ..Inputs::default() };
+        let inputs = Inputs::classic((1.5, -3.0), (-2.0, 2.0));
         for _ in 0..300 {
             a.step_with(&inputs).unwrap();
             b.step_with(&inputs).unwrap();
@@ -1229,7 +1291,7 @@ mod tests {
       (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1255,7 +1317,7 @@ mod tests {
   (par (rig) (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6])))))
 "#;
         let mut sim = Sim::load(CARD, Some("g")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1278,7 +1340,7 @@ mod tests {
              {:team :player :damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         // shot 1 (fired tick 0, 4 u/s) reaches the enemy ring at ~tick 47
         for _ in 0..55 {
             sim.step_with(&inputs).unwrap();
@@ -1307,7 +1369,7 @@ mod tests {
              :colliders [{:layer :player-hurt :r 0.06}]}))"
                 .into(),
         );
-        sess.last_inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        sess.last_inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         sess.start(Sim::load(CARD, Some("g")).unwrap());
         for _ in 0..120 {
             sess.advance(CARD).unwrap();
@@ -1341,7 +1403,7 @@ mod tests {
       (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         for _ in 0..300 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1372,7 +1434,7 @@ mod tests {
              {:team :player :damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("gates")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         for _ in 0..200 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1395,7 +1457,7 @@ mod tests {
            {:team :player :damage (fn [self other] (mag (:vel self)))})))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         for _ in 0..60 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1419,7 +1481,7 @@ mod tests {
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
         // player parked ON the beam line, 2 units along it
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         // warn phase: no hitbox
         for _ in 0..50 {
             sim.step_with(&inputs).unwrap();
@@ -1453,7 +1515,7 @@ mod tests {
             let mut sim = Sim::load(CARD, Some(pat)).unwrap();
             // player below the source: pre-fix, aim measured from (0,0)
             // and fired UP toward (0,1); the bullet must head DOWN
-            let inputs = Inputs { player: (0.0, 1.0), nearest_enemy: (0.0, 1.0), ..Inputs::default() };
+            let inputs = Inputs::classic((0.0, 1.0), (0.0, 1.0));
             for _ in 0..60 {
                 sim.step_with(&inputs).unwrap();
             }
@@ -1579,7 +1641,7 @@ mod tests {
         let mut sim = Sim::load(CARD, Some("c")).unwrap();
         let mut inputs = Inputs::default();
         // push left 480 ticks (would travel 16 units unclamped)
-        inputs.axes = (-1.0, 0.0);
+        inputs.set_num("move-x", -1.0);
         for _ in 0..480 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1589,7 +1651,7 @@ mod tests {
         };
         assert!((x_wall + 2.0).abs() < 0.05, "parked at the wall: {}", x_wall);
         // reverse for half a second: must move ~2 units immediately
-        inputs.axes = (1.0, 0.0);
+        inputs.set_num("move-x", 1.0);
         for _ in 0..60 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1598,6 +1660,50 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
+    }
+
+    /// Two pilots: distinct input channels move distinct rigs, channels
+    /// derive per pilot-value, and iframes are per-entity — both pilots
+    /// can be hit in the same window.
+    #[test]
+    fn two_players() {
+        let rig = std::fs::read_to_string("../../cards/coop.dmk").unwrap();
+        let mut sim = Sim::load(&rig, Some("coop")).unwrap();
+        let mut inputs = Inputs::default();
+        // p1 pushes right, p2 pushes left — they cross
+        inputs.set_num("p1-move-x", 1.0);
+        inputs.set_num("p1-move-y", 0.0);
+        inputs.set_num("p2-move-x", -1.0);
+        inputs.set_num("p2-move-y", 0.0);
+        for _ in 0..120 {
+            sim.step_with(&inputs).unwrap();
+        }
+        let p1 = match sim.channel_val("player-1") {
+            Some(Val::Vec2 { x, .. }) => x,
+            v => panic!("no $player-1: {:?}", v),
+        };
+        let p2 = match sim.channel_val("player-2") {
+            Some(Val::Vec2 { x, .. }) => x,
+            v => panic!("no $player-2: {:?}", v),
+        };
+        assert!(p1 > -1.5 && p2 < 1.5, "rigs moved on their own channels: {} {}", p1, p2);
+        assert!(matches!(sim.channel_val("lives-1"), Some(Val::Num(n)) if n == 3.0));
+        assert!(sim.channel_val("nearest-pilot").is_some());
+
+        // per-entity iframes: park both pilots in the aimed spray column —
+        // over time BOTH lose lives (a global iframe would shield one)
+        let mut inputs = Inputs::default();
+        inputs.set_num("p1-move-x", 0.35); // drift toward center
+        inputs.set_num("p1-move-y", 0.0);
+        inputs.set_num("p2-move-x", -0.35);
+        inputs.set_num("p2-move-y", 0.0);
+        let mut sim = Sim::load(&rig, Some("coop")).unwrap();
+        for _ in 0..1400 {
+            sim.step_with(&inputs).unwrap();
+        }
+        let l1 = match sim.channel_val("lives-1") { Some(Val::Num(n)) => n, _ => 99.0 };
+        let l2 = match sim.channel_val("lives-2") { Some(Val::Num(n)) => n, _ => 99.0 };
+        assert!(l1 < 3.0 && l2 < 3.0, "both pilots hit independently: {} {}", l1, l2);
     }
 
     /// The full-stack card: piloted rig (raw axes -> vel-domain movement),
@@ -1616,9 +1722,9 @@ mod tests {
         let mut saw_needles = false;
         for k in 0..4500u64 {
             // net-zero wiggle with the raw axes; bomb once; focus mid-fight
-            inputs.axes = if k % 200 < 100 { (0.6, 0.0) } else { (-0.6, 0.0) };
-            inputs.bomb = (900..930).contains(&k);
-            inputs.focus = (400..600).contains(&k);
+            inputs.set_num("move-x", if k % 200 < 100 { 0.6 } else { -0.6 });
+            inputs.set_flag("bomb", (900..930).contains(&k));
+            inputs.set_flag("focus-firing", (400..600).contains(&k));
             sim.step_with(&inputs).unwrap();
             if !saw_needles {
                 saw_needles = sim
@@ -1654,7 +1760,7 @@ mod tests {
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
         // the host layers the stock rig; boss/stage cards stay player-free
         sim.add_forms(&src, &format!("{}\n(player-rig)", rig)).unwrap();
-        let inputs = Inputs { player: (0.0, -2.0), nearest_enemy: (0.0, -2.0), ..Inputs::default() };
+        let inputs = Inputs::classic((0.0, -2.0), (0.0, -2.0));
         for _ in 0..1200 {
             sim.step_with(&inputs).unwrap();
         }
