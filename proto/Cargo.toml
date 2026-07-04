@@ -4,6 +4,3 @@ members = ["core", "player"]
 
 [workspace.package]
 edition = "2021"
-
-[profile.dev]
-opt-level = 1
