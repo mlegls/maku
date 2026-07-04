@@ -117,11 +117,22 @@ fn new_task(stack: Vec<TF>) -> Task {
 pub struct Inputs {
     pub player: (f64, f64),
     pub nearest_enemy: (f64, f64),
+    /// Raw movement axes (−1..1) — the OTHER side of the host contract:
+    /// cards with a piloted rig integrate these themselves ($move-x/-y).
+    pub axes: (f64, f64),
+    pub focus: bool,
+    pub bomb: bool,
 }
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { player: (0.0, -4.0), nearest_enemy: (0.0, 3.0) }
+        Inputs {
+            player: (0.0, -4.0),
+            nearest_enemy: (0.0, 3.0),
+            axes: (0.0, 0.0),
+            focus: false,
+            bomb: false,
+        }
     }
 }
 
@@ -255,7 +266,39 @@ impl Sim {
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         let mut ch = (*self.ctx.sig.channels).clone();
-        ch.insert("player".into(), Val::Vec2 { x: inputs.player.0, y: inputs.player.1 });
+        // raw input channels: the card decides what they mean
+        ch.insert("move-x".into(), Val::Num(inputs.axes.0));
+        ch.insert("move-y".into(), Val::Num(inputs.axes.1));
+        ch.insert("focus-firing".into(), Val::Num(if inputs.focus { 1.0 } else { 0.0 }));
+        ch.insert("bomb".into(), Val::Num(if inputs.bomb { 1.0 } else { 0.0 }));
+        // $player: DERIVED from a piloted rig entity (:cols {:pilot 1}) when
+        // one exists — card-integrated movement; host position is the
+        // mouse-rig fallback
+        let piloted = self.world.bullets.iter().find(|b| {
+            b.alive
+                && b.team.as_deref() == Some("player-body")
+                && b.col_get("pilot").is_some()
+        });
+        let player_pos = match piloted {
+            Some(b) => {
+                let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
+                dyn_pose(&b.motion, tau, &b.state, &self.ctx.sig)
+                    .map(|p| (p.x, p.y))
+                    .unwrap_or(inputs.player)
+            }
+            None => inputs.player,
+        };
+        ch.insert("player".into(), Val::Vec2 { x: player_pos.0, y: player_pos.1 });
+        // boss anchor + boss hp as channels (entities with a :boss col)
+        ch.insert("boss".into(), Val::Vec2 { x: self.world.boss.x, y: self.world.boss.y });
+        let boss_hp = self
+            .world
+            .bullets
+            .iter()
+            .find(|b| b.alive && b.col_get("boss").is_some())
+            .and_then(|b| b.col_get("hp"))
+            .unwrap_or(0.0);
+        ch.insert("boss-hp".into(), Val::Num(boss_hp));
         // gameplay-derived channels: counters as signals, so patterns can
         // adapt ((live $graze), (wait-for m"$enemies == 0"), ...)
         ch.insert("graze".into(), Val::Num(self.world.graze as f64));
@@ -283,7 +326,7 @@ impl Sim {
         // the host-provided value is the mock fallback.
         ch.insert(
             "nearest-enemy".into(),
-            match self.nearest("enemy", inputs.player) {
+            match self.nearest("enemy", player_pos) {
                 Some((x, y)) => Val::Vec2 { x, y },
                 None => Val::Vec2 { x: inputs.nearest_enemy.0, y: inputs.nearest_enemy.1 },
             },
@@ -693,11 +736,11 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
     let mut p = world.boss;
     for tf in stack {
         if let TF::Frame(fs) = tf {
-            let f = match fs {
-                FrameSpec::Const(fp) => *fp,
-                FrameSpec::Node(node) => resolve_node_pose(node, world, sig),
-            };
-            p = p.compose(&f);
+            match fs {
+                FrameSpec::World => p = Pose::IDENTITY, // escape the caller anchor
+                FrameSpec::Const(fp) => p = p.compose(fp),
+                FrameSpec::Node(node) => p = p.compose(&resolve_node_pose(node, world, sig)),
+            }
         }
     }
     p
@@ -825,6 +868,7 @@ fn run_action(
         ActionV::Nothing
         | ActionV::Event { .. }
         | ActionV::Cull { .. }
+        | ActionV::CullHostile
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
@@ -1107,7 +1151,7 @@ mod tests {
             a.step().unwrap();
         }
         let mut b = a.clone();
-        let inputs = Inputs { player: (1.5, -3.0), nearest_enemy: (-2.0, 2.0) };
+        let inputs = Inputs { player: (1.5, -3.0), nearest_enemy: (-2.0, 2.0), ..Inputs::default() };
         for _ in 0..300 {
             a.step_with(&inputs).unwrap();
             b.step_with(&inputs).unwrap();
@@ -1145,7 +1189,7 @@ mod tests {
       (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1171,7 +1215,7 @@ mod tests {
   (par (rig) (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6])))))
 "#;
         let mut sim = Sim::load(CARD, Some("g")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1194,7 +1238,7 @@ mod tests {
              {:team :player :damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         // shot 1 (fired tick 0, 4 u/s) reaches the enemy ring at ~tick 47
         for _ in 0..55 {
             sim.step_with(&inputs).unwrap();
@@ -1223,7 +1267,7 @@ mod tests {
              :colliders [{:layer :player-hurt :r 0.06}]}))"
                 .into(),
         );
-        sess.last_inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        sess.last_inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         sess.start(Sim::load(CARD, Some("g")).unwrap());
         for _ in 0..120 {
             sess.advance(CARD).unwrap();
@@ -1257,7 +1301,7 @@ mod tests {
       (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         for _ in 0..300 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1288,7 +1332,7 @@ mod tests {
              {:team :player :damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("gates")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         for _ in 0..200 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1311,7 +1355,7 @@ mod tests {
            {:team :player :damage (fn [self other] (mag (:vel self)))})))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         for _ in 0..60 {
             sim.step_with(&inputs).unwrap();
         }
@@ -1335,7 +1379,7 @@ mod tests {
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
         // player parked ON the beam line, 2 units along it
-        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0), ..Inputs::default() };
         // warn phase: no hitbox
         for _ in 0..50 {
             sim.step_with(&inputs).unwrap();
@@ -1369,7 +1413,7 @@ mod tests {
             let mut sim = Sim::load(CARD, Some(pat)).unwrap();
             // player below the source: pre-fix, aim measured from (0,0)
             // and fired UP toward (0,1); the bullet must head DOWN
-            let inputs = Inputs { player: (0.0, 1.0), nearest_enemy: (0.0, 1.0) };
+            let inputs = Inputs { player: (0.0, 1.0), nearest_enemy: (0.0, 1.0), ..Inputs::default() };
             for _ in 0..60 {
                 sim.step_with(&inputs).unwrap();
             }
@@ -1425,6 +1469,38 @@ mod tests {
         assert!(newest >= 5990, "recent events kept");
     }
 
+    /// The full-stack card: piloted rig (raw axes -> vel-domain movement),
+    /// focus, bombs (raw button + control-layer stock), boss hp phases via
+    /// triggers, spell-2 embedded. One scripted run hits every mechanism.
+    #[test]
+    fn reimu_vs_mima_plays() {
+        let src =
+            std::fs::read_to_string("../../cards/reimu_vs_mima.dmk").unwrap();
+        let mut sim = Sim::load(&src, Some("reimu-vs-mima")).unwrap();
+        let mut inputs = Inputs::default();
+        for k in 0..4500u64 {
+            // net-zero wiggle with the raw axes; bomb once; focus later
+            inputs.axes = if k % 200 < 100 { (0.6, 0.0) } else { (-0.6, 0.0) };
+            inputs.bomb = (900..930).contains(&k);
+            inputs.focus = k > 2000;
+            sim.step_with(&inputs).unwrap();
+        }
+        let names: Vec<String> =
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
+        let count = |n: &str| names.iter().filter(|x| x == &n).count();
+        assert_eq!(count("spell"), 1, "non-spell broke into spell-2");
+        assert_eq!(count("bomb"), 1, "one bomb consumed");
+        assert_eq!(count("died"), 1, "boss down");
+        // the piloted rig moved off its start: $player is entity-derived
+        if let Some(Val::Vec2 { x, y }) = sim.channel_val("player") {
+            assert!(x.abs() > 0.01 || (y + 3.0).abs() > 0.01, "rig integrated the axes");
+        } else {
+            panic!("no $player channel");
+        }
+        // field quiets after the kill (rig + parked guides only)
+        assert!(sim.world.bullets.len() <= 6, "post-fight field: {}", sim.world.bullets.len());
+    }
+
     /// The playable demo card exercises the whole gameplay layer at once:
     /// hostile spray hits/grazes, autofire kills drones.
     #[test]
@@ -1434,7 +1510,7 @@ mod tests {
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
         // the host layers the stock rig; boss/stage cards stay player-free
         sim.add_forms(&src, &format!("{}\n(player-rig)", rig)).unwrap();
-        let inputs = Inputs { player: (0.0, -2.0), nearest_enemy: (0.0, -2.0) };
+        let inputs = Inputs { player: (0.0, -2.0), nearest_enemy: (0.0, -2.0), ..Inputs::default() };
         for _ in 0..1200 {
             sim.step_with(&inputs).unwrap();
         }

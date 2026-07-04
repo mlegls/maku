@@ -504,19 +504,21 @@ async fn main() {
                 player.session.truncate_future(); // resume after rewind = branch
             }
         }
-        // scrub hotkeys (auto-pause): left/right ±1 tick, down/up ∓30
-        if let Some(cur) = player.session.tick() {
-            if is_key_pressed(KeyCode::Right) {
-                player.seek(cur + 1);
-            }
-            if is_key_pressed(KeyCode::Left) {
-                player.seek(cur.saturating_sub(1));
-            }
-            if is_key_pressed(KeyCode::Up) {
-                player.seek(cur + 30);
-            }
-            if is_key_pressed(KeyCode::Down) {
-                player.seek(cur.saturating_sub(30));
+        // scrub hotkeys — only while paused (live arrows belong to movement)
+        if player.paused {
+            if let Some(cur) = player.session.tick() {
+                if is_key_pressed(KeyCode::Right) {
+                    player.seek(cur + 1);
+                }
+                if is_key_pressed(KeyCode::Left) {
+                    player.seek(cur.saturating_sub(1));
+                }
+                if is_key_pressed(KeyCode::Up) {
+                    player.seek(cur + 30);
+                }
+                if is_key_pressed(KeyCode::Down) {
+                    player.seek(cur.saturating_sub(30));
+                }
             }
         }
         // pattern menu: 1-9 select a defpattern from the card
@@ -549,9 +551,31 @@ async fn main() {
             ((mx - cx) / PIXELS_PER_UNIT) as f64,
             ((cy - my) / PIXELS_PER_UNIT) as f64,
         );
-        // the mouse is the mock player for boss patterns and the mock
-        // nearest-enemy for player-side patterns
-        let inputs = Inputs { player: mouse_world, nearest_enemy: mouse_world };
+        // raw input side of the host contract: WASD/arrows -> axes,
+        // Shift -> focus, X -> bomb. The mouse remains the mock $player
+        // for mouse-rig cards and the mock nearest-enemy fallback.
+        let key = |k: KeyCode| is_key_down(k);
+        let ax = (key(KeyCode::D) as i8 - key(KeyCode::A) as i8) as f64
+            + if !player.paused {
+                (key(KeyCode::Right) as i8 - key(KeyCode::Left) as i8) as f64
+            } else {
+                0.0
+            };
+        let ay = (key(KeyCode::W) as i8 - key(KeyCode::S) as i8) as f64
+            + if !player.paused {
+                (key(KeyCode::Up) as i8 - key(KeyCode::Down) as i8) as f64
+            } else {
+                0.0
+            };
+        let mag = (ax * ax + ay * ay).sqrt();
+        let axes = if mag > 1.0 { (ax / mag, ay / mag) } else { (ax, ay) };
+        let inputs = Inputs {
+            player: mouse_world,
+            nearest_enemy: mouse_world,
+            axes,
+            focus: key(KeyCode::LeftShift) || key(KeyCode::RightShift),
+            bomb: key(KeyCode::X),
+        };
         player.session.last_inputs = inputs;
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
@@ -571,10 +595,23 @@ async fn main() {
         }
 
         clear_background(Color::from_rgba(0x12, 0x12, 0x1a, 0xff));
-        // player marker: true hitbox dot (0.06 wu) + graze ring (0.35 wu)
-        draw_circle_lines(mx, my, 0.35 * PIXELS_PER_UNIT, 1.0, Color::new(1.0, 1.0, 1.0, 0.25));
-        draw_circle_lines(mx, my, 8.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.8));
-        draw_circle(mx, my, 0.06 * PIXELS_PER_UNIT, WHITE);
+        // player marker at the $player channel (derived from a piloted rig,
+        // or the mouse): true hitbox dot + graze ring
+        let (pmx, pmy) = player
+            .session
+            .sim
+            .as_ref()
+            .and_then(|s| match s.channel_val("player") {
+                Some(Val::Vec2 { x, y }) => Some((
+                    cx + x as f32 * PIXELS_PER_UNIT,
+                    cy - y as f32 * PIXELS_PER_UNIT,
+                )),
+                _ => None,
+            })
+            .unwrap_or((mx, my));
+        draw_circle_lines(pmx, pmy, 0.35 * PIXELS_PER_UNIT, 1.0, Color::new(1.0, 1.0, 1.0, 0.25));
+        draw_circle_lines(pmx, pmy, 8.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.8));
+        draw_circle(pmx, pmy, 0.06 * PIXELS_PER_UNIT, WHITE);
         if let Some(sim) = &player.session.sim {
             let to_screen =
                 |x: f64, y: f64| (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT);

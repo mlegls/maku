@@ -728,6 +728,8 @@ pub enum ActionV {
     },
     Manipulate { targets: Vec<u64>, callback: Val },
     Cull { target: u64 },
+    /// Clear all hostile (team-less) fire — bomb semantics.
+    CullHostile,
     Wait { ticks: u64 },
     WaitFor { pred: Form, env: Env },
     DefVar { name: Rc<str>, init: Val },
@@ -748,6 +750,10 @@ pub enum FrameSpec {
     /// lives in whichever bullet shares the node (§5 shared instances); the
     /// scheduler resolves the pose at action time.
     Node(Rc<DynNode>),
+    /// (in-frame :world body): RESET the ambient composition — patterns
+    /// don't self-anchor, so the caller's anchor (e.g. the boss) is the
+    /// default; player-side patterns opt out explicitly.
+    World,
 }
 
 #[derive(Debug)]
@@ -1092,6 +1098,11 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Action(Rc::new(ActionV::Manipulate { targets, callback })));
             }
             "cull" => {
+                // (cull): clear all hostile fire (bomb semantics);
+                // (cull handle): cull one bullet
+                if items.len() == 1 {
+                    return Ok(Val::Action(Rc::new(ActionV::CullHostile)));
+                }
                 let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
                     return Err("cull: expected bullet handle".into());
                 };
@@ -1125,12 +1136,19 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let mut fvals = Vec::new();
                 for f in &items[1..items.len() - 1] {
                     let fv = evaluate(f, env, ctx, world)?;
-                    let p = match &fv {
-                        Val::Dyn(d) => dyn_pose(d, 0.0, &MotionState::new(), &ctx.sig)
-                            .unwrap_or(Pose::IDENTITY),
-                        other => as_pose(other.clone()).unwrap_or(Pose::IDENTITY),
-                    };
-                    ctx.ambient = ctx.ambient.compose(&p);
+                    match &fv {
+                        // :world resets the ambient (escape the caller anchor)
+                        Val::Kw(k) if &**k == "world" => ctx.ambient = Pose::IDENTITY,
+                        Val::Dyn(d) => {
+                            let p = dyn_pose(d, 0.0, &MotionState::new(), &ctx.sig)
+                                .unwrap_or(Pose::IDENTITY);
+                            ctx.ambient = ctx.ambient.compose(&p);
+                        }
+                        other => {
+                            let p = as_pose(other.clone()).unwrap_or(Pose::IDENTITY);
+                            ctx.ambient = ctx.ambient.compose(&p);
+                        }
+                    }
                     fvals.push(fv);
                 }
                 let body = evaluate(&items[items.len() - 1], env, ctx, world);
@@ -1138,6 +1156,13 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let mut val = body?;
                 for fv in fvals.into_iter().rev() {
                     val = match fv {
+                        Val::Kw(k) if &*k == "world" => match val {
+                            Val::Action(a) => Val::Action(Rc::new(ActionV::InFrame {
+                                frame: FrameSpec::World,
+                                inner: a,
+                            })),
+                            other => other, // dyns: value composition has no anchor to strip
+                        },
                         Val::Dyn(d) => apply_dyn_frame(d, val)?,
                         other => apply_frame_val(as_pose(other)?, val)?,
                     };
@@ -1480,6 +1505,14 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::DefVar { name, init } | ActionV::SetVar { name, val: init } => {
             ctx.sig.cells.borrow_mut().insert(name.to_string(), init.clone());
+            Ok(Val::Nothing)
+        }
+        ActionV::CullHostile => {
+            for b in world.bullets.iter_mut() {
+                if b.team.is_none() {
+                    b.alive = false;
+                }
+            }
             Ok(Val::Nothing)
         }
         ActionV::Cull { target } => {
