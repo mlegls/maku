@@ -36,8 +36,8 @@
 ;; girepeat does not wait for its child (no `waitchild`), so iterations
 ;; overlap. Structured concurrency makes that explicit: `fork` (finding F8).
 
-(defpattern spread-demo [volley-gap (frames 70)
-                         shot-gap   (frames 10)]
+(defpattern spread-demo [volley-gap (ticks 70)
+                         shot-gap   (ticks 10)]
   ((pose c[0 1])
     ((rot 90)
       (dotimes [vol inf, col ["red" "green" "blue"] :every volley-gap]

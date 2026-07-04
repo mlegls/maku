@@ -43,7 +43,7 @@
 
 (defpattern bowap [speed 4.0
                    arms  5
-                   period (frames 8)]
+                   period (ticks 8)]
   ((pose c[0 2])                       ; DMK roott(1, 0, 2): lexical anchor
     (dotimes [i inf :every period]
       (spawn ((rot m"0.2*(i+1)*(i+2)")
@@ -62,7 +62,7 @@
 
 (defpattern bowap-fold [speed 4.0
                         arms  5
-                        period (frames 8)]
+                        period (ticks 8)]
   ((pose c[0 2])
     (loop [increment 0.4
            base      0.4]

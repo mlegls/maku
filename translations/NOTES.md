@@ -22,15 +22,26 @@ which is what cards-as-data needs.
 
 **Units: one canonical unit per quantity + source-named conversion functions; no
 unit-tagged literals.** A conversion function is named for its *source* unit and
-converts to canonical: `(frames 8)` = 8 frames as canonical seconds; `(rad x)` =
-x radians as canonical angle. The canonical unit has no function — you never
-write `(seconds 2.5)`, you write `2.5`. **Angles are canonically degrees**: the
+converts to canonical: `(ticks 8)` = 8 physics ticks as canonical seconds;
+`(rad x)` = x radians as canonical angle. The canonical unit has no function —
+you never write `(seconds 2.5)`, you write `2.5`. **Angles are canonically degrees**: the
 corpus authors 100% in degrees (DMK's `cossindeg` is fossil evidence of designers
 refusing radians); a radians default would wrap every angle literal in every card.
 Pattern-level trig takes canonical degrees (`sin(90) = 1`); θ-column storage
 (radians / unit vectors, open decision 7) is the compiler's business — conversions
 constant-fold. (`#deg` is gone twice over: a tagged literal was the wrong shape,
 and the unit it tagged is now the default.)
+
+**Time stays seconds-canonical** (asked and answered): unlike degrees/radians — a
+pure scale change — tick-canonical would bake the timestep constant into card
+data, and the signal model makes *continuous* time load-bearing: `Closed (t → a)`
+evaluates at arbitrary t (scrubbing), and the tunnel game reparametrizes on
+continuous arc-length `s`. Ticks are the runtime's sampling grid, not the
+semantic domain. DMK itself splits the same way (control waits in frames,
+hot-layer `t` in seconds). Two amendments: the conversion is renamed `(ticks n)`
+— "frame" implies rendering; the sim owns physics ticks — and note that
+`(wait (ticks 8))` is *exact* on the grid while a seconds literal rounds to it,
+which is the honest reason control code authors in ticks.
 
 Control layer borrows Clojure shapes: `(defpattern name [param default …] body)`,
 `(loop [binding init …] … (recur …))`, `seq`/`par`/`race`/`wait`. An infinite `loop`
@@ -126,7 +137,7 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 
 **`(fork action)`** — run a child concurrently, attached to the nearest enclosing
 scope for cancellation. Needed because DMK async repeaters do *not* wait for their
-children (040's volleys overlap: 80-frame volley, 70-frame period); structured
+children (040's volleys overlap: 80-tick volley, 70-tick period); structured
 concurrency's default is sequential, so the overlap must be explicit. See F8.
 
 **Stock formation vocabulary**: `(arrow n back side)` — Array Pose,
@@ -219,7 +230,7 @@ enum with a color tag the render contract consumes.
 **F5 — time-unit hazard.** DMK waits are engine frames (120 fps) except when
 suffixed (`2.5s`), and `paction` delays are seconds. Two corpus-adjacent bugs
 waiting to happen. The language should have exactly one bare unit (seconds) and an
-explicit `(frames n)` constructor; never context-dependent units.
+explicit `(ticks n)` constructor; never context-dependent units.
 
 **F6 — cohort rate (observation, not a language change).** A `Closed` dyn that
 references only bullet-local τ (e.g. `linear`) evaluates identically for all
