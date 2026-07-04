@@ -535,7 +535,13 @@ pub struct World {
     pub tick: u64,
     pub next_id: u64,
     pub bullets: Vec<Bullet>,
-    pub events: Vec<Event>,
+    /// The event log is SHARED across snapshots (Rc): the log is monotonic,
+    /// so a snapshot needs only `cursor` — restore truncates the shared
+    /// tail and re-stepping re-emits deterministically. Snapshots carry
+    /// zero event data.
+    pub log: Rc<std::cell::RefCell<EventLog>>,
+    /// Global index one past the last event THIS timeline emitted.
+    pub cursor: u64,
     pub rng: u64,
     pub boss: Pose,
     pub boss_anim: Option<BossAnim>,
@@ -547,12 +553,63 @@ pub struct World {
 }
 
 /// A gameplay event: emitted by collision or by the (event :name) action.
-/// Events live in World, so scrubbing rewinds and replays them too.
+/// Names are interned (Rc<str>) — a card emits a handful of distinct names.
 #[derive(Clone, Debug)]
 pub struct Event {
     pub tick: u64,
-    pub name: String,
+    pub name: Rc<str>,
     pub pos: Option<(f64, f64)>,
+}
+
+/// Append-only event log with a global index origin: entries[i] has global
+/// index base + i. The front may be pruned (display history only — restores
+/// truncate the TAIL, never read the pruned front).
+#[derive(Default)]
+pub struct EventLog {
+    pub base: u64,
+    pub entries: std::collections::VecDeque<Event>,
+}
+
+impl EventLog {
+    fn tip(&self) -> u64 {
+        self.base + self.entries.len() as u64
+    }
+
+    /// Drop everything at or after the cursor (a timeline restore).
+    pub fn truncate_to(&mut self, cursor: u64) {
+        while self.tip() > cursor {
+            self.entries.pop_back();
+        }
+    }
+
+    /// Bound the retained window (front prune; amortized by the caller).
+    pub fn prune(&mut self, keep_from_tick: u64) {
+        while self
+            .entries
+            .front()
+            .map(|e| e.tick < keep_from_tick)
+            .unwrap_or(false)
+        {
+            self.entries.pop_front();
+            self.base += 1;
+        }
+    }
+}
+
+impl World {
+    /// Emit an event. Invariant: only the sim at the shared log's tip may
+    /// append; a clone stepped in parallel (diverged timeline) detects the
+    /// mismatch and copy-on-writes its own fresh log.
+    pub fn push_event(&mut self, ev: Event) {
+        if self.log.borrow().tip() != self.cursor {
+            self.log = Rc::new(std::cell::RefCell::new(EventLog {
+                base: self.cursor,
+                entries: std::collections::VecDeque::new(),
+            }));
+        }
+        self.log.borrow_mut().entries.push_back(ev);
+        self.cursor += 1;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -569,7 +626,8 @@ impl Default for World {
             tick: 0,
             next_id: 0,
             bullets: Vec::new(),
-            events: Vec::new(),
+            log: Rc::new(std::cell::RefCell::new(EventLog::default())),
+            cursor: 0,
             rng: 0x9e37_79b9_7f4a_7c15,
             boss: Pose::IDENTITY,
             boss_anim: None,
@@ -1389,7 +1447,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
     match a {
         ActionV::Nothing => Ok(Val::Nothing),
         ActionV::Event { channel } => {
-            world.events.push(Event { tick: world.tick, name: channel.to_string(), pos: None });
+            world.push_event(Event { tick: world.tick, name: channel.as_ref().into(), pos: None });
             Ok(Val::Nothing)
         }
         ActionV::DefVar { name, init } | ActionV::SetVar { name, val: init } => {

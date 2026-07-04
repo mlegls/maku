@@ -149,6 +149,9 @@ impl Session {
                 .map(|(_, s)| s.clone())
                 .ok_or("no snapshot history")?;
             self.sim = Some(base);
+            // the event log is shared; drop events this timeline hasn't
+            // emitted yet (re-stepping re-emits them deterministically)
+            self.sim.as_mut().unwrap().rewind_events();
         }
         while self.tick().unwrap() < target {
             self.advance(card_src)?;
@@ -301,6 +304,34 @@ mod tests {
         assert_eq!((count(&sess, "x"), count(&sess, "z")), (2, 0));
         sess.seek(CARD, 130).unwrap();
         assert_eq!((count(&sess, "x"), count(&sess, "z")), (4, 5), "swap replayed at tick 70");
+    }
+
+    /// The event log is shared: snapshots hold a cursor, not a copy; a
+    /// restore truncates the shared tail and re-stepping re-emits.
+    #[test]
+    fn event_log_shared_and_cursored() {
+        const ECARD: &str = r#"
+(defpattern e [] (dotimes [i inf :every (ticks 10)] (event :ping)))
+"#;
+        let mut sess = Session::default();
+        sess.snap_every = 50;
+        sess.start(Sim::load(ECARD, Some("e")).unwrap());
+        for _ in 0..200 {
+            sess.advance(ECARD).unwrap();
+        }
+        // every snapshot shares ONE log allocation with the live sim
+        let live = sess.sim.as_ref().unwrap().world.log.clone();
+        for (_, snap) in &sess.snaps {
+            assert!(std::rc::Rc::ptr_eq(&live, &snap.world.log));
+        }
+        let n_at_200 = sess.sim.as_ref().unwrap().events_vec().len();
+        assert_eq!(n_at_200, 20);
+        // rewind: the shared tail is truncated to the restored cursor...
+        sess.seek(ECARD, 55).unwrap();
+        assert_eq!(sess.sim.as_ref().unwrap().events_vec().len(), 6);
+        // ...and scrubbing forward re-emits the identical suffix
+        sess.seek(ECARD, 200).unwrap();
+        assert_eq!(sess.sim.as_ref().unwrap().events_vec().len(), n_at_200);
     }
 
     /// Thinning keeps the snapshot set bounded with the baseline intact,

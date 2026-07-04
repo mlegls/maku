@@ -609,24 +609,26 @@ async fn main() {
             // event flashes: expanding rings read straight from world.events
             // (stateless — rewind and they replay with the timeline)
             let now = sim.tick();
-            for ev in sim.world.events.iter().rev().take(64) {
-                let age = now.saturating_sub(ev.tick);
-                if age > 24 {
-                    continue;
+            sim.with_events(|events| {
+                for ev in events.iter().rev().take(64) {
+                    let age = now.saturating_sub(ev.tick);
+                    if age > 24 {
+                        continue;
+                    }
+                    let k = age as f32 / 24.0;
+                    let (col, r0) = match &*ev.name {
+                        "graze" => (Color::new(0.6, 0.9, 1.0, 0.7 * (1.0 - k)), 6.0),
+                        "player-hit" => (Color::new(1.0, 0.25, 0.3, 0.9 * (1.0 - k)), 12.0),
+                        "enemy-hit" => (Color::new(1.0, 0.8, 0.3, 0.5 * (1.0 - k)), 8.0),
+                        "died" => (Color::new(1.0, 0.6, 0.2, 0.8 * (1.0 - k)), 12.0),
+                        _ => continue,
+                    };
+                    if let Some((ex, ey)) = ev.pos {
+                        let (sx, sy) = to_screen(ex, ey);
+                        draw_circle_lines(sx, sy, r0 + k * 26.0, 2.0, col);
+                    }
                 }
-                let k = age as f32 / 24.0;
-                let (col, r0) = match ev.name.as_str() {
-                    "graze" => (Color::new(0.6, 0.9, 1.0, 0.7 * (1.0 - k)), 6.0),
-                    "player-hit" => (Color::new(1.0, 0.25, 0.3, 0.9 * (1.0 - k)), 12.0),
-                    "enemy-hit" => (Color::new(1.0, 0.8, 0.3, 0.5 * (1.0 - k)), 8.0),
-                    "died" => (Color::new(1.0, 0.6, 0.2, 0.8 * (1.0 - k)), 12.0),
-                    _ => continue,
-                };
-                if let Some((ex, ey)) = ev.pos {
-                    let (sx, sy) = to_screen(ex, ey);
-                    draw_circle_lines(sx, sy, r0 + k * 26.0, 2.0, col);
-                }
-            }
+            });
             // post-hit iframes: flash the player marker
             if sim.world.iframe_until > now && (now / 6) % 2 == 0 {
                 draw_circle_lines(mx, my, 14.0, 2.0, Color::new(1.0, 0.3, 0.3, 0.8));

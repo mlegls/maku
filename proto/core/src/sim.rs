@@ -328,14 +328,14 @@ impl Sim {
         }
         self.collide(inputs)?;
         self.fire_triggers();
-        // bound the event log: it lives inside World, so every session
-        // snapshot clones it — unpruned it makes snapshot cost O(t) and
-        // total snapshot memory O(t²) (the "lags after a while" failure).
-        // Amortized: prune only past a size threshold.
+        // bound the retained event window. The log is SHARED across
+        // snapshots (they store only a cursor), so this is display
+        // history, not snapshot data: restores truncate the tail and
+        // re-stepping re-emits — the pruned front is never needed.
         const EVENT_KEEP: u64 = 1200; // 10s of history for host/patterns
-        if self.world.events.len() > 4096 {
+        if self.world.log.borrow().entries.len() > 4096 {
             let cutoff = self.world.tick.saturating_sub(EVENT_KEEP);
-            self.world.events.retain(|e| e.tick >= cutoff);
+            self.world.log.borrow_mut().prune(cutoff);
         }
         self.world.tick += 1;
         // cull: off-playfield points; lasers past their active window
@@ -519,7 +519,7 @@ impl Sim {
             let player = &mut self.world.bullets[pj];
             let lives = player.col_get("lives").unwrap_or(0.0);
             player.col_set(&"lives".into(), lives - 1.0);
-            self.world.events.push(Event { tick, name: "player-hit".into(), pos: pos[i] });
+            self.world.push_event(Event { tick, name: "player-hit".into(), pos: pos[i] });
         }
         for i in graze_contacts {
             let b = &mut self.world.bullets[i];
@@ -528,7 +528,7 @@ impl Sim {
             }
             b.grazed = true;
             self.world.graze += 1;
-            self.world.events.push(Event { tick, name: "graze".into(), pos: pos[i] });
+            self.world.push_event(Event { tick, name: "graze".into(), pos: pos[i] });
         }
         for (i, j) in shot_contacts {
             if !self.world.bullets[i].alive || !self.world.bullets[j].alive {
@@ -553,7 +553,7 @@ impl Sim {
             let enemy = &mut self.world.bullets[j];
             let hp = enemy.col_get("hp").unwrap_or(1.0);
             enemy.col_set(&"hp".into(), hp - dmg);
-            self.world.events.push(Event { tick, name: "enemy-hit".into(), pos: pos[j] });
+            self.world.push_event(Event { tick, name: "enemy-hit".into(), pos: pos[j] });
         }
         Ok(())
     }
@@ -577,13 +577,14 @@ impl Sim {
                     continue;
                 }
                 let (latch, name, cull) = (rule.latch.clone(), rule.name.clone(), rule.cull);
+                let name: Rc<str> = name;
                 let at = self.world.bullets[i].prev_pos;
                 let b = &mut self.world.bullets[i];
                 b.col_set(&latch, 1.0);
                 if cull {
                     b.alive = false;
                 }
-                self.world.events.push(Event { tick, name: name.to_string(), pos: at });
+                self.world.push_event(Event { tick, name, pos: at });
             }
         }
     }
@@ -609,6 +610,22 @@ impl Sim {
     /// Current value of a channel (for host UI, e.g. scrub indicators).
     pub fn channel_val(&self, name: &str) -> Option<Val> {
         self.ctx.sig.channel(name)
+    }
+
+    /// Read the retained event window without cloning it.
+    pub fn with_events<R>(&self, f: impl FnOnce(&std::collections::VecDeque<Event>) -> R) -> R {
+        f(&self.world.log.borrow().entries)
+    }
+
+    /// Retained events, cloned (tests, casual host use).
+    pub fn events_vec(&self) -> Vec<Event> {
+        self.world.log.borrow().entries.iter().cloned().collect()
+    }
+
+    /// After restoring this sim as a snapshot: drop shared-log events its
+    /// timeline hasn't emitted yet (re-stepping re-emits them).
+    pub fn rewind_events(&mut self) {
+        self.world.log.borrow_mut().truncate_to(self.world.cursor);
     }
 
     fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
@@ -1134,7 +1151,7 @@ mod tests {
         }
         assert_eq!(sim.world.player_hits, 1, "second bullet fell in iframes");
         let hits: Vec<_> =
-            sim.world.events.iter().filter(|e| e.name == "player-hit").collect();
+            sim.events_vec().into_iter().filter(|e| &*e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
         assert_eq!(sim.world.bullets.iter().filter(|b| b.team.is_none()).count(), 1);
@@ -1182,13 +1199,13 @@ mod tests {
         for _ in 0..55 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.events.iter().filter(|e| e.name == "enemy-hit").count(), 1);
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "enemy-hit").count(), 1);
         assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 1.0));
         // shot 2 kills at ~tick 77; shot 3 flies through empty space
         for _ in 0..55 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.events.iter().filter(|e| e.name == "died").count(), 1);
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "died").count(), 1);
         assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 0.0));
     }
 
@@ -1215,9 +1232,13 @@ mod tests {
         sess.seek(CARD, 10).unwrap();
         assert_eq!(sess.sim.as_ref().unwrap().world.graze, 0, "rewound past the graze");
         sess.seek(CARD, 120).unwrap();
-        let w = &sess.sim.as_ref().unwrap().world;
-        assert_eq!(w.graze, 1, "replay re-grazes, not double-counts");
-        assert_eq!(w.events.iter().filter(|e| e.name == "graze").count(), 1);
+        let sim = sess.sim.as_ref().unwrap();
+        assert_eq!(sim.world.graze, 1, "replay re-grazes, not double-counts");
+        assert_eq!(
+            sim.events_vec().iter().filter(|e| &*e.name == "graze").count(),
+            1,
+            "the shared log was truncated at restore and re-populated"
+        );
     }
 
     /// The player is an ordinary entity: lives is a column decremented by
@@ -1241,7 +1262,7 @@ mod tests {
             sim.step_with(&inputs).unwrap();
         }
         // 70-tick cadence clears the 60-tick iframes: all 4 arrivals hit
-        let count = |n: &str| sim.world.events.iter().filter(|e| e.name == n).count();
+        let count = |n: &str| sim.events_vec().iter().filter(|e| &*e.name == n).count();
         assert_eq!(count("player-hit"), 4);
         assert_eq!(count("game-over"), 1, "trigger edge-fires once at lives 0, latched");
         // the column keeps counting (what game-over MEANS is host policy)
@@ -1271,7 +1292,7 @@ mod tests {
         for _ in 0..200 {
             sim.step_with(&inputs).unwrap();
         }
-        let count = |n: &str| sim.world.events.iter().filter(|e| e.name == n).count();
+        let count = |n: &str| sim.events_vec().iter().filter(|e| &*e.name == n).count();
         assert_eq!(count("enemy-hit"), 3, "every contact writes the column");
         assert_eq!(count("low-hp"), 1, "gate fired once at hp 1, latched");
         assert_eq!(count("died"), 1, "death is just the second threshold");
@@ -1295,7 +1316,7 @@ mod tests {
             sim.step_with(&inputs).unwrap();
         }
         assert_eq!(
-            sim.world.events.iter().filter(|e| e.name == "died").count(),
+            sim.events_vec().iter().filter(|e| &*e.name == "died").count(),
             1,
             "vel-magnitude damage (≈4) beats hp 3 in one contact"
         );
@@ -1366,8 +1387,9 @@ mod tests {
         for _ in 0..6000 {
             sim.step().unwrap();
         }
-        assert!(sim.world.events.len() < 4200, "pruned: {}", sim.world.events.len());
-        let newest = sim.world.events.last().unwrap().tick;
+        let events = sim.events_vec();
+        assert!(events.len() < 4200, "pruned: {}", events.len());
+        let newest = events.last().unwrap().tick;
         assert!(newest >= 5990, "recent events kept");
     }
 
@@ -1384,11 +1406,10 @@ mod tests {
         for _ in 0..1200 {
             sim.step_with(&inputs).unwrap();
         }
-        let w = &sim.world;
-        assert!(w.player_hits > 0, "aimed spray reaches a stationary player");
-        assert!(w.graze > 0, "fan neighbors graze");
+        assert!(sim.world.player_hits > 0, "aimed spray reaches a stationary player");
+        assert!(sim.world.graze > 0, "fan neighbors graze");
         assert!(
-            w.events.iter().any(|e| e.name == "died"),
+            sim.events_vec().iter().any(|e| &*e.name == "died"),
             "autofire kills drones"
         );
     }
