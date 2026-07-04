@@ -502,4 +502,13 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   `wait-for`, random-walk fold, rand/brand dissolution, macros→functions.
   ~60 lines vs ~100; the whole card except two parked guides is piecewise-
   Closed.
+- `player_homing.edn` — the Scanned/stages/live exercise (Reimu Home and
+  Laser + Fantasy Seal motion core). `truerotatelerprate` == `slew` verbatim
+  (source: "degrees of gap to close per second"); give-up homing = slew with
+  a rate signal decaying to zero (class (d) self-discretizes, no stages
+  needed); the tracking laser is `smooth |> slew` feeding a signal-valued
+  frame; Fantasy Seal's `&ldelta` hand-threading (persistent control writing
+  a per-bullet column) is the `stages` exit handoff verbatim. New stock:
+  `(smooth k sig)` one-pole follower (SC Lag). Channels are role-relative:
+  `player` / `nearest-enemy` are one mechanism pointed both ways.
 - Remaining: the language.md consolidation pass.

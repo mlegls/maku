@@ -1,0 +1,156 @@
+;; Translation: player-side homing, from two DMK scripts:
+;;   A/B: Patterns/PlayerFire/"Reimu Home and Laser 1234 (Experimental).bdsl"
+;;   C:   Patterns/PlayerFire/Bombs/"Reimu Fantasy Seal.bdsl" (motion core)
+;; The Scanned / stages / live-injected exercise the WebDemo corpus never
+;; forced: everything here tracks a moving target in flight.
+;;
+;; Decoded against source:
+;;   truerotatelerprate(rate, from, to)
+;;       "degrees of gap to close per second", constant rate
+;;       (Parametrics.cs:356-360) == our (slew rate init sig), verbatim.
+;;       DMK passes vectors; ours slews the ANGLE (angle-aware, shortest
+;;       arc) with magnitude carried separately -- same trajectory.
+;;   lerp01(k, prev, target)  in a per-frame beforeDraw = one-pole
+;;       exponential smoothing == our (smooth k sig) (SC Lag).
+;;   LNearestEnemy   injected channel. Role-relative: boss patterns get
+;;       `player`, player patterns get `nearest-enemy` -- both are just
+;;       channels; nothing in the language distinguishes sides.
+;;   &ldelta idiom (Fantasy Seal): a persistent per-tick bulletcontrol
+;;       records accdelta into a per-bullet column before tOffset, so the
+;;       homing mode can start from the orbit's exit velocity.
+;;       Hand-threaded stages exit handoff.
+;;   player(dmg, ...)  player-bullet damage options -> gameplay tags.
+
+;; ============================================================================
+;; A. Free-fire: homing amulets
+;;
+;;   DMK:  simple nrvelocity(truerotatelerprate(60,
+;;             rotify(py 10), LNearestEnemy - loc))
+;;
+;; Velocity domain, self-referential (`pos`), live target, constant turn rate.
+
+(defpattern reimu-free-fire [opt 0            ; option index; host mounts one
+                             power 4.0]       ;   instance per option frame
+  (dotimes [i inf :every (ticks 12)]
+    (when (>= power opt)                      ; DMK clip <= powerf p
+      (event :sfx "x-pc-fire-1")
+      (spawn (vel p[10 (slew 60 90
+                             (angle-of (- (live nearest-enemy) pos)))])
+             {:style {:family :amulet :color (nth [:red :black] opt)}
+              :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
+
+;; (slew rate init sig): rate-limited angle follower; `init` optional
+;; (defaults to the target's first sample); RATE MAY BE A SIGNAL (see B).
+;; The vel slot binds `pos` (SCANNED.md 1b); `live` marks the tracking
+;; choice -- plain `nearest-enemy` would aim once at spawn.
+
+;; ============================================================================
+;; B. Focus fire: give-up pathers + a smoothing tracking laser
+;;
+;;   DMK pather:  truerotatelerprate(lerpt(0.8, 1.5, 120, 0), ...)
+;;   DMK laser:   start targetLocation =v2 cy(50)
+;;                beforeDraw(set { targetLocation
+;;                    lerp01(0.02, &targetLocation, LNearestEnemy) })
+;;                dynamic nrvelocity(laserrotatelerp(lerpt(3, 8, 0.7, 0),
+;;                    ..., &targetLocation - loc))
+;;                varLength(15, 30 * t)  delete/deactivate on firing state
+
+(defpattern reimu-focus [opt 0]
+  (par
+    ;; pathers: hard turn that decays to nothing -- give-up homing.
+    ;; A time-varying slew rate hitting zero freezes the heading: class (d)
+    ;; reactivity that discretizes ITSELF into class (c); no stages needed.
+    (dotimes [i inf :every (ticks 120)]
+      (spawn (pather 0.5
+               (vel p[(lerp3 0 0.3 1.1 1.3 t 9 2 10)
+                      (slew (lerp 0.8 1.5 t 120 0) 90
+                            (angle-of (- (live nearest-enemy) pos)))]))
+             {:style {:family :gpather :color :black :variant :b}
+              :width 2
+              :damage {:hit 120 :graze 400 :on-hit :oh1-red}}))
+    ;; the tracking laser: aim = slew toward a SMOOTHED target. Two scans
+    ;; compose (smooth |> slew); `target` is let-bound = one shared instance
+    ;; feeding the laser's frame.
+    (let [target (smooth 0.02 (live nearest-enemy))]
+      (spawn ((rot (slew (lerp 3 8 t 0.7 0) 90
+                         (angle-of (- target pos))))
+               (laser {:active inf
+                       :u-max (min 15 m"30*t")     ; varLength: grows, capped
+                       :while (live focus-firing)})) ; deactivate w/ fire key
+             {:style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
+                      :variant :b}
+              :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
+
+;; ============================================================================
+;; C. Fantasy Seal, motion core: orbit the player, then chase, inheriting
+;;    exit velocity.
+;;
+;;   DMK:  switch(t < tOffset,
+;;           roffset(Lplayer + <spiral>),
+;;           nrvelocity(truerotatelerprate(lerp(0.4, 0.6, t-tOffset, 400, 30),
+;;               &ldelta * 1s, LNearestEnemy - loc)
+;;             * lerp3(0, 0.1, 0.2, 0.4, t-tOffset, 1, 0.2, 0.8)))
+;;   plus a persistent per-tick control: { &ldelta = accdelta } while
+;;   t < tOffset.
+;;
+;; The switch + hand-recorded &ldelta is EXACTLY stages with exit handoff:
+;; DMK spends a persistent per-tick control writing a per-bullet column so
+;; the second mode can read its entry velocity; ours is the (fn [exit] ...)
+;; segment boundary, and t rebases so the homing ramps read from zero.
+
+(defn seal-orb [k]                            ; k = orb index 0..5
+  (stages
+    ;; orbit stage: riding the LIVE player frame (continuous tracking is the
+    ;; point of a bomb that sweeps around you) -- class (b), pointwise.
+    (stage 4.0
+      ((live player)
+        (polar (lerpsmooth eoutsine 0 1 t 0.5 2.2)
+               m"90 + 350*t + 60*k")))
+    ;; chase stage: slew from the orbit's exit heading toward the nearest
+    ;; enemy, turn rate relaxing 400 -> 30, speed ramping through a dip.
+    (forever
+      (fn [exit]
+        (vel p[(* (mag (:vel exit)) (lerp3 0 0.1 0.2 0.4 t 1 0.2 0.8))
+               (slew (lerp 0.4 0.6 t 400 30)
+                     (angle-of (:vel exit))
+                     (angle-of (- (live nearest-enemy) pos)))])))))
+
+(defpattern fantasy-seal []
+  (dotimes [k 6, col [:red :green :yellow :blue] :every (ticks 24)]
+    (spawn (seal-orb k)
+           {:style {:family :gglcircle :color col :variant :w}
+            :scale 2
+            :damage {:hit 900 :graze 700}})))
+
+;; ============================================================================
+;; Rate / constructor audit
+;;
+;;   A. amulet vel        Scanned: integrate + slew state + live channel +
+;;                        self-ref pos. Irreducibly class (d) -- the honest
+;;                        residue SCANNED.md SS4 predicted ............... ar
+;;   B. pather vel        Scanned, but the slew rate reaches 0 at t=1.5:
+;;                        after that the step is constant-preserving --
+;;                        give-up homing self-discretizes (d)->(c) without
+;;                        stages, remat, or flags ........................ ar
+;;   B. (smooth 0.02 ...) Scanned one-pole, ONE instance (let-bound
+;;                        sharing); feeds a signal-valued frame .......... kr
+;;                        (per laser per tick, no per-bullet columns)
+;;   B. :u-max signal     Closed; SS6 window signals in the wild ......... ar
+;;   C. stage 1           Closed spiral composed with the LIVE player frame:
+;;                        pointwise class (b) -- scrubs against the input
+;;                        tape ........................................... ar
+;;   C. stage 2           Scanned (slew + live); t rebases at the boundary
+;;                        so both ramps read from the handoff tick ....... ar
+;;   C. exit handoff      replaces DMK's persistent-control-writes-a-
+;;                        column &ldelta machinery entirely
+;;
+;; New stock this file: (smooth k sig) one-pole follower (SC Lag; DMK's
+;; beforeDraw lerp01 idiom); (slew rate init sig) finalized with optional
+;; init and signal-valued rate. Role-relative channels noted: player/
+;; nearest-enemy are the same mechanism pointed both ways.
+;;
+;; DMK needed, across these three behaviors: a velocity-function repository
+;; entry (truerotatelerprate), a laser-specific variant (laserrotatelerp),
+;; a beforeDraw escape hatch with a mutable hoisted vector, a persistent
+;; bulletcontrol writing per-bullet state, and a switch() on a mode flag.
+;; Ours: slew + smooth + stages, composing with everything else.
