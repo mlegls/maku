@@ -204,6 +204,22 @@ labels survive tree transformations. Corpus contact (ph_boss2_mima):
 `hpi`/`type`/`root` = phase opts; the `isAccel` mode-flag attack is a nested
 `phases` in a phase body.
 
+**`move` — entity motion is remat, not frame mutation (clarified).** There IS
+a thing being moved: the boss (or player option) is an expressed entity — it
+renders, collides, has hp — and patterns anchor to its live pose signal (the
+`kr`-hoisted frame of §4). `(move dur ease dest)` is derived, not primitive:
+
+    (move dur ease dest)
+      ≡ (seq (remat self :motion (fn [exit] (ease-seg ease dur (:pose exit) dest)))
+             (wait dur))
+
+one frame-stamped remat event appending a closed eased segment (C⁰ by
+construction — the segment starts from the snapped exit pose), then a
+blocking wait. DMK's `movetarget` blocks the same way; its `~` prefix is our
+`(fork (move …))`. Consequently the entity's trajectory is an ordinary
+piecewise-Closed segment history — there is no mutable frame variable
+anywhere, and scrub/replay ride the same segment log as every other remat.
+
 **`(fork action)` — dynamic `par`.** Starts `action` concurrently as a child
 *adopted by the nearest enclosing concurrency scope* (`par`/`race`/phase), then
 continues immediately. The scope's completion waits for adopted children; its
