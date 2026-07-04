@@ -97,6 +97,108 @@ function M.raw(text)
   M.send(text)
 end
 
+-- ---------------------------------------------------------------------------
+-- run: send forms as an anonymous pattern (the eval operator)
+
+--- Strip a ; comment (string-aware) from one line.
+local function strip_comment(line)
+  local out, in_str = {}, false
+  for i = 1, #line do
+    local c = line:sub(i, i)
+    if c == '"' and line:sub(i - 1, i - 1) ~= "\\" then
+      in_str = not in_str
+    end
+    if c == ";" and not in_str then
+      break
+    end
+    out[#out + 1] = c
+  end
+  return table.concat(out)
+end
+
+--- Send text (possibly multi-line) as (run ...): one wire line.
+function M.run_text(text)
+  local parts = {}
+  for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
+    parts[#parts + 1] = strip_comment(l)
+  end
+  local one = vim.trim(table.concat(parts, " "))
+  if one == "" then
+    return notify("nothing to run", vim.log.levels.WARN)
+  end
+  write_if_modified()
+  M.send("(run " .. one .. ")")
+  notify("run " .. one:sub(1, 40))
+end
+
+local function text_in_range(srow, scol, erow, ecol) -- 1-indexed, inclusive
+  local lines = vim.api.nvim_buf_get_lines(0, srow - 1, erow, false)
+  if #lines == 0 then
+    return ""
+  end
+  if #lines == 1 then
+    lines[1] = lines[1]:sub(scol, ecol)
+  else
+    lines[1] = lines[1]:sub(scol)
+    lines[#lines] = lines[#lines]:sub(1, ecol)
+  end
+  return table.concat(lines, "\n")
+end
+
+function _G.__danmaku_opfunc(motion)
+  local s = vim.api.nvim_buf_get_mark(0, "[")
+  local e = vim.api.nvim_buf_get_mark(0, "]")
+  if motion == "char" then
+    M.run_text(text_in_range(s[1], s[2] + 1, e[1], e[2] + 1))
+  else
+    M.run_text(text_in_range(s[1], 1, e[1], 2147483647))
+  end
+end
+
+--- The operator: <localleader>e{motion} / visual <localleader>e.
+function M.operator()
+  vim.o.operatorfunc = "v:lua.__danmaku_opfunc"
+  return "g@"
+end
+
+function M.run_visual()
+  local s = vim.fn.getpos("'<")
+  local e = vim.fn.getpos("'>")
+  M.run_text(text_in_range(s[2], s[3], e[2], e[3]))
+end
+
+--- Innermost form enclosing the cursor (conjure's ee).
+function M.run_inner_form()
+  local save = vim.fn.getcurpos()
+  local open = vim.fn.searchpairpos("(", "", ")", "bcnW")
+  if open[1] == 0 then
+    return notify("no enclosing form", vim.log.levels.WARN)
+  end
+  vim.fn.cursor(open[1], open[2])
+  local close = vim.fn.searchpairpos("(", "", ")", "nW")
+  vim.fn.setpos(".", save)
+  if close[1] == 0 then
+    return notify("unbalanced form", vim.log.levels.WARN)
+  end
+  M.run_text(text_in_range(open[1], open[2], close[1], close[2]))
+end
+
+--- Root (top-level) form around the cursor (conjure's er).
+function M.run_root_form()
+  local save = vim.fn.getcurpos()
+  local start = vim.fn.search([[^(]], "bcnW")
+  if start == 0 then
+    return notify("no top-level form", vim.log.levels.WARN)
+  end
+  vim.fn.cursor(start, 1)
+  local close = vim.fn.searchpairpos("(", "", ")", "nW")
+  vim.fn.setpos(".", save)
+  if close[1] == 0 then
+    return notify("unbalanced form", vim.log.levels.WARN)
+  end
+  M.run_text(text_in_range(start, 1, close[1], close[2]))
+end
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 
@@ -127,13 +229,19 @@ function M.setup(opts)
     pattern = "*.dmk",
     group = vim.api.nvim_create_augroup("danmaku-nvim", { clear = true }),
     callback = function(ev)
-      local map = function(lhs, fn, desc)
-        vim.keymap.set("n", lhs, fn, { buffer = ev.buf, desc = "danmaku: " .. desc })
+      local map = function(mode, lhs, fn, desc, opts)
+        local o = vim.tbl_extend("force", { buffer = ev.buf, desc = "danmaku: " .. desc }, opts or {})
+        vim.keymap.set(mode, lhs, fn, o)
       end
-      map("<leader>dp", M.play, "play pattern under cursor")
-      map("<leader>dl", M.load, "load card")
-      map("<leader>dr", M.restart, "restart")
-      map("<leader>d<space>", M.toggle_pause, "toggle pause")
+      -- eval operator, conjure-style
+      map("n", "<localleader>e", M.operator, "run {motion}", { expr = true })
+      map("x", "<localleader>e", M.run_visual, "run selection")
+      map("n", "<localleader>ee", M.run_inner_form, "run innermost form")
+      map("n", "<localleader>er", M.run_root_form, "run root form")
+      -- fixed commands (not selection-sensitive)
+      map("n", "<leader>dl", M.load, "load card")
+      map("n", "<leader>dr", M.restart, "restart")
+      map("n", "<leader>d<space>", M.toggle_pause, "toggle pause")
     end,
   })
 end

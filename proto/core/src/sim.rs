@@ -71,11 +71,37 @@ impl Sim {
             Some(n) => n.to_string(),
             None => card.order.first().cloned().ok_or("card has no defpattern")?,
         };
+        Sim::from_pattern(&card, &name)
+    }
+
+    /// Run arbitrary action-valued forms as an anonymous pattern, with the
+    /// given card's defs (and defpatterns) in scope — the REPL entry point.
+    /// A leading (defpattern ...) form registers and runs itself.
+    pub fn load_forms(card_src: &str, form_src: &str) -> Result<Sim, String> {
+        let card_forms = read_all(card_src).map_err(|e| e.to_string())?;
+        let mut card = load_card(&card_forms)?;
+        let body = read_all(form_src).map_err(|e| e.to_string())?;
+        if let Some(Form::List(items)) = body.first() {
+            if matches!(items.first(), Some(Form::Sym(s)) if &**s == "defpattern") {
+                let sent = load_card(&body)?;
+                let first = sent.order.first().cloned().ok_or("no defpattern")?;
+                card.patterns.extend(sent.patterns);
+                card.defs.extend(sent.defs);
+                return Sim::from_pattern(&card, &first);
+            }
+        }
+        let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(card.defs.clone());
+        let world = World::default();
+        let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env: Env::empty() }]);
+        Ok(Sim { world, tasks: vec![task], ctx })
+    }
+
+    fn from_pattern(card: &Card, name: &str) -> Result<Sim, String> {
         let pat = card
             .patterns
-            .get(&name)
+            .get(name)
             .ok_or_else(|| format!("no pattern '{}' in card", name))?;
-
         let mut ctx = Ctx::default();
         ctx.sig.defs = Rc::new(card.defs.clone());
         let mut world = World::default();
@@ -662,6 +688,26 @@ mod tests {
             sim.world.bullets.iter().filter(|b| b.style.family == "star").collect();
         let p = dyn_pose(&ring[0].motion, 0.0, &ring[0].state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
+    }
+
+    /// Anonymous forms run with the card's defs in scope (the REPL path).
+    #[test]
+    fn load_forms_anonymous() {
+        let card = r#"
+(def spd 3.0)
+(defpattern unused [] (spawn (circle 3 (linear c[1 0]))))
+"#;
+        let mut sim =
+            Sim::load_forms(card, "(spawn (circle 8 (linear c[spd 0])))").unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.bullets.len(), 8);
+        let mut sim2 = Sim::load_forms(
+            card,
+            "(defpattern ring [n 5] (spawn (circle n (linear c[spd 0]))))",
+        )
+        .unwrap();
+        sim2.step().unwrap();
+        assert_eq!(sim2.world.bullets.len(), 5);
     }
 
     /// F15 in the sim: 200's variant (axis 0, len 3) and color (axis 1 via

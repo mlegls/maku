@@ -7,6 +7,8 @@
 //! is the card format — so editor clients (vim plugin) are thin
 //! send-form-to-socket shims:
 //!
+//!   (run <forms...>)                 run forms as an anonymous pattern
+//!                                     (current card's defs in scope)
 //!   (load "path/to/card.dmk")        reload from disk
 //!   (load "path" "pattern-name")     ... selecting a pattern
 //!   (pattern "name")                 switch pattern in the current card
@@ -102,6 +104,23 @@ impl Player {
             }
         };
         match head.as_str() {
+            "run" => {
+                // re-serialize the parsed forms (Display prints canonical)
+                let src = items[1..]
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                match Sim::load_forms(&self.card_src, &src) {
+                    Ok(sim) => {
+                        self.sim = Some(sim);
+                        let preview: String = src.chars().take(40).collect();
+                        self.status = format!("run {}…", preview);
+                        self.paused = false;
+                    }
+                    Err(e) => self.status = format!("run error: {}", e),
+                }
+            }
             "load" => {
                 if let Some(p) = arg_str(1) {
                     self.card_path = p;
