@@ -434,8 +434,12 @@ pub struct Bullet {
     pub hue: Option<MetaSig>,
     /// Collider set — archetype data, Rc-shared across a spawn's elements.
     pub colliders: Rc<[Collider]>,
-    /// Hit points for :team :enemy entities (:hp meta).
-    pub hp: Option<f64>,
+    /// User-defined numeric columns (§9's sidecar, inline for the
+    /// prototype). hp is not special — it's just the first custom column.
+    pub cols: Vec<(Rc<str>, f64)>,
+    /// Standing edge-triggers over own columns — archetype data. Death is
+    /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
+    pub triggers: Rc<[TriggerRule]>,
     /// Damage on contact (:damage meta): a number, a DMK player() map whose
     /// :hit is taken, or a PURE FUNCTION (fn [self other] num) evaluated at
     /// contact — contacts are rare, so interpreting there is free.
@@ -445,6 +449,46 @@ pub struct Bullet {
     /// Last tick's position (collision pass) — contact velocity is the
     /// finite difference, uniform across Closed and Scanned motion.
     pub prev_pos: Option<(f64, f64)>,
+}
+
+impl Bullet {
+    pub fn col_get(&self, name: &str) -> Option<f64> {
+        self.cols.iter().find(|(k, _)| &**k == name).map(|(_, v)| *v)
+    }
+
+    pub fn col_set(&mut self, name: &Rc<str>, v: f64) {
+        match self.cols.iter_mut().find(|(k, _)| k == name) {
+            Some((_, slot)) => *slot = v,
+            None => self.cols.push((name.clone(), v)),
+        }
+    }
+}
+
+/// A standing rule over an entity's own columns: when `col ≤ leq` first
+/// becomes true (edge-triggered; the latch is itself a column, so it
+/// snapshots and scrubs), emit the event and optionally cull. The same
+/// mechanism covers death, HP-gated boss phases, enrage thresholds, lives.
+#[derive(Clone, Debug)]
+pub struct TriggerRule {
+    /// Event name; also keys the latch column.
+    pub name: Rc<str>,
+    /// Precomputed latch column key.
+    pub latch: Rc<str>,
+    pub col: Rc<str>,
+    pub leq: f64,
+    pub cull: bool,
+}
+
+impl TriggerRule {
+    pub fn new(name: &str, col: &str, leq: f64, cull: bool) -> TriggerRule {
+        TriggerRule {
+            name: name.into(),
+            latch: format!("{}#fired", name).into(),
+            col: col.into(),
+            leq,
+            cull,
+        }
+    }
 }
 
 /// Collision layers. The engine's interaction matrix pairs them:
@@ -618,7 +662,8 @@ pub enum ActionV {
         styles: Vec<Style>,
         hues: Vec<Option<MetaSig>>,
         team: Option<Rc<str>>,
-        hp: Option<f64>,
+        cols: Vec<(Rc<str>, f64)>,
+        triggers: Rc<[TriggerRule]>,
         damage: Val,
         colliders: Rc<[Collider]>,
     },
@@ -1356,7 +1401,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, hues, team, hp, damage, colliders } => {
+        ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders } => {
             let mut handles = Vec::new();
             for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
                 let motion = if ctx.ambient == Pose::IDENTITY {
@@ -1382,7 +1427,8 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     hue: h.clone(),
                     colliders: colliders.clone(),
-                    hp: *hp,
+                    cols: cols.clone(),
+                    triggers: triggers.clone(),
                     damage: damage.clone(),
                     grazed: false,
                     prev_pos: None,
@@ -1860,9 +1906,63 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         Some(Val::Kw(k)) => Some(Rc::from(&*k)),
         _ => None,
     };
-    let hp = match map_get(&meta, "hp") {
-        Some(Val::Num(n)) => Some(n),
-        _ => None,
+    // columns: :hp n is sugar for a col; :cols {:armor 2 ...} adds more.
+    // :team :enemy defaults hp to 1 so untyped enemies still die to a shot.
+    let mut cols: Vec<(Rc<str>, f64)> = Vec::new();
+    match map_get(&meta, "hp") {
+        Some(Val::Num(n)) => cols.push(("hp".into(), n)),
+        _ => {
+            if team.as_deref() == Some("enemy") {
+                cols.push(("hp".into(), 1.0));
+            }
+        }
+    }
+    if let Some(Val::Map(kvs)) = map_get(&meta, "cols") {
+        for (k, v) in kvs.iter() {
+            if let (Val::Kw(k), Val::Num(n)) = (k, v) {
+                cols.push((k.as_ref().into(), *n));
+            }
+        }
+    }
+    // triggers: explicit :triggers replaces the synthesized default
+    // (hp col present → death rule: hp ≤ 0 → cull + event :died)
+    let triggers: Rc<[TriggerRule]> = match map_get(&meta, "triggers") {
+        Some(Val::Arr(items)) => {
+            let mut rules = Vec::new();
+            for it in items.iter() {
+                let Val::Map(kvs) = it else {
+                    return Err("triggers: expected maps".into());
+                };
+                let get = |name: &str| {
+                    kvs.iter().find_map(|(k, v)| match k {
+                        Val::Kw(kw) if &**kw == name => Some(v.clone()),
+                        _ => None,
+                    })
+                };
+                let col = match get("col") {
+                    Some(Val::Kw(k)) => k.to_string(),
+                    _ => return Err("triggers: missing :col".into()),
+                };
+                let leq = match get("leq") {
+                    Some(Val::Num(n)) => n,
+                    _ => return Err("triggers: missing :leq".into()),
+                };
+                let event = match get("event") {
+                    Some(Val::Kw(k)) => k.to_string(),
+                    _ => return Err("triggers: missing :event".into()),
+                };
+                let cull = matches!(get("cull"), Some(Val::Bool(true)));
+                rules.push(TriggerRule::new(&event, &col, leq, cull));
+            }
+            rules.into()
+        }
+        _ => {
+            if cols.iter().any(|(k, _)| &**k == "hp") {
+                vec![TriggerRule::new("died", "hp", 0.0, true)].into()
+            } else {
+                Vec::new().into()
+            }
+        }
     };
     // :damage n | {:hit n ...} (DMK player() map) | (fn [self other] n)
     let damage = match map_get(&meta, "damage") {
@@ -1925,7 +2025,7 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         .into_iter()
         .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
         .collect();
-    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team, hp, damage, colliders })))
+    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders })))
 }
 
 fn flatten_elems(

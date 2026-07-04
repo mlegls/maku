@@ -64,8 +64,8 @@ fn contact_map(b: &Bullet, pos: Option<(f64, f64)>, vel: (f64, f64)) -> Val {
     if let Some((x, y)) = pos {
         kvs.push((Val::Kw("pos".into()), Val::Vec2 { x, y }));
     }
-    if let Some(hp) = b.hp {
-        kvs.push((Val::Kw("hp".into()), Val::Num(hp)));
+    for (k, v) in &b.cols {
+        kvs.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
     }
     if let Some(t) = &b.team {
         kvs.push((Val::Kw("team".into()), Val::Kw(t.as_ref().into())));
@@ -318,6 +318,7 @@ impl Sim {
             }
         }
         self.collide(inputs)?;
+        self.fire_triggers();
         self.world.tick += 1;
         // cull: off-playfield points; lasers past their active window
         let tick = self.world.tick;
@@ -502,17 +503,44 @@ impl Sim {
                 }
             };
             self.world.bullets[i].alive = false;
+            // the effect is a COLUMN WRITE, nothing more — what zero hp
+            // means is the enemy's trigger's business, not the contact's
             let enemy = &mut self.world.bullets[j];
-            let hp = enemy.hp.get_or_insert(1.0);
-            *hp -= dmg;
-            if *hp <= 0.0 {
-                enemy.alive = false;
-                self.world.events.push(Event { tick, name: "enemy-died".into(), pos: pos[j] });
-            } else {
-                self.world.events.push(Event { tick, name: "enemy-hit".into(), pos: pos[j] });
-            }
+            let hp = enemy.col_get("hp").unwrap_or(1.0);
+            enemy.col_set(&"hp".into(), hp - dmg);
+            self.world.events.push(Event { tick, name: "enemy-hit".into(), pos: pos[j] });
         }
         Ok(())
+    }
+
+    /// Standing triggers: per entity, per rule, when `col ≤ leq` first
+    /// holds, fire (event + optional cull). The latch is a column, so it
+    /// snapshots/scrubs; order is canonical (entity index, rule index).
+    fn fire_triggers(&mut self) {
+        let tick = self.world.tick;
+        for i in 0..self.world.bullets.len() {
+            let n_rules = self.world.bullets[i].triggers.len();
+            for r in 0..n_rules {
+                let b = &self.world.bullets[i];
+                if !b.alive {
+                    break;
+                }
+                let rule = &b.triggers[r];
+                let armed = b.col_get(&rule.latch).is_none();
+                let holds = b.col_get(&rule.col).map(|v| v <= rule.leq).unwrap_or(false);
+                if !(armed && holds) {
+                    continue;
+                }
+                let (latch, name, cull) = (rule.latch.clone(), rule.name.clone(), rule.cull);
+                let at = self.world.bullets[i].prev_pos;
+                let b = &mut self.world.bullets[i];
+                b.col_set(&latch, 1.0);
+                if cull {
+                    b.alive = false;
+                }
+                self.world.events.push(Event { tick, name: name.to_string(), pos: at });
+            }
+        }
     }
 
     /// Nearest alive entity with the given team tag, by position.
@@ -1103,7 +1131,7 @@ mod tests {
         for _ in 0..55 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.events.iter().filter(|e| e.name == "enemy-died").count(), 1);
+        assert_eq!(sim.world.events.iter().filter(|e| e.name == "died").count(), 1);
         assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 0.0));
     }
 
@@ -1130,6 +1158,34 @@ mod tests {
         assert_eq!(w.events.iter().filter(|e| e.name == "graze").count(), 1);
     }
 
+    /// Death is not special: :triggers replaces the synthesized default,
+    /// so an entity can gate a phase event at low hp and die at zero —
+    /// same mechanism, two thresholds, each edge-fires exactly once.
+    #[test]
+    fn trigger_thresholds() {
+        const CARD: &str = r#"
+(defpattern gates []
+  (seq
+    (spawn (pose c[0 2])
+           {:team :enemy :hp 3 :hitbox 0.3
+            :triggers [{:col :hp :leq 1 :event :low-hp}
+                       {:col :hp :leq 0 :event :died :cull true}]})
+    (dotimes [i 3 :every (ticks 30)]
+      (spawn (in-frame (pose c[0 0]) (vel c[0 4]))
+             {:team :player :damage 1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("gates")).unwrap();
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        for _ in 0..200 {
+            sim.step_with(&inputs).unwrap();
+        }
+        let count = |n: &str| sim.world.events.iter().filter(|e| e.name == n).count();
+        assert_eq!(count("enemy-hit"), 3, "every contact writes the column");
+        assert_eq!(count("low-hp"), 1, "gate fired once at hp 1, latched");
+        assert_eq!(count("died"), 1, "death is just the second threshold");
+        assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 0.0));
+    }
+
     /// :damage can be a pure function of both contact entities — here,
     /// damage = |contact velocity| one-shots a 3hp enemy at speed 4.
     #[test]
@@ -1147,7 +1203,7 @@ mod tests {
             sim.step_with(&inputs).unwrap();
         }
         assert_eq!(
-            sim.world.events.iter().filter(|e| e.name == "enemy-died").count(),
+            sim.world.events.iter().filter(|e| e.name == "died").count(),
             1,
             "vel-magnitude damage (≈4) beats hp 3 in one contact"
         );
@@ -1214,7 +1270,7 @@ mod tests {
         assert!(w.player_hits > 0, "aimed spray reaches a stationary player");
         assert!(w.graze > 0, "fan neighbors graze");
         assert!(
-            w.events.iter().any(|e| e.name == "enemy-died"),
+            w.events.iter().any(|e| e.name == "died"),
             "autofire kills drones"
         );
     }

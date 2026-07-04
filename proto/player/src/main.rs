@@ -597,7 +597,7 @@ async fn main() {
                     "graze" => (Color::new(0.6, 0.9, 1.0, 0.7 * (1.0 - k)), 6.0),
                     "player-hit" => (Color::new(1.0, 0.25, 0.3, 0.9 * (1.0 - k)), 12.0),
                     "enemy-hit" => (Color::new(1.0, 0.8, 0.3, 0.5 * (1.0 - k)), 8.0),
-                    "enemy-died" => (Color::new(1.0, 0.6, 0.2, 0.8 * (1.0 - k)), 12.0),
+                    "died" => (Color::new(1.0, 0.6, 0.2, 0.8 * (1.0 - k)), 12.0),
                     _ => continue,
                 };
                 if let Some((ex, ey)) = ev.pos {
