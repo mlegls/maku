@@ -631,29 +631,49 @@ mod tests {
 // card source stays self-contained and run/add/swap need no path context.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// Read a card file, splicing (import "...") lines recursively.
+/// Read a card file from the filesystem, splicing (import "...") lines.
 pub fn expand_card(path: &Path) -> Result<String, String> {
-    let mut visited = HashSet::new();
-    expand_card_inner(path, &mut visited)
+    let key = path.to_string_lossy().to_string();
+    expand_card_with(&key, &|p| {
+        std::fs::read_to_string(p).map_err(|e| format!("{}: {}", p, e))
+    })
 }
 
-fn expand_card_inner(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<String, String> {
-    let canon = path
-        .canonicalize()
-        .map_err(|e| format!("import {}: {}", path.display(), e))?;
-    if !visited.insert(canon.clone()) {
+/// Import expansion over an abstract reader (filesystem natively; a fetched
+/// file map on wasm). Paths are /-separated strings, lexically normalized.
+pub fn expand_card_with(
+    path: &str,
+    read: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    let mut visited = HashSet::new();
+    expand_inner(&normalize(path), read, &mut visited)
+}
+
+fn expand_inner(
+    path: &str,
+    read: &dyn Fn(&str) -> Result<String, String>,
+    visited: &mut HashSet<String>,
+) -> Result<String, String> {
+    if !visited.insert(path.to_string()) {
         return Ok(String::new()); // include-once
     }
-    let src = std::fs::read_to_string(&canon)
-        .map_err(|e| format!("import {}: {}", path.display(), e))?;
-    let base = canon.parent().map(Path::to_path_buf).unwrap_or_default();
+    let src = read(path).map_err(|e| format!("import {}", e))?;
+    let base = match path.rfind('/') {
+        Some(i) => &path[..i],
+        None => "",
+    };
     let mut out = String::with_capacity(src.len());
     for line in src.lines() {
         match import_target(line) {
             Some(rel) => {
-                out.push_str(&expand_card_inner(&base.join(rel), visited)?);
+                let joined = if base.is_empty() {
+                    rel.to_string()
+                } else {
+                    format!("{}/{}", base, rel)
+                };
+                out.push_str(&expand_inner(&normalize(&joined), read, visited)?);
                 out.push('\n');
             }
             None => {
@@ -663,6 +683,27 @@ fn expand_card_inner(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<Stri
         }
     }
     Ok(out)
+}
+
+/// Lexical path normalization (resolve "." and ".."); no filesystem access,
+/// so include-once dedup works identically on native and wasm.
+fn normalize(p: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    let absolute = p.starts_with('/');
+    for c in p.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                if parts.last().map(|l| *l != "..").unwrap_or(false) {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..");
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    format!("{}{}", if absolute { "/" } else { "" }, parts.join("/"))
 }
 
 /// `(import "path")` alone on a line (comments after are fine).
