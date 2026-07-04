@@ -35,7 +35,9 @@
 ;;               and aiyd = HNMod(n, n-1-i) (signed) -- Patterner.cs:607,
 ;;               Math.cs HMod/HNMod. With frv2(rxy(-a*aixd, b*aiyd)) this
 ;;               builds a chevron: center at origin, wings swept back.
-;;   lerp(a,b,t,v1,v2)  as t goes a->b seconds, value v1->v2, clamped.
+;;   lerp(a,b,ctrl,v1,v2)  pure pointwise: v1 + clamp01((ctrl-a)/(b-a))*(v2-v1).
+;;               No clock inside -- a,b are CONTROLLER bounds, in the
+;;               controller's own units (seconds here only because ctrl = t).
 ;;
 ;; DMK semantics: every 2.5s, aim at the player (snapshot) and fire a chevron
 ;; of 7 arms, each arm itself a mini-chevron of 9 amulets (63 total), starting
