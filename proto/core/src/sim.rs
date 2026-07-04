@@ -730,6 +730,23 @@ impl Sim {
         self.ctx.sig.channel(name)
     }
 
+    /// DEBUG/tooling read of the pattern-scoped control cells (defvar).
+    /// Cells are deliberately NOT part of the host game contract — the
+    /// export surface is channels/events/tags (§3) — but an inspector
+    /// wants to see them (sorted for stable display).
+    pub fn cells_snapshot(&self) -> Vec<(String, Val)> {
+        let mut out: Vec<(String, Val)> = self
+            .ctx
+            .sig
+            .cells
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Read the retained event window without cloning it.
     pub fn with_events<R>(&self, f: impl FnOnce(&std::collections::VecDeque<Event>) -> R) -> R {
         f(&self.world.log.borrow().entries)

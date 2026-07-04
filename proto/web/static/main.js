@@ -164,13 +164,24 @@ function draw() {
   }
 
 
+  // boss hp bar (the $boss-hp derived channel; NaN when no boss col)
+  const bhp = dk.channel_num('boss-hp');
+  if (bhp > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(20, 10, cv.width - 40, 6);
+    ctx.fillStyle = 'rgba(255,90,120,0.9)';
+    ctx.fillRect(20, 10, (cv.width - 40) * Math.min(bhp / 100, 1), 6);
+  }
+
   // HUD / timeline / menu (DOM built with textContent — no innerHTML)
   const lives = dk.lives();
   document.getElementById('hud').textContent =
     `tick ${dk.tick()}  entities ${dk.entity_count()}  graze ${dk.graze()}` +
     `  hits ${dk.hits()}  lives ${lives < 0 ? '-' : lives}` +
     (dk.paused() ? '  [paused]' : '');
-  document.getElementById('status').textContent = dk.status();
+  const cells = dk.cells();
+  document.getElementById('status').textContent =
+    dk.status() + (cells ? '\ncells: ' + cells.replaceAll('\n', '  ') : '');
   document.getElementById('play').textContent = dk.paused() ? '▶' : '⏸';
   const tl = dk.timeline();
   if (tl.length && !scrubbing) {

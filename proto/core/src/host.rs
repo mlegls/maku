@@ -347,6 +347,11 @@ impl Instance {
         self.session.sim.as_ref().and_then(|s| s.channel_val(name))
     }
 
+    /// Debug/tooling: the pattern-scoped control cells (not game contract).
+    pub fn cells(&self) -> Vec<(String, Val)> {
+        self.session.sim.as_ref().map(|s| s.cells_snapshot()).unwrap_or_default()
+    }
+
     /// Events no older than `max_age` ticks, newest first — for stateless
     /// effect flashes (they replay under scrubbing).
     pub fn recent_events(&self, max_age: u64) -> Vec<Event> {

@@ -154,6 +154,17 @@ impl Danmaku {
             .collect()
     }
 
+    /// Debug: pattern-scoped control cells as "name=value" lines (an
+    /// inspector view — cells are not part of the host game contract).
+    pub fn cells(&self) -> String {
+        self.inst
+            .cells()
+            .into_iter()
+            .map(|(k, v)| format!("{}={:?}", k, v))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// [x, y] of the $player channel, or empty (sugar for channel_vec).
     pub fn player_pos(&self) -> Vec<f32> {
         self.channel_vec("player")
