@@ -43,18 +43,19 @@
 ;; Arm color by distance from center; volley style variant cycles /, /w, /b.
 
 (defpattern aimed-demo []
-  ((pose #cart [0 0])
-    (loop [vol 0]
-      (event :sfx "x-fire-burst-1")
-      (spawn ((aim player)                        ; injected signal in spawn args
-               ((offset #cart [-7 0])             ;   => implicit snap (SS3, class a)
-                 (arrow 7 1.0 0.5                 ; chevron of arms
-                   (arrow 9 0.15 0.08             ; each arm a mini-chevron
-                     (vel #cart [#math "lerp(0.4, 0.8, t, 12, 2)" 0])))))
-             {:style (nth ["amulet-*/" "amulet-*/w" "amulet-*/b"] (mod vol 3))
-              :color ["red" "yellow" "blue" "purple" "blue" "yellow" "red"]})
-      (wait 2.5)
-      (recur (inc vol)))))
+  ;; no anchor: DMK roott(1,0,0) is the identity; patterns don't self-anchor --
+  ;; the caller applies a frame ((boss-frame (aimed-demo))) if one is wanted.
+  (loop [vol 0]
+    (event :sfx "x-fire-burst-1")
+    (spawn ((aim player)                          ; injected signal in spawn args
+             (+ #cart [-7 0]                      ;   => implicit snap (SS3, class a)
+                (arrow 7 1.0 0.5                  ; + inside the aim frame =
+                  (arrow 9 0.15 0.08              ;   rotational offset (rx of <-7;:>)
+                    (vel #cart [#math "lerp(0.4, 0.8, t, 12, 2)" 0])))))
+           {:style (nth ["amulet-*/" "amulet-*/w" "amulet-*/b"] (mod vol 3))
+            :color ["red" "yellow" "blue" "purple" "blue" "yellow" "red"]})
+    (wait 2.5)
+    (recur (inc vol))))
 
 ;; (arrow n back side) is stock formation vocabulary: Array Pose of n offsets
 ;; {(-back*|j|, side*j) : j in -(n-1)/2 .. (n-1)/2}, canonical left-to-right
@@ -65,16 +66,15 @@
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument)
 ;;
-;;   (in-frame (pose #cart [0 0])
-;;     (in-frame (rot (snap (angle-to player)))          ; (aim player)
-;;       (in-frame (pose #cart [-7 0])
-;;         (map (fn [arm]
-;;                (in-frame arm
-;;                  (map (fn [sub]
-;;                         (in-frame sub
-;;                           (vel #cart [(math "lerp(0.4,0.8,t,12,2)") 0])))
-;;                       (arrow 9 0.15 0.08))))
-;;              (arrow 7 1.0 0.5)))))
+;;   (in-frame (rot (snap (angle-to player)))            ; (aim player)
+;;     (+ (cart -7 0)                                    ; translate, theta untouched;
+;;       (map (fn [arm]                                  ; frame-relative to where it
+;;              (in-frame arm                            ; appears => rotational
+;;                (map (fn [sub]
+;;                       (in-frame sub
+;;                         (vel #cart [(math "lerp(0.4,0.8,t,12,2)") 0])))
+;;                     (arrow 9 0.15 0.08))))
+;;            (arrow 7 1.0 0.5))))
 ;;
 ;; Multiplicity = 7 x 9 = 63, the SS5 root-to-leaf product, statically readable.
 ;;
@@ -84,7 +84,11 @@
 ;;   (aim player)              snap of injected signal: ir constant per
 ;;                             volley (class (a) reactivity -- the
 ;;                             overwhelmingly common case, SS3) ......... ir
-;;   (offset ...), (arrow ...) constant poses / pose arrays ............. ir
+;;   (+ #cart [-7 0] _)        pure translation IS point-addition; no
+;;                             offset constructor exists (V2RV2 rx/ry vs
+;;                             nx/ny = whether + sits inside or outside
+;;                             the rotation frame) ...................... ir
+;;   (arrow ...)               constant pose arrays ..................... ir
 ;;   (vel #cart [lerp..t.. 0]) SCANNED -- integral of a t-varying speed.
 ;;                             F1 lint case: integrand is piecewise-affine,
 ;;                             closed-form integrable; kept as vel because

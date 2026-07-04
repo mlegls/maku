@@ -90,6 +90,39 @@ concurrency's default is sequential, so the overlap must be explicit. See F8.
 Image of DMK's `bindArrow` + `frv2(rxy(-a*aixd, b*aiyd))` idiom. More of these
 will accumulate (§1: keep the vocabulary); they are library, not core.
 
+**Broadcast zips cycle (adopted).** Shorter arrays cycle rather than error —
+SC multichannel expansion (our §5 source) cycles, and DMK color lists cycle by
+`i mod len`; 060/110 exploit it deliberately. Scalar lifting stops being a
+special case: an atom is a length-1 array cycled — one rule subsumes lifting,
+exact zip, and palettes. Constraint: cycling is **axis-aware, never flat** — a
+7-vector against a 7×9 product cycles along the arm axis after leading-axis
+alignment (F9); flat cycling over the 63 would stripe across sub-arrays and
+silently produce garbage. Lint non-divisor lengths on finite axes (7 into 9 is
+probably a bug; 3 into 8 is idiomatic).
+
+**No `offset` constructor; pure translation is `+` (adopted).** Composing a
+translation-only pose and adding a point to positions are the same operation, so
+the two-op algebra (§4) covers it. Sharper than §4's current wording: `+` is
+expressed in whatever frame it lexically appears in — add *inside* a rotation
+frame and you have DMK's rotational `rx,ry`; add *outside* the `in-frame`
+wrapper and you have nonrotational `nx,ny` (the world-frame gravity case).
+V2RV2's rotational/nonrotational split is not an operator or data structure;
+it is *where the `+` sits in the tree*. Pending language.md §4 amendment.
+
+**Action-level `in-frame` is a distribution law, not new semantics (adopted).**
+`(in-frame f (par a b)) ≡ (par (in-frame f a) (in-frame f b))` (same for
+seq/loop/race); `(in-frame f (spawn d m)) ≡ (spawn (in-frame f d) m)`;
+non-spawning actions ignore it. The frame pushes through control combinators
+and lands on spawn dyn-roots, where it is the ordinary pose-typed `in-frame` —
+so the action overload is macro-eliminable (kept as a canonical node for
+compactness, *defined* by the law). Consequences: (a) a signal-valued frame
+reaching a spawn is a spawn argument ⇒ snapped by default, `live` to track —
+§3 needs no new capture rule; (b) distribution is lexical, so ambient frames do
+not leak into embedded patterns — the scope adapter decides; (c) **patterns
+don't self-anchor**: the caller applies the frame (`(boss-frame (bowap))`),
+which is where DMK puts `roott` too (the boss script, not the pattern). Corpus
+translations keep non-identity anchors only to mirror the demo scripts.
+
 Time units: bare numbers in `wait` are **seconds**; `(frames n)` converts at the
 fixed timestep. (DMK mixes bare frame counts and `2.5s` suffixes; see finding F5.)
 
