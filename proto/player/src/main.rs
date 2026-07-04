@@ -1,13 +1,13 @@
 //! The debug player: a sim+render SERVER (sclang/scsynth split).
 //!
-//! Usage: danmaku-player <card.edn> [pattern-name]
+//! Usage: danmaku-player <card.dmk> [pattern-name]
 //!
 //! The CLI card argument is the degenerate client. A TCP listener on
 //! 127.0.0.1:7777 accepts newline-delimited EDN commands — the wire format
 //! is the card format — so editor clients (vim plugin) are thin
 //! send-form-to-socket shims:
 //!
-//!   (load "path/to/card.edn")        reload from disk
+//!   (load "path/to/card.dmk")        reload from disk
 //!   (load "path" "pattern-name")     ... selecting a pattern
 //!   (pattern "name")                 switch pattern in the current card
 //!   (restart)                        re-run the current pattern
@@ -226,7 +226,7 @@ fn window_conf() -> Conf {
 async fn main() {
     let mut args = std::env::args().skip(1);
     let card_path = args.next().unwrap_or_else(|| {
-        eprintln!("usage: danmaku-player <card.edn> [pattern-name]");
+        eprintln!("usage: danmaku-player <card.dmk> [pattern-name]");
         std::process::exit(2);
     });
     let pattern = args.next();

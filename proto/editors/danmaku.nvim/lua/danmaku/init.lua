@@ -100,6 +100,20 @@ end
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 
+  -- .dmk cards: own filetype (no clojure plugins attach), clojure/edn
+  -- highlighting via regex syntax + treesitter alias when available
+  vim.filetype.add({ extension = { dmk = "danmaku" } })
+  pcall(vim.treesitter.language.register, "clojure", "danmaku")
+  vim.api.nvim_create_autocmd("FileType", {
+    pattern = "danmaku",
+    group = vim.api.nvim_create_augroup("danmaku-ft", { clear = true }),
+    callback = function()
+      vim.bo.syntax = "clojure"
+      vim.bo.commentstring = ";; %s"
+      vim.bo.lisp = true
+    end,
+  })
+
   vim.api.nvim_create_user_command("DanmakuPlay", M.play, { desc = "danmaku: play pattern under cursor" })
   vim.api.nvim_create_user_command("DanmakuLoad", M.load, { desc = "danmaku: load current card" })
   vim.api.nvim_create_user_command("DanmakuRestart", M.restart, { desc = "danmaku: restart pattern" })
@@ -110,7 +124,7 @@ function M.setup(opts)
 
   -- buffer-local mappings on card files
   vim.api.nvim_create_autocmd({ "BufEnter", "BufNewFile" }, {
-    pattern = "*.edn",
+    pattern = "*.dmk",
     group = vim.api.nvim_create_augroup("danmaku-nvim", { clear = true }),
     callback = function(ev)
       local map = function(lhs, fn, desc)

@@ -45,11 +45,11 @@
                    arms  5
                    period (ticks 8)]
   ((pose c[0 2])                       ; DMK roott(1, 0, 2): lexical anchor
-    (dotimes [i inf :every period]
-      (spawn ((rot m"0.2*(i+1)*(i+2)")
-               (circle arms (linear c[speed 0])))
-             {:style {:family :gem :variant :w
-                      :color [:yellow :orange :red :pink :purple]}}))))
+   (dotimes [i inf :every period]
+     (spawn ((rot m"0.2*(i+1)*(i+2)")
+             (circle arms (linear c[speed 0])))
+            {:style {:family :gem :variant :w
+                     :color [:yellow :orange :red :pink :purple]}}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Version B -- the honest fold, for when the recurrence does NOT telescope.
@@ -64,15 +64,15 @@
                         arms  5
                         period (ticks 8)]
   ((pose c[0 2])
-    (loop [increment 0.4
-           base      0.4]
-      (spawn ((rot base)
-               (circle arms (linear c[speed 0])))
-             {:style {:family :gem :variant :w
-                      :color [:yellow :orange :red :pink :purple]}})
-      (wait period)
-      (recur (+ increment 0.4)
-             (+ base increment 0.4)))))
+   (loop [increment 0.4
+          base      0.4]
+     (spawn ((rot base)
+             (circle arms (linear c[speed 0])))
+            {:style {:family :gem :variant :w
+                     :color [:yellow :orange :red :pink :purple]}})
+     (wait period)
+     (recur (+ increment 0.4)
+            (+ base increment 0.4)))))
 
 ;; Both iterations are infinite, as in DMK (`times(inf)`); they terminate by
 ;; scope cancellation when the enclosing phase/race ends (SS8). A vs B is the

@@ -531,25 +531,25 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
 
 ## Status
 
-- `020_gsrepeat.edn` — complete. Everything has a clean image.
-- `130_bowap.edn` — complete. Two versions (closed-form and fold); F3 is the finding.
-- `040_spread.edn` — complete. Both repeater levels are time-sequential → nested
+- `020_gsrepeat.dmk` — complete. Everything has a clean image.
+- `130_bowap.dmk` — complete. Two versions (closed-form and fold); F3 is the finding.
+- `040_spread.dmk` — complete. Both repeater levels are time-sequential → nested
   control loops; `rv2incr`/`spread`/`hvar` all dissolve to index arithmetic; F8.
-- `080_aimed.edn` — complete. First script to touch an injected signal (implicit
+- `080_aimed.dmk` — complete. First script to touch an injected signal (implicit
   snap, §3 class (a)); chevron idiom → `arrow` combinator (F10); F9; the
   decelerating `vel` is the F1 lint case in the wild.
-- `060_polar.edn` — complete. Every DMK modifier became a seq binding
+- `060_polar.dmk` — complete. Every DMK modifier became a seq binding
   (`colorf`→`stutter`, `bindLR`→`[1 -1]`, parent-index `colorf`→outer binding);
   first nonlinear Closed dyn; slot-bound `t` formalized (F12).
-- `070_dynamic_lasers.edn` — complete. **Axis materialization survives first
+- `070_dynamic_lasers.dmk` — complete. **Axis materialization survives first
   contact**: DMK dynamic laser = f(t, u) with u = lt, length = u-extent,
   stagger = render-resolution hint. Surface for open decision 3 proposed
   (`(laser shape {:warn :active :u-max :resolution})`); hueshift's hoisted
   index became one array-broadcast expression; F11.
-- `110_exploding_stars.edn` — complete. DMK's per-bullet state + pool control
+- `110_exploding_stars.dmk` — complete. DMK's per-bullet state + pool control
   + polling dissolves into spawn handles + control-layer scheduling (F13);
   first facing override; `(cull b :soft)`; callback layer-audit exercised.
-- `200_cradle.edn` — complete. `guideempty2`/channels/`dtpoffset` dissolve
+- `200_cradle.dmk` — complete. `guideempty2`/channels/`dtpoffset` dissolve
   into an unexpressed frame level (F14 — largest structural win yet: 18
   invisible bullets → 0); named signals replace BDSL function+$() idiom;
   Scanned-contagion poster child for the F1 lint; meta axis-targeting rule
@@ -560,13 +560,13 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   `stages` = statically-scheduled remat / `remat` = event-driven stage
   transition; the boss script's `switch(reflected, …)` idiom decoded as
   hand-rolled rematerialization.
-- `ph_boss2_spell2.edn` — complete (the ceiling test). Exercises everything
+- `ph_boss2_spell2.dmk` — complete (the ceiling test). Exercises everything
   at once: `defvar` cells (F16), the first genuinely *shared* scan (the
   guide), summons-as-fork-in-frame, `whiletrue` = pause (verified) →
   `wait-for`, random-walk fold, rand/brand dissolution, macros→functions.
   ~60 lines vs ~100; the whole card except two parked guides is piecewise-
   Closed.
-- `player_homing.edn` — the Scanned/stages/live exercise (Reimu Home and
+- `player_homing.dmk` — the Scanned/stages/live exercise (Reimu Home and
   Laser + Fantasy Seal motion core). `truerotatelerprate` == `slew` verbatim
   (source: "degrees of gap to close per second"); give-up homing = slew with
   a rate signal decaying to zero (class (d) self-discretizes, no stages
