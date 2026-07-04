@@ -13,6 +13,7 @@ pub enum RenderItem {
 }
 
 /// One running task = a stack of resumable cursors over Action trees.
+#[derive(Clone)]
 enum TF {
     Seq { items: Rc<[Form]>, idx: usize, env: Env },
     Dot {
@@ -35,6 +36,7 @@ enum TF {
     Frame(FrameSpec),
 }
 
+#[derive(Clone)]
 struct Task {
     stack: Vec<TF>,
     wait: u64,
@@ -45,6 +47,7 @@ fn new_task(stack: Vec<TF>) -> Task {
     Task { stack, wait: 0, wait_pred: None }
 }
 
+#[derive(Clone, Copy)]
 pub struct Inputs {
     pub player: (f64, f64),
     pub nearest_enemy: (f64, f64),
@@ -60,6 +63,19 @@ pub struct Sim {
     pub world: World,
     tasks: Vec<Task>,
     ctx: Ctx,
+}
+
+/// Snapshot = clone: everything is Rc-shared immutable or plain data, except
+/// control cells, which are mutable and must deep-copy (a scrubbed-back sim
+/// must not see future cell writes). This is what makes scrubbing "restore
+/// nearest snapshot + re-step the input tape" (design.md §11).
+impl Clone for Sim {
+    fn clone(&self) -> Sim {
+        let mut ctx = self.ctx.clone();
+        ctx.sig.cells =
+            Rc::new(std::cell::RefCell::new(self.ctx.sig.cells.borrow().clone()));
+        Sim { world: self.world.clone(), tasks: self.tasks.clone(), ctx }
+    }
 }
 
 impl Sim {
@@ -688,6 +704,37 @@ mod tests {
             sim.world.bullets.iter().filter(|b| b.style.family == "star").collect();
         let p = dyn_pose(&ring[0].motion, 0.0, &ring[0].state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
+    }
+
+    /// Snapshot determinism: clone mid-run, step both with identical inputs,
+    /// worlds stay identical (the scrubbing contract).
+    #[test]
+    fn snapshot_determinism() {
+        let src = std::fs::read_to_string("../../translations/ph_boss2_spell2.dmk").unwrap();
+        let mut a = Sim::load(&src, Some("spell-2")).unwrap();
+        for _ in 0..200 {
+            a.step().unwrap();
+        }
+        let mut b = a.clone();
+        let inputs = Inputs { player: (1.5, -3.0), nearest_enemy: (-2.0, 2.0) };
+        for _ in 0..300 {
+            a.step_with(&inputs).unwrap();
+            b.step_with(&inputs).unwrap();
+        }
+        assert_eq!(a.world.bullets.len(), b.world.bullets.len());
+        let sig = SigEnv::default();
+        for (x, y) in a.world.bullets.iter().zip(b.world.bullets.iter()) {
+            assert_eq!(x.id, y.id);
+            let tau = (a.world.tick - x.birth) as f64 / TICK_RATE;
+            let px = dyn_pose(&x.motion, tau, &x.state, &sig).unwrap();
+            let py = dyn_pose(&y.motion, tau, &y.state, &sig).unwrap();
+            assert!(
+                (px.x - py.x).abs() < 1e-12 && (px.y - py.y).abs() < 1e-12,
+                "diverged: {:?} vs {:?}",
+                px,
+                py
+            );
+        }
     }
 
     /// Anonymous forms run with the card's defs in scope (the REPL path).

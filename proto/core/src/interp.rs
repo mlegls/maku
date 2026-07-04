@@ -417,6 +417,7 @@ pub struct MetaSig {
     pub idx: usize, // element index for array-valued tag signals
 }
 
+#[derive(Clone)]
 pub struct Bullet {
     pub id: u64,
     pub kind: Kind,
@@ -429,6 +430,7 @@ pub struct Bullet {
     pub hue: Option<MetaSig>,
 }
 
+#[derive(Clone)]
 pub struct World {
     pub tick: u64,
     pub next_id: u64,

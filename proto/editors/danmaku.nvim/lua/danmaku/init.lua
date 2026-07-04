@@ -91,6 +91,16 @@ function M.clear()
   notify("clear")
 end
 
+--- Scrub to an absolute tick (pauses the player).
+function M.seek(tick)
+  M.send(string.format("(seek %d)", tick))
+end
+
+--- Scrub by a relative number of ticks (negative = rewind).
+function M.step(n)
+  M.send(string.format("(step %d)", n))
+end
+
 local paused = false
 function M.toggle_pause()
   paused = not paused
@@ -226,6 +236,12 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("DanmakuLoad", M.load, { desc = "danmaku: load current card" })
   vim.api.nvim_create_user_command("DanmakuRestart", M.restart, { desc = "danmaku: restart pattern" })
   vim.api.nvim_create_user_command("DanmakuClear", M.clear, { desc = "danmaku: stop running pattern" })
+  vim.api.nvim_create_user_command("DanmakuSeek", function(cmd)
+    M.seek(tonumber(cmd.args) or 0)
+  end, { nargs = 1, desc = "danmaku: scrub to absolute tick" })
+  vim.api.nvim_create_user_command("DanmakuStep", function(cmd)
+    M.step(tonumber(cmd.args) or 1)
+  end, { nargs = "?", desc = "danmaku: scrub ±N ticks" })
   vim.api.nvim_create_user_command("DanmakuPause", M.toggle_pause, { desc = "danmaku: toggle pause" })
   vim.api.nvim_create_user_command("DanmakuSend", function(cmd)
     M.raw(cmd.args)
@@ -250,6 +266,13 @@ function M.setup(opts)
       map("n", "<leader>dr", M.restart, "restart")
       map("n", "<leader>dc", M.clear, "clear (stop pattern)")
       map("n", "<leader>d<space>", M.toggle_pause, "toggle pause")
+      -- scrubbing (count-aware: 30<leader>dk rewinds 30 ticks)
+      map("n", "<leader>dj", function()
+        M.step(vim.v.count1)
+      end, "scrub forward N ticks")
+      map("n", "<leader>dk", function()
+        M.step(-vim.v.count1)
+      end, "scrub back N ticks")
     end,
   })
 end

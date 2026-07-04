@@ -18,7 +18,9 @@ Then from any `.dmk` card buffer:
 | `<leader>dl` / `:DanmakuLoad` | save + load this file — **does not play** (menu/defs refresh only) |
 | `<leader>dr` / `:DanmakuRestart` | restart the current pattern |
 | `<leader>dc` / `:DanmakuClear` | stop the running pattern (card stays loaded) |
-| `<leader>d<space>` / `:DanmakuPause` | toggle pause |
+| `<leader>d<space>` / `:DanmakuPause` | toggle pause (resuming after a rewind branches the timeline) |
+| `{count}<leader>dj` / `{count}<leader>dk` | scrub forward / back by count ticks (default 1) |
+| `:DanmakuSeek {tick}` / `:DanmakuStep {±n}` | scrub to an absolute tick / by a relative amount |
 | `:DanmakuPlay` | play the `defpattern` nearest the cursor, by name |
 | `:DanmakuSend (pattern "bowap-fold")` | raw EDN command |
 

@@ -15,6 +15,9 @@
 //!   (pattern "name")                 switch pattern in the current card
 //!   (restart)                        re-run the current pattern
 //!   (clear)                          stop the running pattern
+//!   (seek N) (step ±N)               scrub the timeline (pauses; the sim is
+//!                                    a deterministic fold over the input
+//!                                    tape — backward = snapshot + re-step)
 //!   (pause) (resume)
 
 use danmaku_core::edn::{read_all, Form};
@@ -27,6 +30,7 @@ use std::sync::mpsc::{channel, Receiver};
 
 const PORT: u16 = 7777;
 const PIXELS_PER_UNIT: f32 = 55.0;
+const SNAP_EVERY: u64 = 120; // one snapshot per second of sim time
 
 struct Player {
     card_path: String,
@@ -37,6 +41,11 @@ struct Player {
     paused: bool,
     accum: f64,
     status: String,
+    /// Scrubbing (design.md §11): the sim is a deterministic fold over the
+    /// input tape, so any tick = nearest snapshot + re-step.
+    tape: Vec<Inputs>,          // tape[t] stepped the sim t → t+1
+    snaps: Vec<(u64, Sim)>,     // periodic snapshots, ascending
+    last_inputs: Inputs,
 }
 
 impl Player {
@@ -84,6 +93,7 @@ impl Player {
         match Sim::load(&self.card_src, self.pattern.as_deref()) {
             Ok(sim) => {
                 self.sim = Some(sim);
+                self.reset_history();
                 let name = self
                     .pattern
                     .clone()
@@ -95,6 +105,76 @@ impl Player {
                 self.sim = None;
                 self.status = format!("load error: {}", e);
             }
+        }
+    }
+
+    /// Reset scrub history around a fresh sim (call after any (re)start).
+    fn reset_history(&mut self) {
+        self.tape.clear();
+        self.snaps.clear();
+        if let Some(sim) = &self.sim {
+            self.snaps.push((sim.tick(), sim.clone()));
+        }
+    }
+
+    /// Advance the sim one tick, recording tape + periodic snapshots. Replays
+    /// from the tape when stepping over already-recorded ticks.
+    fn advance(&mut self, live: Inputs) -> Result<(), String> {
+        let Some(sim) = &mut self.sim else { return Ok(()) };
+        let t = sim.tick() as usize;
+        let inputs = if t < self.tape.len() { self.tape[t] } else { live };
+        if t >= self.tape.len() {
+            self.tape.push(inputs);
+        }
+        sim.step_with(&inputs)?;
+        let now = sim.tick();
+        if now % SNAP_EVERY == 0 && self.snaps.last().map(|(t, _)| *t) != Some(now) {
+            self.snaps.push((now, sim.clone()));
+        }
+        Ok(())
+    }
+
+    /// Scrub to an absolute tick (pauses). Backward = restore nearest
+    /// snapshot and re-step the tape; forward extends the tape if needed.
+    fn seek(&mut self, target: u64) {
+        if self.sim.is_none() {
+            self.status = "seek: nothing running".into();
+            return;
+        }
+        self.paused = true;
+        let cur = self.sim.as_ref().unwrap().tick();
+        if target < cur {
+            let (base_tick, base) = match self
+                .snaps
+                .iter()
+                .rev()
+                .find(|(t, _)| *t <= target)
+            {
+                Some((t, s)) => (*t, s.clone()),
+                None => {
+                    self.status = "seek: no snapshot history".into();
+                    return;
+                }
+            };
+            let _ = base_tick;
+            self.sim = Some(base);
+        }
+        let live = self.last_inputs;
+        while self.sim.as_ref().unwrap().tick() < target {
+            if let Err(e) = self.advance(live) {
+                self.status = format!("seek error: {}", e);
+                return;
+            }
+        }
+        self.status = format!("scrub @ tick {}", target);
+    }
+
+    /// Resuming after a scrub-back branches the timeline: drop the future.
+    fn truncate_future(&mut self) {
+        if let Some(sim) = &self.sim {
+            let t = sim.tick();
+            self.tape.truncate(t as usize);
+            self.snaps.retain(|(st, _)| *st <= t);
         }
     }
 
@@ -145,11 +225,27 @@ impl Player {
                 match Sim::load_forms(&self.card_src, &src) {
                     Ok(sim) => {
                         self.sim = Some(sim);
+                        self.reset_history();
                         let preview: String = src.chars().take(40).collect();
                         self.status = format!("run {}…", preview);
                         self.paused = false;
                     }
                     Err(e) => self.status = format!("run error: {}", e),
+                }
+            }
+            "seek" => {
+                if let Some(Form::Num(n)) = items.get(1) {
+                    self.seek((*n).max(0.0) as u64);
+                }
+            }
+            "step" => {
+                let n = match items.get(1) {
+                    Some(Form::Num(n)) => *n,
+                    _ => 1.0,
+                };
+                if let Some(sim) = &self.sim {
+                    let cur = sim.tick() as f64;
+                    self.seek((cur + n).max(0.0) as u64);
                 }
             }
             "load" => {
@@ -172,7 +268,10 @@ impl Player {
             "restart" => self.restart(),
             "clear" => self.clear(),
             "pause" => self.paused = true,
-            "resume" => self.paused = false,
+            "resume" => {
+                self.paused = false;
+                self.truncate_future();
+            }
             _ => self.status = format!("unknown command '{}'", head),
         }
     }
@@ -292,6 +391,9 @@ async fn main() {
         paused: false,
         accum: 0.0,
         status: String::new(),
+        tape: Vec::new(),
+        snaps: Vec::new(),
+        last_inputs: Inputs::default(),
     };
     if player.card_path.is_empty() {
         player.status = format!("no card — listening on 127.0.0.1:{}", PORT);
@@ -322,6 +424,24 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::Space) {
             player.paused = !player.paused;
+            if !player.paused {
+                player.truncate_future(); // resuming after scrub-back branches
+            }
+        }
+        // scrub hotkeys (auto-pause): left/right ±1 tick, down/up ∓30
+        if let Some(cur) = player.sim.as_ref().map(|s| s.tick()) {
+            if is_key_pressed(KeyCode::Right) {
+                player.seek(cur + 1);
+            }
+            if is_key_pressed(KeyCode::Left) {
+                player.seek(cur.saturating_sub(1));
+            }
+            if is_key_pressed(KeyCode::Up) {
+                player.seek(cur + 30);
+            }
+            if is_key_pressed(KeyCode::Down) {
+                player.seek(cur.saturating_sub(30));
+            }
         }
         // pattern menu: 1-9 select a defpattern from the card
         for (i, key) in [
@@ -356,6 +476,7 @@ async fn main() {
         // the mouse is the mock player for boss patterns and the mock
         // nearest-enemy for player-side patterns
         let inputs = Inputs { player: mouse_world, nearest_enemy: mouse_world };
+        player.last_inputs = inputs;
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !player.paused {
@@ -363,8 +484,8 @@ async fn main() {
             let dt = 1.0 / TICK_RATE;
             while player.accum >= dt {
                 player.accum -= dt;
-                if let Some(sim) = &mut player.sim {
-                    if let Err(e) = sim.step_with(&inputs) {
+                if player.sim.is_some() {
+                    if let Err(e) = player.advance(inputs) {
                         player.status = format!("sim error: {}", e);
                         player.paused = true;
                         break;
