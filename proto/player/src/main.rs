@@ -1,6 +1,7 @@
 //! The debug player: a sim+render SERVER (sclang/scsynth split).
 //!
-//! Usage: danmaku-player <card.dmk> [pattern-name]
+//! Usage: danmaku-player [card.dmk [pattern-name]]
+//! With no card argument the player starts empty and waits for clients.
 //!
 //! The CLI card argument is the degenerate client. A TCP listener on
 //! 127.0.0.1:7777 accepts newline-delimited EDN commands — the wire format
@@ -39,6 +40,10 @@ struct Player {
 
 impl Player {
     fn reload_from_disk(&mut self) {
+        if self.card_path.is_empty() {
+            self.status = "no card loaded — send (load \"path\") or (run …)".into();
+            return;
+        }
         match std::fs::read_to_string(&self.card_path) {
             Ok(src) => {
                 self.card_src = src;
@@ -243,11 +248,10 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
+    // usage: danmaku-player [card.dmk [pattern-name]] — with no card, start
+    // empty and wait for (load ...) / (run ...) from clients
     let mut args = std::env::args().skip(1);
-    let card_path = args.next().unwrap_or_else(|| {
-        eprintln!("usage: danmaku-player <card.dmk> [pattern-name]");
-        std::process::exit(2);
-    });
+    let card_path = args.next().unwrap_or_default();
     let pattern = args.next();
 
     let mut player = Player {
@@ -260,7 +264,11 @@ async fn main() {
         accum: 0.0,
         status: String::new(),
     };
-    player.reload_from_disk();
+    if player.card_path.is_empty() {
+        player.status = format!("no card — listening on 127.0.0.1:{}", PORT);
+    } else {
+        player.reload_from_disk();
+    }
     let commands = serve(PORT);
 
     loop {
