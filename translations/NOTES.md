@@ -1,7 +1,10 @@
 # Translation exercise: conventions and findings
 
-Companion to `dmk-corpus/README.md`. Surface syntax is EDN; all conventions here are
-provisional and exist to make the translations writable — they are proposals, not spec.
+Companion to `dmk-corpus/README.md`. **Consolidated into language.md** — the
+conventions and findings below are folded into the spec as of the consolidation
+pass; this file remains as the working record of how each decision was reached
+(with source citations). Where this file and language.md disagree, language.md
+wins.
 
 ## EDN conventions
 
