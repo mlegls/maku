@@ -135,8 +135,13 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 - Backtick is *reserved* (quasiquotation for card macros), which is why the
   promotion is `m"…"` and not `` `…` ``.
 
-**`(fork action)`** — run a child concurrently, attached to the nearest enclosing
-scope for cancellation. Needed because DMK async repeaters do *not* wait for their
+**`(fork action)` — dynamic `par`.** Starts `action` concurrently as a child
+*adopted by the nearest enclosing concurrency scope* (`par`/`race`/phase), then
+continues immediately. The scope's completion waits for adopted children; its
+cancellation cancels them (finalizers run per §8) — when a phase ends, in-flight
+forked volleys die with it. Static child list → write `par`; dynamic number of
+branches (forking from inside a loop) → `fork`. Precedent: Trio's nursery
+`start_soon`. Needed because DMK async repeaters do *not* wait for their
 children (040's volleys overlap: 80-tick volley, 70-tick period); structured
 concurrency's default is sequential, so the overlap must be explicit. See F8.
 
@@ -187,8 +192,6 @@ don't self-anchor**: the caller applies the frame (`(boss-frame (bowap))`),
 which is where DMK puts `roott` too (the boss script, not the pattern). Corpus
 translations keep non-identity anchors only to mirror the demo scripts.
 
-Time units: bare numbers in `wait` are **seconds**; `(frames n)` converts at the
-fixed timestep. (DMK mixes bare frame counts and `2.5s` suffixes; see finding F5.)
 
 ## Findings
 
