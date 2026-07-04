@@ -25,16 +25,21 @@ Then from any `.dmk` card buffer:
 | `{count}<leader>dg` | scrub to absolute tick (bare = tick 0) |
 | `:DanmakuSeek {tick}` / `:DanmakuStep {±n}` | scrub to an absolute tick / by a relative amount |
 
-Sending a form with the eval operator **keeps the input tape**: the recorded
-timeline replays through the new code up to the current tick — pause, rewind,
-edit, `<localleader>ee`, and watch the same dodge against the revised pattern.
-The player also has a timeline slider + play/pause button at the bottom.
 | `:DanmakuPlay` | play the `defpattern` nearest the cursor, by name |
 | `:DanmakuSend (pattern "bowap-fold")` | raw EDN command |
 
 Anonymous forms sent with `e` run with the loaded card's `def`s in scope;
 sending a whole `(defpattern …)` registers and runs it. Comments are stripped
 line-wise before transport (the protocol is one form per line).
+
+The session is a deterministic fold over two tapes. `er` (run) **keeps the
+input tape**: the recorded timeline replays through the new code up to the
+current tick — pause, rewind, edit, `<localleader>ee`, and watch the same
+dodge against the revised pattern. `es` (swap) and `eA` (add) land on the
+**command tape** at their tick, so scrubbing back across a swap/add boundary
+and forward again replays the program change exactly (orange markers on the
+player's timeline slider). Resuming after a rewind branches: future inputs
+*and* future program changes are dropped.
 
 lazy.nvim spec (local dir):
 

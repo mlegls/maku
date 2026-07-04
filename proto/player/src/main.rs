@@ -20,14 +20,17 @@
 //!   (pattern "name")                 switch pattern in the current card
 //!   (restart)                        re-run the current pattern
 //!   (clear)                          stop the running pattern
-//!   (seek N) (step ±N)               scrub the timeline (pauses; the sim is
-//!                                    a deterministic fold over the input
-//!                                    tape — backward = snapshot + re-step)
+//!   (seek N) (step ±N)               scrub the timeline (pauses). The sim
+//!                                    is a deterministic fold over two tapes
+//!                                    (inputs + program commands); backward =
+//!                                    snapshot + re-step, and add/swap
+//!                                    boundaries replay at their ticks
 //!   (pause) (resume)
 
 use danmaku_core::edn::{read_all, Form};
-use danmaku_core::interp::{load_card, TICK_RATE};
 use danmaku_core::interp::Val;
+use danmaku_core::interp::{load_card, TICK_RATE};
+use danmaku_core::session::Session;
 use danmaku_core::sim::{Inputs, RenderItem, Sim};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
@@ -36,7 +39,6 @@ use std::sync::mpsc::{channel, Receiver};
 
 const PORT: u16 = 7777;
 const PIXELS_PER_UNIT: f32 = 55.0;
-const SNAP_EVERY: u64 = 120; // one snapshot per second of sim time
 const TIMELINE_H: f32 = 30.0;
 
 struct Player {
@@ -44,16 +46,13 @@ struct Player {
     card_src: String,
     pattern: Option<String>,
     patterns: Vec<String>,
-    sim: Option<Sim>,
+    /// The scrubbable timeline (core::session): input tape + command tape
+    /// + snapshots; the sim lives inside.
+    session: Session,
     paused: bool,
     accum: f64,
     status: String,
-    /// Scrubbing (design.md §11): the sim is a deterministic fold over the
-    /// input tape, so any tick = nearest snapshot + re-step.
-    tape: Vec<Inputs>,          // tape[t] stepped the sim t → t+1
-    snaps: Vec<(u64, Sim)>,     // periodic snapshots, ascending
-    last_inputs: Inputs,
-    dragging: bool,             // scrubbing via the timeline slider
+    dragging: bool, // scrubbing via the timeline slider
 }
 
 impl Player {
@@ -100,8 +99,7 @@ impl Player {
         self.refresh_menu();
         match Sim::load(&self.card_src, self.pattern.as_deref()) {
             Ok(sim) => {
-                self.sim = Some(sim);
-                self.reset_history();
+                self.session.start(sim);
                 let name = self
                     .pattern
                     .clone()
@@ -110,85 +108,24 @@ impl Player {
                 self.status = format!("{} [{}]", self.card_path, name);
             }
             Err(e) => {
-                self.sim = None;
+                self.session.stop();
                 self.status = format!("load error: {}", e);
             }
         }
     }
 
-    /// Reset scrub history around a fresh sim (call after any (re)start).
-    fn reset_history(&mut self) {
-        self.tape.clear();
-        self.snaps.clear();
-        if let Some(sim) = &self.sim {
-            self.snaps.push((sim.tick(), sim.clone()));
-        }
-    }
-
-    /// Advance the sim one tick, recording tape + periodic snapshots. Replays
-    /// from the tape when stepping over already-recorded ticks.
-    fn advance(&mut self, live: Inputs) -> Result<(), String> {
-        let Some(sim) = &mut self.sim else { return Ok(()) };
-        let t = sim.tick() as usize;
-        let inputs = if t < self.tape.len() { self.tape[t] } else { live };
-        if t >= self.tape.len() {
-            self.tape.push(inputs);
-        }
-        sim.step_with(&inputs)?;
-        let now = sim.tick();
-        if now % SNAP_EVERY == 0 && self.snaps.last().map(|(t, _)| *t) != Some(now) {
-            self.snaps.push((now, sim.clone()));
-        }
-        Ok(())
-    }
-
-    /// Scrub to an absolute tick (pauses). Backward = restore nearest
-    /// snapshot and re-step the tape; forward extends the tape if needed.
+    /// Scrub to an absolute tick (pauses).
     fn seek(&mut self, target: u64) {
-        if self.sim.is_none() {
-            self.status = "seek: nothing running".into();
-            return;
-        }
         self.paused = true;
-        let cur = self.sim.as_ref().unwrap().tick();
-        if target < cur {
-            let (base_tick, base) = match self
-                .snaps
-                .iter()
-                .rev()
-                .find(|(t, _)| *t <= target)
-            {
-                Some((t, s)) => (*t, s.clone()),
-                None => {
-                    self.status = "seek: no snapshot history".into();
-                    return;
-                }
-            };
-            let _ = base_tick;
-            self.sim = Some(base);
-        }
-        let live = self.last_inputs;
-        while self.sim.as_ref().unwrap().tick() < target {
-            if let Err(e) = self.advance(live) {
-                self.status = format!("seek error: {}", e);
-                return;
-            }
-        }
-        self.status = format!("scrub @ tick {}", target);
-    }
-
-    /// Resuming after a scrub-back branches the timeline: drop the future.
-    fn truncate_future(&mut self) {
-        if let Some(sim) = &self.sim {
-            let t = sim.tick();
-            self.tape.truncate(t as usize);
-            self.snaps.retain(|(st, _)| *st <= t);
+        match self.session.seek(&self.card_src, target) {
+            Ok(()) => self.status = format!("scrub @ tick {}", target),
+            Err(e) => self.status = format!("seek: {}", e),
         }
     }
 
     /// Stop the running pattern; keep the card loaded.
     fn clear(&mut self) {
-        self.sim = None;
+        self.session.stop();
         self.status = if self.card_src.is_empty() {
             format!("cleared — listening on 127.0.0.1:{}", PORT)
         } else {
@@ -230,23 +167,10 @@ impl Player {
                     .map(|f| f.to_string())
                     .collect::<Vec<_>>()
                     .join(" ");
-                let cur = self.sim.as_ref().map(|s| s.tick()).unwrap_or(0);
-                match Sim::load_forms(&self.card_src, &src) {
-                    Ok(sim) => {
-                        // keep the input tape: replay the recorded timeline
-                        // through the NEW code up to the current tick — the
-                        // pause/rewind/edit/re-run loop (design.md §11)
-                        self.sim = Some(sim);
-                        self.snaps.clear();
-                        self.snaps.push((0, self.sim.as_ref().unwrap().clone()));
-                        let replay_to = cur.min(self.tape.len() as u64);
-                        while self.sim.as_ref().unwrap().tick() < replay_to {
-                            let live = self.last_inputs;
-                            if let Err(e) = self.advance(live) {
-                                self.status = format!("run replay error: {}", e);
-                                break;
-                            }
-                        }
+                // replace the program; the input tape replays through the
+                // NEW code (the pause/rewind/edit/re-run loop, design.md §11)
+                match self.session.rerun(&self.card_src, &src) {
+                    Ok(replay_to) => {
                         let preview: String = src.chars().take(40).collect();
                         self.status = if replay_to > 0 {
                             format!("run {}… (replayed to tick {})", preview, replay_to)
@@ -258,47 +182,37 @@ impl Player {
                 }
             }
             "add" => {
-                // layer onto the running sim; its clocks anchor at this tick.
-                // (falls back to run when nothing is running)
+                // layer at the current tick, recorded on the command tape
+                // (scrub-safe); falls back to run when nothing is running
                 let src = items[1..]
                     .iter()
                     .map(|f| f.to_string())
                     .collect::<Vec<_>>()
                     .join(" ");
-                match &mut self.sim {
-                    Some(sim) => match sim.add_forms(&self.card_src, &src) {
-                        Ok(()) => {
-                            let preview: String = src.chars().take(40).collect();
-                            self.status = format!("add {}…", preview);
-                        }
+                let preview: String = src.chars().take(40).collect();
+                if self.session.sim.is_some() {
+                    match self.session.record_add(src) {
+                        Ok(()) => self.status = format!("add {}…", preview),
                         Err(e) => self.status = format!("add error: {}", e),
-                    },
-                    None => match Sim::load_forms(&self.card_src, &src) {
-                        Ok(sim) => {
-                            self.sim = Some(sim);
-                            self.reset_history();
-                            self.status = "add (started fresh)".into();
-                        }
+                    }
+                } else {
+                    match self.session.rerun(&self.card_src, &src) {
+                        Ok(_) => self.status = format!("add (started fresh) {}…", preview),
                         Err(e) => self.status = format!("add error: {}", e),
-                    },
+                    }
                 }
             }
             "swap" => {
-                // generational hot-swap: keep the world, replace the program
+                // generational hot-swap, recorded on the command tape
                 let src = items[1..]
                     .iter()
                     .map(|f| f.to_string())
                     .collect::<Vec<_>>()
                     .join(" ");
-                match &mut self.sim {
-                    Some(sim) => match sim.swap_forms(&self.card_src, &src) {
-                        Ok(()) => {
-                            let preview: String = src.chars().take(40).collect();
-                            self.status = format!("swap {}…", preview);
-                        }
-                        Err(e) => self.status = format!("swap error: {}", e),
-                    },
-                    None => self.status = "swap: nothing running (use run)".into(),
+                let preview: String = src.chars().take(40).collect();
+                match self.session.record_swap(src) {
+                    Ok(()) => self.status = format!("swap {}…", preview),
+                    Err(e) => self.status = format!("swap error: {}", e),
                 }
             }
             "seek" => {
@@ -311,9 +225,8 @@ impl Player {
                     Some(Form::Num(n)) => *n,
                     _ => 1.0,
                 };
-                if let Some(sim) = &self.sim {
-                    let cur = sim.tick() as f64;
-                    self.seek((cur + n).max(0.0) as u64);
+                if let Some(cur) = self.session.tick() {
+                    self.seek((cur as f64 + n).max(0.0) as u64);
                 }
             }
             "load" => {
@@ -338,7 +251,7 @@ impl Player {
             "pause" => self.paused = true,
             "resume" => {
                 self.paused = false;
-                self.truncate_future();
+                self.session.truncate_future();
             }
             _ => self.status = format!("unknown command '{}'", head),
         }
@@ -437,11 +350,11 @@ fn style_color(color: &str) -> Color {
 /// Dragging the handle scrubs (auto-pauses); clicking play resumes, which
 /// branches the timeline (truncates the future) like every other resume.
 fn timeline_ui(player: &mut Player, mx: f32, my: f32) {
-    let Some(cur) = player.sim.as_ref().map(|s| s.tick()) else { return };
+    let Some(cur) = player.session.tick() else { return };
     let h = screen_height();
     let w = screen_width();
     let cy = h - TIMELINE_H / 2.0;
-    let total = player.tape.len().max(1) as f32;
+    let total = player.session.tape.len().max(1) as f32;
 
     // play/pause button
     let (bx, br) = (22.0, 9.0);
@@ -461,7 +374,7 @@ fn timeline_ui(player: &mut Player, mx: f32, my: f32) {
     if over_btn && is_mouse_button_pressed(MouseButton::Left) {
         player.paused = !player.paused;
         if !player.paused {
-            player.truncate_future();
+            player.session.truncate_future();
         }
         return;
     }
@@ -473,13 +386,18 @@ fn timeline_ui(player: &mut Player, mx: f32, my: f32) {
     draw_line(x0, cy, x1, cy, 3.0, Color::new(1.0, 1.0, 1.0, 0.15));
     draw_line(x0, cy, hx, cy, 3.0, Color::new(0.4, 0.7, 1.0, 0.8));
     // snapshot notches
-    for (st, _) in &player.snaps {
+    for (st, _) in &player.session.snaps {
         let sx = x0 + (*st as f32 / total).clamp(0.0, 1.0) * (x1 - x0);
         draw_line(sx, cy - 4.0, sx, cy + 4.0, 1.0, Color::new(1.0, 1.0, 1.0, 0.2));
     }
+    // command-tape markers: where adds/swaps landed
+    for ct in player.session.cmd_ticks() {
+        let sx = x0 + (ct as f32 / total).clamp(0.0, 1.0) * (x1 - x0);
+        draw_line(sx, cy - 6.0, sx, cy + 6.0, 2.0, Color::new(1.0, 0.7, 0.3, 0.8));
+    }
     draw_circle(hx, cy, 6.0, if player.dragging { WHITE } else { LIGHTGRAY });
     draw_text(
-        &format!("{} / {}", cur, player.tape.len()),
+        &format!("{} / {}", cur, player.session.tape.len()),
         x1 + 10.0,
         cy + 5.0,
         16.0,
@@ -496,7 +414,7 @@ fn timeline_ui(player: &mut Player, mx: f32, my: f32) {
     }
     if player.dragging {
         let f = ((mx - x0) / (x1 - x0)).clamp(0.0, 1.0);
-        let target = (f * player.tape.len() as f32).round() as u64;
+        let target = (f * player.session.tape.len() as f32).round() as u64;
         if target != cur {
             player.seek(target);
         }
@@ -525,13 +443,10 @@ async fn main() {
         card_src: String::new(),
         pattern,
         patterns: Vec::new(),
-        sim: None,
+        session: Session::default(),
         paused: false,
         accum: 0.0,
         status: String::new(),
-        tape: Vec::new(),
-        snaps: Vec::new(),
-        last_inputs: Inputs::default(),
         dragging: false,
     };
     if player.card_path.is_empty() {
@@ -564,11 +479,11 @@ async fn main() {
         if is_key_pressed(KeyCode::Space) {
             player.paused = !player.paused;
             if !player.paused {
-                player.truncate_future(); // resuming after scrub-back branches
+                player.session.truncate_future(); // resume after rewind = branch
             }
         }
         // scrub hotkeys (auto-pause): left/right ±1 tick, down/up ∓30
-        if let Some(cur) = player.sim.as_ref().map(|s| s.tick()) {
+        if let Some(cur) = player.session.tick() {
             if is_key_pressed(KeyCode::Right) {
                 player.seek(cur + 1);
             }
@@ -615,7 +530,7 @@ async fn main() {
         // the mouse is the mock player for boss patterns and the mock
         // nearest-enemy for player-side patterns
         let inputs = Inputs { player: mouse_world, nearest_enemy: mouse_world };
-        player.last_inputs = inputs;
+        player.session.last_inputs = inputs;
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !player.paused {
@@ -623,8 +538,8 @@ async fn main() {
             let dt = 1.0 / TICK_RATE;
             while player.accum >= dt {
                 player.accum -= dt;
-                if player.sim.is_some() {
-                    if let Err(e) = player.advance(inputs) {
+                if player.session.sim.is_some() {
+                    if let Err(e) = player.session.advance(&player.card_src) {
                         player.status = format!("sim error: {}", e);
                         player.paused = true;
                         break;
@@ -637,7 +552,7 @@ async fn main() {
         // player marker
         draw_circle_lines(mx, my, 8.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.8));
         draw_circle(mx, my, 2.5, WHITE);
-        if let Some(sim) = &player.sim {
+        if let Some(sim) = &player.session.sim {
             let to_screen =
                 |x: f64, y: f64| (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT);
             for item in sim.render() {
