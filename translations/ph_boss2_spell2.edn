@@ -11,7 +11,7 @@
 ;;   <4p>           angle-only V2RV2; `p` float suffix = phi => 4phi deg
 ;;                  volley increment (golden-ish spacing).
 ;;   240f           C# float literal (BDSL2 is C#-ish), not a frame suffix.
-;;   factor         dl^0.3 difficulty ambient -> pattern parameter.
+;;   factor         dl^0.3 -- rank is an injected channel; factor a def over it.
 ;;   ph_ref.bdsl    grid helpers + laser macros -> ordinary functions here
 ;;                  (HLaser/V2Laser are macros upstream only because BDSL
 ;;                  abstraction over style arguments is expensive).
@@ -45,7 +45,7 @@
 
 ;; --- one guide rig: reflector star + laser turret riding a guide ------------
 
-(defn guide-rig [ud factor]
+(defn guide-rig [ud]
   ;; guide: launches at +-45deg, decelerates to a stop, then parks (Scanned).
   ;; ONE instance shared by the rider spawn and both turret loops -- the
   ;; let-binding IS the shared() node (SS5); first corpus case to need it.
@@ -77,10 +77,14 @@
 
 ;; --- the spell ---------------------------------------------------------------
 
-(defpattern spell-2 [factor 1.0]
+;; dl is DMK's rank: an injected channel (SS3), not a parameter -- ambient in
+;; the read-only direction, so no threading through defns.
+(def factor (pow rank 0.3))
+
+(defpattern spell-2 []
   (defvar mode 1)                          ; F16: pattern-scoped control cell
   (seq
-    (par (guide-rig 1 factor) (guide-rig -1 factor)) ; rigs persist all phase
+    (par (guide-rig 1) (guide-rig -1))     ; rigs persist for the whole phase
     (loop []
       (set! mode 1)
       (power-up)
@@ -153,10 +157,12 @@
 ;;                            distinction doesn't exist; (rand -8 8) in a
 ;;                            per-bullet slot is keyed by spawn path+index.
 ;;   macros -> functions      ph_ref's HLaser/V2Laser macros are plain defns.
-;;   factor threading         caught by the prototype: guide-rig originally
-;;                            referenced spell-2's factor param free -- defns
-;;                            are lexically scoped, so difficulty must be
-;;                            passed (DMK's dl is ambient; ours is explicit).
+;;   factor = rank channel    caught by the prototype: guide-rig referenced a
+;;                            factor PARAM free (defns are lexical). Root
+;;                            cause: difficulty was misclassified -- dl is
+;;                            rank, an injected channel (SS3), ambient in the
+;;                            read-only direction. (def factor (pow rank 0.3))
+;;                            and the threading disappears.
 ;;
 ;; Approximations (intent-level):
 ;;   - turret cadence phase: DMK wait-then-fire vs our fire-then-wait inside

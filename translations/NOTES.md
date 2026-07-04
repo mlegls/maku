@@ -485,6 +485,41 @@ value inside a defn — loops containing no temporal actions evaluate inline
 (exactly F3's fold-belongs-to-the-control-layer point); temporal actions
 inside such loops are errors.
 
+**Ambient context: three disciplined forms, not one map (adopted).** A shared
+read-write namespace "anything can write" is DMK's GCX environment again — the
+hoisted-variable soup whose elimination made every translation clearer, and a
+tree-rewrite hazard (cards can't see which names a subtree reads/shadows).
+The ambient itch decomposes:
+
+1. **Read-only ambient = channels** (injected or derived): rank/difficulty,
+   player pose, tunnel `s`. Single writer, on the replay tape, readable
+   anywhere without threading. F19(a)'s root cause was misclassification:
+   DMK's `dl` IS rank, already an injected channel per §3 —
+   `(def factor (pow rank 0.3))` and the threading disappears.
+2. **Read-write ambient = cells** (`defvar`/`set!`, F16): already a shared
+   namespace, but pattern-scoped; embedding adapters decide sharing.
+3. **Scoped overrides** `(with {rank 0.5} body)` — dynamic *binding*, not
+   mutation: channel values overridden for a lexical subtree. Delimited
+   writes, tree-visible provenance, card-macro friendly ("this card at half
+   rank" = wrap in `with`). NEW surface, pending spec entry **[decide]**.
+
+**F20 — most "primitive" channels are derived; only true inputs are injected.**
+`nearest-enemy` is not a host input: enemies are expressed entities carrying a
+team/`:enemy` tag, and nearest-enemy = a spatial query over tagged entities
+relative to `player` — a **derived channel**: computed by the sim per tick
+from world state, exposed and *taped* like an injected channel (kr), so
+signals may read it without violating world-isolation and scrubbing still
+works. The same sorting applies across the assumed vocabulary:
+- genuinely injected (host-only knowledge): player pose/buttons
+  (`focus-firing`), tunnel `s`, rank;
+- derived channels (sim-computed from world, taped): `nearest-enemy`, counts/
+  thresholds (hp fractions), boss pose *as read by other patterns*;
+- entity-state reads, not channels at all: DMK's `mine`/`OptionLocation`/
+  `LaserLastActiveT` (self accessors), the boss frame a pattern is mounted on;
+- pure library, not primitive: `aim` (sugar over `rot`∘`angle-of` + emitter
+  origin), formations (`arrow`/`fan`), grid helpers, easings;
+- genuinely core: counter-based `rand` (determinism contract), `snap`/`live`.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure

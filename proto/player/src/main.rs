@@ -14,7 +14,7 @@
 //!   (pause) (resume)
 
 use danmaku_core::edn::{read_all, Form};
-use danmaku_core::interp::TICK_RATE;
+use danmaku_core::interp::{load_card, TICK_RATE};
 use danmaku_core::sim::{Inputs, RenderItem, Sim};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
@@ -28,6 +28,7 @@ struct Player {
     card_path: String,
     card_src: String,
     pattern: Option<String>,
+    patterns: Vec<String>,
     sim: Option<Sim>,
     paused: bool,
     accum: f64,
@@ -46,19 +47,38 @@ impl Player {
     }
 
     fn restart(&mut self) {
+        // card menu: every defpattern in the file, in order
+        self.patterns = read_all(&self.card_src)
+            .ok()
+            .and_then(|forms| load_card(&forms).ok())
+            .map(|c| c.order)
+            .unwrap_or_default();
+        if let Some(p) = &self.pattern {
+            if !self.patterns.iter().any(|n| n == p) {
+                self.pattern = None; // stale selection after reload
+            }
+        }
         match Sim::load(&self.card_src, self.pattern.as_deref()) {
             Ok(sim) => {
                 self.sim = Some(sim);
-                self.status = format!(
-                    "{} [{}]",
-                    self.card_path,
-                    self.pattern.as_deref().unwrap_or("first pattern")
-                );
+                let name = self
+                    .pattern
+                    .clone()
+                    .or_else(|| self.patterns.first().cloned())
+                    .unwrap_or_default();
+                self.status = format!("{} [{}]", self.card_path, name);
             }
             Err(e) => {
                 self.sim = None;
                 self.status = format!("load error: {}", e);
             }
+        }
+    }
+
+    fn select(&mut self, idx: usize) {
+        if let Some(name) = self.patterns.get(idx) {
+            self.pattern = Some(name.clone());
+            self.restart();
         }
     }
 
@@ -215,6 +235,7 @@ async fn main() {
         card_path,
         card_src: String::new(),
         pattern,
+        patterns: Vec::new(),
         sim: None,
         paused: false,
         accum: 0.0,
@@ -241,6 +262,25 @@ async fn main() {
         }
         if is_key_pressed(KeyCode::Space) {
             player.paused = !player.paused;
+        }
+        // pattern menu: 1-9 select a defpattern from the card
+        for (i, key) in [
+            KeyCode::Key1,
+            KeyCode::Key2,
+            KeyCode::Key3,
+            KeyCode::Key4,
+            KeyCode::Key5,
+            KeyCode::Key6,
+            KeyCode::Key7,
+            KeyCode::Key8,
+            KeyCode::Key9,
+        ]
+        .iter()
+        .enumerate()
+        {
+            if is_key_pressed(*key) {
+                player.select(i);
+            }
         }
         if is_key_pressed(KeyCode::Escape) {
             break;
@@ -323,6 +363,22 @@ async fn main() {
             );
         } else {
             draw_text(&player.status, 12.0, 24.0, 22.0, RED);
+        }
+        // pattern menu
+        let current = player
+            .pattern
+            .clone()
+            .or_else(|| player.patterns.first().cloned())
+            .unwrap_or_default();
+        for (i, name) in player.patterns.iter().enumerate() {
+            let sel = *name == current;
+            draw_text(
+                &format!("{} {}", i + 1, name),
+                12.0,
+                screen_height() - 14.0 * (player.patterns.len() - i) as f32,
+                18.0,
+                if sel { WHITE } else { GRAY },
+            );
         }
         next_frame().await;
     }

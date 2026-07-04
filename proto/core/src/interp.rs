@@ -680,6 +680,8 @@ pub struct SigEnv {
     pub defs: Rc<HashMap<String, Form>>,
     pub player: (f64, f64),
     pub nearest_enemy: (f64, f64),
+    /// Injected scalar channel: difficulty/rank (DMK's dl). Read-only ambient.
+    pub rank: f64,
     /// Pattern-scoped control cells (F16): written by set! (control layer),
     /// read live by signals; shared between world and signal contexts.
     pub cells: Rc<std::cell::RefCell<HashMap<String, Val>>>,
@@ -691,6 +693,7 @@ impl Default for SigEnv {
             defs: Rc::new(HashMap::new()),
             player: (0.0, -4.0),
             nearest_enemy: (0.0, 3.0),
+            rank: 1.0,
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
         }
     }
@@ -735,6 +738,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 Ok(Val::Vec2 { x: ctx.sig.nearest_enemy.0, y: ctx.sig.nearest_enemy.1 })
             }
             "phi" => Ok(Val::Num(1.618_033_988_749_895)),
+            "rank" => Ok(Val::Num(ctx.sig.rank)),
             name => {
                 if let Some(v) = env.lookup(name) {
                     // a deferred signal (shared scan) forces inside scan contexts
