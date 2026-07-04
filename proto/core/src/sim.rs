@@ -180,6 +180,8 @@ impl Clone for Sim {
         let mut ctx = self.ctx.clone();
         ctx.sig.cells =
             Rc::new(std::cell::RefCell::new(self.ctx.sig.cells.borrow().clone()));
+        ctx.sig.exports =
+            Rc::new(std::cell::RefCell::new(self.ctx.sig.exports.borrow().clone()));
         Sim { world: self.world.clone(), tasks: self.tasks.clone(), ctx }
     }
 }
@@ -312,6 +314,7 @@ impl Sim {
             ("move-y", Val::Num(0.0)),
             ("focus-firing", Val::Num(0.0)),
             ("bomb", Val::Num(0.0)),
+            ("boss-hp", Val::Num(0.0)),
             ("player", Val::Vec2 { x: 0.0, y: -4.0 }),
             ("nearest-enemy", Val::Vec2 { x: 0.0, y: 3.0 }),
         ] {
@@ -394,16 +397,27 @@ impl Sim {
         {
             ch.insert("lives".into(), Val::Num(l));
         }
-        // boss anchor + boss hp (entities with a :boss col)
+        // boss anchor (the move-action target — engine state, not an entity)
         ch.insert("boss".into(), Val::Vec2 { x: self.world.boss.x, y: self.world.boss.y });
-        let boss_hp = self
-            .world
-            .bullets
-            .iter()
-            .find(|b| b.alive && b.col_get("boss").is_some())
-            .and_then(|b| b.col_get("hp"))
-            .unwrap_or(0.0);
-        ch.insert("boss-hp".into(), Val::Num(boss_hp));
+        // :expose rules — entity columns published as channels; a dead or
+        // absent entity reads 0, so hp gates fire (cards declare these:
+        // {:expose {:hp :boss-hp}})
+        for (chan, id, col) in &self.world.exposes {
+            let v = self
+                .world
+                .bullets
+                .iter()
+                .find(|b| b.alive && b.id == *id)
+                .and_then(|b| b.col_get(col))
+                .unwrap_or(0.0);
+            ch.insert(chan.to_string(), Val::Num(v));
+        }
+        // (export cell) — pattern cells published as read-only channels
+        for name in self.ctx.sig.exports.borrow().iter() {
+            if let Some(v) = self.ctx.sig.cells.borrow().get(name) {
+                ch.insert(name.clone(), v.clone());
+            }
+        }
         self.ctx.sig.channels = Rc::new(ch);
         // control layer
         let mut i = 0;
@@ -981,6 +995,7 @@ fn run_action(
         | ActionV::Event { .. }
         | ActionV::Cull { .. }
         | ActionV::CullHostile
+        | ActionV::Export { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
@@ -1677,6 +1692,45 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
+    }
+
+    /// :expose publishes an entity column as a channel (0 after death, so
+    /// hp gates fire); (export cell) publishes a pattern cell read-only.
+    #[test]
+    fn expose_and_export() {
+        const CARD: &str = r#"
+(defpattern e []
+  (seq
+    (defvar phase 1)
+    (export phase)
+    (spawn (pose c[0 2])
+           {:team :enemy :hp 2 :hitbox 0.3 :expose {:hp $target-hp}})
+    (spawn (in-frame (pose c[0 0]) (vel c[0 4])) {:team :player :damage 1})
+    (wait-for (<= $target-hp 1))
+    (set! phase 2)
+    (spawn (in-frame (pose c[0 0]) (vel c[0 4])) {:team :player :damage 1})))
+"#;
+        let mut sim = Sim::load(CARD, Some("e")).unwrap();
+        for _ in 0..40 {
+            sim.step().unwrap();
+        }
+        assert!(matches!(sim.channel_val("target-hp"), Some(Val::Num(n)) if n == 2.0));
+        assert!(matches!(sim.channel_val("phase"), Some(Val::Num(n)) if n == 1.0));
+        for _ in 0..40 {
+            sim.step().unwrap(); // first shot lands ~tick 47; second ~95
+        }
+        assert!(matches!(sim.channel_val("target-hp"), Some(Val::Num(n)) if n == 1.0));
+        assert!(
+            matches!(sim.channel_val("phase"), Some(Val::Num(n)) if n == 2.0),
+            "exported cell tracks the pattern's set!"
+        );
+        for _ in 0..220 {
+            sim.step().unwrap(); // second shot kills; entity culled
+        }
+        assert!(
+            matches!(sim.channel_val("target-hp"), Some(Val::Num(n)) if n == 0.0),
+            "dead entity reads 0, not stale"
+        );
     }
 
     /// Two pilots: distinct input channels move distinct rigs, channels

@@ -593,11 +593,13 @@ pub struct World {
     pub rng: u64,
     pub boss: Pose,
     pub boss_anim: Option<BossAnim>,
+    /// Column-expose rules from spawn meta :expose {:col :channel}:
+    /// channel := that entity's column while alive, else 0. Registered at
+    /// spawn, persists past the entity (death reads as 0, so hp gates fire).
+    pub exposes: Vec<(Rc<str>, u64, Rc<str>)>,
     /// Gameplay counters — part of World so they snapshot/scrub with it.
     pub graze: u64,
     pub player_hits: u64,
-    /// Ticks are ignored for player hits until this tick (post-hit iframes).
-    pub iframe_until: u64,
 }
 
 /// A gameplay event: emitted by collision or by the (event :name) action.
@@ -679,9 +681,9 @@ impl Default for World {
             rng: 0x9e37_79b9_7f4a_7c15,
             boss: Pose::IDENTITY,
             boss_anim: None,
+            exposes: Vec::new(),
             graze: 0,
             player_hits: 0,
-            iframe_until: 0,
         }
     }
 }
@@ -773,9 +775,14 @@ pub enum ActionV {
         triggers: Rc<[TriggerRule]>,
         damage: Val,
         colliders: Rc<[Collider]>,
+        expose: Rc<[(Rc<str>, Rc<str>)]>,
     },
     Manipulate { targets: Vec<u64>, callback: Val },
     Cull { target: u64 },
+    /// (export cell): publish a pattern cell as a read-only channel of the
+    /// same name — the pattern-level export surface (host renders it; the
+    /// pattern stays the single writer).
+    Export { name: Rc<str> },
     /// Clear all hostile (team-less) fire — bomb semantics.
     CullHostile,
     /// (until pred body...): structured cancellation — run body; the tick
@@ -951,6 +958,8 @@ pub struct SigEnv {
     /// Pattern-scoped control cells (F16): written by set! (control layer),
     /// read live by signals; shared between world and signal contexts.
     pub cells: Rc<std::cell::RefCell<HashMap<String, Val>>>,
+    /// Cells published as channels via (export cell).
+    pub exports: Rc<std::cell::RefCell<Vec<String>>>,
 }
 
 impl Default for SigEnv {
@@ -966,6 +975,7 @@ impl Default for SigEnv {
             defs: Rc::new(HashMap::new()),
             channels: Rc::new(ch),
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
+            exports: Rc::new(std::cell::RefCell::new(Vec::new())),
         }
     }
 }
@@ -1329,6 +1339,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(Val::Arr(Rc::new(out)));
             }
+            "export" => {
+                let Form::Sym(name) = &items[1] else {
+                    return Err("export: expected a cell name".into());
+                };
+                return Ok(Val::Action(Rc::new(ActionV::Export { name: name.clone() })));
+            }
             "defvar" => {
                 let Some(Form::Sym(name)) = items.get(1) else {
                     return Err("defvar: expected name".into());
@@ -1579,6 +1595,22 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.push_event(Event { tick: world.tick, name: channel.as_ref().into(), pos: None });
             Ok(Val::Nothing)
         }
+        ActionV::Export { name } => {
+            {
+                let mut ex = ctx.sig.exports.borrow_mut();
+                if !ex.iter().any(|n| n == &**name) {
+                    ex.push(name.to_string());
+                }
+            }
+            // same-tick availability
+            let v = ctx.sig.cells.borrow().get(&**name).cloned();
+            if let Some(v) = v {
+                let mut m = (*ctx.sig.channels).clone();
+                m.insert(name.to_string(), v);
+                ctx.sig.channels = Rc::new(m);
+            }
+            Ok(Val::Nothing)
+        }
         ActionV::DefVar { name, init } | ActionV::SetVar { name, val: init } => {
             ctx.sig.cells.borrow_mut().insert(name.to_string(), init.clone());
             Ok(Val::Nothing)
@@ -1597,7 +1629,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders } => {
+        ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders, expose } => {
             let mut handles = Vec::new();
             for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
                 let motion = if ctx.ambient == Pose::IDENTITY {
@@ -1629,6 +1661,15 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     grazed: false,
                     prev_pos: None,
                 });
+                for (col, chan) in expose.iter() {
+                    world.exposes.push((chan.clone(), id, col.clone()));
+                    // same-tick availability: the channel exists the moment
+                    // the entity does (gates may read it this very tick)
+                    let v = world.bullets.last().and_then(|b| b.col_get(col)).unwrap_or(0.0);
+                    let mut m = (*ctx.sig.channels).clone();
+                    m.insert(chan.to_string(), Val::Num(v));
+                    ctx.sig.channels = Rc::new(m);
+                }
                 handles.push(Val::Handle(id));
             }
             Ok(Val::Arr(Rc::new(handles)))
@@ -2069,7 +2110,34 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
 
 /// Meta keys whose values are signals sampled later (§7): never evaluated at
 /// spawn time (they reference slot-bound t).
-const SIGNAL_TAGS: &[&str] = &["hue", "facing"];
+/// Meta tags whose values are NOT evaluated at spawn: signal-valued tags
+/// (contain t), and :expose (whose $names are channel DESIGNATORS, not
+/// reads — evaluated, $boss-hp would resolve as a channel read).
+const SIGNAL_TAGS: &[&str] = &["hue", "facing", "expose"];
+
+fn parse_expose(meta: Option<&Form>) -> Rc<[(Rc<str>, Rc<str>)]> {
+    let mut out = Vec::new();
+    if let Some(Form::Map(kvs)) = meta {
+        for (k, v) in kvs.iter() {
+            if matches!(k, Form::Kw(kw) if &**kw == "expose") {
+                if let Form::Map(pairs) = v {
+                    for (col, chan) in pairs.iter() {
+                        let Form::Kw(col) = col else { continue };
+                        let chan: Option<Rc<str>> = match chan {
+                            Form::Sym(s) if s.starts_with('$') => Some(s[1..].into()),
+                            Form::Kw(c) => Some(c.as_ref().into()),
+                            _ => None,
+                        };
+                        if let Some(chan) = chan {
+                            out.push((col.as_ref().into(), chan));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.into()
+}
 
 fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let dv = evaluate(&items[1], env, ctx, world)?;
@@ -2178,6 +2246,11 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         Some(Val::Num(n)) => Some(n),
         _ => None,
     };
+    // :expose {:hp $boss-hp}: publish this entity's column as a derived
+    // channel — the declarative form of "sim-computed world fact" (§3).
+    // Parsed from the RAW form ($names here are channel designators, like
+    // the keys of (with {$rank 0.5} …) — not reads); :keywords accepted too.
+    let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(items.get(2));
     // collider set: archetype data, one Rc shared by every spawned element.
     // :colliders [{:layer :damage :r 0.1} ...] replaces the team default;
     // :hitbox r resizes the default primary collider.
@@ -2222,7 +2295,17 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         .into_iter()
         .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
         .collect();
-    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders })))
+    Ok(Val::Action(Rc::new(ActionV::Spawn {
+        dyns,
+        styles,
+        hues,
+        team,
+        cols,
+        triggers,
+        damage,
+        colliders,
+        expose,
+    })))
 }
 
 fn flatten_elems(

@@ -90,6 +90,7 @@
     (move 0.9 :out-sine c[0 2.6])
     (spawn (live $boss)
            {:team :enemy :hp 100 :hitbox 0.45
+            :expose {:hp $boss-hp}          ; publish MY hp as $boss-hp
             :cols {:boss 1}
             :triggers [{:col :hp :leq 60 :event :spell-break}
                        {:col :hp :leq 0 :event :died :cull true}]

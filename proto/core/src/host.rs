@@ -393,12 +393,20 @@ impl Instance {
         self.session.sim.as_ref().map(|s| s.world.player_hits).unwrap_or(0)
     }
 
-    /// Post-hit invulnerability active (marker flicker).
+    /// Post-hit invulnerability active on any player entity (marker
+    /// flicker). Iframes are a per-entity column.
     pub fn iframes_active(&self) -> bool {
         self.session
             .sim
             .as_ref()
-            .map(|s| s.world.iframe_until > s.tick())
+            .map(|s| {
+                let t = s.tick() as f64;
+                s.world.bullets.iter().any(|b| {
+                    b.alive
+                        && b.team.as_deref() == Some("player-body")
+                        && b.col_get("iframe-until").map(|u| u > t).unwrap_or(false)
+                })
+            })
             .unwrap_or(false)
     }
 
