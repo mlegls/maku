@@ -46,7 +46,7 @@
             (spawn ((rot m"120*vol + shot*40/7")
                      (linear c[m"2 + 0.3*shot" 0]))
                    {:style "arrow-*/w"
-                    :color (nth ["red" "green" "blue"] (mod vol 3))})))
+                    :color (nth ["red" "green" "blue"] vol)})))
         (wait volley-gap)
         (recur (inc vol))))))
 

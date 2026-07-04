@@ -52,7 +52,7 @@
                 (arrow 7 1.0 0.5                  ; + inside the aim frame =
                   (arrow 9 0.15 0.08              ;   rotational offset (rx of <-7;:>)
                     (vel c[(lerp 0.4 0.8 t 12 2) 0])))))
-           {:style (nth ["amulet-*/" "amulet-*/w" "amulet-*/b"] (mod vol 3))
+           {:style (nth ["amulet-*/" "amulet-*/w" "amulet-*/b"] vol)
             :color ["red" "yellow" "blue" "purple" "blue" "yellow" "red"]})
     (wait 2.5)
     (recur (inc vol))))

@@ -104,7 +104,7 @@ between (not after the last).
   arrays/matrices alike; no separate math-mode semantics.
 - **When to use it**: expressions with several *binary operators*, where infix
   genuinely reads more naturally. Single calls stay s-expr — `(lerp 0.4 0.8 t 12 2)`,
-  `(inc i)`, `(mod vol 3)`, `(+ increment 0.4)` are not math-macro material.
+  `(inc i)`, `(nth palette vol)`, `(+ increment 0.4)` are not math-macro material.
 - Backtick is *reserved* (quasiquotation for card macros), which is why the
   promotion is `m"…"` and not `` `…` ``.
 
@@ -126,7 +126,16 @@ exact zip, and palettes. Constraint: cycling is **axis-aware, never flat** — a
 7-vector against a 7×9 product cycles along the arm axis after leading-axis
 alignment (F9); flat cycling over the 63 would stripe across sub-arrays and
 silently produce garbage. Lint non-divisor lengths on finite axes (7 into 9 is
-probably a bug; 3 into 8 is idiomatic).
+probably a bug; 3 into 8 is idiomatic). Same principle for indexed access:
+**`nth` is cyclic** (index mod length) — `(nth palette vol)`, no explicit mod;
+strict bounds are the marked case (`nth-strict`). "Arrays are cyclic" is one
+principle covering zip, index, and scalar lift. Note a bare meta array cannot
+replace loop-indexed access in a control loop: a single-bullet spawn has no
+axis to zip against, and under nested loops (vol/shot) the cycle axis would be
+ambiguous — DMK dodges this by attaching `color` to a specific repeater level,
+positional information a spawn-attached meta map doesn't carry. (If a finite
+emission is instead expressed as one array spawn with a birth-time column —
+§3's spiral idiom — a bare palette *does* cycle against the volley axis.)
 
 **No `offset` constructor; pure translation is `+` (adopted).** Composing a
 translation-only pose and adding a point to positions are the same operation, so
