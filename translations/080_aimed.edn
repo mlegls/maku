@@ -48,10 +48,10 @@
   (loop [vol 0]
     (event :sfx "x-fire-burst-1")
     (spawn ((aim player)                          ; injected signal in spawn args
-             (+ #cart [-7 0]                      ;   => implicit snap (SS3, class a)
+             (+ c[-7 0]                      ;   => implicit snap (SS3, class a)
                 (arrow 7 1.0 0.5                  ; + inside the aim frame =
                   (arrow 9 0.15 0.08              ;   rotational offset (rx of <-7;:>)
-                    (vel #cart [#math "lerp(0.4, 0.8, t, 12, 2)" 0])))))
+                    (vel c[(lerp 0.4 0.8 t 12 2) 0])))))
            {:style (nth ["amulet-*/" "amulet-*/w" "amulet-*/b"] (mod vol 3))
             :color ["red" "yellow" "blue" "purple" "blue" "yellow" "red"]})
     (wait 2.5)
@@ -72,7 +72,7 @@
 ;;              (in-frame arm                            ; appears => rotational
 ;;                (map (fn [sub]
 ;;                       (in-frame sub
-;;                         (vel #cart [(math "lerp(0.4,0.8,t,12,2)") 0])))
+;;                         (vel (cart (lerp 0.4 0.8 t 12 2) 0))))
 ;;                     (arrow 9 0.15 0.08))))
 ;;            (arrow 7 1.0 0.5))))
 ;;
@@ -84,12 +84,12 @@
 ;;   (aim player)              snap of injected signal: ir constant per
 ;;                             volley (class (a) reactivity -- the
 ;;                             overwhelmingly common case, SS3) ......... ir
-;;   (+ #cart [-7 0] _)        pure translation IS point-addition; no
+;;   (+ c[-7 0] _)        pure translation IS point-addition; no
 ;;                             offset constructor exists (V2RV2 rx/ry vs
 ;;                             nx/ny = whether + sits inside or outside
 ;;                             the rotation frame) ...................... ir
 ;;   (arrow ...)               constant pose arrays ..................... ir
-;;   (vel #cart [lerp..t.. 0]) SCANNED -- integral of a t-varying speed.
+;;   (vel c[(lerp ...) 0])     SCANNED -- integral of a t-varying speed.
 ;;                             F1 lint case: integrand is piecewise-affine,
 ;;                             closed-form integrable; kept as vel because
 ;;                             designers think in speed (design.md SS2).

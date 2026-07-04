@@ -44,10 +44,10 @@
 (defpattern bowap [speed 4.0
                    arms  5
                    period (frames 8)]
-  ((pose #cart [0 2])                       ; DMK roott(1, 0, 2): lexical anchor
+  ((pose c[0 2])                       ; DMK roott(1, 0, 2): lexical anchor
     (loop [i 0]
-      (spawn ((rot #deg #math "0.2*(i+1)*(i+2)")
-               (circle arms (linear #cart [speed 0])))
+      (spawn ((rot (deg m"0.2*(i+1)*(i+2)"))
+               (circle arms (linear c[speed 0])))
              {:style "gem-*/w"
               :color ["yellow" "orange" "red" "pink" "purple"]}) ; F4: merge DSL
       (wait period)
@@ -65,16 +65,16 @@
 (defpattern bowap-fold [speed 4.0
                         arms  5
                         period (frames 8)]
-  ((pose #cart [0 2])
+  ((pose c[0 2])
     (loop [increment 0.4
            base      0.4]
-      (spawn ((rot #deg base)
-               (circle arms (linear #cart [speed 0])))
+      (spawn ((rot (deg base))
+               (circle arms (linear c[speed 0])))
              {:style "gem-*/w"
               :color ["yellow" "orange" "red" "pink" "purple"]})
       (wait period)
-      (recur #math "increment + 0.4"
-             #math "base + increment + 0.4"))))
+      (recur (+ increment 0.4)
+             (+ base increment 0.4)))))
 
 ;; Both loops are infinite, as in DMK (`times(inf)`); they terminate by scope
 ;; cancellation when the enclosing phase/race ends (SS8).
@@ -82,8 +82,8 @@
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, shot i)
 ;;
-;;   (in-frame (rot #deg <ir angle>)                 ; whole-volley rotation
-;;     (map (fn [p] (in-frame p (linear #cart [4 0])))
+;;   (in-frame (rot (deg <ir angle>))                 ; whole-volley rotation
+;;     (map (fn [p] (in-frame p (linear (cart 4 0))))
 ;;          (circle 5)))
 ;;
 ;; :color [c0 .. c4] zips against the 5-element pose array (SS5 length-matching);
@@ -93,9 +93,9 @@
 ;; Rate / constructor audit
 ;;
 ;;   base angle (either version)   control-layer constant per shot ....... ir
-;;   (rot #deg base)               constant pose, promoted Closed-const .. ir
+;;   (rot (deg base))               constant pose, promoted Closed-const .. ir
 ;;   (circle 5)                    Array Pose ............................ ir
-;;   (linear #cart [4 0])          Closed, bullet-local tau .............. ar
+;;   (linear (cart 4 0))          Closed, bullet-local tau .............. ar
 ;;                                 (F6 cohort note applies: 5 per cohort)
 ;;   :color vector                 ir per element (zip) .................. ir
 ;;   loop state (Version B)        pattern state, control layer -- never a

@@ -38,13 +38,13 @@
 
 (defpattern spread-demo [volley-gap (frames 70)
                          shot-gap   (frames 10)]
-  ((pose #cart [0 1])
-    ((rot #deg 90)
+  ((pose c[0 1])
+    ((rot (deg 90))
       (loop [vol 0]
         (fork
           (dotimes [shot 8 :every shot-gap]
-            (spawn ((rot #deg #math "120*vol + shot*40/7")
-                     (linear #cart [#math "2 + 0.3*shot" 0]))
+            (spawn ((rot (deg m"120*vol + shot*40/7"))
+                     (linear c[m"2 + 0.3*shot" 0]))
                    {:style "arrow-*/w"
                     :color (nth ["red" "green" "blue"] (mod vol 3))})))
         (wait volley-gap)
@@ -53,10 +53,12 @@
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, volley `vol`, shot `shot`)
 ;;
-;;   (in-frame (pose #cart [0 1])
-;;     (in-frame (rot #deg 90)
-;;       (in-frame (rot #deg (math "120*vol + shot*40/7"))
-;;         (linear #cart [(math "2 + 0.3*shot") 0]))))
+;;   (in-frame (pose (cart 0 1))
+;;     (in-frame (rot (deg 90))
+;;       (in-frame (rot (deg (+ (* 120 vol) (/ (* shot 40) 7))))
+;;         (linear (cart (+ 2 (* 0.3 shot)) 0)))))
+;;
+;; (m"..." is parse-only: the canonical tree is the parsed s-expr form.)
 ;;
 ;; (dotimes [shot 8 :every d] body) desugars to
 ;;   (loop [shot 0] body (when (< shot 7) (wait d) (recur (inc shot))))

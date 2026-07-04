@@ -11,15 +11,20 @@ provisional and exist to make the translations writable — they are proposals, 
 | `[a b c]` | **array literal** — first-class, broadcasts per §5; never evaluated as a call |
 | `{:k v}` | meta record (§7) / option map |
 | `:keyword` | tag keys, channel names, enum-ish options |
-| `#cart [x y]`, `#polar [r θ]` | tagged `Vec2` literals (§2's tagged interpretation, as reader tags) |
-| `#deg 45` | angle literal in degrees (DMK's native unit); bare floats in angle slots are radians |
-| `#math "80*t + sine(1, 0.2, t)"` | the §11 infix escape as a tagged string — reads as data, parses to the canonical tree |
+| `c[x y]`, `p[r θ]` | coordinate literals — reader shorthand for `(cart x y)` / `(polar r θ)` (§2's tagged `Vec2`); elements are ordinary expressions: `c[(lerp 0.4 0.8 t 12 2) 0]` |
+| `m"80*t + sine(1, 0.2, t)"` | infix math reader macro (§11's escape); scope defined below |
 | `symbol` | binding reference (`t`/`τ` never appear free; stock dyn constructors close over bullet-local time internally) |
 
 The EDN choice earns its keep exactly where hoped: `[0 120 240]` (array data,
 broadcasts) is lexically distinct from `(circle 3)` (evaluated form that *returns* an
 array), and every canonical tree is readable as pure data without an evaluator —
 which is what cards-as-data needs.
+
+**Units: one canonical unit per quantity + conversion functions; no unit-tagged
+literals.** Time: seconds canonical, `(frames n)` converts at the fixed timestep.
+Angle: radians canonical, `(deg x)` / `(rad x)` convert — ordinary functions,
+usable inside `m""` as `deg(120*vol)`. (`#deg` is gone; a tagged literal was the
+wrong shape — units are conversions, not syntax.)
 
 Control layer borrows Clojure shapes: `(defpattern name [param default …] body)`,
 `(loop [binding init …] … (recur …))`, `seq`/`par`/`race`/`wait`. An infinite `loop`
@@ -36,7 +41,7 @@ runtime dispatch, or "sugar is only sugar" breaks):
   when no declared overload unifies (protects functions with trailing pose-typed
   parameters).
 - *Applicable frames*: a list whose head types to `Signal Pose`/`Array Pose`
-  applies as `in-frame`: `((rot #deg base) child)`, `(anchor child)` for a
+  applies as `in-frame`: `((rot (deg base)) child)`, `(anchor child)` for a
   let-bound frame, `([p1 p2] child)` for a literal frame array. This is §4's
   frames-as-transformers made literal — a frame *is* a `Dyn → Dyn` (and
   `Action → Action`) transformer. Vector literals themselves stay pure data;
@@ -73,12 +78,27 @@ Finite iteration sugar (`dotimes`-style) desugars to `loop`/`recur`; sugar is on
 sugar. Adopted form: `(dotimes [i n :every dt] body)` — n iterations, `dt` wait
 between (not after the last).
 
-**`#math` is the default for arithmetic** (adopted): any expression where infix
-reads better than nesting — more than one operator, or any polynomial/trig — goes
-in `#math "..."`. Single applications stay s-expr (`(inc i)`, `(mod vol 3)`).
-Symbols inside `#math` resolve against the enclosing lexical scope; the tag parses
-to ordinary canonical tree, so `#math "0.2*(i+1)*(i+2)"` and the nested s-expr are
-the *same* card data.
+**`m"…"` — the math macro, scoped concretely (adopted):**
+
+- **Parse-only.** Everything inside has an s-expr equivalent and parses to the
+  same canonical tree; the macro adds zero semantics. `m"0.2*(i+1)*(i+2)"` and
+  the nested s-expr are the *same* card data. Canonical/serialized form is
+  always the parsed tree.
+- **Grammar inside**: infix `+ - * / ^ %` and comparisons with PEMDAS;
+  function-call syntax `f(a, b)` where `f` is any in-scope function and
+  arguments are again math expressions (so `deg(120*vol)`, `sine(1, 0.2, t)`
+  need no escape); array literals `[…]` and coordinate literals `c[…]`/`p[…]`;
+  `$(…)` splices an arbitrary s-expression for anything else.
+- **Free symbols resolve against the enclosing lexical scope** — no requirement
+  to pre-bind; the macro is an alternate parse, not a binding boundary.
+- **Broadcasts like everything else**: operators inside parse to the same `+`/`*`
+  nodes, which broadcast per §5 — `m"[0 120 240] + 80*t"` fans out. Scalars and
+  arrays/matrices alike; no separate math-mode semantics.
+- **When to use it**: expressions with several *binary operators*, where infix
+  genuinely reads more naturally. Single calls stay s-expr — `(lerp 0.4 0.8 t 12 2)`,
+  `(inc i)`, `(mod vol 3)`, `(+ increment 0.4)` are not math-macro material.
+- Backtick is *reserved* (quasiquotation for card macros), which is why the
+  promotion is `m"…"` and not `` `…` ``.
 
 **`(fork action)`** — run a child concurrently, attached to the nearest enclosing
 scope for cancellation. Needed because DMK async repeaters do *not* wait for their
@@ -132,7 +152,7 @@ fixed timestep. (DMK mixes bare frame counts and `2.5s` suffixes; see finding F5
 Both demo scripts use `s(rvelocity(px(v)))` — a constant integrand. Per §4, velocity
 constructors are scans by construction, so the literal translation makes every
 straight-line bullet `Scanned` (non-scrubbable) for no reason. Translated as the
-`Closed` position form `(linear #cart [v 0])`. Proposed rule: **no silent
+`Closed` position form `(linear c[v 0])`. Proposed rule: **no silent
 strengthening** (a scan stays a scan — predictability), but the stock vocabulary
 covers the closed forms and the compiler lints "scan with closed-form-integrable
 integrand" with the suggested rewrite. Candidate open-decision entry.

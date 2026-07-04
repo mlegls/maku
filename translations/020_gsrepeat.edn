@@ -29,16 +29,16 @@
 ;; circles fires outward at speed 2; at t=1s a ring of 10 red circles at speed 3.
 
 (defpattern gsrepeat-demo []
-  ((pose #cart [0 1])                       ; lexical anchor; no global emitter.
+  ((pose c[0 1])                       ; lexical anchor; no global emitter.
     (par                                    ; DMK roott animates the boss entity;
       (seq                                  ; the pattern only anchors.
         (event :sfx "x-fire-burst-1")
-        (spawn (circle 14 (linear #cart [2 0]))
+        (spawn (circle 14 (linear c[2 0]))
                {:style "scircle-blue/b"}))
       (seq
         (wait 1.0)
         (event :sfx "x-fire-burst-2")
-        (spawn (circle 10 (linear #cart [3 0]))
+        (spawn (circle 10 (linear c[3 0]))
                {:style "scircle-red/w"})))))
 
 ;; ---------------------------------------------------------------------------
@@ -50,8 +50,8 @@
 ;; SS4), then in-frame broadcasts elementwise with the scalar child lifted
 ;; (SS5). It IS ordinary map -- no special frame-broadcast rule:
 ;;
-;;   (in-frame (pose #cart [0 1])
-;;     (map (fn [p] (in-frame p (linear #cart [2 0])))
+;;   (in-frame (pose (cart 0 1))
+;;     (map (fn [p] (in-frame p (linear (cart 2 0))))
 ;;          (circle 14)))
 ;;
 ;; The inline (linear ...) is nominally fresh-per-element, but linear is Closed/
@@ -60,11 +60,11 @@
 ;; ---------------------------------------------------------------------------
 ;; Rate / constructor audit
 ;;
-;;   (pose #cart [0 1])     constant anchor, promoted Closed-const ....... ir
+;;   (pose c[0 1])          constant anchor, promoted Closed-const ....... ir
 ;;                          (would be kr if a live entity frame)
 ;;   (circle 14)            value: Array Pose (theta column = !14 x 2pi/14),
 ;;                          promoted to Closed-const per element ......... ir
-;;   (linear #cart [2 0])   Closed (tau -> v*tau), references bullet-local
+;;   (linear c[2 0])        Closed (tau -> v*tau), references bullet-local
 ;;                          tau only .................................... ar
 ;;                          (cohort note F6: all 14 born same tick =>
 ;;                          value shared across the cohort each frame)
