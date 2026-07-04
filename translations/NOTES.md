@@ -459,6 +459,22 @@ functions. Structure is still preferred where the gating IS structure
 (successive stages of a loop); cells are for state read *concurrently* by
 long-lived signals and independent loops.
 
+**F17 (from the prototype) — `let` defers action-valued bindings to
+reach-time.** `((pose P) (let [stars (spawn …)] …))`: if the let executed its
+spawn at evaluation time, the ambient frame — which the distribution law owes
+the spawn — would not be applied yet (the frame wraps the let's *result*).
+Rule: a `let` whose bindings include action values becomes an action; its
+bindings execute when the scheduler reaches it, inside the ambient frame, and
+their results (spawn handles) bind. Pure lets are unaffected. Pending
+language.md §4/§6 amendment.
+
+**F18 (from the prototype) — ambient frames do not cross `fn` boundaries.**
+110's manipulate callback spawns at `(+ (pos b) …)` — world coordinates; if
+the lexically enclosing anchor frame leaked into the callback, the explosion
+would be double-anchored. Rule: lexical distribution stops at lambdas, the
+same way it stops at embedded patterns (the adapter/caller decides). Verified
+by test (`handles_and_manipulate`). Pending language.md §4 amendment.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure

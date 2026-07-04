@@ -1,5 +1,5 @@
 //! The deterministic sim: fixed-tick scheduler over inert Action trees +
-//! bullet pool. design.md §4: step(inputs) → events; bulk render getters.
+//! bullet/entity world. design.md §4: step(inputs) → events; render getters.
 
 use crate::edn::{read_all, Form};
 use crate::interp::*;
@@ -7,20 +7,9 @@ use std::rc::Rc;
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
 
-pub struct Bullet {
-    pub motion: Rc<DynNode>,
-    pub birth: u64,
-    pub style: Style,
-    pub alive: bool,
-    pub state: MotionState,   // per-bullet cells for Scanned nodes
-    pub scanned: bool,
-}
-
-pub struct RenderBullet<'a> {
-    pub x: f64,
-    pub y: f64,
-    pub th: f64,
-    pub style: &'a Style,
+pub enum RenderItem {
+    Dot { x: f64, y: f64, th: f64, style: Style, hue: f64 },
+    Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64 },
 }
 
 /// One running task = a stack of resumable cursors over Action trees.
@@ -51,14 +40,6 @@ struct Task {
     wait: u64,
 }
 
-pub struct Sim {
-    pub tick: u64,
-    tasks: Vec<Task>,
-    pub bullets: Vec<Bullet>,
-    pub events: Vec<(u64, String)>,
-    ctx: Ctx,
-}
-
 pub struct Inputs {
     pub player: (f64, f64),
 }
@@ -67,6 +48,12 @@ impl Default for Inputs {
     fn default() -> Self {
         Inputs { player: (0.0, -4.0) }
     }
+}
+
+pub struct Sim {
+    pub world: World,
+    tasks: Vec<Task>,
+    ctx: Ctx,
 }
 
 impl Sim {
@@ -84,16 +71,22 @@ impl Sim {
             .ok_or_else(|| format!("no pattern '{}' in card", name))?;
 
         let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(card.defs.clone());
+        let mut world = World::default();
         let mut env = Env::empty();
         for (pname, default) in &pat.params {
-            let v = evaluate(default, &env, &mut ctx)?;
+            let v = evaluate(default, &env, &mut ctx, &mut world)?;
             env = env.bind(pname.clone(), v);
         }
         let task = Task {
             stack: vec![TF::Seq { items: pat.body.clone(), idx: 0, env }],
             wait: 0,
         };
-        Ok(Sim { tick: 0, tasks: vec![task], bullets: Vec::new(), events: Vec::new(), ctx })
+        Ok(Sim { world, tasks: vec![task], ctx })
+    }
+
+    pub fn tick(&self) -> u64 {
+        self.world.tick
     }
 
     pub fn step(&mut self) -> Result<(), String> {
@@ -101,23 +94,13 @@ impl Sim {
     }
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
-        self.ctx.player = inputs.player;
-        // run control layer
+        self.ctx.sig.player = inputs.player;
+        // control layer
         let mut i = 0;
         while i < self.tasks.len() {
-            let mut task = std::mem::replace(
-                &mut self.tasks[i],
-                Task { stack: vec![], wait: 0 },
-            );
+            let mut task = std::mem::replace(&mut self.tasks[i], Task { stack: vec![], wait: 0 });
             let mut new_tasks = Vec::new();
-            let done = step_task(
-                &mut task,
-                self.tick,
-                &mut self.bullets,
-                &mut self.events,
-                &mut new_tasks,
-                &mut self.ctx,
-            )?;
+            let done = step_task(&mut task, &mut self.ctx, &mut self.world, &mut new_tasks)?;
             if done {
                 self.tasks.remove(i);
             } else {
@@ -126,27 +109,34 @@ impl Sim {
             }
             self.tasks.extend(new_tasks);
         }
-        // integrate Scanned motion for this tick
+        // integrate Scanned motion
         let dt = 1.0 / TICK_RATE;
-        let tick = self.tick;
-        for b in &mut self.bullets {
+        let tick = self.world.tick;
+        let sig = self.ctx.sig.clone();
+        for b in &mut self.world.bullets {
             if b.scanned {
                 let tau = (tick - b.birth) as f64 / TICK_RATE;
-                step_motion(&b.motion, tau, dt, &mut b.state)?;
+                step_motion(&b.motion, tau, dt, &mut b.state, &sig)?;
             }
         }
-        self.tick += 1;
-        // cull
-        let tick = self.tick;
+        self.world.tick += 1;
+        // cull: off-playfield points; lasers past their active window
+        let tick = self.world.tick;
         let mut err = None;
-        self.bullets.retain(|b| {
+        self.world.bullets.retain(|b| {
+            if !b.alive {
+                return false;
+            }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            match dyn_pose(&b.motion, tau, &b.state) {
-                Ok(p) => b.alive && p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
-                Err(e) => {
-                    err = Some(e);
-                    false
-                }
+            match &b.kind {
+                Kind::Point => match dyn_pose(&b.motion, tau, &b.state, &sig) {
+                    Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
+                    Err(e) => {
+                        err = Some(e);
+                        false
+                    }
+                },
+                Kind::Laser { warn, active, .. } => tau <= warn + active,
             }
         });
         match err {
@@ -155,20 +145,74 @@ impl Sim {
         }
     }
 
-    pub fn render(&self) -> Vec<RenderBullet<'_>> {
-        self.bullets
-            .iter()
-            .filter(|b| b.alive)
-            .filter_map(|b| {
-                let tau = (self.tick - b.birth) as f64 / TICK_RATE;
-                dyn_pose(&b.motion, tau, &b.state).ok().map(|p| RenderBullet {
-                    x: p.x,
-                    y: p.y,
-                    th: p.th,
-                    style: &b.style,
-                })
-            })
-            .collect()
+    fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
+        let Some(h) = &b.hue else { return 0.0 };
+        let env = h.env.bind("t".into(), Val::Num(tau));
+        let mut ctx = Ctx { sig: self.ctx.sig.clone(), ambient: Pose::IDENTITY };
+        let mut w = World::default();
+        match evaluate(&h.form, &env, &mut ctx, &mut w) {
+            Ok(Val::Num(x)) => x,
+            Ok(Val::Arr(items)) if !items.is_empty() => {
+                items[h.idx % items.len()].num().unwrap_or(0.0)
+            }
+            _ => 0.0,
+        }
+    }
+
+    pub fn render(&self) -> Vec<RenderItem> {
+        let sig = &self.ctx.sig;
+        let mut out = Vec::new();
+        for b in &self.world.bullets {
+            if !b.alive {
+                continue;
+            }
+            let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
+            match &b.kind {
+                Kind::Point => {
+                    if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, sig) {
+                        out.push(RenderItem::Dot {
+                            x: p.x,
+                            y: p.y,
+                            th: p.th,
+                            style: b.style.clone(),
+                            hue: self.sample_hue(b, tau),
+                        });
+                    }
+                }
+                Kind::Laser { shape, warn, active: _, u_max, resolution } => {
+                    let Ok(anchor) = dyn_pose(&b.motion, tau, &b.state, sig) else {
+                        continue;
+                    };
+                    let steps = ((u_max / resolution).ceil() as usize).clamp(2, 400);
+                    let mut pts = Vec::with_capacity(steps + 1);
+                    let mut broke = false;
+                    for k in 0..=steps {
+                        let u = u_max * k as f64 / steps as f64;
+                        let local = match shape {
+                            Some(sh) => match dyn_pose_u(sh, tau, u, &b.state, sig) {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    broke = true;
+                                    break;
+                                }
+                            },
+                            None => Pose { x: u, y: 0.0, th: 0.0 }, // straight along +x
+                        };
+                        let w = anchor.compose(&local);
+                        pts.push((w.x, w.y));
+                    }
+                    if !broke {
+                        out.push(RenderItem::Polyline {
+                            pts,
+                            style: b.style.clone(),
+                            active: tau >= *warn,
+                            hue: self.sample_hue(b, tau),
+                        });
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -186,29 +230,24 @@ fn ambient(stack: &[TF]) -> Pose {
 /// Step one task until it blocks (wait) or completes. Returns true if done.
 fn step_task(
     task: &mut Task,
-    tick: u64,
-    bullets: &mut Vec<Bullet>,
-    events: &mut Vec<(u64, String)>,
-    new_tasks: &mut Vec<Task>,
     ctx: &mut Ctx,
+    world: &mut World,
+    new_tasks: &mut Vec<Task>,
 ) -> Result<bool, String> {
     if task.wait > 0 {
         task.wait -= 1;
         if task.wait > 0 {
             return Ok(false);
         }
-        // wait reached zero: resume on this tick (wait n = resume n ticks later)
     }
-    // fuel: a hostile card can slow the frame, not hang it (language.md §8)
     let mut fuel: u32 = 100_000;
     loop {
         fuel -= 1;
         if fuel == 0 {
             return Err("control-layer fuel exhausted this tick".into());
         }
-        // Find the next form to run from the top of the stack.
         let Some(top) = task.stack.last_mut() else {
-            return Ok(true); // task complete
+            return Ok(true);
         };
         let next: Option<(Form, Env)> = match top {
             TF::Frame(_) => {
@@ -230,14 +269,10 @@ fn step_task(
                     continue;
                 }
                 if *started && *every > 0 {
-                    // wait BETWEEN iterations (not after the last: checked above)
                     *started = false;
                     task.wait = *every;
-                    // fallthrough: pause now, resume into the body next time
-                    // (started=false means body comes next)
                     return Ok(false);
                 }
-                // enter body for iteration i
                 let mut e = env.bind(var.clone(), Val::Num(*i));
                 let idx_i = *i as i64;
                 for (nm, src) in seq_binds.iter() {
@@ -257,7 +292,6 @@ fn step_task(
             }
             TF::Loop { names, body, env, cur, idx } => {
                 if *idx >= body.len() {
-                    // fell off the end without recur: loop completes
                     task.stack.pop();
                     continue;
                 }
@@ -272,64 +306,58 @@ fn step_task(
         };
         let Some((form, env)) = next else { continue };
         ctx.ambient = ambient(&task.stack);
-        let v = evaluate(&form, &env, ctx)?;
-        match v {
-            Val::Action(a) => {
-                if run_action(&a, task, tick, bullets, events, new_tasks)? {
-                    return Ok(false); // blocked on wait
-                }
+        let v = evaluate(&form, &env, ctx, world)?;
+        if let Val::Action(a) = v {
+            if run_action(&a, task, ctx, world, new_tasks)? {
+                return Ok(false);
             }
-            _ => { /* non-action value in body position: discard */ }
         }
     }
 }
 
-/// Execute an evaluated action. Returns true if the task blocked.
+/// Execute an evaluated action inside a task. Returns true if the task blocked.
 fn run_action(
     a: &ActionV,
     task: &mut Task,
-    tick: u64,
-    bullets: &mut Vec<Bullet>,
-    events: &mut Vec<(u64, String)>,
+    ctx: &mut Ctx,
+    world: &mut World,
     new_tasks: &mut Vec<Task>,
 ) -> Result<bool, String> {
     match a {
-        ActionV::Nothing => Ok(false),
+        ActionV::Nothing
+        | ActionV::Event { .. }
+        | ActionV::Cull { .. }
+        | ActionV::Manipulate { .. }
+        | ActionV::Spawn { .. } => {
+            ctx.ambient = ambient(&task.stack);
+            exec_instant(a, ctx, world)?;
+            Ok(false)
+        }
         ActionV::Wait { ticks } => {
             task.wait = *ticks;
             Ok(*ticks > 0)
-        }
-        ActionV::Event { channel } => {
-            events.push((tick, channel.to_string()));
-            Ok(false)
-        }
-        ActionV::Spawn { dyns, styles } => {
-            let amb = ambient(&task.stack);
-            for (d, s) in dyns.iter().zip(styles.iter()) {
-                let motion = if amb == Pose::IDENTITY {
-                    d.clone()
-                } else {
-                    Rc::new(DynNode::Frame(Rc::new(DynNode::Const(amb)), d.clone()))
-                };
-                let scanned = is_scanned(&motion);
-                bullets.push(Bullet {
-                    motion,
-                    birth: tick,
-                    style: s.clone(),
-                    alive: true,
-                    state: MotionState::new(),
-                    scanned,
-                });
-            }
-            Ok(false)
         }
         ActionV::Seq { items, env } => {
             task.stack.push(TF::Seq { items: items.clone(), idx: 0, env: env.clone() });
             Ok(false)
         }
+        ActionV::Let { binds, body, env } => {
+            // action-valued bindings execute here, inside the ambient frame
+            ctx.ambient = ambient(&task.stack);
+            let mut e = env.clone();
+            for (name, v) in binds {
+                let bound = match v {
+                    Val::Action(a) => exec_instant(a, ctx, world)?,
+                    other => other.clone(),
+                };
+                e = e.bind(name.clone(), bound);
+            }
+            task.stack.push(TF::Seq { items: body.clone(), idx: 0, env: e });
+            Ok(false)
+        }
         ActionV::InFrame { frame, inner } => {
             task.stack.push(TF::Frame(*frame));
-            run_action(inner, task, tick, bullets, events, new_tasks)
+            run_action(inner, task, ctx, world, new_tasks)
         }
         ActionV::Dotimes { var, n, seq_binds, every_ticks, body, env } => {
             task.stack.push(TF::Dot {
@@ -355,7 +383,6 @@ fn run_action(
             Ok(false)
         }
         ActionV::Recur(vals) => {
-            // unwind to nearest Loop frame, rebind, restart
             while let Some(tf) = task.stack.last_mut() {
                 if let TF::Loop { cur, idx, .. } = tf {
                     *cur = vals.clone();
@@ -367,19 +394,17 @@ fn run_action(
             Err("recur outside loop".into())
         }
         ActionV::Fork(inner) => {
-            // prototype: forked child inherits the ambient frame as a snapshot
             let amb = ambient(&task.stack);
             let mut stack = Vec::new();
             if amb != Pose::IDENTITY {
                 stack.push(TF::Frame(amb));
             }
             let mut child = Task { stack, wait: 0 };
-            run_action(inner, &mut child, tick, bullets, events, new_tasks)?;
+            run_action(inner, &mut child, ctx, world, new_tasks)?;
             new_tasks.push(child);
             Ok(false)
         }
         ActionV::Par(kids) => {
-            // prototype: all children become tasks; completion tracking later
             for k in kids {
                 let amb = ambient(&task.stack);
                 let mut stack = Vec::new();
@@ -387,7 +412,7 @@ fn run_action(
                     stack.push(TF::Frame(amb));
                 }
                 let mut child = Task { stack, wait: 0 };
-                run_action(k, &mut child, tick, bullets, events, new_tasks)?;
+                run_action(k, &mut child, ctx, world, new_tasks)?;
                 new_tasks.push(child);
             }
             Ok(false)
@@ -409,6 +434,9 @@ mod tests {
             ("../../translations/040_spread.edn", "spread-demo", 300),
             ("../../translations/060_polar.edn", "polar-demo", 300),
             ("../../translations/080_aimed.edn", "aimed-demo", 400),
+            ("../../translations/070_dynamic_lasers.edn", "lasers-demo", 300),
+            ("../../translations/110_exploding_stars.edn", "exploding-stars", 400),
+            ("../../translations/200_cradle.edn", "cradle", 300),
         ];
         for (path, pattern, ticks) in cases {
             let src = std::fs::read_to_string(path)
@@ -420,7 +448,7 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{} [{}]: {}", path, pattern, e));
             }
             assert!(
-                !sim.bullets.is_empty(),
+                !sim.world.bullets.is_empty(),
                 "{} [{}]: no bullets after {} ticks",
                 path,
                 pattern,
@@ -429,7 +457,6 @@ mod tests {
         }
     }
 
-    /// BoWaP Version A, verbatim from translations/130_bowap.edn (code only).
     const BOWAP: &str = r#"
 (defpattern bowap [speed 4.0
                    arms  5
@@ -445,40 +472,30 @@ mod tests {
     #[test]
     fn bowap_headless() {
         let mut sim = Sim::load(BOWAP, Some("bowap")).unwrap();
-        // run 1 second = 120 ticks; volleys at tick 0, 8, ..., 112 → 15 volleys
         for _ in 0..120 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.bullets.len(), 15 * 5, "15 volleys × 5 arms");
+        assert_eq!(sim.world.bullets.len(), 15 * 5, "15 volleys × 5 arms");
 
-        // first volley, arm 0: base angle 0.4°, τ = 1s, speed 4, anchored at (0,2)
-        let b = &sim.bullets[0];
+        let sig = SigEnv::default();
+        let b = &sim.world.bullets[0];
         assert_eq!(b.birth, 0);
         assert_eq!(b.style.family, "gem");
         assert_eq!(b.style.color, "yellow");
-        assert_eq!(b.style.variant, "w");
-        let p = dyn_pose(&b.motion, 1.0, &b.state).unwrap();
+        let p = dyn_pose(&b.motion, 1.0, &b.state, &sig).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
 
-        // arm colors cycle the 5-palette
-        assert_eq!(sim.bullets[1].style.color, "orange");
-        assert_eq!(sim.bullets[4].style.color, "purple");
+        assert_eq!(sim.world.bullets[1].style.color, "orange");
+        assert_eq!(sim.world.bullets[4].style.color, "purple");
 
-        // second volley (i=1): base = 0.2*2*3 = 1.2°
-        let b5 = &sim.bullets[5];
+        let b5 = &sim.world.bullets[5];
         assert_eq!(b5.birth, 8);
-        let p5 = dyn_pose(&b5.motion, 0.0, &b5.state).unwrap();
-        assert!((p5.x - 0.0).abs() < 1e-9 && (p5.y - 2.0).abs() < 1e-9);
-        let heading = dyn_pose(&b5.motion, 1.0, &b5.state).unwrap();
-        let ang5 = (1.2f64).to_radians();
-        assert!((heading.x - 4.0 * ang5.cos()).abs() < 1e-9);
     }
 
     #[test]
     fn bowap_fold_version_matches() {
-        // Version B (loop/recur fold) from the same translation file.
         const BOWAP_B: &str = r#"
 (defpattern bowap-fold [speed 4.0
                         arms  5
@@ -500,11 +517,12 @@ mod tests {
             sa.step().unwrap();
             sb.step().unwrap();
         }
-        assert_eq!(sa.bullets.len(), sb.bullets.len());
-        // A and B are the same pattern: F3's telescoping claim, checked numerically
-        for (a, b) in sa.bullets.iter().zip(sb.bullets.iter()) {
+        assert_eq!(sa.world.bullets.len(), sb.world.bullets.len());
+        let sig = SigEnv::default();
+        for (a, b) in sa.world.bullets.iter().zip(sb.world.bullets.iter()) {
             assert_eq!(a.birth, b.birth);
-            let (pa, pb) = (dyn_pose(&a.motion, 0.7, &a.state).unwrap(), dyn_pose(&b.motion, 0.7, &b.state).unwrap());
+            let pa = dyn_pose(&a.motion, 0.7, &a.state, &sig).unwrap();
+            let pb = dyn_pose(&b.motion, 0.7, &b.state, &sig).unwrap();
             assert!(
                 (pa.x - pb.x).abs() < 1e-6 && (pa.y - pb.y).abs() < 1e-6,
                 "A/B diverged: {:?} vs {:?}",
@@ -512,5 +530,62 @@ mod tests {
                 pb
             );
         }
+    }
+
+    /// 110's mechanism end-to-end: let-bound spawn handles + scheduled
+    /// manipulate with explode-and-cull.
+    #[test]
+    fn handles_and_manipulate() {
+        const CARD: &str = r#"
+(defpattern boom []
+  ((pose c[0 1])
+    (let [stars (spawn (circle 4 (linear c[1 0])) {:style {:family :lstar}})]
+      (seq
+        (wait 0.5)
+        (manipulate (nth stars 0)
+          (fn [b]
+            (spawn (+ (pos b) (circle 8 (linear c[2 0])))
+                   {:style {:family :star}})
+            (cull b :soft)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("boom")).unwrap();
+        for _ in 0..120 {
+            sim.step().unwrap();
+        }
+        let lstars = sim.world.bullets.iter().filter(|b| b.style.family == "lstar").count();
+        let stars = sim.world.bullets.iter().filter(|b| b.style.family == "star").count();
+        assert_eq!(lstars, 3, "one big star culled");
+        assert_eq!(stars, 8, "explosion ring spawned");
+        // ring anchored at the culled star's position at t≈0.5 (x = 0.5 from
+        // anchor (0,1)); fn bodies drop the ambient frame, so no double anchor
+        let sig = SigEnv::default();
+        let ring: Vec<_> =
+            sim.world.bullets.iter().filter(|b| b.style.family == "star").collect();
+        let p = dyn_pose(&ring[0].motion, 0.0, &ring[0].state, &sig).unwrap();
+        assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
+    }
+
+    /// F15 in the sim: 200's variant (axis 0, len 3) and color (axis 1 via
+    /// explicit length 6) must bind to their axes, not the flat index.
+    #[test]
+    fn leading_axis_meta() {
+        const CARD: &str = r#"
+(defpattern axes []
+  (spawn (map (fn [idx] ((rot m"15*idx") (circle 6 (linear c[1 0]))))
+              (iota 3))
+         {:style {:family :x
+                  :variant [:b :c :w]
+                  :color (nth [:blue :green :teal] (iota 6))}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("axes")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.bullets.len(), 18);
+        let b = |k: usize| &sim.world.bullets[k].style;
+        assert_eq!(b(0).variant, "b");
+        assert_eq!(b(6).variant, "c");
+        assert_eq!(b(12).variant, "w");
+        assert_eq!(b(0).color, "blue");
+        assert_eq!(b(3).color, "blue"); // cycles within the ring axis
+        assert_eq!(b(7).color, "green");
     }
 }

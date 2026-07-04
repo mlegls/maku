@@ -15,7 +15,7 @@
 
 use danmaku_core::edn::{read_all, Form};
 use danmaku_core::interp::TICK_RATE;
-use danmaku_core::sim::{Inputs, Sim};
+use danmaku_core::sim::{Inputs, RenderItem, Sim};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -133,6 +133,50 @@ fn serve(port: u16) -> Receiver<String> {
     rx
 }
 
+/// Rotate a color's hue by `deg` (cheap RGB-space rotation).
+fn hue_shift(c: Color, deg: f64) -> Color {
+    if deg.abs() < 1e-9 {
+        return c;
+    }
+    let (h, s, l) = rgb_to_hsl(c);
+    hsl_to_rgb(((h + deg as f32).rem_euclid(360.0), s, l), c.a)
+}
+
+fn rgb_to_hsl(c: Color) -> (f32, f32, f32) {
+    let (r, g, b) = (c.r, c.g, c.b);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if (max - r).abs() < 1e-6 {
+        60.0 * (((g - b) / d).rem_euclid(6.0))
+    } else if (max - g).abs() < 1e-6 {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    (h, s, l)
+}
+
+fn hsl_to_rgb((h, s, l): (f32, f32, f32), a: f32) -> Color {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    Color::new(r + m, g + m, b + m, a)
+}
+
 fn style_color(color: &str) -> Color {
     match color {
         "red" => Color::from_rgba(0xff, 0x4d, 0x5e, 0xff),
@@ -144,6 +188,7 @@ fn style_color(color: &str) -> Color {
         "purple" => Color::from_rgba(0xb2, 0x7d, 0xff, 0xff),
         "pink" => Color::from_rgba(0xff, 0x85, 0xc2, 0xff),
         "black" => Color::from_rgba(0x60, 0x60, 0x70, 0xff),
+        "blueteal" => Color::from_rgba(0x4d, 0xbc, 0xe8, 0xff),
         _ => WHITE,
     }
 }
@@ -232,24 +277,42 @@ async fn main() {
         draw_circle_lines(mx, my, 8.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.8));
         draw_circle(mx, my, 2.5, WHITE);
         if let Some(sim) = &player.sim {
-            for b in sim.render() {
-                let sx = cx + b.x as f32 * PIXELS_PER_UNIT;
-                let sy = cy - b.y as f32 * PIXELS_PER_UNIT; // world y-up
-                let r = match b.style.family.as_str() {
-                    "lstar" | "gglcircle" => 10.0,
-                    "gem" | "star" => 5.0,
-                    _ => 6.0,
-                };
-                let col = style_color(&b.style.color);
-                draw_circle(sx, sy, r, col);
-                draw_circle_lines(sx, sy, r, 1.5, Color::new(1.0, 1.0, 1.0, 0.35));
+            let to_screen =
+                |x: f64, y: f64| (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT);
+            for item in sim.render() {
+                match item {
+                    RenderItem::Dot { x, y, style, hue, .. } => {
+                        let (sx, sy) = to_screen(x, y);
+                        let r = match style.family.as_str() {
+                            "lstar" | "gglcircle" => 10.0,
+                            "gem" | "star" => 5.0,
+                            _ => 6.0,
+                        };
+                        let col = hue_shift(style_color(&style.color), hue);
+                        draw_circle(sx, sy, r, col);
+                        draw_circle_lines(sx, sy, r, 1.5, Color::new(1.0, 1.0, 1.0, 0.35));
+                    }
+                    RenderItem::Polyline { pts, style, active, hue } => {
+                        let col = hue_shift(style_color(&style.color), hue);
+                        let (w, col) = if active {
+                            (6.0, col)
+                        } else {
+                            (1.5, Color::new(col.r, col.g, col.b, 0.45))
+                        };
+                        for seg in pts.windows(2) {
+                            let (ax, ay) = to_screen(seg[0].0, seg[0].1);
+                            let (bx, by) = to_screen(seg[1].0, seg[1].1);
+                            draw_line(ax, ay, bx, by, w, col);
+                        }
+                    }
+                }
             }
             draw_text(
                 &format!(
-                    "{}  tick {}  bullets {}  {}",
+                    "{}  tick {}  entities {}  {}",
                     player.status,
-                    sim.tick,
-                    sim.bullets.len(),
+                    sim.tick(),
+                    sim.world.bullets.len(),
                     if player.paused { "[paused]" } else { "" }
                 ),
                 12.0,

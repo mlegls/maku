@@ -2,13 +2,20 @@
 //!
 //! Per language.md §2: Actions are inert data; the scheduler (sim.rs) walks
 //! them with an explicit stack. Expressions evaluate instantly and purely;
-//! only Action leaves (wait/spawn/event) interact with time. Seq bodies are
-//! LAZY (each item form evaluates when reached), which gives loop-var and
-//! cell timing for free.
+//! only Action leaves interact with time or the world. Seq bodies are LAZY.
 //!
-//! Dyns: Closed nodes evaluate at arbitrary τ (slot-bound t, F12). Vel nodes
-//! are the first Scanned constructor: per-bullet state integrated per tick
-//! (state keyed by node identity; each bullet owns its state cells).
+//! Signals evaluate against a SigEnv (defs + injected snapshot) and never
+//! touch the world — the spec's purity rule is also what breaks the borrow
+//! cycle here. Scanned nodes (Vel) keep per-bullet state keyed by node
+//! identity.
+//!
+//! Two rules this prototype surfaced for the spec:
+//!  - `let` in action position defers action-valued bindings to scheduler
+//!    reach-time (a spawn executed at evaluation time would miss the ambient
+//!    frame the distribution law owes it).
+//!  - Ambient frames do not cross `fn` boundaries (manipulate callbacks spawn
+//!    in world coordinates; lexical distribution stops at lambdas, the same
+//!    way it stops at embedded patterns).
 
 use crate::edn::Form;
 use std::collections::HashMap;
@@ -44,7 +51,7 @@ pub enum DynNode {
     Const(Pose),
     /// pos = v·τ in the local frame; θ = heading.
     Linear { vx: f64, vy: f64 },
-    /// Closed position expression over slot-bound t (F12); polar or cart.
+    /// Closed position expression over slot-bound t (and u, for laser shapes).
     ClosedPt { a: Form, b: Form, polar: bool, env: Env },
     /// Integrated velocity (Scanned): components over slot-bound t.
     Vel { a: Form, b: Form, polar: bool, env: Env },
@@ -53,11 +60,32 @@ pub enum DynNode {
     Frame(Rc<DynNode>, Rc<DynNode>),
 }
 
-fn eval_pt(a: &Form, b: &Form, polar: bool, env: &Env, tau: f64) -> Result<(f64, f64), String> {
-    let e = env.bind("t".into(), Val::Num(tau));
-    let mut ctx = Ctx::default();
-    let av = evaluate(a, &e, &mut ctx)?.num()?;
-    let bv = evaluate(b, &e, &mut ctx)?.num()?;
+/// Extended entity (§6 axis materialization): a laser = anchor dyn + shape
+/// over (t, u) + lifecycle window.
+#[derive(Debug)]
+pub struct ExtLaser {
+    pub anchor: Rc<DynNode>,
+    pub shape: Option<Rc<DynNode>>, // None = straight along frame +x
+    pub warn: f64,
+    pub active: f64,
+    pub u_max: f64,
+    pub resolution: f64,
+}
+
+fn eval_pt(
+    a: &Form,
+    b: &Form,
+    polar: bool,
+    env: &Env,
+    sig: &SigEnv,
+    tau: f64,
+    u: f64,
+) -> Result<(f64, f64), String> {
+    let e = env.bind("t".into(), Val::Num(tau)).bind("u".into(), Val::Num(u));
+    let mut ctx = Ctx { sig: sig.clone(), ambient: Pose::IDENTITY };
+    let mut w = World::default(); // signals never touch the world (§2)
+    let av = evaluate(a, &e, &mut ctx, &mut w)?.num()?;
+    let bv = evaluate(b, &e, &mut ctx, &mut w)?.num()?;
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         Ok((av * c, av * s))
@@ -66,7 +94,17 @@ fn eval_pt(a: &Form, b: &Form, polar: bool, env: &Env, tau: f64) -> Result<(f64,
     }
 }
 
-pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState) -> Result<Pose, String> {
+pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
+    dyn_pose_u(d, tau, 0.0, state, sig)
+}
+
+pub fn dyn_pose_u(
+    d: &DynNode,
+    tau: f64,
+    u: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Pose, String> {
     match d {
         DynNode::Const(p) => Ok(*p),
         DynNode::Linear { vx, vy } => Ok(Pose {
@@ -75,51 +113,55 @@ pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState) -> Result<Pose, Stri
             th: vy.atan2(*vx).to_degrees(),
         }),
         DynNode::ClosedPt { a, b, polar, env } => {
-            let (x, y) = eval_pt(a, b, *polar, env, tau)?;
-            // heading by finite difference (orientation policy: derive by default)
+            let (x, y) = eval_pt(a, b, *polar, env, sig, tau, u)?;
             let eps = 1.0 / TICK_RATE;
-            let (x2, y2) = eval_pt(a, b, *polar, env, tau + eps)?;
+            let (x2, y2) = eval_pt(a, b, *polar, env, sig, tau + eps, u)?;
             Ok(Pose { x, y, th: (y2 - y).atan2(x2 - x).to_degrees() })
         }
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
             let [x, y] = state.get(&key).copied().unwrap_or([0.0, 0.0]);
-            let (vx, vy) = eval_pt(a, b, *polar, env, tau)?;
+            let (vx, vy) = eval_pt(a, b, *polar, env, sig, tau, u)?;
             Ok(Pose { x, y, th: vy.atan2(vx).to_degrees() })
         }
         DynNode::Translate { dx, dy, child } => {
-            let p = dyn_pose(child, tau, state)?;
+            let p = dyn_pose_u(child, tau, u, state, sig)?;
             Ok(Pose { x: p.x + dx, y: p.y + dy, th: p.th })
         }
         DynNode::Frame(parent, child) => {
-            let pp = dyn_pose(parent, tau, state)?;
-            let cp = dyn_pose(child, tau, state)?;
+            let pp = dyn_pose_u(parent, tau, u, state, sig)?;
+            let cp = dyn_pose_u(child, tau, u, state, sig)?;
             Ok(pp.compose(&cp))
         }
     }
 }
 
 /// Advance the Scanned leaves of a motion tree by one tick.
-pub fn step_motion(d: &DynNode, tau: f64, dt: f64, state: &mut MotionState) -> Result<(), String> {
+pub fn step_motion(
+    d: &DynNode,
+    tau: f64,
+    dt: f64,
+    state: &mut MotionState,
+    sig: &SigEnv,
+) -> Result<(), String> {
     match d {
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let (vx, vy) = eval_pt(a, b, *polar, env, tau)?;
+            let (vx, vy) = eval_pt(a, b, *polar, env, sig, tau, 0.0)?;
             let cell = state.entry(key).or_insert([0.0, 0.0]);
             cell[0] += vx * dt;
             cell[1] += vy * dt;
             Ok(())
         }
-        DynNode::Translate { child, .. } => step_motion(child, tau, dt, state),
+        DynNode::Translate { child, .. } => step_motion(child, tau, dt, state, sig),
         DynNode::Frame(a, b) => {
-            step_motion(a, tau, dt, state)?;
-            step_motion(b, tau, dt, state)
+            step_motion(a, tau, dt, state, sig)?;
+            step_motion(b, tau, dt, state, sig)
         }
         _ => Ok(()),
     }
 }
 
-/// True if any Scanned node exists (bullets without them never need stepping).
 pub fn is_scanned(d: &DynNode) -> bool {
     match d {
         DynNode::Vel { .. } => true,
@@ -129,8 +171,7 @@ pub fn is_scanned(d: &DynNode) -> bool {
     }
 }
 
-/// Does a form reference the slot-bound parameters t/u? (F12: such expressions
-/// denote signals; without them, the same constructor is a plain value.)
+/// Does a form reference the slot-bound parameters t/u? (F12)
 fn contains_t(form: &Form) -> bool {
     match form {
         Form::Sym(s) => &**s == "t" || &**s == "u",
@@ -140,12 +181,58 @@ fn contains_t(form: &Form) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// World: bullets + events. The control layer's mutable half.
+
 #[derive(Clone, Debug, Default)]
 pub struct Style {
     pub family: String,
     pub color: String,
     pub variant: String,
 }
+
+#[derive(Debug, Clone)]
+pub enum Kind {
+    Point,
+    Laser { shape: Option<Rc<DynNode>>, warn: f64, active: f64, u_max: f64, resolution: f64 },
+}
+
+/// A signal-valued meta tag sampled at render time (e.g. :hue).
+#[derive(Debug, Clone)]
+pub struct MetaSig {
+    pub form: Form,
+    pub env: Env,
+    pub idx: usize, // element index for array-valued tag signals
+}
+
+pub struct Bullet {
+    pub id: u64,
+    pub kind: Kind,
+    pub motion: Rc<DynNode>,
+    pub birth: u64,
+    pub style: Style,
+    pub alive: bool,
+    pub state: MotionState,
+    pub scanned: bool,
+    pub hue: Option<MetaSig>,
+}
+
+#[derive(Default)]
+pub struct World {
+    pub tick: u64,
+    pub next_id: u64,
+    pub bullets: Vec<Bullet>,
+    pub events: Vec<(u64, String)>,
+}
+
+impl World {
+    pub fn find(&self, id: u64) -> Option<usize> {
+        self.bullets.iter().position(|b| b.id == id && b.alive)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Values.
 
 #[derive(Clone, Debug)]
 pub enum Val {
@@ -158,7 +245,11 @@ pub enum Val {
     Arr(Rc<Vec<Val>>),
     Map(Rc<Vec<(Val, Val)>>),
     Dyn(Rc<DynNode>),
+    Ext(Rc<ExtLaser>),
     Action(Rc<ActionV>),
+    Fn { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
+    Builtin(Rc<str>),
+    Handle(u64),
     Nothing,
 }
 
@@ -171,13 +262,22 @@ impl Val {
     }
 }
 
+/// One spawn element: a plain dyn or an extended entity, plus its §5 shape
+/// path — (axis_len, index) per array level, root to leaf — for the F15
+/// leading-axis/by-length meta rule.
+pub struct SpawnElem {
+    pub motion: Rc<DynNode>,
+    pub kind: Kind,
+    pub path: Vec<(usize, usize)>,
+}
+
 /// Inert action descriptions. Bodies are unevaluated forms + env (lazy seq).
 #[derive(Debug)]
 pub enum ActionV {
     Seq { items: Rc<[Form]>, env: Env },
     Dotimes {
         var: Rc<str>,
-        n: f64, // f64::INFINITY for inf
+        n: f64,
         seq_binds: Vec<(Rc<str>, Val)>,
         every_ticks: u64,
         body: Rc<[Form]>,
@@ -186,12 +286,23 @@ pub enum ActionV {
     Loop { names: Vec<Rc<str>>, inits: Vec<Val>, body: Rc<[Form]>, env: Env },
     Recur(Vec<Val>),
     InFrame { frame: Pose, inner: Rc<ActionV> },
-    Spawn { dyns: Vec<Rc<DynNode>>, styles: Vec<Style> },
+    /// Bindings whose values are actions execute at scheduler reach-time
+    /// (inside the ambient frame); their results (e.g. spawn handles) bind.
+    Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
+    Spawn { dyns: Vec<SpawnMade>, styles: Vec<Style>, hues: Vec<Option<MetaSig>> },
+    Manipulate { targets: Vec<u64>, callback: Val },
+    Cull { target: u64 },
     Wait { ticks: u64 },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
     Event { channel: Rc<str> },
     Nothing,
+}
+
+#[derive(Debug)]
+pub struct SpawnMade {
+    pub motion: Rc<DynNode>,
+    pub kind: Kind,
 }
 
 // ---------------------------------------------------------------------------
@@ -231,18 +342,20 @@ impl Env {
 
 pub struct Pattern {
     pub name: String,
-    pub params: Vec<(Rc<str>, Form)>, // name, default expr
+    pub params: Vec<(Rc<str>, Form)>,
     pub body: Rc<[Form]>,
 }
 
 pub struct Card {
     pub patterns: HashMap<String, Pattern>,
     pub order: Vec<String>,
+    pub defs: HashMap<String, Form>,
 }
 
 pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut patterns = HashMap::new();
     let mut order = Vec::new();
+    let mut defs = HashMap::new();
     for f in forms {
         if let Form::List(items) = f {
             match items.first() {
@@ -272,32 +385,53 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     order.push(name.clone());
                     patterns.insert(name.clone(), Pattern { name, params, body });
                 }
-                // defn/def/defvar: next milestone
+                Some(Form::Sym(s)) if &**s == "def" => {
+                    if let Some(Form::Sym(n)) = items.get(1) {
+                        defs.insert(n.to_string(), items[2].clone());
+                    }
+                }
+                Some(Form::Sym(s)) if &**s == "defn" => {
+                    // (defn name [params] body...) → def name (fn [params] body...)
+                    if let Some(Form::Sym(n)) = items.get(1) {
+                        let mut fnform = vec![Form::sym("fn")];
+                        fnform.extend(items[2..].iter().cloned());
+                        defs.insert(n.to_string(), Form::list(fnform));
+                    }
+                }
                 _ => {}
             }
         }
     }
-    Ok(Card { patterns, order })
+    Ok(Card { patterns, order, defs })
 }
 
 // ---------------------------------------------------------------------------
-// Expression evaluation.
+// Contexts.
 
-/// Evaluation context: injected snapshot + the lexically distributed ambient
-/// frame (needed by `aim`, which is relative to the emitter).
-#[derive(Clone, Debug)]
-pub struct Ctx {
+/// What signals may see: top-level defs + the injected snapshot. Never the
+/// world (the purity rule, load-bearing for the borrow structure too).
+#[derive(Clone, Default)]
+pub struct SigEnv {
+    pub defs: Rc<HashMap<String, Form>>,
     pub player: (f64, f64),
+}
+
+#[derive(Clone)]
+pub struct Ctx {
+    pub sig: SigEnv,
     pub ambient: Pose,
 }
 
 impl Default for Ctx {
     fn default() -> Self {
-        Ctx { player: (0.0, -4.0), ambient: Pose::IDENTITY }
+        Ctx { sig: SigEnv { defs: Rc::new(HashMap::new()), player: (0.0, -4.0) }, ambient: Pose::IDENTITY }
     }
 }
 
-pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+// ---------------------------------------------------------------------------
+// Expression evaluation.
+
+pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     match form {
         Form::Num(n) => Ok(Val::Num(*n)),
         Form::Bool(b) => Ok(Val::Bool(*b)),
@@ -305,42 +439,57 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
         Form::Kw(k) => Ok(Val::Kw(k.clone())),
         Form::Sym(s) => match &**s {
             "inf" => Ok(Val::Num(f64::INFINITY)),
-            // injected signal, snapped by default (§3)
-            "player" => Ok(Val::Vec2 { x: ctx.player.0, y: ctx.player.1 }),
-            name => env
-                .lookup(name)
-                .ok_or_else(|| format!("unresolved symbol '{}'", name)),
+            "player" => Ok(Val::Vec2 { x: ctx.sig.player.0, y: ctx.sig.player.1 }),
+            name => {
+                if let Some(v) = env.lookup(name) {
+                    return Ok(v);
+                }
+                if let Some(f) = ctx.sig.defs.clone().get(name) {
+                    // hygienic except the slot-bound parameters: a def'd
+                    // signal's t IS the referencing slot's t (F12)
+                    let mut e = Env::empty();
+                    for slot in ["t", "u"] {
+                        if let Some(v) = env.lookup(slot) {
+                            e = e.bind(slot.into(), v);
+                        }
+                    }
+                    return evaluate(f, &e, ctx, world);
+                }
+                if is_builtin(name) {
+                    return Ok(Val::Builtin(s.clone()));
+                }
+                Err(format!("unresolved symbol '{}'", name))
+            }
         },
         Form::Vector(items) => {
             let vals = items
                 .iter()
-                .map(|i| evaluate(i, env, ctx))
+                .map(|i| evaluate(i, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Val::Arr(Rc::new(vals)))
         }
         Form::Map(kvs) => {
             let pairs = kvs
                 .iter()
-                .map(|(k, v)| Ok((evaluate(k, env, ctx)?, evaluate(v, env, ctx)?)))
+                .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, evaluate(v, env, ctx, world)?)))
                 .collect::<Result<Vec<_>, String>>()?;
             Ok(Val::Map(Rc::new(pairs)))
         }
-        Form::List(items) => evaluate_list(items, env, ctx),
+        Form::List(items) => evaluate_list(items, env, ctx, world),
     }
 }
 
-fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let head = items.first().ok_or("cannot evaluate empty list")?;
 
-    // Special forms first.
     if let Form::Sym(s) = head {
         match &**s {
-            "dotimes" => return sf_dotimes(items, env, ctx),
-            "loop" => return sf_loop(items, env, ctx),
+            "dotimes" => return sf_dotimes(items, env, ctx, world),
+            "loop" => return sf_loop(items, env, ctx, world),
             "recur" => {
                 let vals = items[1..]
                     .iter()
-                    .map(|f| evaluate(f, env, ctx))
+                    .map(|f| evaluate(f, env, ctx, world))
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(Val::Action(Rc::new(ActionV::Recur(vals))));
             }
@@ -353,16 +502,16 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String
             "par" => {
                 let kids = items[1..]
                     .iter()
-                    .map(|f| as_action(evaluate(f, env, ctx)?))
+                    .map(|f| as_action(evaluate(f, env, ctx, world)?))
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(Val::Action(Rc::new(ActionV::Par(kids))));
             }
             "fork" => {
-                let inner = as_action(evaluate(&items[1], env, ctx)?)?;
+                let inner = as_action(evaluate(&items[1], env, ctx, world)?)?;
                 return Ok(Val::Action(Rc::new(ActionV::Fork(inner))));
             }
             "when" => {
-                let c = evaluate(&items[1], env, ctx)?;
+                let c = evaluate(&items[1], env, ctx, world)?;
                 return if truthy(&c) {
                     Ok(Val::Action(Rc::new(ActionV::Seq {
                         items: items[2..].to_vec().into(),
@@ -373,40 +522,81 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String
                 };
             }
             "if" => {
-                let c = evaluate(&items[1], env, ctx)?;
+                let c = evaluate(&items[1], env, ctx, world)?;
                 return if truthy(&c) {
-                    evaluate(&items[2], env, ctx)
+                    evaluate(&items[2], env, ctx, world)
                 } else if items.len() > 3 {
-                    evaluate(&items[3], env, ctx)
+                    evaluate(&items[3], env, ctx, world)
                 } else {
                     Ok(Val::Nothing)
                 };
             }
-            "let" => return sf_let(items, env, ctx),
+            "let" => return sf_let(items, env, ctx, world),
+            "fn" => {
+                let Some(Form::Vector(ps)) = items.get(1) else {
+                    return Err("fn: expected param vector".into());
+                };
+                let params: Vec<Rc<str>> = ps
+                    .iter()
+                    .map(|p| match p {
+                        Form::Sym(n) => Ok(n.clone()),
+                        _ => Err("fn: bad param (destructuring unimplemented)".to_string()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Val::Fn {
+                    params: params.into(),
+                    body: items[2..].to_vec().into(),
+                    env: env.clone(),
+                });
+            }
             "wait" => {
-                let secs = evaluate(&items[1], env, ctx)?.num()?;
+                let secs = evaluate(&items[1], env, ctx, world)?.num()?;
                 return Ok(Val::Action(Rc::new(ActionV::Wait {
                     ticks: (secs * TICK_RATE).round().max(0.0) as u64,
                 })));
             }
             "event" => {
-                let ch = match evaluate(&items[1], env, ctx)? {
+                let ch = match evaluate(&items[1], env, ctx, world)? {
                     Val::Kw(k) => k,
                     v => return Err(format!("event: expected channel keyword, got {:?}", v)),
                 };
                 return Ok(Val::Action(Rc::new(ActionV::Event { channel: ch })));
             }
-            "spawn" => return sf_spawn(items, env, ctx),
+            "spawn" => return sf_spawn(items, env, ctx, world),
+            "manipulate" => {
+                let target = evaluate(&items[1], env, ctx, world)?;
+                let callback = evaluate(&items[2], env, ctx, world)?;
+                let mut targets = Vec::new();
+                collect_handles(&target, &mut targets)?;
+                return Ok(Val::Action(Rc::new(ActionV::Manipulate { targets, callback })));
+            }
+            "cull" => {
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("cull: expected bullet handle".into());
+                };
+                return Ok(Val::Action(Rc::new(ActionV::Cull { target: id })));
+            }
+            "pos" => {
+                // (pos b): the bullet's current world position — world read.
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("pos: expected bullet handle".into());
+                };
+                let Some(i) = world.find(id) else {
+                    return Err("pos: dead handle".into());
+                };
+                let b = &world.bullets[i];
+                let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                let p = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
+                return Ok(Val::Vec2 { x: p.x, y: p.y });
+            }
             "in-frame" => {
-                let frame = as_pose(evaluate(&items[1], env, ctx)?)?;
-                let child = evaluate(&items[2], env, ctx)?;
+                let frame = as_pose(evaluate(&items[1], env, ctx, world)?)?;
+                let child = evaluate(&items[2], env, ctx, world)?;
                 return apply_frame_val(frame, child);
             }
-            "circle" => return sf_circle(items, env, ctx),
-            "arrow" => return sf_arrow(items, env, ctx),
-            "fan" => return sf_fan(items, env, ctx),
-            // F12: cart/polar with slot-bound t denote Closed position signals;
-            // without t they are plain point values (handled by builtin).
+            "circle" => return sf_circle(items, env, ctx, world),
+            "arrow" => return sf_arrow(items, env, ctx, world),
+            "fan" => return sf_fan(items, env, ctx, world),
             "cart" | "polar" if items[1..].iter().any(contains_t) => {
                 if items.len() != 3 {
                     return Err(format!("{}: expected two components", s));
@@ -418,54 +608,194 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String
                     env: env.clone(),
                 })));
             }
-            "vel" => return sf_vel(items, env, ctx),
+            "vel" => return sf_vel(items, env, ctx, world),
+            "laser" => return sf_laser(items, env, ctx, world),
             "aim" => {
-                // (aim player): rot toward the (snapped) target, relative to
-                // the ambient emitter frame.
-                let target = evaluate(&items[1], env, ctx)?;
+                let target = evaluate(&items[1], env, ctx, world)?;
                 let Val::Vec2 { x, y } = target else {
                     return Err("aim: expected a point target".into());
                 };
-                let world =
-                    (y - ctx.ambient.y).atan2(x - ctx.ambient.x).to_degrees();
-                return Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: world - ctx.ambient.th }));
+                let world_ang = (y - ctx.ambient.y).atan2(x - ctx.ambient.x).to_degrees();
+                return Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: world_ang - ctx.ambient.th }));
             }
-            "fn" | "defn" | "defvar" | "set!" | "phases" | "stages" | "scan" => {
+            "map" => {
+                let f = evaluate(&items[1], env, ctx, world)?;
+                let Val::Arr(xs) = evaluate(&items[2], env, ctx, world)? else {
+                    return Err("map: expected array".into());
+                };
+                let out = xs
+                    .iter()
+                    .map(|x| apply_fn(f.clone(), &[x.clone()], ctx, world))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Val::Arr(Rc::new(out)));
+            }
+            "defvar" | "set!" | "phases" | "stages" | "scan" | "wait-for" => {
                 return Err(format!("'{}' not implemented in this milestone", s));
             }
             _ => {}
         }
     }
 
-    // Ordinary application. Symbols with no lexical binding resolve as builtins;
-    // anything else evaluates the head and dispatches on the value (applicable
-    // frames, language.md §4).
+    // Ordinary application.
     if let Form::Sym(name) = head {
-        if env.lookup(name).is_none() && &**name != "player" {
+        if env.lookup(name).is_none()
+            && !ctx.sig.defs.contains_key(&**name)
+            && &**name != "player"
+        {
             let args = items[1..]
                 .iter()
-                .map(|f| evaluate(f, env, ctx))
+                .map(|f| evaluate(f, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
             return builtin(name, &args);
         }
     }
-    let hv = evaluate(head, env, ctx)?;
+    let hv = evaluate(head, env, ctx, world)?;
     match hv {
         Val::Pose(p) => {
             if items.len() != 2 {
                 return Err("frame application takes exactly one child".into());
             }
-            let child = evaluate(&items[1], env, ctx)?;
+            let child = evaluate(&items[1], env, ctx, world)?;
             apply_frame_val(p, child)
         }
         Val::Arr(_) => {
             if items.len() != 2 {
                 return Err("frame-array application takes exactly one child".into());
             }
-            let child = evaluate(&items[1], env, ctx)?;
+            let child = evaluate(&items[1], env, ctx, world)?;
             apply_frame_arr(&hv, child)
         }
+        f @ (Val::Fn { .. } | Val::Builtin(_)) => {
+            let args = items[1..]
+                .iter()
+                .map(|x| evaluate(x, env, ctx, world))
+                .collect::<Result<Vec<_>, _>>()?;
+            apply_fn(f, &args, ctx, world)
+        }
         _ => Err(format!("cannot apply {:?}", hv)),
+    }
+}
+
+/// Apply a user fn or builtin. Ambient frames do not cross fn boundaries.
+pub fn apply_fn(f: Val, args: &[Val], ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    match f {
+        Val::Builtin(name) => builtin(&name, args),
+        Val::Fn { params, body, env } => {
+            let mut e = env.clone();
+            for (p, a) in params.iter().zip(args.iter()) {
+                e = e.bind(p.clone(), a.clone());
+            }
+            let saved_ambient = ctx.ambient;
+            ctx.ambient = Pose::IDENTITY;
+            let mut last = Val::Nothing;
+            let mut result = Ok(());
+            for form in body.iter() {
+                match evaluate(form, &e, ctx, world) {
+                    Ok(v) => {
+                        // instantaneous actions in fn bodies execute in place
+                        // (manipulate callbacks: event/spawn/cull)
+                        if let Val::Action(a) = &v {
+                            if let Err(err) = exec_instant(a, ctx, world) {
+                                result = Err(err);
+                                break;
+                            }
+                        }
+                        last = v;
+                    }
+                    Err(err) => {
+                        result = Err(err);
+                        break;
+                    }
+                }
+            }
+            ctx.ambient = saved_ambient;
+            result.map(|_| last)
+        }
+        v => Err(format!("cannot apply {:?}", v)),
+    }
+}
+
+/// Execute an instantaneous action immediately (fn bodies, let bindings).
+/// Returns the action's result value (spawn → handles).
+pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    match a {
+        ActionV::Nothing => Ok(Val::Nothing),
+        ActionV::Event { channel } => {
+            world.events.push((world.tick, channel.to_string()));
+            Ok(Val::Nothing)
+        }
+        ActionV::Cull { target } => {
+            if let Some(i) = world.find(*target) {
+                world.bullets[i].alive = false;
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::Spawn { dyns, styles, hues } => {
+            let mut handles = Vec::new();
+            for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
+                let motion = if ctx.ambient == Pose::IDENTITY {
+                    d.motion.clone()
+                } else {
+                    Rc::new(DynNode::Frame(
+                        Rc::new(DynNode::Const(ctx.ambient)),
+                        d.motion.clone(),
+                    ))
+                };
+                let scanned = is_scanned(&motion);
+                let id = world.next_id;
+                world.next_id += 1;
+                world.bullets.push(Bullet {
+                    id,
+                    kind: d.kind.clone(),
+                    motion,
+                    birth: world.tick,
+                    style: s.clone(),
+                    alive: true,
+                    state: MotionState::new(),
+                    scanned,
+                    hue: h.clone(),
+                });
+                handles.push(Val::Handle(id));
+            }
+            Ok(Val::Arr(Rc::new(handles)))
+        }
+        ActionV::Manipulate { targets, callback } => {
+            for id in targets {
+                if world.find(*id).is_some() {
+                    apply_fn(callback.clone(), &[Val::Handle(*id)], ctx, world)?;
+                }
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::Seq { items, env } => {
+            // instantaneous only: run each item now
+            let mut e = Ctx { sig: ctx.sig.clone(), ambient: ctx.ambient };
+            for f in items.iter() {
+                let v = evaluate(f, env, &mut e, world)?;
+                if let Val::Action(a) = &v {
+                    exec_instant(a, &mut e, world)?;
+                }
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::Wait { .. } => Err("cannot wait in instantaneous context (fn body)".into()),
+        other => Err(format!("action not instantaneous: {:?}", other)),
+    }
+}
+
+fn collect_handles(v: &Val, out: &mut Vec<u64>) -> Result<(), String> {
+    match v {
+        Val::Handle(id) => {
+            out.push(*id);
+            Ok(())
+        }
+        Val::Arr(items) => {
+            for i in items.iter() {
+                collect_handles(i, out)?;
+            }
+            Ok(())
+        }
+        v => Err(format!("expected handle(s), got {:?}", v)),
     }
 }
 
@@ -483,7 +813,6 @@ fn as_action(v: Val) -> Result<Rc<ActionV>, String> {
 fn as_pose(v: Val) -> Result<Pose, String> {
     match v {
         Val::Pose(p) => Ok(p),
-        // point→pose promotion (language.md §2)
         Val::Vec2 { x, y } => Ok(Pose { x, y, th: 0.0 }),
         v => Err(format!("expected pose, got {:?}", v)),
     }
@@ -498,8 +827,6 @@ fn as_dyn(v: Val) -> Result<Rc<DynNode>, String> {
     }
 }
 
-/// Frame applied to a value: dyn/pose → composed dyn; action → InFrame action;
-/// array → per-element (§5: ordinary map).
 fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
     match child {
         Val::Action(a) => Ok(Val::Action(Rc::new(ActionV::InFrame { frame, inner: a }))),
@@ -510,6 +837,14 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Val::Arr(Rc::new(out)))
         }
+        Val::Ext(l) => Ok(Val::Ext(Rc::new(ExtLaser {
+            anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), l.anchor.clone())),
+            shape: l.shape.clone(),
+            warn: l.warn,
+            active: l.active,
+            u_max: l.u_max,
+            resolution: l.resolution,
+        }))),
         other => {
             let d = as_dyn(other)?;
             Ok(Val::Dyn(Rc::new(DynNode::Frame(
@@ -532,23 +867,39 @@ fn apply_frame_arr(frames: &Val, child: Val) -> Result<Val, String> {
 // ---------------------------------------------------------------------------
 // Special forms.
 
-fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let Some(Form::Vector(binds)) = items.get(1) else {
         return Err("let: expected binding vector".into());
     };
     if binds.len() % 2 != 0 {
         return Err("let: odd binding vector".into());
     }
+    // Evaluate bindings. If any binding value is an ACTION, defer the whole
+    // let to scheduler reach-time (Action::Let) so e.g. spawns execute inside
+    // the ambient frame and their handles bind.
     let mut e = env.clone();
+    let mut deferred: Vec<(Rc<str>, Val)> = Vec::new();
+    let mut any_action = false;
     for c in binds.chunks(2) {
         let Form::Sym(name) = &c[0] else {
             return Err("let: bad binding name (destructuring unimplemented)".into());
         };
-        let v = evaluate(&c[1], &e, ctx)?;
-        e = e.bind(name.clone(), v);
+        let v = evaluate(&c[1], &e, ctx, world)?;
+        if matches!(v, Val::Action(_)) {
+            any_action = true;
+        }
+        e = e.bind(name.clone(), v.clone());
+        deferred.push((name.clone(), v));
+    }
+    if any_action {
+        return Ok(Val::Action(Rc::new(ActionV::Let {
+            binds: deferred,
+            body: items[2..].to_vec().into(),
+            env: env.clone(),
+        })));
     }
     match items.len() - 2 {
-        1 => evaluate(&items[2], &e, ctx),
+        1 => evaluate(&items[2], &e, ctx, world),
         _ => Ok(Val::Action(Rc::new(ActionV::Seq {
             items: items[2..].to_vec().into(),
             env: e,
@@ -556,7 +907,7 @@ fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
     }
 }
 
-fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let Some(Form::Vector(spec)) = items.get(1) else {
         return Err("dotimes: expected binding vector".into());
     };
@@ -566,7 +917,7 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
     while k < spec.len() {
         if let Form::Kw(kw) = &spec[k] {
             if &**kw == "every" {
-                let secs = evaluate(&spec[k + 1], env, ctx)?.num()?;
+                let secs = evaluate(&spec[k + 1], env, ctx, world)?.num()?;
                 every_ticks = (secs * TICK_RATE).round().max(0.0) as u64;
                 k += 2;
                 continue;
@@ -582,14 +933,14 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
     let Form::Sym(var) = counter.0 else {
         return Err("dotimes: bad counter name".into());
     };
-    let n = evaluate(counter.1, env, ctx)?.num()?;
+    let n = evaluate(counter.1, env, ctx, world)?.num()?;
     let seq_binds = rest
         .iter()
         .map(|(name, src)| {
             let Form::Sym(nm) = name else {
                 return Err("dotimes: bad seq binding name".to_string());
             };
-            Ok((nm.clone(), evaluate(src, env, ctx)?))
+            Ok((nm.clone(), evaluate(src, env, ctx, world)?))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Val::Action(Rc::new(ActionV::Dotimes {
@@ -602,7 +953,7 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
     })))
 }
 
-fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let Some(Form::Vector(binds)) = items.get(1) else {
         return Err("loop: expected binding vector".into());
     };
@@ -616,7 +967,7 @@ fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
             return Err("loop: bad binding name".into());
         };
         names.push(name.clone());
-        inits.push(evaluate(&c[1], env, ctx)?);
+        inits.push(evaluate(&c[1], env, ctx, world)?);
     }
     Ok(Val::Action(Rc::new(ActionV::Loop {
         names,
@@ -626,8 +977,7 @@ fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
     })))
 }
 
-fn sf_vel(items: &[Form], env: &Env, _ctx: &mut Ctx) -> Result<Val, String> {
-    // (vel c[..]) / (vel p[..]): components as forms over slot-bound t.
+fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let Some(Form::List(arg)) = items.get(1) else {
         return Err("vel: expected a coordinate argument".into());
     };
@@ -639,36 +989,124 @@ fn sf_vel(items: &[Form], env: &Env, _ctx: &mut Ctx) -> Result<Val, String> {
     if comps.len() != 2 {
         return Err("vel: expected two components".into());
     }
-    Ok(Val::Dyn(Rc::new(DynNode::Vel {
+    let node = Rc::new(DynNode::Vel {
         a: comps[0].clone(),
         b: comps[1].clone(),
         polar,
         env: env.clone(),
+    });
+    match items.get(2) {
+        None => Ok(Val::Dyn(node)),
+        Some(cf) => {
+            // trailing-child sugar on dyn constructors
+            let child = evaluate(cf, env, ctx, world)?;
+            match child {
+                Val::Arr(_) => {
+                    // one vel frame carrying an array of children: product
+                    let Val::Arr(kids) = child else { unreachable!() };
+                    let out = kids
+                        .iter()
+                        .map(|k| {
+                            Ok(Val::Dyn(Rc::new(DynNode::Frame(node.clone(), as_dyn(k.clone())?))))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    Ok(Val::Arr(Rc::new(out)))
+                }
+                other => Ok(Val::Dyn(Rc::new(DynNode::Frame(node, as_dyn(other)?)))),
+            }
+        }
+    }
+}
+
+fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    // (laser shape? opts): shape is a dyn over (t, u); opts is a map.
+    let (shape, opts_idx) = match items.get(1) {
+        Some(Form::Map(_)) => (None, 1),
+        Some(_) => {
+            let sv = evaluate(&items[1], env, ctx, world)?;
+            (Some(as_dyn(sv)?), 2)
+        }
+        None => return Err("laser: expected options".into()),
+    };
+    let opts = match items.get(opts_idx) {
+        Some(m) => evaluate(m, env, ctx, world)?,
+        None => Val::Map(Rc::new(vec![])),
+    };
+    let getf = |key: &str, dflt: f64| -> f64 {
+        map_get(&opts, key).and_then(|v| v.num().ok()).unwrap_or(dflt)
+    };
+    Ok(Val::Ext(Rc::new(ExtLaser {
+        anchor: Rc::new(DynNode::Const(Pose::IDENTITY)),
+        shape,
+        warn: getf("warn", 0.0),
+        active: getf("active", f64::INFINITY),
+        u_max: getf("u-max", 10.0),
+        resolution: getf("resolution", 0.1),
     })))
 }
 
-fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
-    let dv = evaluate(&items[1], env, ctx)?;
+/// Meta keys whose values are signals sampled later (§7): never evaluated at
+/// spawn time (they reference slot-bound t).
+const SIGNAL_TAGS: &[&str] = &["hue", "facing"];
+
+fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let dv = evaluate(&items[1], env, ctx, world)?;
     let meta = match items.get(2) {
-        Some(m) => evaluate(m, env, ctx)?,
+        Some(Form::Map(kvs)) => {
+            let mut pairs = Vec::new();
+            for (k, v) in kvs.iter() {
+                let kv = evaluate(k, env, ctx, world)?;
+                let skip = matches!(&kv, Val::Kw(kw) if SIGNAL_TAGS.contains(&kw.as_ref()));
+                let vv = if skip { Val::Nothing } else { evaluate(v, env, ctx, world)? };
+                pairs.push((kv, vv));
+            }
+            Val::Map(Rc::new(pairs))
+        }
+        Some(m) => evaluate(m, env, ctx, world)?,
         None => Val::Map(Rc::new(vec![])),
     };
-    let mut dyns = Vec::new();
-    flatten_dyns(dv, &mut dyns)?;
-    let styles = resolve_styles(&meta, dyns.len())?;
-    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles })))
+    let mut elems = Vec::new();
+    flatten_elems(dv, &mut Vec::new(), &mut elems)?;
+    let styles = resolve_styles(&meta, &elems)?;
+    let hues = resolve_hue(items.get(2), &meta, env, elems.len());
+    let dyns = elems
+        .into_iter()
+        .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
+        .collect();
+    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues })))
 }
 
-fn flatten_dyns(v: Val, out: &mut Vec<Rc<DynNode>>) -> Result<(), String> {
+fn flatten_elems(
+    v: Val,
+    path: &mut Vec<(usize, usize)>,
+    out: &mut Vec<SpawnElem>,
+) -> Result<(), String> {
     match v {
         Val::Arr(items) => {
-            for i in items.iter() {
-                flatten_dyns(i.clone(), out)?;
+            let len = items.len();
+            for (i, item) in items.iter().enumerate() {
+                path.push((len, i));
+                flatten_elems(item.clone(), path, out)?;
+                path.pop();
             }
             Ok(())
         }
+        Val::Ext(l) => {
+            out.push(SpawnElem {
+                motion: l.anchor.clone(),
+                kind: Kind::Laser {
+                    shape: l.shape.clone(),
+                    warn: l.warn,
+                    active: l.active,
+                    u_max: l.u_max,
+                    resolution: l.resolution,
+                },
+                path: path.clone(),
+            });
+            Ok(())
+        }
         other => {
-            out.push(as_dyn(other)?);
+            out.push(SpawnElem { motion: as_dyn(other)?, kind: Kind::Point, path: path.clone() });
             Ok(())
         }
     }
@@ -695,83 +1133,149 @@ fn kw_str(v: &Val) -> String {
     }
 }
 
-/// Resolve `:style` meta for n elements: axis arrays zip cyclically against
-/// the (flattened, leading-axis-major) element index — prototype simplification
-/// of the §5 leading-axis rule.
-fn resolve_styles(meta: &Val, n: usize) -> Result<Vec<Style>, String> {
-    let style = map_get(meta, "style").unwrap_or(Val::Map(Rc::new(vec![])));
-    let get_axis = |key: &str, k: usize| -> String {
-        match map_get(&style, key) {
-            Some(Val::Arr(items)) if !items.is_empty() => kw_str(&items[k % items.len()]),
-            Some(v) => kw_str(&v),
-            None => String::new(),
+/// §5/F15: a meta axis array binds to the first array level (root to leaf)
+/// whose length matches; otherwise it cycles on the flat index.
+fn axis_value(v: &Val, elem: &SpawnElem, flat: usize) -> String {
+    match v {
+        Val::Arr(items) if !items.is_empty() => {
+            let len = items.len();
+            for (axis_len, idx) in &elem.path {
+                if *axis_len == len {
+                    return kw_str(&items[idx % len]);
+                }
+            }
+            kw_str(&items[flat % len])
         }
-    };
-    Ok((0..n)
-        .map(|k| Style {
-            family: get_axis("family", k),
-            color: get_axis("color", k),
-            variant: get_axis("variant", k),
+        v => kw_str(v),
+    }
+}
+
+fn resolve_styles(meta: &Val, elems: &[SpawnElem]) -> Result<Vec<Style>, String> {
+    let style = map_get(meta, "style").unwrap_or(Val::Map(Rc::new(vec![])));
+    Ok(elems
+        .iter()
+        .enumerate()
+        .map(|(k, e)| Style {
+            family: map_get(&style, "family").map(|v| axis_value(&v, e, k)).unwrap_or_default(),
+            color: map_get(&style, "color").map(|v| axis_value(&v, e, k)).unwrap_or_default(),
+            variant: map_get(&style, "variant").map(|v| axis_value(&v, e, k)).unwrap_or_default(),
         })
         .collect())
 }
 
-/// Pose-array formation with optional trailing child (frame sugar).
+/// :hue is signal-valued meta (§7): keep the FORM and sample at render time.
+fn resolve_hue(meta_form: Option<&Form>, meta: &Val, env: &Env, n: usize) -> Vec<Option<MetaSig>> {
+    let has_hue = map_get(meta, "hue").is_some();
+    if !has_hue {
+        return vec![None; n];
+    }
+    // find the hue form in the meta map form
+    if let Some(Form::Map(kvs)) = meta_form {
+        for (k, v) in kvs.iter() {
+            if let Form::Kw(kw) = k {
+                if &**kw == "hue" {
+                    return (0..n)
+                        .map(|idx| Some(MetaSig { form: v.clone(), env: env.clone(), idx }))
+                        .collect();
+                }
+            }
+        }
+    }
+    vec![None; n]
+}
+
 fn formation(
     poses: Vec<Pose>,
     child: Option<&Form>,
     env: &Env,
     ctx: &mut Ctx,
+    world: &mut World,
 ) -> Result<Val, String> {
     let arr = Val::Arr(Rc::new(poses.into_iter().map(Val::Pose).collect()));
     match child {
         None => Ok(arr),
         Some(cf) => {
-            let child = evaluate(cf, env, ctx)?;
+            let child = evaluate(cf, env, ctx, world)?;
             apply_frame_arr(&arr, child)
         }
     }
 }
 
-fn sf_circle(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
-    let n = evaluate(&items[1], env, ctx)?.num()? as usize;
+fn sf_circle(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let n = evaluate(&items[1], env, ctx, world)?.num()? as usize;
     if n == 0 {
         return Err("circle: zero elements".into());
     }
     let poses = (0..n)
         .map(|k| Pose { x: 0.0, y: 0.0, th: k as f64 * 360.0 / n as f64 })
         .collect();
-    formation(poses, items.get(2), env, ctx)
+    formation(poses, items.get(2), env, ctx, world)
 }
 
-fn sf_arrow(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
-    // (arrow n back side child?): chevron {(-back*|j|, side*j)}, j centered.
-    let n = evaluate(&items[1], env, ctx)?.num()? as i64;
-    let back = evaluate(&items[2], env, ctx)?.num()?;
-    let side = evaluate(&items[3], env, ctx)?.num()?;
+fn sf_arrow(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let n = evaluate(&items[1], env, ctx, world)?.num()? as i64;
+    let back = evaluate(&items[2], env, ctx, world)?.num()?;
+    let side = evaluate(&items[3], env, ctx, world)?.num()?;
     let half = (n - 1) / 2;
     let poses = (-half..=(n - 1 - half))
         .map(|j| Pose { x: -back * (j.abs() as f64), y: side * j as f64, th: 0.0 })
         .collect();
-    formation(poses, items.get(4), env, ctx)
+    formation(poses, items.get(4), env, ctx, world)
 }
 
-fn sf_fan(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
-    // (fan n step child?): centered angular fan, step degrees apart.
-    let n = evaluate(&items[1], env, ctx)?.num()? as i64;
-    let step = evaluate(&items[2], env, ctx)?.num()?;
+fn sf_fan(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let n = evaluate(&items[1], env, ctx, world)?.num()? as i64;
+    let step = evaluate(&items[2], env, ctx, world)?.num()?;
     let mid = (n - 1) as f64 / 2.0;
     let poses = (0..n)
         .map(|k| Pose { x: 0.0, y: 0.0, th: (k as f64 - mid) * step })
         .collect();
-    formation(poses, items.get(3), env, ctx)
+    formation(poses, items.get(3), env, ctx, world)
 }
 
 // ---------------------------------------------------------------------------
 // Builtins.
 
-/// Polymorphic addition: numbers, points, poses (translation), arrays (map),
-/// dyns (Translate node) — the `+` of the two-op algebra (§4).
+const BUILTINS: &[&str] = &[
+    "+", "-", "*", "/", "mod", "pow", "inc", "dec", "=", "<", ">", "<=", ">=", "min", "max",
+    "abs", "quot", "ticks", "sin", "cos", "sine", "cart", "polar", "pose", "rot", "still",
+    "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerpsmooth", "angle-of",
+    "mag", "einsine", "eoutsine", "eiosine",
+];
+
+fn is_builtin(name: &str) -> bool {
+    BUILTINS.contains(&name)
+}
+
+/// Broadcast-aware numeric binop (§5: zips cycle; scalars lift).
+fn num_bin(a: Val, b: Val, f: fn(f64, f64) -> f64) -> Result<Val, String> {
+    match (a, b) {
+        (Val::Num(x), Val::Num(y)) => Ok(Val::Num(f(x, y))),
+        (Val::Arr(xs), Val::Arr(ys)) => {
+            let len = xs.len().max(ys.len());
+            let out = (0..len)
+                .map(|k| num_bin(xs[k % xs.len()].clone(), ys[k % ys.len()].clone(), f))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        (Val::Arr(xs), y) => {
+            let out = xs
+                .iter()
+                .map(|x| num_bin(x.clone(), y.clone(), f))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        (x, Val::Arr(ys)) => {
+            let out = ys
+                .iter()
+                .map(|y| num_bin(x.clone(), y.clone(), f))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        (a, b) => Err(format!("numeric op on {:?} and {:?}", a, b)),
+    }
+}
+
 fn add2(a: Val, b: Val) -> Result<Val, String> {
     match (a, b) {
         (Val::Num(x), Val::Num(y)) => Ok(Val::Num(x + y)),
@@ -791,7 +1295,21 @@ fn add2(a: Val, b: Val) -> Result<Val, String> {
         (Val::Vec2 { x, y }, Val::Dyn(d)) | (Val::Dyn(d), Val::Vec2 { x, y }) => Ok(Val::Dyn(
             Rc::new(DynNode::Translate { dx: x, dy: y, child: d }),
         )),
+        (a @ (Val::Num(_) | Val::Arr(_)), b @ (Val::Num(_) | Val::Arr(_))) => {
+            num_bin(a, b, |x, y| x + y)
+        }
         (a, b) => Err(format!("+: cannot add {:?} and {:?}", a, b)),
+    }
+}
+
+fn ease(name: &str, r: f64) -> f64 {
+    use std::f64::consts::FRAC_PI_2;
+    let r = r.clamp(0.0, 1.0);
+    match name {
+        "einsine" => 1.0 - (r * FRAC_PI_2).cos(),
+        "eoutsine" => (r * FRAC_PI_2).sin(),
+        "eiosine" => 0.5 - 0.5 * (r * std::f64::consts::PI).cos(),
+        _ => r,
     }
 }
 
@@ -802,14 +1320,14 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             .num()
     };
     let fold_num = |init: f64, f: fn(f64, f64) -> f64| -> Result<Val, String> {
-        let mut acc = if args.is_empty() { init } else { args[0].num()? };
+        let mut acc = if args.is_empty() { Val::Num(init) } else { args[0].clone() };
         if args.len() == 1 {
-            acc = f(init, acc); // unary negate / reciprocal
+            acc = num_bin(Val::Num(init), acc, f)?;
         }
         for a in &args[1..] {
-            acc = f(acc, a.num()?);
+            acc = num_bin(acc, a.clone(), f)?;
         }
-        Ok(Val::Num(acc))
+        Ok(acc)
     };
     match name {
         "+" => {
@@ -819,7 +1337,16 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             }
             Ok(acc)
         }
-        "-" => fold_num(0.0, |a, b| a - b),
+        "-" => match (&args.first(), args.len()) {
+            (Some(Val::Vec2 { x: ax, y: ay }), 2) => {
+                if let Val::Vec2 { x: bx, y: by } = &args[1] {
+                    Ok(Val::Vec2 { x: ax - bx, y: ay - by })
+                } else {
+                    Err("-: mixed vector/number".into())
+                }
+            }
+            _ => fold_num(0.0, |a, b| a - b),
+        },
         "*" => fold_num(1.0, |a, b| a * b),
         "/" => fold_num(1.0, |a, b| a / b),
         "mod" => Ok(Val::Num(n(0)?.rem_euclid(n(1)?))),
@@ -839,7 +1366,6 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "sin" => Ok(Val::Num(n(0)?.to_radians().sin())),
         "cos" => Ok(Val::Num(n(0)?.to_radians().cos())),
         "sine" => {
-            // DMK sine(period, amp, x): amp * sin(2π x / period)
             let (period, amp, x) = (n(0)?, n(1)?, n(2)?);
             Ok(Val::Num(amp * (std::f64::consts::TAU * x / period).sin()))
         }
@@ -856,23 +1382,62 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             Val::Vec2 { x, y } => Ok(Val::Dyn(Rc::new(DynNode::Linear { vx: *x, vy: *y }))),
             v => Err(format!("linear: expected point, got {:?}", v)),
         },
+        "angle-of" => match &args[0] {
+            Val::Vec2 { x, y } => Ok(Val::Num(y.atan2(*x).to_degrees())),
+            v => Err(format!("angle-of: expected point, got {:?}", v)),
+        },
+        "mag" => match &args[0] {
+            Val::Vec2 { x, y } => Ok(Val::Num((x * x + y * y).sqrt())),
+            v => Err(format!("mag: expected point, got {:?}", v)),
+        },
         "iota" => {
             let count = n(0)? as usize;
             Ok(Val::Arr(Rc::new(
                 (0..count).map(|k| Val::Num(k as f64)).collect(),
             )))
         }
-        "nth" => match &args[0] {
-            Val::Arr(items) if !items.is_empty() => {
-                let i = n(1)? as i64;
-                let len = items.len() as i64;
-                Ok(items[(i.rem_euclid(len)) as usize].clone())
+        "range" => {
+            let (a, b) = (n(0)?, n(1)?);
+            let step = if args.len() > 2 { n(2)? } else { 1.0 };
+            let mut out = Vec::new();
+            let mut x = a;
+            while (step > 0.0 && x < b) || (step < 0.0 && x > b) {
+                out.push(Val::Num(x));
+                x += step;
             }
-            v => Err(format!("nth: expected non-empty array, got {:?}", v)),
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        "nth" => match (&args[0], &args[1]) {
+            (Val::Arr(items), Val::Arr(idxs)) if !items.is_empty() => {
+                // broadcast: (nth xs (iota n))
+                let out = idxs
+                    .iter()
+                    .map(|i| {
+                        let k = i.num()? as i64;
+                        Ok(items[(k.rem_euclid(items.len() as i64)) as usize].clone())
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Val::Arr(Rc::new(out)))
+            }
+            (Val::Arr(items), i) if !items.is_empty() => {
+                let k = i.num()? as i64;
+                Ok(items[(k.rem_euclid(items.len() as i64)) as usize].clone())
+            }
+            (v, _) => Err(format!("nth: expected non-empty array, got {:?}", v)),
         },
+        "without" => {
+            let Val::Arr(items) = &args[1] else {
+                return Err("without: expected array".into());
+            };
+            let x = n(0)?;
+            let out = items
+                .iter()
+                .filter(|v| !matches!(v, Val::Num(y) if (*y - x).abs() < 1e-9))
+                .cloned()
+                .collect();
+            Ok(Val::Arr(Rc::new(out)))
+        }
         "stutter" => {
-            // (stutter n xs): each element repeated n times; with cyclic
-            // indexing this is exactly floor-division indexing.
             let reps = n(0)? as usize;
             let Val::Arr(items) = &args[1] else {
                 return Err("stutter: expected array".into());
@@ -890,6 +1455,17 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             let r = ((ctrl - a) / (b - a)).clamp(0.0, 1.0);
             Ok(Val::Num(v1 + r * (v2 - v1)))
         }
+        "lerpsmooth" => {
+            // (lerpsmooth ease a b ctrl v1 v2)
+            let ename = match &args[0] {
+                Val::Builtin(nm) => nm.to_string(),
+                v => return Err(format!("lerpsmooth: expected easing fn, got {:?}", v)),
+            };
+            let (a, b, ctrl, v1, v2) = (n(1)?, n(2)?, n(3)?, n(4)?, n(5)?);
+            let r = ((ctrl - a) / (b - a)).clamp(0.0, 1.0);
+            Ok(Val::Num(v1 + ease(&ename, r) * (v2 - v1)))
+        }
+        "einsine" | "eoutsine" | "eiosine" => Ok(Val::Num(ease(name, n(0)?))),
         _ => Err(format!("unknown function '{}'", name)),
     }
 }
@@ -901,14 +1477,14 @@ mod tests {
 
     fn ev(src: &str) -> Val {
         let f = read_one(src).unwrap();
-        evaluate(&f, &Env::empty(), &mut Ctx::default()).unwrap()
+        evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap()
     }
 
     #[test]
     fn arithmetic_and_math_macro() {
         let f = read_one("m\"0.2*(i+1)*(i+2)\"").unwrap();
         let env = Env::empty().bind("i".into(), Val::Num(3.0));
-        let v = evaluate(&f, &env, &mut Ctx::default()).unwrap();
+        let v = evaluate(&f, &env, &mut Ctx::default(), &mut World::default()).unwrap();
         assert!((v.num().unwrap() - 0.2 * 4.0 * 5.0).abs() < 1e-9);
     }
 
@@ -926,6 +1502,20 @@ mod tests {
         let Val::Arr(items) = ev("(stutter 2 [1 2])") else { panic!() };
         let got: Vec<f64> = items.iter().map(|v| v.num().unwrap()).collect();
         assert_eq!(got, vec![1.0, 1.0, 2.0, 2.0]);
+        // nth broadcast (200's :color axis targeting)
+        let Val::Arr(items) = ev("(nth [10 20 30] (iota 4))") else { panic!() };
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[3].num().unwrap(), 10.0);
+    }
+
+    #[test]
+    fn fn_map_and_easings() {
+        assert_eq!(ev("((fn [x] (* x x)) 5)").num().unwrap(), 25.0);
+        let Val::Arr(items) = ev("(map (fn [x] (inc x)) [1 2 3])") else { panic!() };
+        assert_eq!(items[2].num().unwrap(), 4.0);
+        assert!((ev("(eoutsine 1)").num().unwrap() - 1.0).abs() < 1e-9);
+        let v = ev("(lerpsmooth eoutsine 0 4 2 0 480)").num().unwrap();
+        assert!((v - 480.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin()).abs() < 1e-9);
     }
 
     #[test]
@@ -942,55 +1532,65 @@ mod tests {
             panic!("expected dyn")
         };
         let st = MotionState::new();
-        let p = dyn_pose(&d, 1.0, &st).unwrap();
+        let p = dyn_pose(&d, 1.0, &st, &SigEnv::default()).unwrap();
         assert!(p.x.abs() < 1e-9 && (p.y - 4.0).abs() < 1e-9, "rotated 90°: {:?}", p);
     }
 
     #[test]
-    fn circle_with_child_is_product() {
-        let Val::Arr(items) = ev("(circle 5 (linear c[4 0]))") else { panic!() };
-        assert_eq!(items.len(), 5);
-        let Val::Dyn(d) = &items[1] else { panic!() };
-        let st = MotionState::new();
-        let p = dyn_pose(d, 1.0, &st).unwrap();
-        let (ex, ey) = (
-            4.0 * (72f64).to_radians().cos(),
-            4.0 * (72f64).to_radians().sin(),
-        );
-        assert!((p.x - ex).abs() < 1e-9 && (p.y - ey).abs() < 1e-9);
-    }
-
-    #[test]
     fn closed_polar_dyn() {
-        // (polar m"2*t" m"20*t") — the 060 spiral, slot-bound t (F12)
         let Val::Dyn(d) = ev("(polar m\"2*t\" m\"20*t\")") else { panic!() };
         let st = MotionState::new();
-        let p = dyn_pose(&d, 1.0, &st).unwrap();
+        let p = dyn_pose(&d, 1.0, &st, &SigEnv::default()).unwrap();
         let (ex, ey) = (2.0 * (20f64).to_radians().cos(), 2.0 * (20f64).to_radians().sin());
         assert!((p.x - ex).abs() < 1e-9 && (p.y - ey).abs() < 1e-9, "{:?}", p);
-        // without t, polar is a plain point
         assert!(matches!(ev("p[2 90]"), Val::Vec2 { .. }));
     }
 
     #[test]
     fn vel_integrates() {
-        // constant velocity integrates to linear motion
         let Val::Dyn(d) = ev("(vel c[4 0])") else { panic!() };
         let mut st = MotionState::new();
         let dt = 1.0 / TICK_RATE;
+        let sig = SigEnv::default();
         for k in 0..120 {
-            step_motion(&d, k as f64 * dt, dt, &mut st).unwrap();
+            step_motion(&d, k as f64 * dt, dt, &mut st, &sig).unwrap();
         }
-        let p = dyn_pose(&d, 1.0, &st).unwrap();
+        let p = dyn_pose(&d, 1.0, &st, &sig).unwrap();
         assert!((p.x - 4.0).abs() < 1e-6, "integrated x: {}", p.x);
         assert!(is_scanned(&d));
     }
 
     #[test]
+    fn vel_with_trailing_child() {
+        // 200's guide: (vel c[..] (circle 7 (polar ...)))
+        let Val::Arr(items) = ev("(vel c[1 0] (circle 7 (linear c[1 0])))") else { panic!() };
+        assert_eq!(items.len(), 7);
+        assert!(matches!(&items[0], Val::Dyn(d) if is_scanned(d)));
+    }
+
+    #[test]
+    fn laser_value_and_framing() {
+        let Val::Arr(items) =
+            ev("(circle 6 (laser p[m\"2*t\" m\"-14*u\"] {:warn 1.5 :active inf :u-max 3.5 :resolution 0.4}))")
+        else {
+            panic!()
+        };
+        assert_eq!(items.len(), 6);
+        let Val::Ext(l) = &items[0] else { panic!("expected laser") };
+        assert_eq!(l.u_max, 3.5);
+        // shape at t=1, u=1: r=2, θ=-14°
+        let p = dyn_pose_u(l.shape.as_ref().unwrap(), 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
+        let ex = 2.0 * (-14f64).to_radians().cos();
+        assert!((p.x - ex).abs() < 1e-9);
+    }
+
+    #[test]
     fn aim_is_ambient_relative() {
-        let mut ctx = Ctx { player: (0.0, -4.0), ambient: Pose::IDENTITY };
+        let mut ctx = Ctx::default();
+        ctx.sig.player = (0.0, -4.0);
         let f = read_one("(aim player)").unwrap();
-        let Val::Pose(p) = evaluate(&f, &Env::empty(), &mut ctx).unwrap() else {
+        let Val::Pose(p) = evaluate(&f, &Env::empty(), &mut ctx, &mut World::default()).unwrap()
+        else {
             panic!()
         };
         assert!((p.th - -90.0).abs() < 1e-9, "aim down: {}", p.th);
@@ -998,7 +1598,6 @@ mod tests {
 
     #[test]
     fn plus_translates_formations() {
-        // (+ c[-7 0] (arrow 3 1.0 0.5)): rotational back-offset (080)
         let Val::Arr(items) = ev("(+ c[-7 0] (arrow 3 1.0 0.5))") else { panic!() };
         assert_eq!(items.len(), 3);
         let Val::Pose(center) = &items[1] else { panic!() };
