@@ -1,0 +1,106 @@
+;; Translation of dmk-corpus/070_dynamic_lasers.bdsl
+;;
+;; BDSL original (23 lines), for ergonomics comparison:
+;;
+;;   pattern { } {
+;;   phase 0 {
+;;       roott(1, 0, 0)
+;;   } {
+;;       paction 0 {
+;;           sync "arrowlaser-blueteal" <> gsrepeat {
+;;               times(6)
+;;               circle
+;;               preloop b{
+;;                   hvar loop = i
+;;               }
+;;           } laser(none, 1.5, inf, {
+;;               length(3.5)
+;;               dsfx
+;;               stagger(0.4)
+;;               hueshift(60 * loop + 120 * t)
+;;               dynamic(polar(
+;;                   2 * t,
+;;                   -14 * lt + sine(2.1, 18, t + 1.1 * lt)))
+;;           })
+;;       }
+;;   }
+;;   }
+;;
+;; Decoded against source:
+;;   dynamic(f)   laser shape resampled every frame; f is a function of (t, lt)
+;;                where lt = position along the laser in "laser-time" units.
+;;                lt IS language.md SS6's materialization axis `u`.
+;;   length(3.5)  the u-extent: u in [0, 3.5]  (LaserOptions.cs maxLength).
+;;   stagger(0.4) sampling resolution: texWidth = length/stagger
+;;                (CurvedTileRenderLaser.cs:89,94) -- a RENDER hint, not
+;;                semantics; the semantic shape is the continuous f(t, u).
+;;   dsfx         enables default sounds: "x-laser-fire" at spawn (instant)
+;;                plus "x-laser-on" looping while alive (LaserOptions.cs:110).
+;;   hueshift     doc: "rendering function... do not use rand, or replays
+;;                desync" -- DMK independently enforcing SS7's pure-render-
+;;                signal discipline.
+;;
+;; DMK semantics: 6 lasers around a circle, each a spiral-arm arc (angle
+;; sweeps -14 deg per u, radius grows 2/s, traveling sine wiggle), warning
+;; pose for 1.5s then active forever; hue offset 60 deg per laser, cycling
+;; 120 deg/s.
+
+(defpattern lasers-demo []
+  ;; roott(1,0,0) is the identity: no anchor (callers apply frames).
+  (seq
+    (event :sfx "x-laser-fire")
+    (spawn (circle 6 (laser p[m"2*t" m"-14*u + sine(2.1, 18, t + 1.1*u)"]
+                            {:warn 1.5
+                             :active inf
+                             :u-max 3.5
+                             :resolution 0.4}))
+           {:style "arrowlaser-blueteal"
+            :hue m"60*[0 1 2 3 4 5] + 120*t"
+            :sfx-loop "x-laser-on"})))
+
+;; Surface proposed here for open decision 3 (spawn-extended):
+;;   (laser shape opts) -- an EXTENDED DYN value; `spawn` materializes it.
+;;   shape is a signal over (t, u): u is slot-bound exactly like t (F12).
+;;   :warn/:active are the SS6 lifecycle window (warn -> active -> off);
+;;   :u-max is the u-extent; :resolution is a render-contract sampling hint
+;;   carried in meta-space, not semantics.
+;;
+;; Notable dissolutions:
+;;   hueshift(60*loop + 120*t) -> :hue m"60*[0 1 2 3 4 5] + 120*t"
+;;     one array-broadcast expression = six Closed signals zipping the six
+;;     lasers (SS5 array-of-signals/signal-of-array interchange); the hoisted
+;;     `loop` variable disappears entirely.
+;;   dsfx -> (event :sfx ...) for the instant part + {:sfx-loop ...} for the
+;;     sustained part. Instantaneous host effects are EVENTS; lifetime-bound
+;;     ones are TAGS (the export surface, SS7) the host ties to entity
+;;     lifecycle. DMK needs dsfx to opt IN to implicit effects; we have no
+;;     implicit effects to suppress (finding F11).
+;;
+;; ---------------------------------------------------------------------------
+;; Canonical desugared tree (spawn argument)
+;;
+;;   (map (fn [p] (in-frame p
+;;          (laser (polar (* 2 t)
+;;                        (+ (* -14 u) (sine 2.1 18 (+ t (* 1.1 u)))))
+;;                 {:warn 1.5 :active inf :u-max 3.5 :resolution 0.4})))
+;;        (circle 6))
+;;
+;; ---------------------------------------------------------------------------
+;; Rate / constructor audit
+;;
+;;   (circle 6)              Array Pose ................................. ir
+;;   laser shape             Closed over (t, u) -- both slot-bound; the
+;;                           whole arc scrubs AND rewinds (no scan) ...... ar
+;;                           (per-sample cost is ar x u-samples: the SS6
+;;                           materialization loop)
+;;   :hue                    array of 6 Closed signals; leading-axis zip
+;;                           (F9); per SS7 sampled by the render contract . kr-ish
+;;                           (per laser per frame, not per sample)
+;;   :warn/:active window    lifecycle signals (SS6 doneAction family) ... ir
+;;   :sfx-loop tag           lifetime-bound export (F11) ................ ir
+;;   timeline                single sync volley; no injected signals =>
+;;                           input-independent: scrubbable, extractable
+;;
+;; Axis materialization holds: DMK's dynamic laser is literally f(t, u) with
+;; u = lt, length = u-extent, stagger = sampling. The SS6 unification survives
+;; its first corpus contact. New finding: F11 (instant vs sustained effects).

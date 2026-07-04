@@ -279,6 +279,19 @@ but colors by *arm*: a 7-vector in `:color` must zip against the leading axis of
 the product and broadcast within. §5 specifies length-matching for flat arrays;
 the product case needs the k/APL leading-axis rule stated explicitly.
 
+**F11 — instant vs sustained host effects.** DMK's laser `dsfx` opts in to a
+fire sound (instant) plus an "on" loop that plays while the laser lives. The
+split maps onto machinery we already have: instantaneous effects are outbound
+**events**; lifetime-bound effects are **tags** (§7's export surface) the host
+ties to entity lifecycle — `{:sfx-loop "x-laser-on"}` starts when the entity
+expresses and stops when it culls, for free via done-actions. No new mechanism;
+and no `dsfx`-style suppression flag needed since nothing is implicit.
+
+**F12 — slot-bound time formalized.** See the convention entry: `t`/`u` are
+bound by signal-typed slots (BDSL's movement-function model as a typing rule).
+Corpus forcing case: 060's `polar(2*t, lr*20*t)` mixes slot-bound `t` with
+lexically captured `lr`. Pending language.md §3/§11 amendment.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure
@@ -300,5 +313,10 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
 - `060_polar.edn` — complete. Every DMK modifier became a seq binding
   (`colorf`→`stutter`, `bindLR`→`[1 -1]`, parent-index `colorf`→outer binding);
   first nonlinear Closed dyn; slot-bound `t` formalized (F12).
-- Next per README order: 070 (lasers / axis materialization), 110 (manipulate),
-  200 (guides).
+- `070_dynamic_lasers.edn` — complete. **Axis materialization survives first
+  contact**: DMK dynamic laser = f(t, u) with u = lt, length = u-extent,
+  stagger = render-resolution hint. Surface for open decision 3 proposed
+  (`(laser shape {:warn :active :u-max :resolution})`); hueshift's hoisted
+  index became one array-broadcast expression; F11.
+- Next per README order: 110 (manipulate/rematerialization), 200 (guides),
+  then a boss spell card.
