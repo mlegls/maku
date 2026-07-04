@@ -1353,6 +1353,38 @@ mod tests {
         assert_eq!(sim.world.graze, 1, "beam grazed on the way in");
     }
 
+    /// The duel-card bug: aim inside an expression-level frame must aim
+    /// FROM that frame's position (the frame is ambient for its body),
+    /// not from the world origin. Player just below the source → bullets
+    /// head down at the player, not up.
+    #[test]
+    fn aim_sees_expression_frame_ambient() {
+        const CARD: &str = r#"
+(defpattern nested []
+  (spawn (in-frame (pose c[0 3]) ((aim $player) (linear p[2 0])))))
+(defpattern flat []
+  (spawn (in-frame (pose c[0 3]) (aim $player) (linear p[2 0]))))
+"#;
+        for pat in ["nested", "flat"] {
+            let mut sim = Sim::load(CARD, Some(pat)).unwrap();
+            // player below the source: pre-fix, aim measured from (0,0)
+            // and fired UP toward (0,1); the bullet must head DOWN
+            let inputs = Inputs { player: (0.0, 1.0), nearest_enemy: (0.0, 1.0) };
+            for _ in 0..60 {
+                sim.step_with(&inputs).unwrap();
+            }
+            let b = &sim.world.bullets[0];
+            let sig = SigEnv::default();
+            let p = dyn_pose(&b.motion, 0.5, &b.state, &sig).unwrap();
+            assert!(
+                p.x.abs() < 1e-9 && (p.y - 2.0).abs() < 1e-9,
+                "{}: fired from (0,3) toward the player below: {:?}",
+                pat,
+                p
+            );
+        }
+    }
+
     /// (in-frame f1 f2 body) folds the frame monoid: same pose as nesting.
     #[test]
     fn in_frame_variadic() {

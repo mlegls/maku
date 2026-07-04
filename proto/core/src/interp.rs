@@ -1113,12 +1113,30 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "in-frame" => {
                 // frames form a monoid: (in-frame f1 f2 body) folds as
                 // (f1 (f2 body)), outer to inner. Last argument is the body.
+                // Frames evaluate left→right EXTENDING THE AMBIENT, so
+                // ambient-reading forms in the body (aim) see the lexical
+                // frame composition — uniform with the action-level
+                // distribution law. Signal-valued frames extend by their
+                // spawn-instant pose.
                 if items.len() < 3 {
                     return Err("in-frame: expected (in-frame frame... body)".into());
                 }
-                let mut val = evaluate(&items[items.len() - 1], env, ctx, world)?;
-                for f in items[1..items.len() - 1].iter().rev() {
+                let saved = ctx.ambient;
+                let mut fvals = Vec::new();
+                for f in &items[1..items.len() - 1] {
                     let fv = evaluate(f, env, ctx, world)?;
+                    let p = match &fv {
+                        Val::Dyn(d) => dyn_pose(d, 0.0, &MotionState::new(), &ctx.sig)
+                            .unwrap_or(Pose::IDENTITY),
+                        other => as_pose(other.clone()).unwrap_or(Pose::IDENTITY),
+                    };
+                    ctx.ambient = ctx.ambient.compose(&p);
+                    fvals.push(fv);
+                }
+                let body = evaluate(&items[items.len() - 1], env, ctx, world);
+                ctx.ambient = saved;
+                let mut val = body?;
+                for fv in fvals.into_iter().rev() {
                     val = match fv {
                         Val::Dyn(d) => apply_dyn_frame(d, val)?,
                         other => apply_frame_val(as_pose(other)?, val)?,
@@ -1285,15 +1303,25 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             if items.len() != 2 {
                 return Err("frame application takes exactly one child".into());
             }
-            let child = evaluate(&items[1], env, ctx, world)?;
-            apply_frame_val(p, child)
+            // the applied frame is ambient for its child (see in-frame)
+            let saved = ctx.ambient;
+            ctx.ambient = ctx.ambient.compose(&p);
+            let child = evaluate(&items[1], env, ctx, world);
+            ctx.ambient = saved;
+            apply_frame_val(p, child?)
         }
         // signal-valued frame (live channel, rot-expr): compose dyns
         Val::Dyn(fd) => {
             if items.len() != 2 {
                 return Err("frame application takes exactly one child".into());
             }
-            let child = evaluate(&items[1], env, ctx, world)?;
+            let saved = ctx.ambient;
+            let p0 = dyn_pose(&fd, 0.0, &MotionState::new(), &ctx.sig)
+                .unwrap_or(Pose::IDENTITY);
+            ctx.ambient = ctx.ambient.compose(&p0);
+            let child = evaluate(&items[1], env, ctx, world);
+            ctx.ambient = saved;
+            let child = child?;
             apply_dyn_frame(fd, child)
         }
         Val::Arr(_) => {
