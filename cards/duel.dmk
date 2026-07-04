@@ -1,0 +1,35 @@
+;; duel: the first PLAYABLE card -- dodge the spray, graze for points, your
+;; shots auto-track the drones. Mouse = player. Not a DMK translation; this
+;; exercises the gameplay layer (collision/graze/:hp/:team) end to end.
+;;
+;; Teams: untagged fire is hostile (hits the player); :team :player fire
+;; damages :team :enemy entities; $graze / $enemies are derived channels.
+
+(defpattern duel []
+  (par (drones) (spray) (autofire)))
+
+;; drift-down targets: 3 hp each, big hitbox
+(defpattern drones []
+  (dotimes [i inf :every 3]
+    (spawn (in-frame c[(rand -3 3) 4.4] (vel c[0 -0.5]))
+           {:style {:family :gglcircle :color :green}
+            :team :enemy :hp 3 :hitbox 0.3})))
+
+;; hostile spray, aimed at the live player with a fan around it;
+;; cadence tightens as your graze count grows (rank via $graze)
+(defpattern spray []
+  (seq
+    (wait 0.5)
+    (dotimes [vol inf :every (ticks 26)]
+      (spawn (in-frame (pose c[0 3.2])
+               ((aim $player) (fan 5 24 (linear p[2.8 0]))))
+             {:style {:family :circle :color :red}}))))
+
+;; auto-fire homing shots from the player's frame (player_homing.dmk idiom)
+(defpattern autofire []
+  (dotimes [i inf :every (ticks 10)]
+    (spawn (in-frame (live $player)
+             (vel p[9 (slew 240 90
+                           (angle-of (- (live $nearest-enemy) pos)))]))
+           {:style {:family :gem :color :blue}
+            :team :player :damage 1})))

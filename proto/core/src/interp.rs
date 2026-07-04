@@ -421,7 +421,8 @@ pub struct MetaSig {
 pub struct Bullet {
     pub id: u64,
     /// Gameplay team tag (F20: derived channels like $nearest-enemy are
-    /// queries over tagged entities).
+    /// queries over tagged entities). None = hostile fire; :player = player
+    /// fire (hits :enemy entities); :enemy = a target with hp.
     pub team: Option<Rc<str>>,
     pub kind: Kind,
     pub motion: Rc<DynNode>,
@@ -431,6 +432,24 @@ pub struct Bullet {
     pub state: MotionState,
     pub scanned: bool,
     pub hue: Option<MetaSig>,
+    /// Collision radius (style-derived; :hitbox meta overrides).
+    pub radius: f64,
+    /// Hit points for :team :enemy entities (:hp meta).
+    pub hp: Option<f64>,
+    /// Damage dealt on hit by :team :player fire (:damage meta — a number,
+    /// or a DMK-style map whose :hit entry is used).
+    pub damage: f64,
+    /// Grazes count once per bullet.
+    pub grazed: bool,
+}
+
+/// Style-derived collision radius, in world units.
+pub fn default_radius(family: &str) -> f64 {
+    match family {
+        "lstar" | "gglcircle" => 0.20,
+        "gem" | "star" => 0.09,
+        _ => 0.12,
+    }
 }
 
 #[derive(Clone)]
@@ -438,10 +457,24 @@ pub struct World {
     pub tick: u64,
     pub next_id: u64,
     pub bullets: Vec<Bullet>,
-    pub events: Vec<(u64, String)>,
+    pub events: Vec<Event>,
     pub rng: u64,
     pub boss: Pose,
     pub boss_anim: Option<BossAnim>,
+    /// Gameplay counters — part of World so they snapshot/scrub with it.
+    pub graze: u64,
+    pub player_hits: u64,
+    /// Ticks are ignored for player hits until this tick (post-hit iframes).
+    pub iframe_until: u64,
+}
+
+/// A gameplay event: emitted by collision or by the (event :name) action.
+/// Events live in World, so scrubbing rewinds and replays them too.
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub tick: u64,
+    pub name: String,
+    pub pos: Option<(f64, f64)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -462,6 +495,9 @@ impl Default for World {
             rng: 0x9e37_79b9_7f4a_7c15,
             boss: Pose::IDENTITY,
             boss_anim: None,
+            graze: 0,
+            player_hits: 0,
+            iframe_until: 0,
         }
     }
 }
@@ -549,6 +585,9 @@ pub enum ActionV {
         styles: Vec<Style>,
         hues: Vec<Option<MetaSig>>,
         team: Option<Rc<str>>,
+        hp: Option<f64>,
+        damage: f64,
+        hitbox: Option<f64>,
     },
     Manipulate { targets: Vec<u64>, callback: Val },
     Cull { target: u64 },
@@ -1263,7 +1302,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
     match a {
         ActionV::Nothing => Ok(Val::Nothing),
         ActionV::Event { channel } => {
-            world.events.push((world.tick, channel.to_string()));
+            world.events.push(Event { tick: world.tick, name: channel.to_string(), pos: None });
             Ok(Val::Nothing)
         }
         ActionV::DefVar { name, init } | ActionV::SetVar { name, val: init } => {
@@ -1276,7 +1315,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, hues, team } => {
+        ActionV::Spawn { dyns, styles, hues, team, hp, damage, hitbox } => {
             let mut handles = Vec::new();
             for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
                 let motion = if ctx.ambient == Pose::IDENTITY {
@@ -1301,6 +1340,10 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     state: MotionState::new(),
                     scanned,
                     hue: h.clone(),
+                    radius: hitbox.unwrap_or_else(|| default_radius(&s.family)),
+                    hp: *hp,
+                    damage: *damage,
+                    grazed: false,
                 });
                 handles.push(Val::Handle(id));
             }
@@ -1775,11 +1818,31 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         Some(Val::Kw(k)) => Some(Rc::from(&*k)),
         _ => None,
     };
+    let hp = match map_get(&meta, "hp") {
+        Some(Val::Num(n)) => Some(n),
+        _ => None,
+    };
+    // :damage n, or the DMK player() map {:hit n :graze n :on-hit ...}
+    let damage = match map_get(&meta, "damage") {
+        Some(Val::Num(n)) => n,
+        Some(Val::Map(kvs)) => kvs
+            .iter()
+            .find_map(|(k, v)| match (k, v) {
+                (Val::Kw(kw), Val::Num(n)) if &**kw == "hit" => Some(*n),
+                _ => None,
+            })
+            .unwrap_or(1.0),
+        _ => 1.0,
+    };
+    let hitbox = match map_get(&meta, "hitbox") {
+        Some(Val::Num(n)) => Some(n),
+        _ => None,
+    };
     let dyns = elems
         .into_iter()
         .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
         .collect();
-    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team })))
+    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team, hp, damage, hitbox })))
 }
 
 fn flatten_elems(

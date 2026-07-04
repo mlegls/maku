@@ -190,6 +190,19 @@ impl Sim {
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         let mut ch = (*self.ctx.sig.channels).clone();
         ch.insert("player".into(), Val::Vec2 { x: inputs.player.0, y: inputs.player.1 });
+        // gameplay-derived channels: counters as signals, so patterns can
+        // adapt ((live $graze), (wait-for m"$enemies == 0"), ...)
+        ch.insert("graze".into(), Val::Num(self.world.graze as f64));
+        ch.insert(
+            "enemies".into(),
+            Val::Num(
+                self.world
+                    .bullets
+                    .iter()
+                    .filter(|b| b.alive && b.team.as_deref() == Some("enemy"))
+                    .count() as f64,
+            ),
+        );
         // $nearest-enemy is DERIVED when :team :enemy entities exist (F20:
         // a spatial query over tagged entities, taped like any channel);
         // the host-provided value is the mock fallback.
@@ -238,6 +251,7 @@ impl Sim {
                 step_motion(&b.motion, tau, dt, &mut b.state, &sig)?;
             }
         }
+        self.collide(inputs)?;
         self.world.tick += 1;
         // cull: off-playfield points; lasers past their active window
         let tick = self.world.tick;
@@ -262,6 +276,104 @@ impl Sim {
             Some(e) => Err(e),
             None => Ok(()),
         }
+    }
+
+    /// Collision pass (points only; laser hitboxes are a TODO). Teams:
+    /// None = hostile fire → hits the player point (with graze ring);
+    /// :player fire → damages :enemy entities (:hp), killing at 0.
+    /// Everything writes World (counters, events, alive flags), so the
+    /// whole gameplay layer scrubs and replays with the timeline.
+    fn collide(&mut self, inputs: &Inputs) -> Result<(), String> {
+        const PLAYER_R: f64 = 0.06; // danmaku convention: tiny hitbox
+        const GRAZE_R: f64 = 0.35;
+        const IFRAMES: u64 = 60;
+
+        let sig = self.ctx.sig.clone();
+        let tick = self.world.tick;
+        let (px, py) = inputs.player;
+
+        // positions once per bullet (Closed signals evaluate; Scanned reads
+        // integrated state)
+        let mut pos = Vec::with_capacity(self.world.bullets.len());
+        for b in &self.world.bullets {
+            if !b.alive || !matches!(b.kind, Kind::Point) {
+                pos.push(None);
+                continue;
+            }
+            let tau = (tick - b.birth) as f64 / TICK_RATE;
+            let p = dyn_pose(&b.motion, tau, &b.state, &sig)?;
+            pos.push(Some((p.x, p.y)));
+        }
+
+        // hostile fire vs the player point
+        for (i, b) in self.world.bullets.iter_mut().enumerate() {
+            let Some((bx, by)) = pos[i] else { continue };
+            if b.team.is_some() {
+                continue;
+            }
+            let d2 = (bx - px).powi(2) + (by - py).powi(2);
+            let hit_r = b.radius + PLAYER_R;
+            if d2 < hit_r * hit_r && tick >= self.world.iframe_until {
+                b.alive = false;
+                self.world.player_hits += 1;
+                self.world.iframe_until = tick + IFRAMES;
+                self.world.events.push(Event {
+                    tick,
+                    name: "player-hit".into(),
+                    pos: Some((bx, by)),
+                });
+            } else if !b.grazed {
+                let graze_r = b.radius + GRAZE_R;
+                if d2 < graze_r * graze_r {
+                    b.grazed = true;
+                    self.world.graze += 1;
+                    self.world.events.push(Event {
+                        tick,
+                        name: "graze".into(),
+                        pos: Some((bx, by)),
+                    });
+                }
+            }
+        }
+
+        // player fire vs :enemy entities — collect pairs, then apply damage
+        // in order (an enemy can die mid-tick; later shots pass through)
+        let mut hits: Vec<(usize, usize)> = Vec::new();
+        for (i, shot) in self.world.bullets.iter().enumerate() {
+            if pos[i].is_none() || shot.team.as_deref() != Some("player") {
+                continue;
+            }
+            let (sx, sy) = pos[i].unwrap();
+            for (j, enemy) in self.world.bullets.iter().enumerate() {
+                if pos[j].is_none() || enemy.team.as_deref() != Some("enemy") {
+                    continue;
+                }
+                let (ex, ey) = pos[j].unwrap();
+                let r = shot.radius + enemy.radius;
+                if (sx - ex).powi(2) + (sy - ey).powi(2) < r * r {
+                    hits.push((i, j));
+                    break; // one shot hits one enemy
+                }
+            }
+        }
+        for (i, j) in hits {
+            if !self.world.bullets[i].alive || !self.world.bullets[j].alive {
+                continue;
+            }
+            let dmg = self.world.bullets[i].damage;
+            self.world.bullets[i].alive = false;
+            let enemy = &mut self.world.bullets[j];
+            let hp = enemy.hp.get_or_insert(1.0);
+            *hp -= dmg;
+            let at = pos[j];
+            if *hp <= 0.0 {
+                enemy.alive = false;
+                self.world.events.push(Event { tick, name: "enemy-died".into(), pos: at });
+            } else {
+                self.world.events.push(Event { tick, name: "enemy-hit".into(), pos: at });
+            }
+        }
+        Ok(())
     }
 
     /// Nearest alive entity with the given team tag, by position.
@@ -813,6 +925,117 @@ mod tests {
                 py
             );
         }
+    }
+
+    /// Hostile fire hits the tiny player hitbox once, then iframes absorb
+    /// the follow-up; the bullet that hit is culled.
+    #[test]
+    fn player_hit_and_iframes() {
+        // two bullets aimed straight down the player's column, 10 ticks apart
+        const CARD: &str = r#"
+(defpattern atk []
+  (dotimes [i 2 :every (ticks 10)]
+    (spawn (in-frame (pose c[0 3]) (vel c[0 -6])))))
+"#;
+        let mut sim = Sim::load(CARD, Some("atk")).unwrap();
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        for _ in 0..120 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(sim.world.player_hits, 1, "second bullet fell in iframes");
+        let hits: Vec<_> =
+            sim.world.events.iter().filter(|e| e.name == "player-hit").collect();
+        assert_eq!(hits.len(), 1);
+        // the iframed bullet passed through (grazing) and is still flying
+        assert_eq!(sim.world.bullets.len(), 1);
+        assert_eq!(sim.world.graze, 2, "graze ring precedes the hitbox; iframes graze too");
+    }
+
+    /// A bullet passing beside the player grazes exactly once.
+    #[test]
+    fn graze_counts_once() {
+        const CARD: &str = r#"
+(defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("g")).unwrap();
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        for _ in 0..120 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(sim.world.player_hits, 0, "0.25 off-axis misses the 0.06 hitbox");
+        assert_eq!(sim.world.graze, 1, "graze latches once per bullet");
+        // and the counter is a channel patterns can read
+        assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 1.0));
+    }
+
+    /// Player fire decrements :hp; at zero the enemy dies with an event and
+    /// the $enemies channel reflects it.
+    #[test]
+    fn enemy_hp_and_death() {
+        const CARD: &str = r#"
+(defpattern duel []
+  (seq
+    (spawn (pose c[0 2]) {:team :enemy :hp 2 :hitbox 0.3})
+    (dotimes [i 3 :every (ticks 30)]
+      (spawn (in-frame (pose c[0 0]) (vel c[0 4]))
+             {:team :player :damage 1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("duel")).unwrap();
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        // shot 1 (fired tick 0, 4 u/s) reaches the enemy ring at ~tick 47
+        for _ in 0..55 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(sim.world.events.iter().filter(|e| e.name == "enemy-hit").count(), 1);
+        assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 1.0));
+        // shot 2 kills at ~tick 77; shot 3 flies through empty space
+        for _ in 0..55 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(sim.world.events.iter().filter(|e| e.name == "enemy-died").count(), 1);
+        assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 0.0));
+    }
+
+    /// The gameplay layer lives in World, so it scrubs: rewind to before a
+    /// graze and the counter rewinds with it; re-step and it recurs.
+    #[test]
+    fn gameplay_scrubs() {
+        use crate::session::Session;
+        const CARD: &str = r#"
+(defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
+"#;
+        let mut sess = Session::default();
+        sess.last_inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        sess.start(Sim::load(CARD, Some("g")).unwrap());
+        for _ in 0..120 {
+            sess.advance(CARD).unwrap();
+        }
+        assert_eq!(sess.sim.as_ref().unwrap().world.graze, 1);
+        sess.seek(CARD, 10).unwrap();
+        assert_eq!(sess.sim.as_ref().unwrap().world.graze, 0, "rewound past the graze");
+        sess.seek(CARD, 120).unwrap();
+        let w = &sess.sim.as_ref().unwrap().world;
+        assert_eq!(w.graze, 1, "replay re-grazes, not double-counts");
+        assert_eq!(w.events.iter().filter(|e| e.name == "graze").count(), 1);
+    }
+
+    /// The playable demo card exercises the whole gameplay layer at once:
+    /// hostile spray hits/grazes, autofire kills drones.
+    #[test]
+    fn duel_card_plays() {
+        let src = std::fs::read_to_string("../../cards/duel.dmk").unwrap();
+        let mut sim = Sim::load(&src, Some("duel")).unwrap();
+        let inputs = Inputs { player: (0.0, -2.0), nearest_enemy: (0.0, -2.0) };
+        for _ in 0..1200 {
+            sim.step_with(&inputs).unwrap();
+        }
+        let w = &sim.world;
+        assert!(w.player_hits > 0, "aimed spray reaches a stationary player");
+        assert!(w.graze > 0, "fan neighbors graze");
+        assert!(
+            w.events.iter().any(|e| e.name == "enemy-died"),
+            "autofire kills drones"
+        );
     }
 
     /// F20: $nearest-enemy derives from :team :enemy entities when present.

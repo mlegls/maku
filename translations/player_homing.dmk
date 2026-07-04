@@ -37,7 +37,7 @@
       (spawn (vel p[10 (slew 60 90
                              (angle-of (- (live $nearest-enemy) pos)))])
              {:style {:family :amulet :color (nth [:red :black] opt)}
-              :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
+              :team :player :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
 
 ;; (slew rate init sig): rate-limited angle follower; `init` optional
 ;; (defaults to the target's first sample); RATE MAY BE A SIGNAL (see B).
@@ -67,7 +67,7 @@
                             (angle-of (- (live $nearest-enemy) pos)))]))
              {:style {:family :gpather :color :black :variant :b}
               :width 2
-              :damage {:hit 120 :graze 400 :on-hit :oh1-red}}))
+              :team :player :damage {:hit 120 :graze 400 :on-hit :oh1-red}}))
     ;; the tracking laser: aim = slew toward a SMOOTHED target. Two scans
     ;; compose (smooth |> slew); `target` is let-bound = one shared instance
     ;; feeding the laser's frame.
@@ -79,7 +79,7 @@
                        :while (live $focus-firing)})) ; deactivate w/ fire key
              {:style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
                       :variant :b}
-              :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
+              :team :player :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
 
 ;; ============================================================================
 ;; C. Fantasy Seal, motion core: orbit the player, then chase, inheriting
@@ -120,7 +120,7 @@
     (spawn (seal-orb k)
            {:style {:family :gglcircle :color col :variant :w}
             :scale 2
-            :damage {:hit 900 :graze 700}})))
+            :team :player :damage {:hit 900 :graze 700}})))
 
 ;; ============================================================================
 ;; Rate / constructor audit
