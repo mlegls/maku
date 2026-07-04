@@ -657,6 +657,28 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         _ => return Err(format!("{}: expected param vector", name)),
                     };
                     let body: Rc<[Form]> = items[3..].to_vec().into();
+                    // patterns are callable: synthesize (fn [] (let [p d ...]
+                    // (seq body...))) so (par (bowap) (other)) composes.
+                    // (Prototype: defaults only; §10 scope adapters later.)
+                    if !defs.contains_key(&name) {
+                        let mut binds = Vec::new();
+                        for (pn, dflt) in &params {
+                            binds.push(Form::Sym(pn.clone()));
+                            binds.push(dflt.clone());
+                        }
+                        let mut letf = vec![Form::sym("let"), Form::Vector(binds.into())];
+                        let mut seqf = vec![Form::sym("seq")];
+                        seqf.extend(items[3..].iter().cloned());
+                        letf.push(Form::list(seqf));
+                        defs.insert(
+                            name.clone(),
+                            Form::list(vec![
+                                Form::sym("fn"),
+                                Form::Vector(Vec::new().into()),
+                                Form::list(letf),
+                            ]),
+                        );
+                    }
                     order.push(name.clone());
                     patterns.insert(name.clone(), Pattern { name, params, body });
                 }

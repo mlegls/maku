@@ -844,6 +844,22 @@ mod tests {
         assert_eq!(sim.tick(), 61, "clock continues");
     }
 
+    /// Patterns are callable: (par (a) (b)) plays two patterns in parallel.
+    #[test]
+    fn parallel_patterns() {
+        const CARD: &str = r#"
+(defpattern a [n 4] (spawn (circle n (linear c[1 0])) {:style {:family :x}}))
+(defpattern b [] (seq (wait 0.1) (spawn (circle 3 (linear c[2 0])) {:style {:family :y}})))
+"#;
+        let mut sim = Sim::load_forms(CARD, "(par (a) (b))").unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        let x = sim.world.bullets.iter().filter(|b| b.style.family == "x").count();
+        let y = sim.world.bullets.iter().filter(|b| b.style.family == "y").count();
+        assert_eq!((x, y), (4, 3), "both patterns ran in parallel");
+    }
+
     /// Anonymous forms run with the card's defs in scope (the REPL path).
     #[test]
     fn load_forms_anonymous() {
