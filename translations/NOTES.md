@@ -48,7 +48,9 @@ runtime dispatch, or "sugar is only sugar" breaks):
   only list forms apply.
 
 The child slot is single; an array child multiplies per §5's root-to-leaf product.
-Lint: point→pose promotion in head position warns (classic wrong-thing-applied). `in-frame` overloads to action trees:
+Lint: point→pose promotion in head position warns (classic wrong-thing-applied).
+
+**No global emitter; anchoring is lexical.** `in-frame` overloads to action trees:
 `(in-frame <pose-signal> <actions…>)` scopes every `spawn` in the subtree. There is
 no ambient emitter to `move-to` — DMK's `roott` (animate the boss into place) is the
 boss *entity's* movement; patterns just anchor to a frame, constant or live (a boss
