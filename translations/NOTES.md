@@ -412,5 +412,11 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   invisible bullets → 0); named signals replace BDSL function+$() idiom;
   Scanned-contagion poster child for the F1 lint; meta axis-targeting rule
   (F15).
+- `SCANNED.md` — Scanned surface developed against ph_boss2_mima: raw
+  `(scan s0 step)`; `stages` as the synchronous-feeling segment API
+  (piecewise-Closed when segments close, Scanned otherwise); the unification
+  `stages` = statically-scheduled remat / `remat` = event-driven stage
+  transition; the boss script's `switch(reflected, …)` idiom decoded as
+  hand-rolled rematerialization.
 - Remaining: a boss spell-card slice (thjam13_mima or ph_boss2_mima), then
   the language.md consolidation pass.
