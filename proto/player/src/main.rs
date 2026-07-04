@@ -443,7 +443,11 @@ async fn main() {
         card_src: String::new(),
         pattern,
         patterns: Vec::new(),
-        session: Session::default(),
+        session: {
+            let mut s = Session::default();
+            s.mount_lives = Some(3.0); // this host mounts a 3-lives player
+            s
+        },
         paused: false,
         accum: 0.0,
         status: String::new(),
@@ -627,12 +631,16 @@ async fn main() {
             }
             draw_text(
                 &format!(
-                    "{}  tick {}  entities {}  graze {}  hits {}  {}",
+                    "{}  tick {}  entities {}  graze {}  hits {}  lives {}  {}",
                     player.status,
                     sim.tick(),
                     sim.world.bullets.len(),
                     sim.world.graze,
                     sim.world.player_hits,
+                    match sim.channel_val("lives") {
+                        Some(Val::Num(n)) => format!("{}", n),
+                        _ => "-".into(),
+                    },
                     if player.paused { "[paused]" } else { "" }
                 ),
                 12.0,

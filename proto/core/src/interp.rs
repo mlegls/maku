@@ -497,10 +497,11 @@ impl TriggerRule {
 /// (an engine-side entity at $player).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Layer {
-    Damage, // hostile fire
-    Graze,  // graze ring, conventionally on the bullet
-    Shot,   // player fire
-    Hurt,   // enemy hurtbox
+    Damage,     // hostile fire
+    Graze,      // graze ring, conventionally on the bullet
+    Shot,       // player fire
+    Hurt,       // enemy hurtbox
+    PlayerHurt, // the player entity's hurtbox (host-mounted)
 }
 
 /// One collider: a circle in the owner's frame. Lasers derive capsule

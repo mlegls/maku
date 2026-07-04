@@ -32,6 +32,9 @@ pub struct Session {
     cmds: Vec<(u64, ProgCmd)>,
     /// Live inputs used when advancing past the recorded tape.
     pub last_inputs: Inputs,
+    /// Host policy: mount the player entity (with this many lives) into
+    /// every sim this session starts.
+    pub mount_lives: Option<f64>,
 }
 
 impl Session {
@@ -45,7 +48,10 @@ impl Session {
     }
 
     /// Begin a fresh timeline around `sim` (drops all history).
-    pub fn start(&mut self, sim: Sim) {
+    pub fn start(&mut self, mut sim: Sim) {
+        if let Some(lives) = self.mount_lives {
+            sim.mount_player(lives);
+        }
         self.tape.clear();
         self.snaps.clear();
         self.cmds.clear();
@@ -145,7 +151,10 @@ impl Session {
     /// the input tape is kept. Returns the tick replayed to.
     pub fn rerun(&mut self, card_src: &str, form_src: &str) -> Result<u64, String> {
         let cur = self.tick().unwrap_or(0);
-        let sim = Sim::load_forms(card_src, form_src)?;
+        let mut sim = Sim::load_forms(card_src, form_src)?;
+        if let Some(lives) = self.mount_lives {
+            sim.mount_player(lives);
+        }
         self.snaps.clear();
         self.cmds.clear();
         self.snaps.push((0, sim.clone()));

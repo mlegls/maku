@@ -228,6 +228,39 @@ impl Sim {
         Ok(())
     }
 
+    /// Mount the player as an ordinary entity — HOST opt-in ("the host
+    /// mounts the player"): its motion is the $player channel (a Live
+    /// node, so its pose flows through the same signal path as any
+    /// bullet), its hurtbox is a PlayerHurt collider, lives is a column,
+    /// and game-over is a trigger (non-culling — what to do about it is
+    /// the host's business).
+    pub fn mount_player(&mut self, lives: f64) {
+        let id = self.world.next_id;
+        self.world.next_id += 1;
+        self.world.bullets.push(Bullet {
+            id,
+            team: Some("player-body".into()),
+            kind: Kind::Point,
+            motion: Rc::new(DynNode::Live { channel: "player".into() }),
+            birth: self.world.tick,
+            style: Style {
+                family: "player".into(),
+                color: String::new(),
+                variant: String::new(),
+            },
+            alive: true,
+            state: MotionState::new(),
+            scanned: false,
+            hue: None,
+            colliders: vec![Collider { layer: Layer::PlayerHurt, r: 0.06 }].into(),
+            cols: vec![("lives".into(), lives)],
+            triggers: vec![TriggerRule::new("game-over", "lives", 0.0, false)].into(),
+            damage: Val::Num(1.0),
+            grazed: false,
+            prev_pos: None,
+        });
+    }
+
     fn from_pattern(card: &Card, name: &str) -> Result<Sim, String> {
         let pat = card
             .patterns
@@ -259,6 +292,15 @@ impl Sim {
         // gameplay-derived channels: counters as signals, so patterns can
         // adapt ((live $graze), (wait-for m"$enemies == 0"), ...)
         ch.insert("graze".into(), Val::Num(self.world.graze as f64));
+        if let Some(l) = self
+            .world
+            .bullets
+            .iter()
+            .find(|b| b.alive && b.team.as_deref() == Some("player-body"))
+            .and_then(|b| b.col_get("lives"))
+        {
+            ch.insert("lives".into(), Val::Num(l));
+        }
         ch.insert(
             "enemies".into(),
             Val::Num(
@@ -327,6 +369,9 @@ impl Sim {
             if !b.alive {
                 return false;
             }
+            if b.team.as_deref() == Some("player-body") {
+                return true; // the player rides a channel; never field-culled
+            }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
             match &b.kind {
                 Kind::Point => match dyn_pose(&b.motion, tau, &b.state, &sig) {
@@ -355,14 +400,12 @@ impl Sim {
     /// Everything writes World, so the gameplay layer scrubs with the
     /// timeline; resolve order is canonical (bullet index) for determinism.
     /// Lasers derive capsule chains from their sampled curve while active.
-    fn collide(&mut self, inputs: &Inputs) -> Result<(), String> {
-        const PLAYER_R: f64 = 0.06; // implicit player hurtbox (danmaku-tiny)
+    fn collide(&mut self, _inputs: &Inputs) -> Result<(), String> {
         const LASER_R: f64 = 0.08; // beam half-width for collision
         const IFRAMES: u64 = 60;
 
         let sig = self.ctx.sig.clone();
         let tick = self.world.tick;
-        let (px, py) = inputs.player;
 
         // phase 0: world-space collider anchors + contact velocities
         let n = self.world.bullets.len();
@@ -386,49 +429,70 @@ impl Sim {
             b.prev_pos = *p;
         }
 
-        // squared distance from the player to bullet i's collision anchor:
-        // points measure center distance; active lasers measure distance to
-        // the sampled beam (capsule chain), inflated by the beam width
-        let player_d2 = |b: &Bullet, i: usize| -> Option<f64> {
+        // player hurtboxes: PlayerHurt colliders on host-mounted entities
+        let hurts: Vec<(usize, f64, (f64, f64))> = self
+            .world
+            .bullets
+            .iter()
+            .enumerate()
+            .filter(|(i, b)| {
+                b.team.as_deref() == Some("player-body") && pos[*i].is_some()
+            })
+            .flat_map(|(i, b)| {
+                let at = pos[i].unwrap();
+                b.colliders
+                    .iter()
+                    .filter(|c| c.layer == Layer::PlayerHurt)
+                    .map(move |c| (i, c.r, at))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        // squared distance from a target point to bullet i's collision
+        // anchor: points measure center distance; active lasers measure
+        // distance to the sampled beam (capsule chain)
+        let target_d2 = |b: &Bullet, i: usize, to: (f64, f64)| -> Option<f64> {
             let (bx, by) = pos[i]?;
             match &b.kind {
-                Kind::Point => Some((bx - px).powi(2) + (by - py).powi(2)),
+                Kind::Point => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
                 Kind::Laser { warn, .. } => {
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if tau < *warn {
                         return None; // warn phase: no hitbox yet
                     }
                     let pts = sample_laser(b, tau, &sig)?;
-                    let d = dist_to_chain((px, py), &pts)?;
+                    let d = dist_to_chain(to, &pts)?;
                     Some((d - LASER_R).max(0.0).powi(2))
                 }
             }
         };
 
         // phase 1: detect — the big set (hostile colliders) tests only
-        // against the player's implicit hurtbox: O(bullets × 1)
-        let mut hit_contacts: Vec<usize> = Vec::new();
+        // against the player's few hurtboxes: O(bullets × few)
+        let mut hit_contacts: Vec<(usize, usize)> = Vec::new(); // (bullet, player)
         let mut graze_contacts: Vec<usize> = Vec::new();
         for (i, b) in self.world.bullets.iter().enumerate() {
             if b.team.is_some() || pos[i].is_none() {
                 continue;
             }
-            let Some(d2) = player_d2(b, i) else { continue };
-            for c in b.colliders.iter() {
-                match c.layer {
-                    Layer::Damage => {
-                        let r = c.r + PLAYER_R;
-                        if d2 < r * r {
-                            hit_contacts.push(i);
+            for &(pj, pr, at) in &hurts {
+                let Some(d2) = target_d2(b, i, at) else { continue };
+                for c in b.colliders.iter() {
+                    match c.layer {
+                        Layer::Damage => {
+                            let r = c.r + pr;
+                            if d2 < r * r {
+                                hit_contacts.push((i, pj));
+                            }
                         }
-                    }
-                    Layer::Graze if !b.grazed => {
-                        let r = c.r + PLAYER_R;
-                        if d2 < r * r {
-                            graze_contacts.push(i);
+                        Layer::Graze if !b.grazed => {
+                            let r = c.r + pr;
+                            if d2 < r * r {
+                                graze_contacts.push(i);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -461,7 +525,7 @@ impl Sim {
         }
 
         // phase 2: resolve, canonical order
-        for i in hit_contacts {
+        for (i, pj) in hit_contacts {
             if tick < self.world.iframe_until {
                 continue;
             }
@@ -474,6 +538,11 @@ impl Sim {
             }
             self.world.player_hits += 1;
             self.world.iframe_until = tick + IFRAMES;
+            // the hit effect is a column write too; game-over is the
+            // player entity's trigger, not the contact's business
+            let player = &mut self.world.bullets[pj];
+            let lives = player.col_get("lives").unwrap_or(0.0);
+            player.col_set(&"lives".into(), lives - 1.0);
             self.world.events.push(Event { tick, name: "player-hit".into(), pos: pos[i] });
         }
         for i in graze_contacts {
@@ -584,8 +653,8 @@ impl Sim {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
         for b in &self.world.bullets {
-            if !b.alive {
-                continue;
+            if !b.alive || b.team.as_deref() == Some("player-body") {
+                continue; // the host draws its own player marker
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
             match &b.kind {
@@ -1077,6 +1146,7 @@ mod tests {
     (spawn (in-frame (pose c[0 3]) (vel c[0 -6])))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
+        sim.mount_player(3.0);
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
@@ -1086,8 +1156,10 @@ mod tests {
             sim.world.events.iter().filter(|e| e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
-        assert_eq!(sim.world.bullets.len(), 1);
+        assert_eq!(sim.world.bullets.iter().filter(|b| b.team.is_none()).count(), 1);
         assert_eq!(sim.world.graze, 2, "graze ring precedes the hitbox; iframes graze too");
+        // the hit effect is a column write; $lives is a channel
+        assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == 2.0));
     }
 
     /// A bullet passing beside the player grazes exactly once.
@@ -1097,6 +1169,7 @@ mod tests {
 (defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
 "#;
         let mut sim = Sim::load(CARD, Some("g")).unwrap();
+        sim.mount_player(3.0);
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
@@ -1144,6 +1217,7 @@ mod tests {
 (defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
 "#;
         let mut sess = Session::default();
+        sess.mount_lives = Some(3.0);
         sess.last_inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         sess.start(Sim::load(CARD, Some("g")).unwrap());
         for _ in 0..120 {
@@ -1156,6 +1230,31 @@ mod tests {
         let w = &sess.sim.as_ref().unwrap().world;
         assert_eq!(w.graze, 1, "replay re-grazes, not double-counts");
         assert_eq!(w.events.iter().filter(|e| e.name == "graze").count(), 1);
+    }
+
+    /// The player is an ordinary entity: lives is a column decremented by
+    /// the hit effect; game-over is its (non-culling) trigger.
+    #[test]
+    fn lives_and_game_over() {
+        const CARD: &str = r#"
+(defpattern atk []
+  (dotimes [i 5 :every (ticks 70)]
+    (spawn (in-frame (pose c[0 3]) (vel c[0 -6])))))
+"#;
+        let mut sim = Sim::load(CARD, Some("atk")).unwrap();
+        sim.mount_player(2.0);
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        for _ in 0..300 {
+            sim.step_with(&inputs).unwrap();
+        }
+        // 70-tick cadence clears the 60-tick iframes: all 4 arrivals hit
+        let count = |n: &str| sim.world.events.iter().filter(|e| e.name == n).count();
+        assert_eq!(count("player-hit"), 4);
+        assert_eq!(count("game-over"), 1, "trigger edge-fires once at lives 0, latched");
+        // the column keeps counting (what game-over MEANS is host policy)
+        assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == -2.0));
+        // non-culling: the player entity is still there (host decides)
+        assert!(sim.world.bullets.iter().any(|b| b.team.as_deref() == Some("player-body")));
     }
 
     /// Death is not special: :triggers replaces the synthesized default,
@@ -1218,6 +1317,7 @@ mod tests {
   (spawn ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6}))))
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
+        sim.mount_player(3.0);
         // player parked ON the beam line, 2 units along it
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         // warn phase: no hitbox
@@ -1229,7 +1329,11 @@ mod tests {
             sim.step_with(&inputs).unwrap();
         }
         assert_eq!(sim.world.player_hits, 1, "active beam hits");
-        assert_eq!(sim.world.bullets.len(), 1, "the beam persists through the hit");
+        assert_eq!(
+            sim.world.bullets.iter().filter(|b| b.team.is_none()).count(),
+            1,
+            "the beam persists through the hit"
+        );
         assert_eq!(sim.world.graze, 1, "beam grazed on the way in");
     }
 
@@ -1262,6 +1366,7 @@ mod tests {
     fn duel_card_plays() {
         let src = std::fs::read_to_string("../../cards/duel.dmk").unwrap();
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
+        sim.mount_player(3.0);
         let inputs = Inputs { player: (0.0, -2.0), nearest_enemy: (0.0, -2.0) };
         for _ in 0..1200 {
             sim.step_with(&inputs).unwrap();
