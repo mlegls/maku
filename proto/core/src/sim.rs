@@ -42,11 +42,12 @@ struct Task {
 
 pub struct Inputs {
     pub player: (f64, f64),
+    pub nearest_enemy: (f64, f64),
 }
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { player: (0.0, -4.0) }
+        Inputs { player: (0.0, -4.0), nearest_enemy: (0.0, 3.0) }
     }
 }
 
@@ -95,6 +96,7 @@ impl Sim {
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         self.ctx.sig.player = inputs.player;
+        self.ctx.sig.nearest_enemy = inputs.nearest_enemy;
         // control layer
         let mut i = 0;
         while i < self.tasks.len() {
@@ -148,7 +150,7 @@ impl Sim {
     fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
         let Some(h) = &b.hue else { return 0.0 };
         let env = h.env.bind("t".into(), Val::Num(tau));
-        let mut ctx = Ctx { sig: self.ctx.sig.clone(), ambient: Pose::IDENTITY };
+        let mut ctx = Ctx { sig: self.ctx.sig.clone(), ambient: Pose::IDENTITY, scan: None };
         let mut w = World::default();
         match evaluate(&h.form, &env, &mut ctx, &mut w) {
             Ok(Val::Num(x)) => x,
@@ -179,9 +181,16 @@ impl Sim {
                         });
                     }
                 }
-                Kind::Laser { shape, warn, active: _, u_max, resolution } => {
+                Kind::Laser { shape, warn, active: _, u_max, u_max_sig, resolution } => {
                     let Ok(anchor) = dyn_pose(&b.motion, tau, &b.state, sig) else {
                         continue;
+                    };
+                    let u_max = match u_max_sig {
+                        Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
+                            .and_then(|v| v.num())
+                            .unwrap_or(*u_max)
+                            .max(0.01),
+                        None => *u_max,
                     };
                     let steps = ((u_max / resolution).ceil() as usize).clamp(2, 400);
                     let mut pts = Vec::with_capacity(steps + 1);
@@ -437,6 +446,9 @@ mod tests {
             ("../../translations/070_dynamic_lasers.edn", "lasers-demo", 300),
             ("../../translations/110_exploding_stars.edn", "exploding-stars", 400),
             ("../../translations/200_cradle.edn", "cradle", 300),
+            ("../../translations/player_homing.edn", "reimu-free-fire", 300),
+            ("../../translations/player_homing.edn", "reimu-focus", 400),
+            ("../../translations/player_homing.edn", "fantasy-seal", 700),
         ];
         for (path, pattern, ticks) in cases {
             let src = std::fs::read_to_string(path)

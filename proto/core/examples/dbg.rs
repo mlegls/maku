@@ -12,6 +12,9 @@ fn main() {
         ("/Users/mlegls/dev/danmaku-engine/translations/070_dynamic_lasers.edn", "lasers-demo", 300),
         ("/Users/mlegls/dev/danmaku-engine/translations/110_exploding_stars.edn", "exploding-stars", 400),
         ("/Users/mlegls/dev/danmaku-engine/translations/200_cradle.edn", "cradle", 300),
+        ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.edn", "reimu-free-fire", 300),
+        ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.edn", "reimu-focus", 400),
+        ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.edn", "fantasy-seal", 700),
     ];
     for (path, pattern, ticks) in cases {
         let src = match std::fs::read_to_string(path) {

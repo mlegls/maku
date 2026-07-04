@@ -43,8 +43,37 @@ impl Pose {
     }
 }
 
-/// Per-bullet scanned state: keyed by dyn-node identity (Rc pointer).
-pub type MotionState = HashMap<usize, [f64; 2]>;
+/// Per-bullet scanned state: keyed by dyn-node identity (Rc pointer) or, for
+/// stateful expression sites (slew/smooth), a hash of (base node, site index).
+#[derive(Debug, Clone)]
+pub enum Cell {
+    N([f64; 2]),
+    D(Rc<DynNode>),
+}
+pub type MotionState = HashMap<usize, Cell>;
+
+/// Scan-context IO for stateful signal evaluation: carries the bullet's state
+/// cells plus a per-evaluation site counter (stable for a fixed expr tree).
+pub struct ScanIo {
+    pub state: MotionState,
+    pub base: usize,
+    pub counter: usize,
+    pub advance: bool,
+    pub dt: f64,
+}
+pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
+
+fn site_key(base: usize, counter: usize) -> usize {
+    base ^ (0x9e37_79b9_usize.wrapping_mul(counter + 1))
+}
+
+fn shortest_arc(from: f64, to: f64) -> f64 {
+    let mut d = (to - from).rem_euclid(360.0);
+    if d > 180.0 {
+        d -= 360.0;
+    }
+    d
+}
 
 #[derive(Debug)]
 pub enum DynNode {
@@ -58,6 +87,32 @@ pub enum DynNode {
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
     Translate { dx: f64, dy: f64, child: Rc<DynNode> },
     Frame(Rc<DynNode>, Rc<DynNode>),
+    /// A live injected channel as a pose (class (b): pointwise, no state).
+    Live { channel: Rc<str> },
+    /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
+    RotExpr { form: Form, env: Env },
+    /// SCANNED.md's `stages`: segment list with per-bullet (idx, epoch) state
+    /// and explicit exit handoff into Lazy segments.
+    Stages { segs: Vec<StageSeg> },
+}
+
+#[derive(Debug)]
+pub struct StageSeg {
+    pub term: StageTerm,
+    pub make: StageMake,
+}
+
+#[derive(Debug)]
+pub enum StageTerm {
+    Dur(f64),
+    Until(Form, Env),
+    Forever,
+}
+
+#[derive(Debug)]
+pub enum StageMake {
+    Ready(Rc<DynNode>),
+    Lazy(Val), // an (fn [exit] ...) closure, instantiated at the boundary
 }
 
 /// Extended entity (§6 axis materialization): a laser = anchor dyn + shape
@@ -69,9 +124,29 @@ pub struct ExtLaser {
     pub warn: f64,
     pub active: f64,
     pub u_max: f64,
+    pub u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
     pub resolution: f64,
 }
 
+pub fn eval_sig(
+    form: &Form,
+    env: &Env,
+    sig: &SigEnv,
+    tau: f64,
+    u: f64,
+    scan: Option<ScanShared>,
+    pos: Option<(f64, f64)>,
+) -> Result<Val, String> {
+    let mut e = env.bind("t".into(), Val::Num(tau)).bind("u".into(), Val::Num(u));
+    if let Some((px, py)) = pos {
+        e = e.bind("pos".into(), Val::Vec2 { x: px, y: py });
+    }
+    let mut ctx = Ctx { sig: sig.clone(), ambient: Pose::IDENTITY, scan };
+    let mut w = World::default(); // signals never touch the world (§2)
+    evaluate(form, &e, &mut ctx, &mut w)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn eval_pt(
     a: &Form,
     b: &Form,
@@ -80,18 +155,28 @@ fn eval_pt(
     sig: &SigEnv,
     tau: f64,
     u: f64,
+    scan: Option<ScanShared>,
+    pos: Option<(f64, f64)>,
 ) -> Result<(f64, f64), String> {
-    let e = env.bind("t".into(), Val::Num(tau)).bind("u".into(), Val::Num(u));
-    let mut ctx = Ctx { sig: sig.clone(), ambient: Pose::IDENTITY };
-    let mut w = World::default(); // signals never touch the world (§2)
-    let av = evaluate(a, &e, &mut ctx, &mut w)?.num()?;
-    let bv = evaluate(b, &e, &mut ctx, &mut w)?.num()?;
+    let av = eval_sig(a, env, sig, tau, u, scan.clone(), pos)?.num()?;
+    let bv = eval_sig(b, env, sig, tau, u, scan, pos)?.num()?;
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         Ok((av * c, av * s))
     } else {
         Ok((av, bv))
     }
+}
+
+/// Read-only scan context over a clone of the bullet's state.
+fn read_scan(state: &MotionState, base: usize) -> ScanShared {
+    Rc::new(std::cell::RefCell::new(ScanIo {
+        state: state.clone(),
+        base,
+        counter: 0,
+        advance: false,
+        dt: 0.0,
+    }))
 }
 
 pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
@@ -113,16 +198,41 @@ pub fn dyn_pose_u(
             th: vy.atan2(*vx).to_degrees(),
         }),
         DynNode::ClosedPt { a, b, polar, env } => {
-            let (x, y) = eval_pt(a, b, *polar, env, sig, tau, u)?;
+            let key = d as *const DynNode as usize;
+            let (x, y) = eval_pt(a, b, *polar, env, sig, tau, u, Some(read_scan(state, key)), None)?;
             let eps = 1.0 / TICK_RATE;
-            let (x2, y2) = eval_pt(a, b, *polar, env, sig, tau + eps, u)?;
+            let (x2, y2) =
+                eval_pt(a, b, *polar, env, sig, tau + eps, u, Some(read_scan(state, key)), None)?;
             Ok(Pose { x, y, th: (y2 - y).atan2(x2 - x).to_degrees() })
         }
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let [x, y] = state.get(&key).copied().unwrap_or([0.0, 0.0]);
-            let (vx, vy) = eval_pt(a, b, *polar, env, sig, tau, u)?;
+            let [x, y] = match state.get(&key) {
+                Some(Cell::N(v)) => *v,
+                _ => [0.0, 0.0],
+            };
+            let (vx, vy) =
+                eval_pt(a, b, *polar, env, sig, tau, u, Some(read_scan(state, key)), Some((x, y)))?;
             Ok(Pose { x, y, th: vy.atan2(vx).to_degrees() })
+        }
+        DynNode::Live { channel } => {
+            let (x, y) = sig.channel(channel);
+            Ok(Pose { x, y, th: 0.0 })
+        }
+        DynNode::RotExpr { form, env } => {
+            let key = d as *const DynNode as usize;
+            let th = eval_sig(form, env, sig, tau, u, Some(read_scan(state, key)), Some((0.0, 0.0)))?
+                .num()?;
+            Ok(Pose { x: 0.0, y: 0.0, th })
+        }
+        DynNode::Stages { segs } => {
+            let key = d as *const DynNode as usize;
+            let [idx, epoch] = match state.get(&key) {
+                Some(Cell::N(v)) => *v,
+                _ => [0.0, 0.0],
+            };
+            let cur = stage_dyn(segs, idx as usize, state, key)?;
+            dyn_pose_u(&cur, tau - epoch, u, state, sig)
         }
         DynNode::Translate { dx, dy, child } => {
             let p = dyn_pose_u(child, tau, u, state, sig)?;
@@ -133,6 +243,23 @@ pub fn dyn_pose_u(
             let cp = dyn_pose_u(child, tau, u, state, sig)?;
             Ok(pp.compose(&cp))
         }
+    }
+}
+
+/// The dyn for the current segment of a Stages node.
+fn stage_dyn(
+    segs: &[StageSeg],
+    idx: usize,
+    state: &MotionState,
+    key: usize,
+) -> Result<Rc<DynNode>, String> {
+    let seg = segs.get(idx).ok_or("stages: segment index out of range")?;
+    match &seg.make {
+        StageMake::Ready(d) => Ok(d.clone()),
+        StageMake::Lazy(_) => match state.get(&(key + 1)) {
+            Some(Cell::D(d)) => Ok(d.clone()),
+            _ => Err("stages: lazy segment not instantiated".into()),
+        },
     }
 }
 
@@ -147,11 +274,66 @@ pub fn step_motion(
     match d {
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let (vx, vy) = eval_pt(a, b, *polar, env, sig, tau, 0.0)?;
-            let cell = state.entry(key).or_insert([0.0, 0.0]);
-            cell[0] += vx * dt;
-            cell[1] += vy * dt;
+            let [x, y] = match state.get(&key) {
+                Some(Cell::N(v)) => *v,
+                _ => [0.0, 0.0],
+            };
+            let (vx, vy) = advance_sites(state, key, dt, |scan| {
+                eval_pt(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)))
+            })?;
+            state.insert(key, Cell::N([x + vx * dt, y + vy * dt]));
             Ok(())
+        }
+        DynNode::RotExpr { form, env } => {
+            let key = d as *const DynNode as usize;
+            advance_sites(state, key, dt, |scan| {
+                eval_sig(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)))?.num()
+            })?;
+            Ok(())
+        }
+        DynNode::Stages { segs } => {
+            let key = d as *const DynNode as usize;
+            let [mut idx, mut epoch] = match state.get(&key) {
+                Some(Cell::N(v)) => *v,
+                _ => [0.0, 0.0],
+            };
+            // terminate current segment?
+            let seg = segs.get(idx as usize).ok_or("stages: bad segment")?;
+            let local = tau - epoch;
+            let done = match &seg.term {
+                StageTerm::Dur(dsec) => local >= *dsec,
+                StageTerm::Until(pred, penv) => {
+                    let scan = read_scan(state, key);
+                    truthy(&eval_sig(pred, penv, sig, local, 0.0, Some(scan), None)?)
+                }
+                StageTerm::Forever => false,
+            };
+            if done && (idx as usize) + 1 < segs.len() {
+                // exit snapshot from the finishing segment
+                let cur = stage_dyn(segs, idx as usize, state, key)?;
+                let p1 = dyn_pose_u(&cur, local, 0.0, state, sig)?;
+                let p0 = dyn_pose_u(&cur, (local - dt).max(0.0), 0.0, state, sig)?;
+                let exit = Val::Map(Rc::new(vec![
+                    (Val::Kw("pos".into()), Val::Vec2 { x: p1.x, y: p1.y }),
+                    (
+                        Val::Kw("vel".into()),
+                        Val::Vec2 { x: (p1.x - p0.x) / dt, y: (p1.y - p0.y) / dt },
+                    ),
+                    (Val::Kw("pose".into()), Val::Pose(p1)),
+                ]));
+                idx += 1.0;
+                epoch = tau;
+                if let StageMake::Lazy(f) = &segs[idx as usize].make {
+                    let mut ctx = Ctx { sig: sig.clone(), ambient: Pose::IDENTITY, scan: None };
+                    let mut w = World::default();
+                    let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
+                    state.insert(key + 1, Cell::D(as_dyn(dv)?));
+                }
+            }
+            state.insert(key, Cell::N([idx, epoch]));
+            let cur = stage_dyn(segs, idx as usize, state, key)?;
+            // step the inner dyn on the segment-local clock
+            step_motion(&cur, tau - epoch, dt, state, sig)
         }
         DynNode::Translate { child, .. } => step_motion(child, tau, dt, state, sig),
         DynNode::Frame(a, b) => {
@@ -162,9 +344,32 @@ pub fn step_motion(
     }
 }
 
+/// Run an evaluation with an advancing scan context over the bullet's state,
+/// then merge the (possibly grown) state back.
+fn advance_sites<T>(
+    state: &mut MotionState,
+    base: usize,
+    dt: f64,
+    f: impl FnOnce(ScanShared) -> Result<T, String>,
+) -> Result<T, String> {
+    let io = Rc::new(std::cell::RefCell::new(ScanIo {
+        state: std::mem::take(state),
+        base,
+        counter: 0,
+        advance: true,
+        dt,
+    }));
+    let r = f(io.clone());
+    *state = Rc::try_unwrap(io)
+        .map_err(|_| "scan context escaped".to_string())?
+        .into_inner()
+        .state;
+    r
+}
+
 pub fn is_scanned(d: &DynNode) -> bool {
     match d {
-        DynNode::Vel { .. } => true,
+        DynNode::Vel { .. } | DynNode::RotExpr { .. } | DynNode::Stages { .. } => true,
         DynNode::Translate { child, .. } => is_scanned(child),
         DynNode::Frame(a, b) => is_scanned(a) || is_scanned(b),
         _ => false,
@@ -194,7 +399,14 @@ pub struct Style {
 #[derive(Debug, Clone)]
 pub enum Kind {
     Point,
-    Laser { shape: Option<Rc<DynNode>>, warn: f64, active: f64, u_max: f64, resolution: f64 },
+    Laser {
+        shape: Option<Rc<DynNode>>,
+        warn: f64,
+        active: f64,
+        u_max: f64,
+        u_max_sig: Option<(Form, Env)>,
+        resolution: f64,
+    },
 }
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
@@ -250,6 +462,9 @@ pub enum Val {
     Fn { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     Builtin(Rc<str>),
     Handle(u64),
+    /// A deferred signal expression (shared stateful instance, §5): forced
+    /// when referenced inside a scan context.
+    Thunk(Rc<(Form, Env)>),
     Nothing,
 }
 
@@ -410,21 +625,39 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
 
 /// What signals may see: top-level defs + the injected snapshot. Never the
 /// world (the purity rule, load-bearing for the borrow structure too).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SigEnv {
     pub defs: Rc<HashMap<String, Form>>,
     pub player: (f64, f64),
+    pub nearest_enemy: (f64, f64),
+}
+
+impl Default for SigEnv {
+    fn default() -> Self {
+        SigEnv { defs: Rc::new(HashMap::new()), player: (0.0, -4.0), nearest_enemy: (0.0, 3.0) }
+    }
+}
+
+impl SigEnv {
+    pub fn channel(&self, name: &str) -> (f64, f64) {
+        match name {
+            "nearest-enemy" => self.nearest_enemy,
+            _ => self.player,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct Ctx {
     pub sig: SigEnv,
     pub ambient: Pose,
+    /// Some(...) while evaluating inside a scan (stateful sites active).
+    pub scan: Option<ScanShared>,
 }
 
 impl Default for Ctx {
     fn default() -> Self {
-        Ctx { sig: SigEnv { defs: Rc::new(HashMap::new()), player: (0.0, -4.0) }, ambient: Pose::IDENTITY }
+        Ctx { sig: SigEnv::default(), ambient: Pose::IDENTITY, scan: None }
     }
 }
 
@@ -440,8 +673,19 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Sym(s) => match &**s {
             "inf" => Ok(Val::Num(f64::INFINITY)),
             "player" => Ok(Val::Vec2 { x: ctx.sig.player.0, y: ctx.sig.player.1 }),
+            "nearest-enemy" => {
+                Ok(Val::Vec2 { x: ctx.sig.nearest_enemy.0, y: ctx.sig.nearest_enemy.1 })
+            }
+            "phi" => Ok(Val::Num(1.618_033_988_749_895)),
             name => {
                 if let Some(v) = env.lookup(name) {
+                    // a deferred signal (shared scan) forces inside scan contexts
+                    if ctx.scan.is_some() {
+                        if let Val::Thunk(t) = &v {
+                            let (f, e) = &**t;
+                            return evaluate(f, e, ctx, world);
+                        }
+                    }
                     return Ok(v);
                 }
                 if let Some(f) = ctx.sig.defs.clone().get(name) {
@@ -610,6 +854,46 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "vel" => return sf_vel(items, env, ctx, world),
             "laser" => return sf_laser(items, env, ctx, world),
+            "pather" => {
+                // prototype: pathers render as points (trail later); the dyn
+                // is the second argument
+                return evaluate(&items[2], env, ctx, world);
+            }
+            "live" => {
+                // in a scan context: the channel's current value (class b/d);
+                // at control level: a live pose signal usable as a frame
+                if let Some(Form::Sym(ch)) = items.get(1) {
+                    match ch.as_ref() {
+                        "player" | "nearest-enemy" => {
+                            return if ctx.scan.is_some() {
+                                let (x, y) = ctx.sig.channel(ch);
+                                Ok(Val::Vec2 { x, y })
+                            } else {
+                                Ok(Val::Dyn(Rc::new(DynNode::Live { channel: ch.clone() })))
+                            };
+                        }
+                        _ => return Ok(Val::Bool(true)), // unknown host channel stub
+                    }
+                }
+                return evaluate(&items[1], env, ctx, world);
+            }
+            "slew" | "smooth" => {
+                if ctx.scan.is_none() {
+                    // deferred shared instance (§5): forced in scan contexts
+                    return Ok(Val::Thunk(Rc::new((
+                        Form::List(items.to_vec().into()),
+                        env.clone(),
+                    ))));
+                }
+                return sf_stateful(&**s, items, env, ctx, world);
+            }
+            "stages" => return sf_stages(items, env, ctx, world),
+            "rot" if items.len() == 2 && contains_t(&items[1]) => {
+                return Ok(Val::Dyn(Rc::new(DynNode::RotExpr {
+                    form: items[1].clone(),
+                    env: env.clone(),
+                })));
+            }
             "aim" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
                 let Val::Vec2 { x, y } = target else {
@@ -625,7 +909,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 };
                 let out = xs
                     .iter()
-                    .map(|x| apply_fn(f.clone(), &[x.clone()], ctx, world))
+                    .map(|x| apply_fn(f.clone(), &[x.clone()], ctx, world, false))
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(Val::Arr(Rc::new(out)));
             }
@@ -658,6 +942,14 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             let child = evaluate(&items[1], env, ctx, world)?;
             apply_frame_val(p, child)
         }
+        // signal-valued frame (live channel, rot-expr): compose dyns
+        Val::Dyn(fd) => {
+            if items.len() != 2 {
+                return Err("frame application takes exactly one child".into());
+            }
+            let child = evaluate(&items[1], env, ctx, world)?;
+            apply_dyn_frame(fd, child)
+        }
         Val::Arr(_) => {
             if items.len() != 2 {
                 return Err("frame-array application takes exactly one child".into());
@@ -665,19 +957,55 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             let child = evaluate(&items[1], env, ctx, world)?;
             apply_frame_arr(&hv, child)
         }
+        Val::Kw(k) => {
+            // keyword application: map access, e.g. (:vel exit)
+            let arg = evaluate(&items[1], env, ctx, world)?;
+            Ok(map_get(&arg, &k).unwrap_or(Val::Nothing))
+        }
         f @ (Val::Fn { .. } | Val::Builtin(_)) => {
             let args = items[1..]
                 .iter()
                 .map(|x| evaluate(x, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
-            apply_fn(f, &args, ctx, world)
+            apply_fn(f, &args, ctx, world, false)
         }
         _ => Err(format!("cannot apply {:?}", hv)),
     }
 }
 
-/// Apply a user fn or builtin. Ambient frames do not cross fn boundaries.
-pub fn apply_fn(f: Val, args: &[Val], ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+/// A dyn in frame (head) position: composes over dyns, exts, and arrays.
+fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
+    match child {
+        Val::Arr(items) => {
+            let out = items
+                .iter()
+                .map(|c| apply_dyn_frame(frame.clone(), c.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        Val::Ext(l) => Ok(Val::Ext(Rc::new(ExtLaser {
+            anchor: Rc::new(DynNode::Frame(frame, l.anchor.clone())),
+            shape: l.shape.clone(),
+            warn: l.warn,
+            active: l.active,
+            u_max: l.u_max,
+            u_max_sig: l.u_max_sig.clone(),
+            resolution: l.resolution,
+        }))),
+        other => Ok(Val::Dyn(Rc::new(DynNode::Frame(frame, as_dyn(other)?)))),
+    }
+}
+
+/// Apply a user fn or builtin. Ambient frames do not cross fn boundaries
+/// (F18). `exec_actions` is set only for manipulate callbacks, whose bodies
+/// run instantaneously; ordinary fns RETURN action values for composition.
+pub fn apply_fn(
+    f: Val,
+    args: &[Val],
+    ctx: &mut Ctx,
+    world: &mut World,
+    exec_actions: bool,
+) -> Result<Val, String> {
     match f {
         Val::Builtin(name) => builtin(&name, args),
         Val::Fn { params, body, env } => {
@@ -692,12 +1020,12 @@ pub fn apply_fn(f: Val, args: &[Val], ctx: &mut Ctx, world: &mut World) -> Resul
             for form in body.iter() {
                 match evaluate(form, &e, ctx, world) {
                     Ok(v) => {
-                        // instantaneous actions in fn bodies execute in place
-                        // (manipulate callbacks: event/spawn/cull)
-                        if let Val::Action(a) = &v {
-                            if let Err(err) = exec_instant(a, ctx, world) {
-                                result = Err(err);
-                                break;
+                        if exec_actions {
+                            if let Val::Action(a) = &v {
+                                if let Err(err) = exec_instant(a, ctx, world) {
+                                    result = Err(err);
+                                    break;
+                                }
                             }
                         }
                         last = v;
@@ -762,14 +1090,14 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Manipulate { targets, callback } => {
             for id in targets {
                 if world.find(*id).is_some() {
-                    apply_fn(callback.clone(), &[Val::Handle(*id)], ctx, world)?;
+                    apply_fn(callback.clone(), &[Val::Handle(*id)], ctx, world, true)?;
                 }
             }
             Ok(Val::Nothing)
         }
         ActionV::Seq { items, env } => {
             // instantaneous only: run each item now
-            let mut e = Ctx { sig: ctx.sig.clone(), ambient: ctx.ambient };
+            let mut e = Ctx { sig: ctx.sig.clone(), ambient: ctx.ambient, scan: None };
             for f in items.iter() {
                 let v = evaluate(f, env, &mut e, world)?;
                 if let Val::Action(a) = &v {
@@ -843,6 +1171,7 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             warn: l.warn,
             active: l.active,
             u_max: l.u_max,
+            u_max_sig: l.u_max_sig.clone(),
             resolution: l.resolution,
         }))),
         other => {
@@ -1028,7 +1357,25 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         }
         None => return Err("laser: expected options".into()),
     };
+    // evaluate options, keeping signal-valued entries (contain t) as forms
+    let mut u_max_sig = None;
     let opts = match items.get(opts_idx) {
+        Some(Form::Map(kvs)) => {
+            let mut pairs = Vec::new();
+            for (k, v) in kvs.iter() {
+                let kv = evaluate(k, env, ctx, world)?;
+                if contains_t(v) {
+                    if matches!(&kv, Val::Kw(kw) if &**kw == "u-max") {
+                        u_max_sig = Some((v.clone(), env.clone()));
+                    }
+                    pairs.push((kv, Val::Nothing));
+                } else {
+                    let vv = evaluate(v, env, ctx, world)?;
+                    pairs.push((kv, vv));
+                }
+            }
+            Val::Map(Rc::new(pairs))
+        }
         Some(m) => evaluate(m, env, ctx, world)?,
         None => Val::Map(Rc::new(vec![])),
     };
@@ -1041,8 +1388,114 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         warn: getf("warn", 0.0),
         active: getf("active", f64::INFINITY),
         u_max: getf("u-max", 10.0),
+        u_max_sig,
         resolution: getf("resolution", 0.1),
     })))
+}
+
+/// slew/smooth: stateful expression sites. State keyed by (base, site index);
+/// the site counter is stable for a fixed expression tree.
+fn sf_stateful(
+    which: &str,
+    items: &[Form],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Val, String> {
+    let scan = ctx.scan.clone().unwrap();
+    let (key, advance, dt) = {
+        let mut io = scan.borrow_mut();
+        let k = site_key(io.base, io.counter);
+        io.counter += 1;
+        (k, io.advance, io.dt)
+    };
+    match which {
+        "slew" => {
+            // (slew rate init? target)
+            let rate = evaluate(&items[1], env, ctx, world)?.num()?;
+            let (init, target_form) = if items.len() > 3 {
+                (Some(evaluate(&items[2], env, ctx, world)?.num()?), &items[3])
+            } else {
+                (None, &items[2])
+            };
+            let target = evaluate(target_form, env, ctx, world)?.num()?;
+            let stored = {
+                let io = scan.borrow();
+                match io.state.get(&key) {
+                    Some(Cell::N(v)) => Some(v[0]),
+                    _ => None,
+                }
+            };
+            let mut cur = stored.unwrap_or(init.unwrap_or(target));
+            if advance {
+                let d = shortest_arc(cur, target);
+                cur += d.clamp(-rate * dt, rate * dt);
+                scan.borrow_mut().state.insert(key, Cell::N([cur, 0.0]));
+            }
+            Ok(Val::Num(cur))
+        }
+        "smooth" => {
+            // (smooth k target): one-pole follower, per tick
+            let k = evaluate(&items[1], env, ctx, world)?.num()?;
+            let target = evaluate(&items[2], env, ctx, world)?;
+            let (tx, ty) = match target {
+                Val::Vec2 { x, y } => (x, y),
+                Val::Num(x) => (x, 0.0),
+                v => return Err(format!("smooth: bad target {:?}", v)),
+            };
+            let stored = {
+                let io = scan.borrow();
+                match io.state.get(&key) {
+                    Some(Cell::N(v)) => Some(*v),
+                    _ => None,
+                }
+            };
+            let [mut x, mut y] = stored.unwrap_or([tx, ty]);
+            if advance {
+                x += k * (tx - x);
+                y += k * (ty - y);
+                scan.borrow_mut().state.insert(key, Cell::N([x, y]));
+            }
+            Ok(Val::Vec2 { x, y })
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// (stages (stage dur sig) (until pred sig) (forever sig-or-fn) ...)
+fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let mut segs = Vec::new();
+    for seg in &items[1..] {
+        let Form::List(parts) = seg else {
+            return Err("stages: expected (stage ...) clauses".into());
+        };
+        let head = match parts.first() {
+            Some(Form::Sym(h)) => h.to_string(),
+            _ => return Err("stages: bad clause head".into()),
+        };
+        let (term, sig_form) = match head.as_str() {
+            "stage" => {
+                let dur = evaluate(&parts[1], env, ctx, world)?.num()?;
+                (StageTerm::Dur(dur), &parts[2])
+            }
+            "until" => (StageTerm::Until(parts[1].clone(), env.clone()), &parts[2]),
+            "forever" => (StageTerm::Forever, &parts[1]),
+            h => return Err(format!("stages: unknown clause '{}'", h)),
+        };
+        let v = evaluate(sig_form, env, ctx, world)?;
+        let make = match v {
+            Val::Fn { .. } => StageMake::Lazy(v),
+            other => StageMake::Ready(as_dyn(other)?),
+        };
+        segs.push(StageSeg { term, make });
+    }
+    if segs.is_empty() {
+        return Err("stages: no segments".into());
+    }
+    if matches!(segs[0].make, StageMake::Lazy(_)) {
+        return Err("stages: first segment cannot be lazy (no exit yet)".into());
+    }
+    Ok(Val::Dyn(Rc::new(DynNode::Stages { segs })))
 }
 
 /// Meta keys whose values are signals sampled later (§7): never evaluated at
@@ -1099,6 +1552,7 @@ fn flatten_elems(
                     warn: l.warn,
                     active: l.active,
                     u_max: l.u_max,
+                    u_max_sig: l.u_max_sig.clone(),
                     resolution: l.resolution,
                 },
                 path: path.clone(),
@@ -1239,8 +1693,8 @@ fn sf_fan(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
 const BUILTINS: &[&str] = &[
     "+", "-", "*", "/", "mod", "pow", "inc", "dec", "=", "<", ">", "<=", ">=", "min", "max",
     "abs", "quot", "ticks", "sin", "cos", "sine", "cart", "polar", "pose", "rot", "still",
-    "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerpsmooth", "angle-of",
-    "mag", "einsine", "eoutsine", "eiosine",
+    "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerp3", "lerpsmooth",
+    "angle-of", "mag", "einsine", "eoutsine", "eiosine",
 ];
 
 fn is_builtin(name: &str) -> bool {
@@ -1454,6 +1908,19 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             let (a, b, ctrl, v1, v2) = (n(0)?, n(1)?, n(2)?, n(3)?, n(4)?);
             let r = ((ctrl - a) / (b - a)).clamp(0.0, 1.0);
             Ok(Val::Num(v1 + r * (v2 - v1)))
+        }
+        "lerp3" => {
+            // (lerp3 a1 b1 a2 b2 ctrl v1 v2 v3): v1→v2 over [a1,b1], v2→v3 over [a2,b2]
+            let (a1, b1, a2, b2, ctrl) = (n(0)?, n(1)?, n(2)?, n(3)?, n(4)?);
+            let (v1, v2, v3) = (n(5)?, n(6)?, n(7)?);
+            let out = if ctrl < a2 {
+                let r = ((ctrl - a1) / (b1 - a1)).clamp(0.0, 1.0);
+                v1 + r * (v2 - v1)
+            } else {
+                let r = ((ctrl - a2) / (b2 - a2)).clamp(0.0, 1.0);
+                v2 + r * (v3 - v2)
+            };
+            Ok(Val::Num(out))
         }
         "lerpsmooth" => {
             // (lerpsmooth ease a b ctrl v1 v2)

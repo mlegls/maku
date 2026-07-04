@@ -249,12 +249,13 @@ async fn main() {
         // mock player rides the mouse (design.md §11: sandbox mock player)
         let (cx, cy) = (screen_width() / 2.0, screen_height() / 2.0 + 100.0);
         let (mx, my) = mouse_position();
-        let inputs = Inputs {
-            player: (
-                ((mx - cx) / PIXELS_PER_UNIT) as f64,
-                ((cy - my) / PIXELS_PER_UNIT) as f64,
-            ),
-        };
+        let mouse_world = (
+            ((mx - cx) / PIXELS_PER_UNIT) as f64,
+            ((cy - my) / PIXELS_PER_UNIT) as f64,
+        );
+        // the mouse is the mock player for boss patterns and the mock
+        // nearest-enemy for player-side patterns
+        let inputs = Inputs { player: mouse_world, nearest_enemy: mouse_world };
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !player.paused {
