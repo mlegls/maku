@@ -3,19 +3,19 @@ use danmaku_core::sim::Sim;
 
 fn main() {
     let cases: &[(&str, &str, usize)] = &[
-        ("/Users/mlegls/dev/danmaku-engine/translations/130_bowap.dmk", "bowap", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/130_bowap.dmk", "bowap-fold", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/020_gsrepeat.dmk", "gsrepeat-demo", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/040_spread.dmk", "spread-demo", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/060_polar.dmk", "polar-demo", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/080_aimed.dmk", "aimed-demo", 400),
-        ("/Users/mlegls/dev/danmaku-engine/translations/070_dynamic_lasers.dmk", "lasers-demo", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/110_exploding_stars.dmk", "exploding-stars", 400),
-        ("/Users/mlegls/dev/danmaku-engine/translations/200_cradle.dmk", "cradle", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.dmk", "reimu-free-fire", 300),
-        ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.dmk", "reimu-focus", 400),
-        ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.dmk", "fantasy-seal", 700),
-        ("/Users/mlegls/dev/danmaku-engine/translations/ph_boss2_spell2.dmk", "spell-2", 900),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/130_bowap.dmk", "bowap", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/130_bowap.dmk", "bowap-fold", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/020_gsrepeat.dmk", "gsrepeat-demo", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/040_spread.dmk", "spread-demo", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/060_polar.dmk", "polar-demo", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/080_aimed.dmk", "aimed-demo", 400),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/070_dynamic_lasers.dmk", "lasers-demo", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/110_exploding_stars.dmk", "exploding-stars", 400),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/200_cradle.dmk", "cradle", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/player_homing.dmk", "reimu-free-fire", 300),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/player_homing.dmk", "reimu-focus", 400),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/player_homing.dmk", "fantasy-seal", 700),
+        ("/Users/mlegls/dev/danmaku-engine/cards/translations/ph_boss2_spell2.dmk", "spell-2", 900),
     ];
     for (path, pattern, ticks) in cases {
         let src = match std::fs::read_to_string(path) {

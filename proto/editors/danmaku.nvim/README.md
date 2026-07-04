@@ -5,7 +5,7 @@ newline-delimited EDN over 127.0.0.1:7777.
 
 Start the player once:
 
-    cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- translations/130_bowap.dmk
+    cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/translations/130_bowap.dmk
 
 Then from any `.dmk` card buffer:
 

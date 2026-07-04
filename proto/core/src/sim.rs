@@ -1040,19 +1040,19 @@ mod tests {
     #[test]
     fn translations_run() {
         let cases: &[(&str, &str, usize)] = &[
-            ("../../translations/130_bowap.dmk", "bowap", 300),
-            ("../../translations/130_bowap.dmk", "bowap-fold", 300),
-            ("../../translations/020_gsrepeat.dmk", "gsrepeat-demo", 300),
-            ("../../translations/040_spread.dmk", "spread-demo", 300),
-            ("../../translations/060_polar.dmk", "polar-demo", 300),
-            ("../../translations/080_aimed.dmk", "aimed-demo", 400),
-            ("../../translations/070_dynamic_lasers.dmk", "lasers-demo", 300),
-            ("../../translations/110_exploding_stars.dmk", "exploding-stars", 400),
-            ("../../translations/200_cradle.dmk", "cradle", 300),
-            ("../../translations/player_homing.dmk", "reimu-free-fire", 300),
-            ("../../translations/player_homing.dmk", "reimu-focus", 400),
-            ("../../translations/player_homing.dmk", "fantasy-seal", 700),
-            ("../../translations/ph_boss2_spell2.dmk", "spell-2", 900),
+            ("../../cards/translations/130_bowap.dmk", "bowap", 300),
+            ("../../cards/translations/130_bowap.dmk", "bowap-fold", 300),
+            ("../../cards/translations/020_gsrepeat.dmk", "gsrepeat-demo", 300),
+            ("../../cards/translations/040_spread.dmk", "spread-demo", 300),
+            ("../../cards/translations/060_polar.dmk", "polar-demo", 300),
+            ("../../cards/translations/080_aimed.dmk", "aimed-demo", 400),
+            ("../../cards/translations/070_dynamic_lasers.dmk", "lasers-demo", 300),
+            ("../../cards/translations/110_exploding_stars.dmk", "exploding-stars", 400),
+            ("../../cards/translations/200_cradle.dmk", "cradle", 300),
+            ("../../cards/translations/player_homing.dmk", "reimu-free-fire", 300),
+            ("../../cards/translations/player_homing.dmk", "reimu-focus", 400),
+            ("../../cards/translations/player_homing.dmk", "fantasy-seal", 700),
+            ("../../cards/translations/ph_boss2_spell2.dmk", "spell-2", 900),
         ];
         for (path, pattern, ticks) in cases {
             let src = std::fs::read_to_string(path)
@@ -1185,7 +1185,7 @@ mod tests {
     /// worlds stay identical (the scrubbing contract).
     #[test]
     fn snapshot_determinism() {
-        let src = std::fs::read_to_string("../../translations/ph_boss2_spell2.dmk").unwrap();
+        let src = std::fs::read_to_string("../../cards/translations/ph_boss2_spell2.dmk").unwrap();
         let mut a = Sim::load(&src, Some("spell-2")).unwrap();
         for _ in 0..200 {
             a.step().unwrap();

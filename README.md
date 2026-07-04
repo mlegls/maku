@@ -17,7 +17,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/notes/` | implementation notes, prototype-vs-spec gaps |
 | `proto/` | Rust prototype: `core` (interpreter/sim/session), `player` (macroquad host), `editors/danmaku.nvim` |
 | `cards/` | playable cards — start with `reimu_vs_mima.dmk` |
-| `translations/` | the DMK translation corpus (validation exercise) + working records |
+| `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
 | `dmk-corpus/` | the upstream DMK scripts translated (MIT) |
 
 ## Quickstart
