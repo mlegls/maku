@@ -19,7 +19,7 @@ constructed inline under broadcast is fresh state per element (own columns);
 state (a countdown), never `wait` — `Action` doesn't fit in the return type
 and would be inert if smuggled.
 
-Genuine class-(d) example — homing with a turn-rate cap:
+Raw-scan homing, for reference (what the sugar below compiles to):
 
 ```edn
 (def homing
@@ -29,6 +29,37 @@ Genuine class-(d) example — homing with a turn-rate cap:
             pos' (+ pos (* dt p[3 dir']))]
         [{:pos pos' :dir dir'} (pose pos' dir')]))))
 ```
+
+## 1b. Derived domains: vel/acc with self-reference (adopted)
+
+`(vel sig)` / `(acc sig)` are §4's integrate-1/2-times constructors, `Scanned`
+by construction. Adopted extensions:
+
+- **Vel/acc slots bind self-state** (F12 extended): `pos` and `dir` in vel
+  slots, plus `vel` in acc slots — DMK precedent: velocity functions receive
+  `bpi` including own location. Self-reference is feedback, and these signals
+  are already scans, so the type story is unchanged.
+- **Injected kinematics**: the input snapshot carries player vel/acc alongside
+  pos; `(deriv sig)` differentiates any signal (finite difference, one
+  prev-sample column — the same machinery §4 uses for heading).
+- **`(slew rate sig)`** — angle-aware rate limiter (shortest-arc; SC `Slew`).
+
+Homing becomes one line:
+
+```edn
+(vel p[3 (slew 120 (angle-to (- (live player) pos)))])
+```
+
+`live` stays explicit — a vel slot is a spawn argument, so snap-by-default
+applies; plain `player` aims once at spawn, `(live player)` tracks. The
+scrub-breaking choice is visible (§3 class (d), marked).
+
+- **Base + correction emerges; no operator needed.** Signals are a vector
+  space pointwise and integration is linear, so `(vel (+ ballistic (* 0.3
+  correction)))` and cross-domain `(+ (polar …) (vel correction))` both just
+  type-check. Implementation note: additive decomposition confines scan state
+  to the correction term — the closed base stays hoistable; "mostly-ballistic
+  with slight homing" costs a small scan, not a scanned trajectory.
 
 ## 2. `stages` — the synchronous-feeling surface
 
