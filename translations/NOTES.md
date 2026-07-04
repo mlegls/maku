@@ -254,9 +254,10 @@ in the loop* it sits rather than which construct hosts it. No engine vocabulary
 needed — the host interprets the channel.
 
 **F8 — DMK's async repeaters implicitly fork; structured concurrency must say so.**
-`girepeat` starts its child and moves on (unless `waitchild`); 040's volleys
-genuinely overlap. Under §8's structured trees, sequential is the default and the
-overlap needs explicit `(fork ...)` into the enclosing cancellation scope — an
+`girepeat` starts its child and moves on (unless `waitchild`); 040's 70-tick
+volleys fire on a 70-tick cadence, impossible sequentially (the period would
+become body+wait = 140). Under §8's structured trees, sequential is the default
+and the concurrency needs explicit `(fork ...)` into the enclosing scope — an
 inversion of DMK's defaults (DMK: fork by default, `waitchild` to sequence). The
 explicit form is better for cards (concurrency visible in the tree), but `fork` is
 new §8 vocabulary that language.md doesn't have yet.
