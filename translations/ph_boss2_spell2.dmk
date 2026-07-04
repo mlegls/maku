@@ -55,6 +55,7 @@
       (spawn guide
              {:style {:family :lstar :color :teal}
               :scale 1.4
+              :team :scenery       ; rig visual: no colliders; survives bombs
               :facing m"240 * ud * live(mode)"})   ; tilts with the mode cell
       ;; "inode summon" = two turret loops forked in the guide frame
       (in-frame guide

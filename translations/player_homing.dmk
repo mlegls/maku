@@ -98,11 +98,11 @@
 ;; the second mode can read its entry velocity; ours is the (fn [exit] ...)
 ;; segment boundary, and t rebases so the homing ramps read from zero.
 
-(defn seal-orb [k]                            ; k = orb index 0..5
+(defn seal-orb [k orbit]                      ; k = orb index 0..5; orbit = s
   (stages
     ;; orbit stage: riding the LIVE player frame (continuous tracking is the
     ;; point of a bomb that sweeps around you) -- class (b), pointwise.
-    (stage 4.0
+    (stage orbit
       ((live $player)
         (polar (lerpsmooth eoutsine 0 1 t 0.5 2.2)
                m"90 + 350*t + 60*k")))
@@ -117,7 +117,7 @@
 
 (defpattern fantasy-seal []
   (dotimes [k 6, col [:red :green :yellow :blue] :every (ticks 24)]
-    (spawn (seal-orb k)
+    (spawn (seal-orb k 4.0)
            {:style {:family :gglcircle :color col :variant :w}
             :scale 2
             :team :player :damage {:hit 900 :graze 700}})))

@@ -64,7 +64,9 @@ impl Player {
             self.status = "no card loaded — send (load \"path\") or (run …)".into();
             return false;
         }
-        match std::fs::read_to_string(&self.card_path) {
+        // expand imports at load time: card_src stays self-contained, so the
+        // tapes and run/add/swap need no path context
+        match danmaku_core::edn::expand_card(std::path::Path::new(&self.card_path)) {
             Ok(src) => {
                 self.card_src = src;
                 self.refresh_menu();

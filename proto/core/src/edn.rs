@@ -622,3 +622,56 @@ mod tests {
         assert!(printed.contains("{:family :gem :variant :w"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// imports: (import "relative/path.dmk") on its own line splices that card's
+// text at this position (recursively, include-once). Textual include with
+// dedup: the importing file's own later defs shadow imported ones, matching
+// ordinary def ordering. Expansion happens at file-load time, so the wire
+// card source stays self-contained and run/add/swap need no path context.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+/// Read a card file, splicing (import "...") lines recursively.
+pub fn expand_card(path: &Path) -> Result<String, String> {
+    let mut visited = HashSet::new();
+    expand_card_inner(path, &mut visited)
+}
+
+fn expand_card_inner(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<String, String> {
+    let canon = path
+        .canonicalize()
+        .map_err(|e| format!("import {}: {}", path.display(), e))?;
+    if !visited.insert(canon.clone()) {
+        return Ok(String::new()); // include-once
+    }
+    let src = std::fs::read_to_string(&canon)
+        .map_err(|e| format!("import {}: {}", path.display(), e))?;
+    let base = canon.parent().map(Path::to_path_buf).unwrap_or_default();
+    let mut out = String::with_capacity(src.len());
+    for line in src.lines() {
+        match import_target(line) {
+            Some(rel) => {
+                out.push_str(&expand_card_inner(&base.join(rel), visited)?);
+                out.push('\n');
+            }
+            None => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `(import "path")` alone on a line (comments after are fine).
+fn import_target(line: &str) -> Option<&str> {
+    let t = line.trim_start();
+    let rest = t.strip_prefix("(import")?;
+    let rest = rest.trim_start().strip_prefix('"')?;
+    let (path, rest) = rest.split_once('"')?;
+    let rest = rest.trim_start().strip_prefix(')')?;
+    let rest = rest.trim_start();
+    (rest.is_empty() || rest.starts_with(';')).then_some(path)
+}

@@ -163,6 +163,12 @@ impl Clone for Sim {
 }
 
 impl Sim {
+    /// Load a card FILE (resolving imports) and instantiate a pattern.
+    pub fn load_file(path: &std::path::Path, pattern: Option<&str>) -> Result<Sim, String> {
+        let src = crate::edn::expand_card(path)?;
+        Sim::load(&src, pattern)
+    }
+
     /// Load a card source and instantiate `pattern` (or the first defpattern).
     pub fn load(src: &str, pattern: Option<&str>) -> Result<Sim, String> {
         let forms = read_all(src).map_err(|e| e.to_string())?;
@@ -1503,6 +1509,31 @@ mod tests {
         assert!(newest >= 5990, "recent events kept");
     }
 
+    /// (import "path") splices recursively, include-once: importing two
+    /// files that both import a common base yields one copy of the base.
+    #[test]
+    fn imports_expand_once() {
+        let dir = std::env::temp_dir().join("dmk-import-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("base.dmk"), "(def shared 7)\n").unwrap();
+        std::fs::write(
+            dir.join("a.dmk"),
+            "(import \"base.dmk\")\n(defpattern a [] (spawn (pose c[shared 0])))\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.dmk"),
+            "(import \"a.dmk\")\n(import \"base.dmk\") ; already included\n\
+             (defpattern m [] (a))\n",
+        )
+        .unwrap();
+        let src = crate::edn::expand_card(&dir.join("main.dmk")).unwrap();
+        assert_eq!(src.matches("(def shared 7)").count(), 1, "include-once");
+        let mut sim = Sim::load(&src, Some("m")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.bullets.len(), 1, "imported defs resolve through layers");
+    }
+
     /// (until pred body): the tick the predicate holds, the body's whole
     /// task subtree — including forks — dies. §8 phase-end cancellation.
     #[test]
@@ -1574,9 +1605,13 @@ mod tests {
     /// triggers, spell-2 embedded. One scripted run hits every mechanism.
     #[test]
     fn reimu_vs_mima_plays() {
-        let src =
-            std::fs::read_to_string("../../cards/reimu_vs_mima.dmk").unwrap();
-        let mut sim = Sim::load(&src, Some("reimu-vs-mima")).unwrap();
+        // load_file resolves the card's imports (spell-2 + seal-orb come
+        // from the translations)
+        let mut sim = Sim::load_file(
+            std::path::Path::new("../../cards/reimu_vs_mima.dmk"),
+            Some("reimu-vs-mima"),
+        )
+        .unwrap();
         let mut inputs = Inputs::default();
         let mut saw_needles = false;
         for k in 0..4500u64 {
