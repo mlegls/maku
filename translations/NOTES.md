@@ -142,8 +142,12 @@ cancellation cancels them (finalizers run per §8) — when a phase ends, in-fli
 forked volleys die with it. Static child list → write `par`; dynamic number of
 branches (forking from inside a loop) → `fork`. Precedent: Trio's nursery
 `start_soon`. Needed because DMK async repeaters do *not* wait for their
-children (040's volleys overlap: 80-tick volley, 70-tick period); structured
-concurrency's default is sequential, so the overlap must be explicit. See F8.
+children: 040's 70-tick volleys fire on a 70-tick cadence, so without fork the
+sequential default would stretch the period to body+wait = 140 ticks. See F8.
+`:every` is "between iterations, not after the last" — n−1 waits for n
+iterations — which is DMK's own semantics (GCR special-cases the final
+iteration to skip the trailing wait); the difference is observable by anything
+sequenced after the loop and by par/race/phase completion.
 
 **Stock formation vocabulary**: `(arrow n back side)` — Array Pose,
 {(−back·|j|, side·j) : j ∈ −(n−1)/2 … (n−1)/2}, canonical left-to-right order.

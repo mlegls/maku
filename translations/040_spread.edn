@@ -32,9 +32,12 @@
 ;; (rv2incr, cumulative -> 120*vol: same dissolution family as BoWaP, trivially
 ;; telescoping) and color cycles red/green/blue.
 ;;
-;; Timing note: a volley lasts ~80 frames but volleys start every 70 -- DMK
-;; girepeat does not wait for its child (no `waitchild`), so iterations
-;; overlap. Structured concurrency makes that explicit: `fork` (finding F8).
+;; Timing note: a volley spans 70 frames (8 shots at 0,10,..,70 -- DMK's GCR
+;; has NO trailing wait: AsyncPatterns.cs RemainsExceptLast + special-cased
+;; last iteration) while volleys start every 70: back-to-back, boundary ticks
+;; coincident. girepeat launches its child and moves on (no `waitchild`);
+;; without (fork ...) the outer :every would wait 70 ticks AFTER the 70-tick
+;; body, doubling the period to 140. Fork keeps the cadence (finding F8).
 
 (defpattern spread-demo [volley-gap (ticks 70)
                          shot-gap   (ticks 10)]
