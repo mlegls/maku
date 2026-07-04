@@ -5,6 +5,10 @@
 //! only Action leaves (wait/spawn/event) interact with time. Seq bodies are
 //! LAZY (each item form evaluates when reached), which gives loop-var and
 //! cell timing for free.
+//!
+//! Dyns: Closed nodes evaluate at arbitrary τ (slot-bound t, F12). Vel nodes
+//! are the first Scanned constructor: per-bullet state integrated per tick
+//! (state keyed by node identity; each bullet owns its state cells).
 
 use crate::edn::Form;
 use std::collections::HashMap;
@@ -32,24 +36,107 @@ impl Pose {
     }
 }
 
-/// Prototype dyn: enough structure for the Closed subset of the corpus.
+/// Per-bullet scanned state: keyed by dyn-node identity (Rc pointer).
+pub type MotionState = HashMap<usize, [f64; 2]>;
+
 #[derive(Debug)]
 pub enum DynNode {
     Const(Pose),
     /// pos = v·τ in the local frame; θ = heading.
     Linear { vx: f64, vy: f64 },
+    /// Closed position expression over slot-bound t (F12); polar or cart.
+    ClosedPt { a: Form, b: Form, polar: bool, env: Env },
+    /// Integrated velocity (Scanned): components over slot-bound t.
+    Vel { a: Form, b: Form, polar: bool, env: Env },
+    /// Point-translation (the `+` of the two-op algebra): θ untouched.
+    Translate { dx: f64, dy: f64, child: Rc<DynNode> },
     Frame(Rc<DynNode>, Rc<DynNode>),
 }
 
-pub fn dyn_pose(d: &DynNode, tau: f64) -> Pose {
+fn eval_pt(a: &Form, b: &Form, polar: bool, env: &Env, tau: f64) -> Result<(f64, f64), String> {
+    let e = env.bind("t".into(), Val::Num(tau));
+    let mut ctx = Ctx::default();
+    let av = evaluate(a, &e, &mut ctx)?.num()?;
+    let bv = evaluate(b, &e, &mut ctx)?.num()?;
+    if polar {
+        let (s, c) = bv.to_radians().sin_cos();
+        Ok((av * c, av * s))
+    } else {
+        Ok((av, bv))
+    }
+}
+
+pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState) -> Result<Pose, String> {
     match d {
-        DynNode::Const(p) => *p,
-        DynNode::Linear { vx, vy } => Pose {
+        DynNode::Const(p) => Ok(*p),
+        DynNode::Linear { vx, vy } => Ok(Pose {
             x: vx * tau,
             y: vy * tau,
             th: vy.atan2(*vx).to_degrees(),
-        },
-        DynNode::Frame(parent, child) => dyn_pose(parent, tau).compose(&dyn_pose(child, tau)),
+        }),
+        DynNode::ClosedPt { a, b, polar, env } => {
+            let (x, y) = eval_pt(a, b, *polar, env, tau)?;
+            // heading by finite difference (orientation policy: derive by default)
+            let eps = 1.0 / TICK_RATE;
+            let (x2, y2) = eval_pt(a, b, *polar, env, tau + eps)?;
+            Ok(Pose { x, y, th: (y2 - y).atan2(x2 - x).to_degrees() })
+        }
+        DynNode::Vel { a, b, polar, env } => {
+            let key = d as *const DynNode as usize;
+            let [x, y] = state.get(&key).copied().unwrap_or([0.0, 0.0]);
+            let (vx, vy) = eval_pt(a, b, *polar, env, tau)?;
+            Ok(Pose { x, y, th: vy.atan2(vx).to_degrees() })
+        }
+        DynNode::Translate { dx, dy, child } => {
+            let p = dyn_pose(child, tau, state)?;
+            Ok(Pose { x: p.x + dx, y: p.y + dy, th: p.th })
+        }
+        DynNode::Frame(parent, child) => {
+            let pp = dyn_pose(parent, tau, state)?;
+            let cp = dyn_pose(child, tau, state)?;
+            Ok(pp.compose(&cp))
+        }
+    }
+}
+
+/// Advance the Scanned leaves of a motion tree by one tick.
+pub fn step_motion(d: &DynNode, tau: f64, dt: f64, state: &mut MotionState) -> Result<(), String> {
+    match d {
+        DynNode::Vel { a, b, polar, env } => {
+            let key = d as *const DynNode as usize;
+            let (vx, vy) = eval_pt(a, b, *polar, env, tau)?;
+            let cell = state.entry(key).or_insert([0.0, 0.0]);
+            cell[0] += vx * dt;
+            cell[1] += vy * dt;
+            Ok(())
+        }
+        DynNode::Translate { child, .. } => step_motion(child, tau, dt, state),
+        DynNode::Frame(a, b) => {
+            step_motion(a, tau, dt, state)?;
+            step_motion(b, tau, dt, state)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// True if any Scanned node exists (bullets without them never need stepping).
+pub fn is_scanned(d: &DynNode) -> bool {
+    match d {
+        DynNode::Vel { .. } => true,
+        DynNode::Translate { child, .. } => is_scanned(child),
+        DynNode::Frame(a, b) => is_scanned(a) || is_scanned(b),
+        _ => false,
+    }
+}
+
+/// Does a form reference the slot-bound parameters t/u? (F12: such expressions
+/// denote signals; without them, the same constructor is a plain value.)
+fn contains_t(form: &Form) -> bool {
+    match form {
+        Form::Sym(s) => &**s == "t" || &**s == "u",
+        Form::List(items) | Form::Vector(items) => items.iter().any(contains_t),
+        Form::Map(kvs) => kvs.iter().any(|(k, v)| contains_t(k) || contains_t(v)),
+        _ => false,
     }
 }
 
@@ -196,8 +283,18 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
 // ---------------------------------------------------------------------------
 // Expression evaluation.
 
+/// Evaluation context: injected snapshot + the lexically distributed ambient
+/// frame (needed by `aim`, which is relative to the emitter).
+#[derive(Clone, Debug)]
 pub struct Ctx {
-    // reserved: RNG, channels, control cells
+    pub player: (f64, f64),
+    pub ambient: Pose,
+}
+
+impl Default for Ctx {
+    fn default() -> Self {
+        Ctx { player: (0.0, -4.0), ambient: Pose::IDENTITY }
+    }
 }
 
 pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
@@ -208,6 +305,8 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
         Form::Kw(k) => Ok(Val::Kw(k.clone())),
         Form::Sym(s) => match &**s {
             "inf" => Ok(Val::Num(f64::INFINITY)),
+            // injected signal, snapped by default (§3)
+            "player" => Ok(Val::Vec2 { x: ctx.player.0, y: ctx.player.1 }),
             name => env
                 .lookup(name)
                 .ok_or_else(|| format!("unresolved symbol '{}'", name)),
@@ -304,6 +403,33 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String
                 return apply_frame_val(frame, child);
             }
             "circle" => return sf_circle(items, env, ctx),
+            "arrow" => return sf_arrow(items, env, ctx),
+            "fan" => return sf_fan(items, env, ctx),
+            // F12: cart/polar with slot-bound t denote Closed position signals;
+            // without t they are plain point values (handled by builtin).
+            "cart" | "polar" if items[1..].iter().any(contains_t) => {
+                if items.len() != 3 {
+                    return Err(format!("{}: expected two components", s));
+                }
+                return Ok(Val::Dyn(Rc::new(DynNode::ClosedPt {
+                    a: items[1].clone(),
+                    b: items[2].clone(),
+                    polar: &**s == "polar",
+                    env: env.clone(),
+                })));
+            }
+            "vel" => return sf_vel(items, env, ctx),
+            "aim" => {
+                // (aim player): rot toward the (snapped) target, relative to
+                // the ambient emitter frame.
+                let target = evaluate(&items[1], env, ctx)?;
+                let Val::Vec2 { x, y } = target else {
+                    return Err("aim: expected a point target".into());
+                };
+                let world =
+                    (y - ctx.ambient.y).atan2(x - ctx.ambient.x).to_degrees();
+                return Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: world - ctx.ambient.th }));
+            }
             "fn" | "defn" | "defvar" | "set!" | "phases" | "stages" | "scan" => {
                 return Err(format!("'{}' not implemented in this milestone", s));
             }
@@ -315,7 +441,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String
     // anything else evaluates the head and dispatches on the value (applicable
     // frames, language.md §4).
     if let Form::Sym(name) = head {
-        if env.lookup(name).is_none() {
+        if env.lookup(name).is_none() && &**name != "player" {
             let args = items[1..]
                 .iter()
                 .map(|f| evaluate(f, env, ctx))
@@ -434,7 +560,6 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
     let Some(Form::Vector(spec)) = items.get(1) else {
         return Err("dotimes: expected binding vector".into());
     };
-    // [i n, x xs, ... :every dt]
     let mut every_ticks: u64 = 0;
     let mut pairs: Vec<(&Form, &Form)> = Vec::new();
     let mut k = 0;
@@ -497,6 +622,27 @@ fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
         names,
         inits,
         body: items[2..].to_vec().into(),
+        env: env.clone(),
+    })))
+}
+
+fn sf_vel(items: &[Form], env: &Env, _ctx: &mut Ctx) -> Result<Val, String> {
+    // (vel c[..]) / (vel p[..]): components as forms over slot-bound t.
+    let Some(Form::List(arg)) = items.get(1) else {
+        return Err("vel: expected a coordinate argument".into());
+    };
+    let (polar, comps) = match arg.first() {
+        Some(Form::Sym(s)) if &**s == "cart" => (false, &arg[1..]),
+        Some(Form::Sym(s)) if &**s == "polar" => (true, &arg[1..]),
+        _ => return Err("vel: expected c[..] or p[..]".into()),
+    };
+    if comps.len() != 2 {
+        return Err("vel: expected two components".into());
+    }
+    Ok(Val::Dyn(Rc::new(DynNode::Vel {
+        a: comps[0].clone(),
+        b: comps[1].clone(),
+        polar,
         env: env.clone(),
     })))
 }
@@ -570,27 +716,84 @@ fn resolve_styles(meta: &Val, n: usize) -> Result<Vec<Style>, String> {
         .collect())
 }
 
-fn sf_circle(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
-    let n = evaluate(&items[1], env, ctx)?.num()? as usize;
-    if n == 0 {
-        return Err("circle: zero elements".into());
-    }
-    let poses: Vec<Val> = (0..n)
-        .map(|k| Val::Pose(Pose { x: 0.0, y: 0.0, th: k as f64 * 360.0 / n as f64 }))
-        .collect();
-    let arr = Val::Arr(Rc::new(poses));
-    match items.get(2) {
+/// Pose-array formation with optional trailing child (frame sugar).
+fn formation(
+    poses: Vec<Pose>,
+    child: Option<&Form>,
+    env: &Env,
+    ctx: &mut Ctx,
+) -> Result<Val, String> {
+    let arr = Val::Arr(Rc::new(poses.into_iter().map(Val::Pose).collect()));
+    match child {
         None => Ok(arr),
-        Some(childf) => {
-            // trailing-child sugar
-            let child = evaluate(childf, env, ctx)?;
+        Some(cf) => {
+            let child = evaluate(cf, env, ctx)?;
             apply_frame_arr(&arr, child)
         }
     }
 }
 
+fn sf_circle(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+    let n = evaluate(&items[1], env, ctx)?.num()? as usize;
+    if n == 0 {
+        return Err("circle: zero elements".into());
+    }
+    let poses = (0..n)
+        .map(|k| Pose { x: 0.0, y: 0.0, th: k as f64 * 360.0 / n as f64 })
+        .collect();
+    formation(poses, items.get(2), env, ctx)
+}
+
+fn sf_arrow(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+    // (arrow n back side child?): chevron {(-back*|j|, side*j)}, j centered.
+    let n = evaluate(&items[1], env, ctx)?.num()? as i64;
+    let back = evaluate(&items[2], env, ctx)?.num()?;
+    let side = evaluate(&items[3], env, ctx)?.num()?;
+    let half = (n - 1) / 2;
+    let poses = (-half..=(n - 1 - half))
+        .map(|j| Pose { x: -back * (j.abs() as f64), y: side * j as f64, th: 0.0 })
+        .collect();
+    formation(poses, items.get(4), env, ctx)
+}
+
+fn sf_fan(items: &[Form], env: &Env, ctx: &mut Ctx) -> Result<Val, String> {
+    // (fan n step child?): centered angular fan, step degrees apart.
+    let n = evaluate(&items[1], env, ctx)?.num()? as i64;
+    let step = evaluate(&items[2], env, ctx)?.num()?;
+    let mid = (n - 1) as f64 / 2.0;
+    let poses = (0..n)
+        .map(|k| Pose { x: 0.0, y: 0.0, th: (k as f64 - mid) * step })
+        .collect();
+    formation(poses, items.get(3), env, ctx)
+}
+
 // ---------------------------------------------------------------------------
 // Builtins.
+
+/// Polymorphic addition: numbers, points, poses (translation), arrays (map),
+/// dyns (Translate node) — the `+` of the two-op algebra (§4).
+fn add2(a: Val, b: Val) -> Result<Val, String> {
+    match (a, b) {
+        (Val::Num(x), Val::Num(y)) => Ok(Val::Num(x + y)),
+        (Val::Vec2 { x: ax, y: ay }, Val::Vec2 { x: bx, y: by }) => {
+            Ok(Val::Vec2 { x: ax + bx, y: ay + by })
+        }
+        (Val::Vec2 { x, y }, Val::Pose(p)) | (Val::Pose(p), Val::Vec2 { x, y }) => {
+            Ok(Val::Pose(Pose { x: p.x + x, y: p.y + y, th: p.th }))
+        }
+        (v @ Val::Vec2 { .. }, Val::Arr(items)) | (Val::Arr(items), v @ Val::Vec2 { .. }) => {
+            let out = items
+                .iter()
+                .map(|i| add2(v.clone(), i.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        (Val::Vec2 { x, y }, Val::Dyn(d)) | (Val::Dyn(d), Val::Vec2 { x, y }) => Ok(Val::Dyn(
+            Rc::new(DynNode::Translate { dx: x, dy: y, child: d }),
+        )),
+        (a, b) => Err(format!("+: cannot add {:?} and {:?}", a, b)),
+    }
+}
 
 fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
     let n = |i: usize| -> Result<f64, String> {
@@ -598,9 +801,9 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             .ok_or_else(|| format!("{}: missing argument {}", name, i))?
             .num()
     };
-    let fold = |init: f64, f: fn(f64, f64) -> f64| -> Result<Val, String> {
+    let fold_num = |init: f64, f: fn(f64, f64) -> f64| -> Result<Val, String> {
         let mut acc = if args.is_empty() { init } else { args[0].num()? };
-        if args.len() == 1 && matches!(name, "-" | "/") {
+        if args.len() == 1 {
             acc = f(init, acc); // unary negate / reciprocal
         }
         for a in &args[1..] {
@@ -609,10 +812,16 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         Ok(Val::Num(acc))
     };
     match name {
-        "+" => fold(0.0, |a, b| a + b),
-        "-" => fold(0.0, |a, b| a - b),
-        "*" => fold(1.0, |a, b| a * b),
-        "/" => fold(1.0, |a, b| a / b),
+        "+" => {
+            let mut acc = args.first().cloned().unwrap_or(Val::Num(0.0));
+            for a in &args[1..] {
+                acc = add2(acc, a.clone())?;
+            }
+            Ok(acc)
+        }
+        "-" => fold_num(0.0, |a, b| a - b),
+        "*" => fold_num(1.0, |a, b| a * b),
+        "/" => fold_num(1.0, |a, b| a / b),
         "mod" => Ok(Val::Num(n(0)?.rem_euclid(n(1)?))),
         "pow" => Ok(Val::Num(n(0)?.powf(n(1)?))),
         "inc" => Ok(Val::Num(n(0)? + 1.0)),
@@ -627,6 +836,13 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "abs" => Ok(Val::Num(n(0)?.abs())),
         "quot" => Ok(Val::Num((n(0)? / n(1)?).trunc())),
         "ticks" => Ok(Val::Num(n(0)? / TICK_RATE)),
+        "sin" => Ok(Val::Num(n(0)?.to_radians().sin())),
+        "cos" => Ok(Val::Num(n(0)?.to_radians().cos())),
+        "sine" => {
+            // DMK sine(period, amp, x): amp * sin(2π x / period)
+            let (period, amp, x) = (n(0)?, n(1)?, n(2)?);
+            Ok(Val::Num(amp * (std::f64::consts::TAU * x / period).sin()))
+        }
         "cart" => Ok(Val::Vec2 { x: n(0)?, y: n(1)? }),
         "polar" => {
             let (r, th) = (n(0)?, n(1)?);
@@ -654,8 +870,22 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             }
             v => Err(format!("nth: expected non-empty array, got {:?}", v)),
         },
+        "stutter" => {
+            // (stutter n xs): each element repeated n times; with cyclic
+            // indexing this is exactly floor-division indexing.
+            let reps = n(0)? as usize;
+            let Val::Arr(items) = &args[1] else {
+                return Err("stutter: expected array".into());
+            };
+            let mut out = Vec::with_capacity(items.len() * reps);
+            for it in items.iter() {
+                for _ in 0..reps {
+                    out.push(it.clone());
+                }
+            }
+            Ok(Val::Arr(Rc::new(out)))
+        }
         "lerp" => {
-            // (lerp a b ctrl v1 v2): pure pointwise, controller bounds
             let (a, b, ctrl, v1, v2) = (n(0)?, n(1)?, n(2)?, n(3)?, n(4)?);
             let r = ((ctrl - a) / (b - a)).clamp(0.0, 1.0);
             Ok(Val::Num(v1 + r * (v2 - v1)))
@@ -671,23 +901,31 @@ mod tests {
 
     fn ev(src: &str) -> Val {
         let f = read_one(src).unwrap();
-        evaluate(&f, &Env::empty(), &mut Ctx {}).unwrap()
+        evaluate(&f, &Env::empty(), &mut Ctx::default()).unwrap()
     }
 
     #[test]
     fn arithmetic_and_math_macro() {
         let f = read_one("m\"0.2*(i+1)*(i+2)\"").unwrap();
         let env = Env::empty().bind("i".into(), Val::Num(3.0));
-        let v = evaluate(&f, &env, &mut Ctx {}).unwrap();
+        let v = evaluate(&f, &env, &mut Ctx::default()).unwrap();
         assert!((v.num().unwrap() - 0.2 * 4.0 * 5.0).abs() < 1e-9);
     }
 
     #[test]
-    fn cyclic_nth_and_iota() {
+    fn variadic_arithmetic() {
+        assert_eq!(ev("(+ 1 2 3)").num().unwrap(), 6.0);
+        assert_eq!(ev("(- 10 1 2)").num().unwrap(), 7.0);
+        assert_eq!(ev("(- 4)").num().unwrap(), -4.0);
+    }
+
+    #[test]
+    fn cyclic_nth_iota_stutter() {
         assert_eq!(ev("(nth [10 20 30] 7)").num().unwrap(), 20.0);
         assert_eq!(ev("(nth [10 20 30] -1)").num().unwrap(), 30.0);
-        let Val::Arr(items) = ev("(iota 4)") else { panic!() };
-        assert_eq!(items.len(), 4);
+        let Val::Arr(items) = ev("(stutter 2 [1 2])") else { panic!() };
+        let got: Vec<f64> = items.iter().map(|v| v.num().unwrap()).collect();
+        assert_eq!(got, vec![1.0, 1.0, 2.0, 2.0]);
     }
 
     #[test]
@@ -700,11 +938,11 @@ mod tests {
 
     #[test]
     fn frame_application_builds_dyn() {
-        // ((rot 90) (linear c[4 0])) — dyn composed under a rotated frame
         let Val::Dyn(d) = ev("((rot 90) (linear c[4 0]))") else {
             panic!("expected dyn")
         };
-        let p = dyn_pose(&d, 1.0);
+        let st = MotionState::new();
+        let p = dyn_pose(&d, 1.0, &st).unwrap();
         assert!(p.x.abs() < 1e-9 && (p.y - 4.0).abs() < 1e-9, "rotated 90°: {:?}", p);
     }
 
@@ -713,11 +951,57 @@ mod tests {
         let Val::Arr(items) = ev("(circle 5 (linear c[4 0]))") else { panic!() };
         assert_eq!(items.len(), 5);
         let Val::Dyn(d) = &items[1] else { panic!() };
-        let p = dyn_pose(d, 1.0);
+        let st = MotionState::new();
+        let p = dyn_pose(d, 1.0, &st).unwrap();
         let (ex, ey) = (
             4.0 * (72f64).to_radians().cos(),
             4.0 * (72f64).to_radians().sin(),
         );
         assert!((p.x - ex).abs() < 1e-9 && (p.y - ey).abs() < 1e-9);
+    }
+
+    #[test]
+    fn closed_polar_dyn() {
+        // (polar m"2*t" m"20*t") — the 060 spiral, slot-bound t (F12)
+        let Val::Dyn(d) = ev("(polar m\"2*t\" m\"20*t\")") else { panic!() };
+        let st = MotionState::new();
+        let p = dyn_pose(&d, 1.0, &st).unwrap();
+        let (ex, ey) = (2.0 * (20f64).to_radians().cos(), 2.0 * (20f64).to_radians().sin());
+        assert!((p.x - ex).abs() < 1e-9 && (p.y - ey).abs() < 1e-9, "{:?}", p);
+        // without t, polar is a plain point
+        assert!(matches!(ev("p[2 90]"), Val::Vec2 { .. }));
+    }
+
+    #[test]
+    fn vel_integrates() {
+        // constant velocity integrates to linear motion
+        let Val::Dyn(d) = ev("(vel c[4 0])") else { panic!() };
+        let mut st = MotionState::new();
+        let dt = 1.0 / TICK_RATE;
+        for k in 0..120 {
+            step_motion(&d, k as f64 * dt, dt, &mut st).unwrap();
+        }
+        let p = dyn_pose(&d, 1.0, &st).unwrap();
+        assert!((p.x - 4.0).abs() < 1e-6, "integrated x: {}", p.x);
+        assert!(is_scanned(&d));
+    }
+
+    #[test]
+    fn aim_is_ambient_relative() {
+        let mut ctx = Ctx { player: (0.0, -4.0), ambient: Pose::IDENTITY };
+        let f = read_one("(aim player)").unwrap();
+        let Val::Pose(p) = evaluate(&f, &Env::empty(), &mut ctx).unwrap() else {
+            panic!()
+        };
+        assert!((p.th - -90.0).abs() < 1e-9, "aim down: {}", p.th);
+    }
+
+    #[test]
+    fn plus_translates_formations() {
+        // (+ c[-7 0] (arrow 3 1.0 0.5)): rotational back-offset (080)
+        let Val::Arr(items) = ev("(+ c[-7 0] (arrow 3 1.0 0.5))") else { panic!() };
+        assert_eq!(items.len(), 3);
+        let Val::Pose(center) = &items[1] else { panic!() };
+        assert!((center.x - -7.0).abs() < 1e-9 && center.y.abs() < 1e-9);
     }
 }

@@ -12,6 +12,8 @@ pub struct Bullet {
     pub birth: u64,
     pub style: Style,
     pub alive: bool,
+    pub state: MotionState,   // per-bullet cells for Scanned nodes
+    pub scanned: bool,
 }
 
 pub struct RenderBullet<'a> {
@@ -57,6 +59,16 @@ pub struct Sim {
     ctx: Ctx,
 }
 
+pub struct Inputs {
+    pub player: (f64, f64),
+}
+
+impl Default for Inputs {
+    fn default() -> Self {
+        Inputs { player: (0.0, -4.0) }
+    }
+}
+
 impl Sim {
     /// Load a card source and instantiate `pattern` (or the first defpattern).
     pub fn load(src: &str, pattern: Option<&str>) -> Result<Sim, String> {
@@ -71,7 +83,7 @@ impl Sim {
             .get(&name)
             .ok_or_else(|| format!("no pattern '{}' in card", name))?;
 
-        let mut ctx = Ctx {};
+        let mut ctx = Ctx::default();
         let mut env = Env::empty();
         for (pname, default) in &pat.params {
             let v = evaluate(default, &env, &mut ctx)?;
@@ -85,6 +97,11 @@ impl Sim {
     }
 
     pub fn step(&mut self) -> Result<(), String> {
+        self.step_with(&Inputs::default())
+    }
+
+    pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
+        self.ctx.player = inputs.player;
         // run control layer
         let mut i = 0;
         while i < self.tasks.len() {
@@ -109,29 +126,47 @@ impl Sim {
             }
             self.tasks.extend(new_tasks);
         }
+        // integrate Scanned motion for this tick
+        let dt = 1.0 / TICK_RATE;
+        let tick = self.tick;
+        for b in &mut self.bullets {
+            if b.scanned {
+                let tau = (tick - b.birth) as f64 / TICK_RATE;
+                step_motion(&b.motion, tau, dt, &mut b.state)?;
+            }
+        }
         self.tick += 1;
         // cull
         let tick = self.tick;
+        let mut err = None;
         self.bullets.retain(|b| {
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            let p = dyn_pose(&b.motion, tau);
-            b.alive && p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
+            match dyn_pose(&b.motion, tau, &b.state) {
+                Ok(p) => b.alive && p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
+                Err(e) => {
+                    err = Some(e);
+                    false
+                }
+            }
         });
-        Ok(())
-    }
-
-    fn pose_of(&self, b: &Bullet, tick: u64) -> Pose {
-        let tau = (tick - b.birth) as f64 / TICK_RATE;
-        dyn_pose(&b.motion, tau)
+        match err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     pub fn render(&self) -> Vec<RenderBullet<'_>> {
         self.bullets
             .iter()
             .filter(|b| b.alive)
-            .map(|b| {
-                let p = self.pose_of(b, self.tick);
-                RenderBullet { x: p.x, y: p.y, th: p.th, style: &b.style }
+            .filter_map(|b| {
+                let tau = (self.tick - b.birth) as f64 / TICK_RATE;
+                dyn_pose(&b.motion, tau, &b.state).ok().map(|p| RenderBullet {
+                    x: p.x,
+                    y: p.y,
+                    th: p.th,
+                    style: &b.style,
+                })
             })
             .collect()
     }
@@ -236,6 +271,7 @@ fn step_task(
             }
         };
         let Some((form, env)) = next else { continue };
+        ctx.ambient = ambient(&task.stack);
         let v = evaluate(&form, &env, ctx)?;
         match v {
             Val::Action(a) => {
@@ -275,7 +311,15 @@ fn run_action(
                 } else {
                     Rc::new(DynNode::Frame(Rc::new(DynNode::Const(amb)), d.clone()))
                 };
-                bullets.push(Bullet { motion, birth: tick, style: s.clone(), alive: true });
+                let scanned = is_scanned(&motion);
+                bullets.push(Bullet {
+                    motion,
+                    birth: tick,
+                    style: s.clone(),
+                    alive: true,
+                    state: MotionState::new(),
+                    scanned,
+                });
             }
             Ok(false)
         }
@@ -363,6 +407,8 @@ mod tests {
             ("../../translations/130_bowap.edn", "bowap-fold", 300),
             ("../../translations/020_gsrepeat.edn", "gsrepeat-demo", 300),
             ("../../translations/040_spread.edn", "spread-demo", 300),
+            ("../../translations/060_polar.edn", "polar-demo", 300),
+            ("../../translations/080_aimed.edn", "aimed-demo", 400),
         ];
         for (path, pattern, ticks) in cases {
             let src = std::fs::read_to_string(path)
@@ -411,7 +457,7 @@ mod tests {
         assert_eq!(b.style.family, "gem");
         assert_eq!(b.style.color, "yellow");
         assert_eq!(b.style.variant, "w");
-        let p = dyn_pose(&b.motion, 1.0);
+        let p = dyn_pose(&b.motion, 1.0, &b.state).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
@@ -423,9 +469,9 @@ mod tests {
         // second volley (i=1): base = 0.2*2*3 = 1.2°
         let b5 = &sim.bullets[5];
         assert_eq!(b5.birth, 8);
-        let p5 = dyn_pose(&b5.motion, 0.0);
+        let p5 = dyn_pose(&b5.motion, 0.0, &b5.state).unwrap();
         assert!((p5.x - 0.0).abs() < 1e-9 && (p5.y - 2.0).abs() < 1e-9);
-        let heading = dyn_pose(&b5.motion, 1.0);
+        let heading = dyn_pose(&b5.motion, 1.0, &b5.state).unwrap();
         let ang5 = (1.2f64).to_radians();
         assert!((heading.x - 4.0 * ang5.cos()).abs() < 1e-9);
     }
@@ -458,7 +504,7 @@ mod tests {
         // A and B are the same pattern: F3's telescoping claim, checked numerically
         for (a, b) in sa.bullets.iter().zip(sb.bullets.iter()) {
             assert_eq!(a.birth, b.birth);
-            let (pa, pb) = (dyn_pose(&a.motion, 0.7), dyn_pose(&b.motion, 0.7));
+            let (pa, pb) = (dyn_pose(&a.motion, 0.7, &a.state).unwrap(), dyn_pose(&b.motion, 0.7, &b.state).unwrap());
             assert!(
                 (pa.x - pb.x).abs() < 1e-6 && (pa.y - pb.y).abs() < 1e-6,
                 "A/B diverged: {:?} vs {:?}",

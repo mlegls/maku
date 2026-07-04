@@ -15,7 +15,7 @@
 
 use danmaku_core::edn::{read_all, Form};
 use danmaku_core::interp::TICK_RATE;
-use danmaku_core::sim::Sim;
+use danmaku_core::sim::{Inputs, Sim};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -201,6 +201,16 @@ async fn main() {
             break;
         }
 
+        // mock player rides the mouse (design.md §11: sandbox mock player)
+        let (cx, cy) = (screen_width() / 2.0, screen_height() / 2.0 + 100.0);
+        let (mx, my) = mouse_position();
+        let inputs = Inputs {
+            player: (
+                ((mx - cx) / PIXELS_PER_UNIT) as f64,
+                ((cy - my) / PIXELS_PER_UNIT) as f64,
+            ),
+        };
+
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !player.paused {
             player.accum += get_frame_time() as f64;
@@ -208,7 +218,7 @@ async fn main() {
             while player.accum >= dt {
                 player.accum -= dt;
                 if let Some(sim) = &mut player.sim {
-                    if let Err(e) = sim.step() {
+                    if let Err(e) = sim.step_with(&inputs) {
                         player.status = format!("sim error: {}", e);
                         player.paused = true;
                         break;
@@ -218,7 +228,9 @@ async fn main() {
         }
 
         clear_background(Color::from_rgba(0x12, 0x12, 0x1a, 0xff));
-        let (cx, cy) = (screen_width() / 2.0, screen_height() / 2.0 + 100.0);
+        // player marker
+        draw_circle_lines(mx, my, 8.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.8));
+        draw_circle(mx, my, 2.5, WHITE);
         if let Some(sim) = &player.sim {
             for b in sim.render() {
                 let sx = cx + b.x as f32 * PIXELS_PER_UNIT;
