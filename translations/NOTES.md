@@ -154,6 +154,10 @@ sequenced after the loop and by par/race/phase completion.
 Image of DMK's `bindArrow` + `frv2(rxy(-a*aixd, b*aiyd))` idiom. More of these
 will accumulate (§1: keep the vocabulary); they are library, not core.
 
+**Array builtins**: `(iota n)` = `[0 1 … n−1]` (APL `!n`, already the notation
+language.md §5 uses for `circle`'s θ column); `(range a b step)` for the general
+case. Usable inside `m""` as `iota(6)`.
+
 **Stock stream vocabulary**: `(stutter n xs)` — each element repeated n times,
 still cycling (SC `Pstutter`); image of DMK's `colorf(xs, i/2)` floored-index
 idiom. Seq-binding sources compose as streams; this is the §8 pattern algebra

@@ -55,7 +55,7 @@
                            :u-max 3.5
                            :resolution 0.4}))
          {:style {:family :arrowlaser :color :blueteal}
-          :hue m"60*[0 1 2 3 4 5] + 120*t"
+          :hue m"60*iota(6) + 120*t"
           :cues {:spawn "x-laser-fire" :active "x-laser-on"}}))
 
 ;; Surface proposed here for open decision 3 (spawn-extended):
@@ -66,7 +66,7 @@
 ;;   carried in meta-space, not semantics.
 ;;
 ;; Notable dissolutions:
-;;   hueshift(60*loop + 120*t) -> :hue m"60*[0 1 2 3 4 5] + 120*t"
+;;   hueshift(60*loop + 120*t) -> :hue m"60*iota(6) + 120*t"
 ;;     one array-broadcast expression = six Closed signals zipping the six
 ;;     lasers (SS5 array-of-signals/signal-of-array interchange); the hoisted
 ;;     `loop` variable disappears entirely.
