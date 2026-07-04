@@ -164,7 +164,15 @@ free: a signal-typed argument slot *binds* them — an expression referencing
 `t`/`u` in such a slot denotes the `Closed` signal λt.(…), exactly BDSL's
 movement-function model. Outside signal slots, `t` is an unresolved-symbol
 error. This is what makes `(polar m"2*t" m"lr*20*t")` well-formed with `lr` an
-ordinary lexical capture and `t` the signal parameter.
+ordinary lexical capture and `t` the signal parameter. Two corollaries
+(adopted): **`t`/`u` are reserved** — not bindable by `loop`/`let`/params, so
+slot-binding is the only possible meaning and shadowing is unrepresentable
+(any future axis parameters, e.g. ancestor-clock symbols, get the same
+treatment); and **no rate/time tags on expressions** — whether an expression
+is time-varying is determined by its free variables, not chosen, so a surface
+tag could only be redundant or wrong (unlike SC's `.ar`/`.kr`, which annotates
+a genuine degree of freedom). The compiler infers constructor/rate; the REPL
+displays it (§3); the reader greps for `t`.
 
 **Broadcast zips cycle (adopted).** Shorter arrays cycle rather than error —
 SC multichannel expansion (our §5 source) cycles, and DMK color lists cycle by
