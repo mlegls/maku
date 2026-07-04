@@ -46,7 +46,7 @@
                    period (frames 8)]
   ((pose c[0 2])                       ; DMK roott(1, 0, 2): lexical anchor
     (loop [i 0]
-      (spawn ((rot (deg m"0.2*(i+1)*(i+2)"))
+      (spawn ((rot m"0.2*(i+1)*(i+2)")
                (circle arms (linear c[speed 0])))
              {:style "gem-*/w"
               :color ["yellow" "orange" "red" "pink" "purple"]}) ; F4: merge DSL
@@ -68,7 +68,7 @@
   ((pose c[0 2])
     (loop [increment 0.4
            base      0.4]
-      (spawn ((rot (deg base))
+      (spawn ((rot base)
                (circle arms (linear c[speed 0])))
              {:style "gem-*/w"
               :color ["yellow" "orange" "red" "pink" "purple"]})
@@ -82,7 +82,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, shot i)
 ;;
-;;   (in-frame (rot (deg <ir angle>))                 ; whole-volley rotation
+;;   (in-frame (rot <ir angle>)                 ; whole-volley rotation
 ;;     (map (fn [p] (in-frame p (linear (cart 4 0))))
 ;;          (circle 5)))
 ;;
@@ -93,7 +93,7 @@
 ;; Rate / constructor audit
 ;;
 ;;   base angle (either version)   control-layer constant per shot ....... ir
-;;   (rot (deg base))               constant pose, promoted Closed-const .. ir
+;;   (rot base)               constant pose, promoted Closed-const .. ir
 ;;   (circle 5)                    Array Pose ............................ ir
 ;;   (linear (cart 4 0))          Closed, bullet-local tau .............. ar
 ;;                                 (F6 cohort note applies: 5 per cohort)

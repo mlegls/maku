@@ -20,11 +20,17 @@ broadcasts) is lexically distinct from `(circle 3)` (evaluated form that *return
 array), and every canonical tree is readable as pure data without an evaluator —
 which is what cards-as-data needs.
 
-**Units: one canonical unit per quantity + conversion functions; no unit-tagged
-literals.** Time: seconds canonical, `(frames n)` converts at the fixed timestep.
-Angle: radians canonical, `(deg x)` / `(rad x)` convert — ordinary functions,
-usable inside `m""` as `deg(120*vol)`. (`#deg` is gone; a tagged literal was the
-wrong shape — units are conversions, not syntax.)
+**Units: one canonical unit per quantity + source-named conversion functions; no
+unit-tagged literals.** A conversion function is named for its *source* unit and
+converts to canonical: `(frames 8)` = 8 frames as canonical seconds; `(rad x)` =
+x radians as canonical angle. The canonical unit has no function — you never
+write `(seconds 2.5)`, you write `2.5`. **Angles are canonically degrees**: the
+corpus authors 100% in degrees (DMK's `cossindeg` is fossil evidence of designers
+refusing radians); a radians default would wrap every angle literal in every card.
+Pattern-level trig takes canonical degrees (`sin(90) = 1`); θ-column storage
+(radians / unit vectors, open decision 7) is the compiler's business — conversions
+constant-fold. (`#deg` is gone twice over: a tagged literal was the wrong shape,
+and the unit it tagged is now the default.)
 
 Control layer borrows Clojure shapes: `(defpattern name [param default …] body)`,
 `(loop [binding init …] … (recur …))`, `seq`/`par`/`race`/`wait`. An infinite `loop`
@@ -41,7 +47,7 @@ runtime dispatch, or "sugar is only sugar" breaks):
   when no declared overload unifies (protects functions with trailing pose-typed
   parameters).
 - *Applicable frames*: a list whose head types to `Signal Pose`/`Array Pose`
-  applies as `in-frame`: `((rot (deg base)) child)`, `(anchor child)` for a
+  applies as `in-frame`: `((rot base) child)`, `(anchor child)` for a
   let-bound frame, `([p1 p2] child)` for a literal frame array. This is §4's
   frames-as-transformers made literal — a frame *is* a `Dyn → Dyn` (and
   `Action → Action`) transformer. Vector literals themselves stay pure data;
@@ -88,7 +94,7 @@ between (not after the last).
   always the parsed tree.
 - **Grammar inside**: infix `+ - * / ^ %` and comparisons with PEMDAS;
   function-call syntax `f(a, b)` where `f` is any in-scope function and
-  arguments are again math expressions (so `deg(120*vol)`, `sine(1, 0.2, t)`
+  arguments are again math expressions (so `rad(1.5)`, `sine(1, 0.2, t)`
   need no escape); array literals `[…]` and coordinate literals `c[…]`/`p[…]`;
   `$(…)` splices an arbitrary s-expression for anything else.
 - **Free symbols resolve against the enclosing lexical scope** — no requirement
