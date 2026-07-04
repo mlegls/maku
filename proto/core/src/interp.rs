@@ -2005,6 +2005,7 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
                         "graze" => Layer::Graze,
                         "shot" => Layer::Shot,
                         "hurt" => Layer::Hurt,
+                        "player-hurt" => Layer::PlayerHurt,
                         other => return Err(format!("colliders: unknown layer :{}", other)),
                     },
                     _ => return Err("colliders: missing :layer".into()),

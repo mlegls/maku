@@ -445,7 +445,12 @@ async fn main() {
         patterns: Vec::new(),
         session: {
             let mut s = Session::default();
-            s.mount_lives = Some(3.0); // this host mounts a 3-lives player
+            // this host's player contract: layer the stock rig card
+            // (swap in your own live: <localleader>es a rig defpattern)
+            s.rig = Some(format!(
+                "{}\n(player-rig)",
+                include_str!("../../../cards/player-rig.dmk")
+            ));
             s
         },
         paused: false,

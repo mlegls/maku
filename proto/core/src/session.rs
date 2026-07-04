@@ -32,9 +32,10 @@ pub struct Session {
     cmds: Vec<(u64, ProgCmd)>,
     /// Live inputs used when advancing past the recorded tape.
     pub last_inputs: Inputs,
-    /// Host policy: mount the player entity (with this many lives) into
-    /// every sim this session starts.
-    pub mount_lives: Option<f64>,
+    /// Host policy: form source (e.g. a player-rig defpattern) layered into
+    /// every fresh timeline as an (add ...) at tick 0 — it rides the command
+    /// tape, so card + tapes fully determine a replay (no hidden host state).
+    pub rig: Option<String>,
 }
 
 impl Session {
@@ -47,14 +48,15 @@ impl Session {
         self.cmds.iter().map(|(t, _)| *t).collect()
     }
 
-    /// Begin a fresh timeline around `sim` (drops all history).
-    pub fn start(&mut self, mut sim: Sim) {
-        if let Some(lives) = self.mount_lives {
-            sim.mount_player(lives);
-        }
+    /// Begin a fresh timeline around `sim` (drops all history). The host
+    /// rig, if any, is recorded as a command at the start tick.
+    pub fn start(&mut self, sim: Sim) {
         self.tape.clear();
         self.snaps.clear();
         self.cmds.clear();
+        if let Some(r) = &self.rig {
+            self.cmds.push((sim.tick(), ProgCmd::Add(r.clone())));
+        }
         self.snaps.push((sim.tick(), sim.clone()));
         self.sim = Some(sim);
     }
@@ -151,12 +153,12 @@ impl Session {
     /// the input tape is kept. Returns the tick replayed to.
     pub fn rerun(&mut self, card_src: &str, form_src: &str) -> Result<u64, String> {
         let cur = self.tick().unwrap_or(0);
-        let mut sim = Sim::load_forms(card_src, form_src)?;
-        if let Some(lives) = self.mount_lives {
-            sim.mount_player(lives);
-        }
+        let sim = Sim::load_forms(card_src, form_src)?;
         self.snaps.clear();
         self.cmds.clear();
+        if let Some(r) = &self.rig {
+            self.cmds.push((0, ProgCmd::Add(r.clone())));
+        }
         self.snaps.push((0, sim.clone()));
         self.sim = Some(sim);
         let replay_to = cur.min(self.tape.len() as u64);

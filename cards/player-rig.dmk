@@ -1,0 +1,15 @@
+;; The stock player kit. "The host mounts the player" inverted: the rig is
+;; ordinary card content -- an entity tracking the $player channel, hurtbox
+;; as a collider, lives as a column, game-over as its trigger. The host
+;; merely layers it in ((add (player-rig)) rides the command tape, so
+;; card + tapes fully determine a replay). Different characters, co-op
+;; ($player-1/$player-2 rigs), or card-integrated movement (motion in the
+;; vel domain over raw input channels) are different rig cards, not engine
+;; changes.
+
+(defpattern player-rig [lives 3]
+  (spawn (live $player)
+         {:team :player-body
+          :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:lives lives}
+          :triggers [{:col :lives :leq 0 :event :game-over}]}))

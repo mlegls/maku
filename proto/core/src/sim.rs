@@ -228,39 +228,6 @@ impl Sim {
         Ok(())
     }
 
-    /// Mount the player as an ordinary entity — HOST opt-in ("the host
-    /// mounts the player"): its motion is the $player channel (a Live
-    /// node, so its pose flows through the same signal path as any
-    /// bullet), its hurtbox is a PlayerHurt collider, lives is a column,
-    /// and game-over is a trigger (non-culling — what to do about it is
-    /// the host's business).
-    pub fn mount_player(&mut self, lives: f64) {
-        let id = self.world.next_id;
-        self.world.next_id += 1;
-        self.world.bullets.push(Bullet {
-            id,
-            team: Some("player-body".into()),
-            kind: Kind::Point,
-            motion: Rc::new(DynNode::Live { channel: "player".into() }),
-            birth: self.world.tick,
-            style: Style {
-                family: "player".into(),
-                color: String::new(),
-                variant: String::new(),
-            },
-            alive: true,
-            state: MotionState::new(),
-            scanned: false,
-            hue: None,
-            colliders: vec![Collider { layer: Layer::PlayerHurt, r: 0.06 }].into(),
-            cols: vec![("lives".into(), lives)],
-            triggers: vec![TriggerRule::new("game-over", "lives", 0.0, false)].into(),
-            damage: Val::Num(1.0),
-            grazed: false,
-            prev_pos: None,
-        });
-    }
-
     fn from_pattern(card: &Card, name: &str) -> Result<Sim, String> {
         let pat = card
             .patterns
@@ -1141,12 +1108,17 @@ mod tests {
     fn player_hit_and_iframes() {
         // two bullets aimed straight down the player's column, 10 ticks apart
         const CARD: &str = r#"
+(defpattern rig []
+  (spawn (live $player)
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:lives 3}
+          :triggers [{:col :lives :leq 0 :event :game-over}]}))
 (defpattern atk []
-  (dotimes [i 2 :every (ticks 10)]
-    (spawn (in-frame (pose c[0 3]) (vel c[0 -6])))))
+  (par (rig)
+    (dotimes [i 2 :every (ticks 10)]
+      (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
-        sim.mount_player(3.0);
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
@@ -1166,10 +1138,13 @@ mod tests {
     #[test]
     fn graze_counts_once() {
         const CARD: &str = r#"
-(defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
+(defpattern rig []
+  (spawn (live $player)
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+(defpattern g []
+  (par (rig) (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6])))))
 "#;
         let mut sim = Sim::load(CARD, Some("g")).unwrap();
-        sim.mount_player(3.0);
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
@@ -1217,7 +1192,11 @@ mod tests {
 (defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
 "#;
         let mut sess = Session::default();
-        sess.mount_lives = Some(3.0);
+        sess.rig = Some(
+            "(defpattern rig [] (spawn (live $player) {:team :player-body \
+             :colliders [{:layer :player-hurt :r 0.06}]}))"
+                .into(),
+        );
         sess.last_inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         sess.start(Sim::load(CARD, Some("g")).unwrap());
         for _ in 0..120 {
@@ -1237,12 +1216,17 @@ mod tests {
     #[test]
     fn lives_and_game_over() {
         const CARD: &str = r#"
+(defpattern rig []
+  (spawn (live $player)
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:lives 2}
+          :triggers [{:col :lives :leq 0 :event :game-over}]}))
 (defpattern atk []
-  (dotimes [i 5 :every (ticks 70)]
-    (spawn (in-frame (pose c[0 3]) (vel c[0 -6])))))
+  (par (rig)
+    (dotimes [i 5 :every (ticks 70)]
+      (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
-        sim.mount_player(2.0);
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         for _ in 0..300 {
             sim.step_with(&inputs).unwrap();
@@ -1313,11 +1297,13 @@ mod tests {
     #[test]
     fn laser_hitbox() {
         const CARD: &str = r#"
+(defpattern rig []
+  (spawn (live $player)
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
 (defpattern beam []
-  (spawn ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6}))))
+  (par (rig) (spawn ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})))))
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
-        sim.mount_player(3.0);
         // player parked ON the beam line, 2 units along it
         let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
         // warn phase: no hitbox
@@ -1365,8 +1351,10 @@ mod tests {
     #[test]
     fn duel_card_plays() {
         let src = std::fs::read_to_string("../../cards/duel.dmk").unwrap();
+        let rig = std::fs::read_to_string("../../cards/player-rig.dmk").unwrap();
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
-        sim.mount_player(3.0);
+        // the host layers the stock rig; boss/stage cards stay player-free
+        sim.add_forms(&src, &format!("{}\n(player-rig)", rig)).unwrap();
         let inputs = Inputs { player: (0.0, -2.0), nearest_enemy: (0.0, -2.0) };
         for _ in 0..1200 {
             sim.step_with(&inputs).unwrap();
