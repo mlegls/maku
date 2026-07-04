@@ -1,0 +1,6 @@
+/Users/mlegls/dev/danmaku-engine/proto/target/debug/deps/danmaku_core-3998f9ae53819a99.d: core/src/lib.rs core/src/edn.rs
+
+/Users/mlegls/dev/danmaku-engine/proto/target/debug/deps/danmaku_core-3998f9ae53819a99: core/src/lib.rs core/src/edn.rs
+
+core/src/lib.rs:
+core/src/edn.rs:
