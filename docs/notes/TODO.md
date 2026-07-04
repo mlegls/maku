@@ -32,10 +32,10 @@ language.md.
 - `core/src/interp.rs` is a 2.9k-line monolith — split into modules
   (reader glue / dyn+motion / eval / actions / spawn / card) before the
   builtin vocabulary grows further.
-- Host API extraction: the macroquad player reaches into `Sim` ad hoc
-  (`world.bullets`, `channel_val`, `events_vec`, render items). A deliberate
-  host facade is the frontend prerequisite — define it, then write
-  `docs/host-api.md` as it stabilizes.
+- ~~Host API extraction~~ done: `core::host::Instance` (card management,
+  wire dispatch, render/event/channel/timeline reads); the macroquad player
+  is now input+draw+net only. Write `docs/host-api.md` from it as the first
+  non-macroquad frontend exercises it.
 - Signal tapping/plotting (design.md §11) — select a subexpression, plot
   over t.
 - Fixed 120 Hz tick assumption in several places (`TICK_RATE`).
