@@ -10,7 +10,9 @@
 ;;
 ;;   boss phases: non-spell while hp > 60; at 60 the :spell-break trigger
 ;;   fires, the field clears, and Spell 2 (the ph_boss2_mima translation)
-;;   takes over until hp 0.
+;;   takes over until hp 0. Phase scopes use (until pred body): structured
+;;   cancellation kills the phase's whole task subtree (turret forks, guide
+;;   loops) the tick its predicate holds -- the SS8 phase-end semantics.
 ;;
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
 ;;   anchor); the player kit opts out with (in-frame :world ...).
@@ -28,23 +30,31 @@
 ;; the piloted rig: position = integral of the raw axes; focus slows.
 ;; :pilot marks this entity as the source of truth for $player.
 (defpattern rig []
-  (spawn (in-frame c[0 -3]
-           (vel c[(* (live $move-x) (- 4.5 (* 2.7 (live $focus-firing))))
-                  (* (live $move-y) (- 4.5 (* 2.7 (live $focus-firing))))]))
+  (spawn (clamp c[-3.8 -4.4] c[3.8 4.4]
+           (in-frame c[0 -3]
+             (vel c[(* (live $move-x) (- 4.5 (* 2.7 (live $focus-firing))))
+                    (* (live $move-y) (- 4.5 (* 2.7 (live $focus-firing))))])))
          {:team :player-body
           :colliders [{:layer :player-hurt :r 0.05}]
           :cols {:lives 3 :pilot 1}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 
-;; homing amulets (player_homing A), snapped to the player each volley
+;; focus switches the fire mode (player_homing's A/B split): homing
+;; amulets unfocused; tight forward needles focused (more dps, must aim)
 (defpattern free-fire []
   (dotimes [i inf :every (ticks 8)]
     (when (> $boss-hp 0)
-      (spawn (in-frame $player
-               (vel p[10 (slew 60 90
-                              (angle-of (- (live $nearest-enemy) pos)))]))
-             {:style {:family :amulet :color :red}
-              :team :player :damage 1}))))
+      (when (< $focus-firing 0.5)
+        (spawn (in-frame $player
+                 (vel p[10 (slew 60 90
+                                (angle-of (- (live $nearest-enemy) pos)))]))
+               {:style {:family :amulet :color :red}
+                :team :player :damage 1}))
+      (when (> $focus-firing 0.5)
+        (spawn (in-frame $player
+                 ([c[-0.25 0] c[0.25 0]] ((rot 90) (linear c[13 0]))))
+               {:style {:family :gem :color :blue}
+                :team :player :damage 1})))))
 
 ;; bombs: raw $bomb button, stock as fold state, cooldown as debounce.
 ;; effect = clear hostile fire + Fantasy Seal orbs (player_homing C core).
@@ -93,25 +103,25 @@
             :style {:family :lstar :color :purple}
             :scale 2})
     (par
-      (nonspell)
+      (seq (wait-for (> $boss-hp 60))
+           (until (<= $boss-hp 60) (nonspell)))
       (seq (wait-for (> $boss-hp 0))       ; boss registered
            (wait-for (<= $boss-hp 60))     ; ...broken into the spell
            (event :spell)
            (cull)                          ; field clear at the phase edge
-           (spell-2)))))
+           (until (<= $boss-hp 0) (spell-2))))))
 
 ;; non-spell: aimed fans + a lazy ring, while the first health bar holds
 (defpattern nonspell []
   (dotimes [vol inf :every (ticks 46)]
-    (when (> $boss-hp 60)
-      (seq
-        (spawn ((aim $player)
-                 (fan 5 16 (linear p[(* factor 2.6) 0])))
-               {:style {:family :circle :color :purple}})
-        (when (= (mod vol 3) 0)
-          (spawn ((rot m"13*vol")
-                   (circle 20 (linear p[(* factor 1.3) 0])))
-                 {:style {:family :circle :color :pink}}))))))
+    (seq
+      (spawn ((aim $player)
+               (fan 5 16 (linear p[(* factor 2.6) 0])))
+             {:style {:family :circle :color :purple}})
+      (when (= (mod vol 3) 0)
+        (spawn ((rot m"13*vol")
+                 (circle 20 (linear p[(* factor 1.3) 0])))
+               {:style {:family :circle :color :pink}})))))
 
 ;; ============================================================================
 ;; Spell 2 — the ph_boss2_mima translation (see translations/ph_boss2_spell2.dmk
@@ -146,12 +156,13 @@
       (spawn guide
              {:style {:family :lstar :color :teal}
               :scale 1.4
+              :team :scenery              ; rig visual: no colliders, and the
+                                          ; bomb's (cull) doesn't clear it
               :facing m"240 * ud * live(mode)"})
       (in-frame guide
         (par
           (fork (seq (wait 1)
                   (loop []
-                    (wait-for (> $boss-hp 0))
                     (wait-for (= mode 1))
                     (spawn ((aim $player)
                              (laser {:warn 1 :active 0.2 :u-max 20}))
@@ -159,7 +170,6 @@
                     (wait (ticks (/ 280 factor)))
                     (recur))))
           (fork (loop []
-                  (wait-for (> $boss-hp 0))
                   (wait-for (= mode 2))
                   (spawn ((aim $player)
                            (laser {:warn 1 :active 0.2 :u-max 20 :width 2}))
@@ -172,21 +182,19 @@
   (seq
     (par (guide-rig 1) (guide-rig -1))
     (loop []
-      (wait-for (> $boss-hp 0))
       (set! mode 1)
       (power-up)
       (loop [k 0, cell (rand-cell)]
         (move (if (= k 0) 1.6 0.7) :out-sine (grid-cell :enemy cell))
-        (when (> $boss-hp 0)
-          (spawn ((aim $player)
+        (spawn ((aim $player)
                  (map (fn [v]
                         ((fan 5 18)
                           (linear p[(* factor (lerp 0 2 v 4 2.4))
                                     (rand -8 8)])))
                       (iota 3)))
                {:style {:family :gdcircle :color :green
-                          :variant [:w :c :b]}
-                  :cues {:spawn "x-fire-burst-1"}}))
+                        :variant [:w :c :b]}
+                :cues {:spawn "x-fire-burst-1"}})
         (wait (ticks 300))
         (when (< k 3) (recur (inc k) (rand-cell-except cell))))
       (wait 1)
@@ -195,15 +203,14 @@
       (set! mode 2)
       (v2-lasers {:family :gdlaser :color :blue :variant :b} 1)
       (dotimes [v 4 :every (ticks 80)]
-        (when (> $boss-hp 0)
-          (spawn ((rot m"4*phi*v")
+        (spawn ((rot m"4*phi*v")
                  (circle 28
                    (polar m"factor * lssht(-3, 0.6, 6*t, 2*t)"
                           m"rand(4, 8) * randpm1() * t")))
                {:style {:family :star :variant :c
-                          :color (nth [:blue :teal :green :pink] (iota 28))}
-                  :scale 1.5
-                  :cues {:spawn "x-fire-star-3"}})))
+                        :color (nth [:blue :teal :green :pink] (iota 28))}
+                :scale 1.5
+                :cues {:spawn "x-fire-star-3"}}))
       (wait 1)
       (set! mode 0)
       (wait 1)

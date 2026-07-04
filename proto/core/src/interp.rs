@@ -89,6 +89,11 @@ pub enum DynNode {
     Frame(Rc<DynNode>, Rc<DynNode>),
     /// A live injected channel as a pose (class (b): pointwise, no state).
     Live { channel: Rc<str> },
+    /// Position clamp (playfield walls). Output-clamps the child pose; for
+    /// integrated children (vel under const frames) the integrator STATE is
+    /// clamped after each step — pushing a wall doesn't bank phantom
+    /// distance, you slide and turn back instantly.
+    Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
     RotExpr { form: Form, env: Env },
     /// SCANNED.md's `stages`: segment list with per-bullet (idx, epoch) state
@@ -219,6 +224,10 @@ pub fn dyn_pose_u(
             let (x, y) = sig.channel_pos(channel);
             Ok(Pose { x, y, th: 0.0 })
         }
+        DynNode::Clamp { lo, hi, child } => {
+            let p = dyn_pose(child, tau, state, sig)?;
+            Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), th: p.th })
+        }
         DynNode::RotExpr { form, env } => {
             let key = d as *const DynNode as usize;
             let th = eval_sig(form, env, sig, tau, u, Some(read_scan(state, key)), Some((0.0, 0.0)))?
@@ -340,7 +349,45 @@ pub fn step_motion(
             step_motion(a, tau, dt, state, sig)?;
             step_motion(b, tau, dt, state, sig)
         }
+        DynNode::Clamp { lo, hi, child } => {
+            step_motion(child, tau, dt, state, sig)?;
+            clamp_integrator(child, *lo, *hi, state);
+            Ok(())
+        }
         _ => Ok(()),
+    }
+}
+
+/// Walk through unrotated const offsets to an integrating Vel node and
+/// clamp its state (bounds shifted into the integrator's local frame).
+/// Anything else: the output clamp in dyn_pose is the only effect.
+fn clamp_integrator(d: &Rc<DynNode>, lo: (f64, f64), hi: (f64, f64), state: &mut MotionState) {
+    match &**d {
+        DynNode::Vel { .. } => {
+            let key = Rc::as_ptr(d) as *const DynNode as usize;
+            if let Some(Cell::N([x, y])) = state.get(&key).cloned() {
+                state.insert(
+                    key,
+                    Cell::N([x.clamp(lo.0, hi.0), y.clamp(lo.1, hi.1)]),
+                );
+            }
+        }
+        DynNode::Frame(a, b) => {
+            if let DynNode::Const(p) = &**a {
+                if p.th.abs() < 1e-12 {
+                    clamp_integrator(
+                        b,
+                        (lo.0 - p.x, lo.1 - p.y),
+                        (hi.0 - p.x, hi.1 - p.y),
+                        state,
+                    );
+                }
+            }
+        }
+        DynNode::Translate { dx, dy, child } => {
+            clamp_integrator(child, (lo.0 - dx, lo.1 - dy), (hi.0 - dx, hi.1 - dy), state);
+        }
+        _ => {}
     }
 }
 
@@ -372,6 +419,7 @@ pub fn is_scanned(d: &DynNode) -> bool {
         DynNode::Vel { .. } | DynNode::RotExpr { .. } | DynNode::Stages { .. } => true,
         DynNode::Translate { child, .. } => is_scanned(child),
         DynNode::Frame(a, b) => is_scanned(a) || is_scanned(b),
+        DynNode::Clamp { child, .. } => is_scanned(child),
         _ => false,
     }
 }
@@ -730,6 +778,11 @@ pub enum ActionV {
     Cull { target: u64 },
     /// Clear all hostile (team-less) fire — bomb semantics.
     CullHostile,
+    /// (until pred body...): structured cancellation — run body; the tick
+    /// the predicate holds, the body's whole task subtree dies. The §8
+    /// phase-end scope-cancellation primitive ((race (wait-for p) body)
+    /// degenerate case).
+    Until { pred: Form, body: Rc<[Form]>, env: Env },
     Wait { ticks: u64 },
     WaitFor { pred: Form, env: Env },
     DefVar { name: Rc<str>, init: Val },
@@ -1097,6 +1150,16 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 collect_handles(&target, &mut targets)?;
                 return Ok(Val::Action(Rc::new(ActionV::Manipulate { targets, callback })));
             }
+            "until" => {
+                if items.len() < 3 {
+                    return Err("until: expected (until pred body...)".into());
+                }
+                return Ok(Val::Action(Rc::new(ActionV::Until {
+                    pred: items[1].clone(),
+                    body: items[2..].to_vec().into(),
+                    env: env.clone(),
+                })));
+            }
             "cull" => {
                 // (cull): clear all hostile fire (bomb semantics);
                 // (cull handle): cull one bullet
@@ -1168,6 +1231,17 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     };
                 }
                 return Ok(val);
+            }
+            "clamp" => {
+                // (clamp lo hi dyn): position clamp, e.g. playfield walls
+                let lo = as_pose(evaluate(&items[1], env, ctx, world)?)?;
+                let hi = as_pose(evaluate(&items[2], env, ctx, world)?)?;
+                let child = as_dyn(evaluate(&items[3], env, ctx, world)?)?;
+                return Ok(Val::Dyn(Rc::new(DynNode::Clamp {
+                    lo: (lo.x, lo.y),
+                    hi: (hi.x, hi.y),
+                    child,
+                })));
             }
             "circle" => return sf_circle(items, env, ctx, world),
             "arrow" => return sf_arrow(items, env, ctx, world),

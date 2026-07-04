@@ -246,6 +246,13 @@ in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE
 
 ---
 
+### Scope cancellation **[spec]**
+
+- **`(until pred body…)`** — structured cancellation: run body; the tick `pred` first holds, the body's entire task subtree (loops, `fork`s, nested `par`s — everything started under the scope) dies together. Forked tasks inherit the guard at fork time, so cancellation follows the dynamic tree, not the lexical text. This is the §8 phase-end semantics DMK gets from phase-token propagation: `(until (<= $boss-hp 0) (spell-2))` cancels the spell's guide rigs and turret forks the instant the health bar empties; in-flight bullets are inert data and persist (clear them explicitly with `(cull)` if the phase edge wants it). `until` is the degenerate case of `race` — `(race (wait-for pred) body)` — which remains the general (not yet needed) form. Guards are ordinary predicates over channels/cells: deterministic, scrub-safe, evaluated at a canonical point per task per tick.
+- **`(clamp lo hi dyn)`** — position clamp (playfield walls). Output-clamps the pose; for integrated children (`vel` under unrotated const frames) the **integrator state** is clamped after each step, so pushing a wall banks no phantom distance — you slide, and reversing moves away immediately. The piloted-rig companion: `(clamp c[-3.8 -4.4] c[3.8 4.4] (in-frame start (vel …axes…)))`.
+
+---
+
 ## 9. Manipulation, queries, events
 
 **[spec]**

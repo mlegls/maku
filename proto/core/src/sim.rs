@@ -82,6 +82,9 @@ pub enum RenderItem {
 #[derive(Clone)]
 enum TF {
     Seq { items: Rc<[Form]>, idx: usize, env: Env },
+    /// (until pred ...) scope marker: while on the stack, the predicate
+    /// cancels this task; forks under it inherit it as a task guard.
+    Guard { pred: Form, env: Env },
     Dot {
         var: Rc<str>,
         n: f64,
@@ -107,10 +110,14 @@ struct Task {
     stack: Vec<TF>,
     wait: u64,
     wait_pred: Option<(Form, Env)>,
+    /// Cancellation guards inherited from enclosing (until ...) scopes at
+    /// fork time — structured cancellation: when a guard fires, this task
+    /// and every task forked under the same scope die together.
+    guards: Vec<(Form, Env)>,
 }
 
 fn new_task(stack: Vec<TF>) -> Task {
-    Task { stack, wait: 0, wait_pred: None }
+    Task { stack, wait: 0, wait_pred: None, guards: Vec::new() }
 }
 
 #[derive(Clone, Copy)]
@@ -761,12 +768,28 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
 }
 
 /// Step one task until it blocks (wait) or completes. Returns true if done.
+fn active_guards(task: &Task) -> Vec<(Form, Env)> {
+    let mut gs = task.guards.clone();
+    for tf in &task.stack {
+        if let TF::Guard { pred, env } = tf {
+            gs.push((pred.clone(), env.clone()));
+        }
+    }
+    gs
+}
+
 fn step_task(
     task: &mut Task,
     ctx: &mut Ctx,
     world: &mut World,
     new_tasks: &mut Vec<Task>,
 ) -> Result<bool, String> {
+    // structured cancellation: any live guard predicate kills the task
+    for (pred, env) in active_guards(task) {
+        if truthy_pub(&evaluate(&pred, &env, ctx, world)?) {
+            return Ok(true);
+        }
+    }
     if task.wait > 0 {
         task.wait -= 1;
         if task.wait > 0 {
@@ -791,6 +814,10 @@ fn step_task(
             return Ok(true);
         };
         let next: Option<(Form, Env)> = match top {
+            TF::Guard { .. } => {
+                task.stack.pop(); // body done: scope closes
+                continue;
+            }
             TF::Frame(_) => {
                 task.stack.pop();
                 continue;
@@ -969,6 +996,7 @@ fn run_action(
                 })
                 .collect();
             let mut child = new_task(stack);
+            child.guards = active_guards(task);
             run_action(inner, &mut child, ctx, world, new_tasks)?;
             new_tasks.push(child);
             Ok(false)
@@ -984,9 +1012,15 @@ fn run_action(
                     })
                     .collect();
                 let mut child = new_task(stack);
+                child.guards = active_guards(task);
                 run_action(k, &mut child, ctx, world, new_tasks)?;
                 new_tasks.push(child);
             }
+            Ok(false)
+        }
+        ActionV::Until { pred, body, env } => {
+            task.stack.push(TF::Guard { pred: pred.clone(), env: env.clone() });
+            task.stack.push(TF::Seq { items: body.clone(), idx: 0, env: env.clone() });
             Ok(false)
         }
     }
@@ -1469,6 +1503,72 @@ mod tests {
         assert!(newest >= 5990, "recent events kept");
     }
 
+    /// (until pred body): the tick the predicate holds, the body's whole
+    /// task subtree — including forks — dies. §8 phase-end cancellation.
+    #[test]
+    fn until_cancels_subtree() {
+        const CARD: &str = r#"
+(defpattern u []
+  (defvar stop 0)
+  (par
+    (until (= stop 1)
+      (par (fork (dotimes [i inf :every (ticks 5)]
+                   (spawn (linear c[0.01 0]))))
+           (dotimes [j inf :every (ticks 5)]
+             (spawn (linear c[0 0.01])))))
+    (seq (wait (ticks 52)) (set! stop 1))))
+"#;
+        let mut sim = Sim::load(CARD, Some("u")).unwrap();
+        for _ in 0..60 {
+            sim.step().unwrap();
+        }
+        let at_cancel = sim.world.bullets.len();
+        assert!(at_cancel >= 20, "both spawners ran: {}", at_cancel);
+        for _ in 0..200 {
+            sim.step().unwrap();
+        }
+        assert_eq!(
+            sim.world.bullets.len(),
+            at_cancel,
+            "cancelled subtree (loop AND its fork) spawns nothing more"
+        );
+    }
+
+    /// (clamp lo hi dyn) clamps the INTEGRATOR state: pushing a wall banks
+    /// no phantom distance — reversing moves away immediately.
+    #[test]
+    fn clamp_slides_not_banks() {
+        const CARD: &str = r#"
+(defpattern c []
+  (spawn (clamp c[-2 -2] c[2 2]
+           (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.05}]
+          :cols {:pilot 1}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("c")).unwrap();
+        let mut inputs = Inputs::default();
+        // push left 480 ticks (would travel 16 units unclamped)
+        inputs.axes = (-1.0, 0.0);
+        for _ in 0..480 {
+            sim.step_with(&inputs).unwrap();
+        }
+        let x_wall = match sim.channel_val("player") {
+            Some(Val::Vec2 { x, .. }) => x,
+            v => panic!("bad player channel: {:?}", v),
+        };
+        assert!((x_wall + 2.0).abs() < 0.05, "parked at the wall: {}", x_wall);
+        // reverse for half a second: must move ~2 units immediately
+        inputs.axes = (1.0, 0.0);
+        for _ in 0..60 {
+            sim.step_with(&inputs).unwrap();
+        }
+        let x_back = match sim.channel_val("player") {
+            Some(Val::Vec2 { x, .. }) => x,
+            _ => unreachable!(),
+        };
+        assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
+    }
+
     /// The full-stack card: piloted rig (raw axes -> vel-domain movement),
     /// focus, bombs (raw button + control-layer stock), boss hp phases via
     /// triggers, spell-2 embedded. One scripted run hits every mechanism.
@@ -1478,13 +1578,22 @@ mod tests {
             std::fs::read_to_string("../../cards/reimu_vs_mima.dmk").unwrap();
         let mut sim = Sim::load(&src, Some("reimu-vs-mima")).unwrap();
         let mut inputs = Inputs::default();
+        let mut saw_needles = false;
         for k in 0..4500u64 {
-            // net-zero wiggle with the raw axes; bomb once; focus later
+            // net-zero wiggle with the raw axes; bomb once; focus mid-fight
             inputs.axes = if k % 200 < 100 { (0.6, 0.0) } else { (-0.6, 0.0) };
             inputs.bomb = (900..930).contains(&k);
-            inputs.focus = k > 2000;
+            inputs.focus = (400..600).contains(&k);
             sim.step_with(&inputs).unwrap();
+            if !saw_needles {
+                saw_needles = sim
+                    .world
+                    .bullets
+                    .iter()
+                    .any(|b| b.team.as_deref() == Some("player") && b.style.family == "gem");
+            }
         }
+        assert!(saw_needles, "focus switched the fire mode to needles");
         let names: Vec<String> =
             sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         let count = |n: &str| names.iter().filter(|x| x == &n).count();
