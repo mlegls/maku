@@ -123,12 +123,35 @@ impl Danmaku {
         self.inst.current_pattern().unwrap_or_default()
     }
 
-    /// [x, y] of the $player channel, or empty.
-    pub fn player_pos(&self) -> Vec<f32> {
-        match self.inst.channel("player") {
+    /// [x, y] of a Vec2-valued channel ($player, $boss, …), or empty.
+    pub fn channel_vec(&self, name: &str) -> Vec<f32> {
+        match self.inst.channel(name) {
             Some(Val::Vec2 { x, y }) => vec![x as f32, y as f32],
             _ => Vec::new(),
         }
+    }
+
+    /// Numeric channel ($lives, $boss-hp, $graze, …); NaN when absent.
+    pub fn channel_num(&self, name: &str) -> f64 {
+        match self.inst.channel(name) {
+            Some(Val::Num(n)) => n,
+            _ => f64::NAN,
+        }
+    }
+
+    /// [x, y]* of alive entities carrying a column (:pilot, :boss, or any
+    /// card-declared marker) — generic tagged-entity positions.
+    pub fn positions(&self, col: &str) -> Vec<f32> {
+        self.inst
+            .positions(col)
+            .into_iter()
+            .flat_map(|(x, y)| [x as f32, y as f32])
+            .collect()
+    }
+
+    /// [x, y] of the $player channel, or empty (sugar for channel_vec).
+    pub fn player_pos(&self) -> Vec<f32> {
+        self.channel_vec("player")
     }
 
     /// Point bullets: [x, y, radius_world, r, g, b]* (colors 0–1, hue

@@ -362,6 +362,20 @@ impl Instance {
         })
     }
 
+    /// World positions of alive entities carrying a column — the same
+    /// tagged-entity query shape derived channels use (`:pilot`, `:boss`,
+    /// or any card-declared marker). Position is the collision-pass sample
+    /// (current tick).
+    pub fn positions(&self, col: &str) -> Vec<(f64, f64)> {
+        let Some(sim) = &self.session.sim else { return Vec::new() };
+        sim.world
+            .bullets
+            .iter()
+            .filter(|b| b.alive && b.col_get(col).is_some())
+            .filter_map(|b| b.prev_pos)
+            .collect()
+    }
+
     pub fn entity_count(&self) -> usize {
         self.session.sim.as_ref().map(|s| s.world.bullets.len()).unwrap_or(0)
     }

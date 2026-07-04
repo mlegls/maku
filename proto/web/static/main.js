@@ -48,9 +48,12 @@ scrub.addEventListener('change', () => { scrubbing = false; });
 document.getElementById('play').onclick = () => dk.toggle_pause();
 for (const cmd of ['run', 'swap', 'add']) {
   document.getElementById(cmd).onclick = () => {
-    // one wire line: strip comments, join, wrap in the chosen verb
-    const body = document.getElementById('code').value
+    // one wire line: strip comments, join; if the text already leads with a
+    // wire verb, strip it (the button chooses the verb — no double-wrap)
+    let body = document.getElementById('code').value
       .split('\n').map(l => l.replace(/;.*$/, '')).join(' ').trim();
+    const m = body.match(/^\((run|swap|add)\s+([\s\S]*)\)$/);
+    if (m) body = m[2];
     dk.command(`(${cmd} ${body})`);
   };
 }
