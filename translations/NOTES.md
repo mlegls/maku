@@ -82,9 +82,25 @@ e.g. `(event :sfx "x-fire-burst-1")`. The language has no engine vocabulary like
    not "capture an arbitrary mutable environment." This is load-bearing for the
    replay/rewind commitments.
 
-Finite iteration sugar (`dotimes`-style) desugars to `loop`/`recur`; sugar is only
-sugar. Adopted form: `(dotimes [i n :every dt] body)` — n iterations, `dt` wait
-between (not after the last).
+**`dotimes` — indexed sequential iteration (adopted form):**
+`(dotimes [i n, x xs, y ys … :every dt] body…)`
+
+- First pair is the counter: `i` over `0…n−1`; `n` may be `inf` (DMK `times(inf)`).
+- `:every dt` is the inter-iteration wait — DMK's repeater `wait(x)`: between
+  iterations, not after the last (that trailing `when`-guard is why it's an
+  option, not a `(wait)` you write yourself).
+- Subsequent pairs are **seq bindings**: each iteration binds the i-th element
+  of the source; arrays cycle (cyclic `nth`). `col ["red" "green" "blue"]` is
+  DMK's repeater-level `color({…})` modifier as a loop binding — restoring the
+  which-loop-level information a spawn-attached meta map lacks, with no magic:
+  it desugars to `(nth xs i)`.
+- Binding sources are stream-shaped: an array is the trivial cycling stream
+  (SC `Pseq`), so when the §8 pattern algebra lands,
+  `(dotimes [i inf, ang (pbrown 0 360 10)] …)` slots in unchanged.
+
+Control-layer trichotomy: **arrays** (simultaneous fan-out) / **`dotimes`**
+(sequential indexed, pure per-iteration) / **`loop`/`recur`** (sequential fold,
+explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 
 **`m"…"` — the math macro, scoped concretely (adopted):**
 

@@ -40,15 +40,13 @@
                          shot-gap   (frames 10)]
   ((pose c[0 1])
     ((rot 90)
-      (loop [vol 0]
+      (dotimes [vol inf, col ["red" "green" "blue"] :every volley-gap]
         (fork
           (dotimes [shot 8 :every shot-gap]
             (spawn ((rot m"120*vol + shot*40/7")
                      (linear c[m"2 + 0.3*shot" 0]))
                    {:style "arrow-*/w"
-                    :color (nth ["red" "green" "blue"] vol)})))
-        (wait volley-gap)
-        (recur (inc vol))))))
+                    :color col})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, volley `vol`, shot `shot`)
@@ -62,6 +60,8 @@
 ;;
 ;; (dotimes [shot 8 :every d] body) desugars to
 ;;   (loop [shot 0] body (when (< shot 7) (wait d) (recur (inc shot))))
+;; and a seq binding [.. col xs ..] adds col = (nth xs i) per iteration
+;; (cyclic nth; DMK's repeater-level color modifier as a loop binding).
 ;;
 ;; DMK dissolutions exercised here:
 ;;   rv2incr(<120>)  -> 120*vol      (cumulative angle, telescopes -- BoWaP-lite)

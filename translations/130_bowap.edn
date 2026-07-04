@@ -45,13 +45,11 @@
                    arms  5
                    period (frames 8)]
   ((pose c[0 2])                       ; DMK roott(1, 0, 2): lexical anchor
-    (loop [i 0]
+    (dotimes [i inf :every period]
       (spawn ((rot m"0.2*(i+1)*(i+2)")
                (circle arms (linear c[speed 0])))
              {:style "gem-*/w"
-              :color ["yellow" "orange" "red" "pink" "purple"]}) ; F4: merge DSL
-      (wait period)
-      (recur (inc i)))))
+              :color ["yellow" "orange" "red" "pink" "purple"]})))) ; F4: merge DSL
 
 ;; ---------------------------------------------------------------------------
 ;; Version B -- the honest fold, for when the recurrence does NOT telescope.
@@ -76,8 +74,9 @@
       (recur (+ increment 0.4)
              (+ base increment 0.4)))))
 
-;; Both loops are infinite, as in DMK (`times(inf)`); they terminate by scope
-;; cancellation when the enclosing phase/race ends (SS8).
+;; Both iterations are infinite, as in DMK (`times(inf)`); they terminate by
+;; scope cancellation when the enclosing phase/race ends (SS8). A vs B is the
+;; trichotomy point: dotimes (indexed iteration) vs loop/recur (explicit fold).
 
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, shot i)
