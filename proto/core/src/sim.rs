@@ -7,6 +7,72 @@ use std::rc::Rc;
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
 
+/// Sample a laser's world-space curve at `tau` (shared by render and the
+/// collision pass — the beam you see is the beam that hits).
+pub fn sample_laser(b: &Bullet, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)>> {
+    let Kind::Laser { shape, u_max, u_max_sig, resolution, .. } = &b.kind else {
+        return None;
+    };
+    let anchor = dyn_pose(&b.motion, tau, &b.state, sig).ok()?;
+    let u_max = match u_max_sig {
+        Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
+            .and_then(|v| v.num())
+            .unwrap_or(*u_max)
+            .max(0.01),
+        None => *u_max,
+    };
+    let steps = ((u_max / resolution).ceil() as usize).clamp(2, 400);
+    let mut pts = Vec::with_capacity(steps + 1);
+    for k in 0..=steps {
+        let u = u_max * k as f64 / steps as f64;
+        let local = match shape {
+            Some(sh) => dyn_pose_u(sh, tau, u, &b.state, sig).ok()?,
+            None => Pose { x: u, y: 0.0, th: 0.0 }, // straight along +x
+        };
+        let w = anchor.compose(&local);
+        pts.push((w.x, w.y));
+    }
+    Some(pts)
+}
+
+/// Distance from a point to a polyline (capsule-chain narrow phase).
+fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for seg in pts.windows(2) {
+        let (ax, ay) = seg[0];
+        let (bx, by) = seg[1];
+        let (dx, dy) = (bx - ax, by - ay);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 > 0.0 {
+            (((p.0 - ax) * dx + (p.1 - ay) * dy) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (cx, cy) = (ax + t * dx, ay + t * dy);
+        let d = ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt();
+        best = Some(best.map_or(d, |b: f64| b.min(d)));
+    }
+    best
+}
+
+/// Entity view handed to contact-time pure functions (:damage fns).
+fn contact_map(b: &Bullet, pos: Option<(f64, f64)>, vel: (f64, f64)) -> Val {
+    let mut kvs = vec![
+        (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
+        (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
+    ];
+    if let Some((x, y)) = pos {
+        kvs.push((Val::Kw("pos".into()), Val::Vec2 { x, y }));
+    }
+    if let Some(hp) = b.hp {
+        kvs.push((Val::Kw("hp".into()), Val::Num(hp)));
+    }
+    if let Some(t) = &b.team {
+        kvs.push((Val::Kw("team".into()), Val::Kw(t.as_ref().into())));
+    }
+    Val::Map(Rc::new(kvs))
+}
+
 pub enum RenderItem {
     Dot { x: f64, y: f64, th: f64, style: Style, hue: f64 },
     Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64 },
@@ -278,99 +344,172 @@ impl Sim {
         }
     }
 
-    /// Collision pass (points only; laser hitboxes are a TODO). Teams:
-    /// None = hostile fire → hits the player point (with graze ring);
-    /// :player fire → damages :enemy entities (:hp), killing at 0.
-    /// Everything writes World (counters, events, alive flags), so the
-    /// whole gameplay layer scrubs and replays with the timeline.
+    /// Collision pass, detect-then-resolve over the layer matrix:
+    ///   damage × player-hurtbox → hit;  graze × player-hurtbox → graze;
+    ///   shot × hurt → damage resolution.
+    /// CHECKS are per-pair-per-tick and shape-only (hot). CONTACTS are rare,
+    /// so effect parameters may be card-defined pure functions — :damage as
+    /// (fn [self other] n) is evaluated at contact with both entities (pos,
+    /// contact velocity via finite difference, hp, team, family) in scope.
+    /// Everything writes World, so the gameplay layer scrubs with the
+    /// timeline; resolve order is canonical (bullet index) for determinism.
+    /// Lasers derive capsule chains from their sampled curve while active.
     fn collide(&mut self, inputs: &Inputs) -> Result<(), String> {
-        const PLAYER_R: f64 = 0.06; // danmaku convention: tiny hitbox
-        const GRAZE_R: f64 = 0.35;
+        const PLAYER_R: f64 = 0.06; // implicit player hurtbox (danmaku-tiny)
+        const LASER_R: f64 = 0.08; // beam half-width for collision
         const IFRAMES: u64 = 60;
 
         let sig = self.ctx.sig.clone();
         let tick = self.world.tick;
         let (px, py) = inputs.player;
 
-        // positions once per bullet (Closed signals evaluate; Scanned reads
-        // integrated state)
-        let mut pos = Vec::with_capacity(self.world.bullets.len());
+        // phase 0: world-space collider anchors + contact velocities
+        let n = self.world.bullets.len();
+        let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
+        let mut vel: Vec<(f64, f64)> = Vec::with_capacity(n);
         for b in &self.world.bullets {
-            if !b.alive || !matches!(b.kind, Kind::Point) {
+            if !b.alive {
                 pos.push(None);
+                vel.push((0.0, 0.0));
                 continue;
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
             let p = dyn_pose(&b.motion, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
+            vel.push(match b.prev_pos {
+                Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
+                None => (0.0, 0.0),
+            });
+        }
+        for (b, p) in self.world.bullets.iter_mut().zip(pos.iter()) {
+            b.prev_pos = *p;
         }
 
-        // hostile fire vs the player point
-        for (i, b) in self.world.bullets.iter_mut().enumerate() {
-            let Some((bx, by)) = pos[i] else { continue };
-            if b.team.is_some() {
+        // squared distance from the player to bullet i's collision anchor:
+        // points measure center distance; active lasers measure distance to
+        // the sampled beam (capsule chain), inflated by the beam width
+        let player_d2 = |b: &Bullet, i: usize| -> Option<f64> {
+            let (bx, by) = pos[i]?;
+            match &b.kind {
+                Kind::Point => Some((bx - px).powi(2) + (by - py).powi(2)),
+                Kind::Laser { warn, .. } => {
+                    let tau = (tick - b.birth) as f64 / TICK_RATE;
+                    if tau < *warn {
+                        return None; // warn phase: no hitbox yet
+                    }
+                    let pts = sample_laser(b, tau, &sig)?;
+                    let d = dist_to_chain((px, py), &pts)?;
+                    Some((d - LASER_R).max(0.0).powi(2))
+                }
+            }
+        };
+
+        // phase 1: detect — the big set (hostile colliders) tests only
+        // against the player's implicit hurtbox: O(bullets × 1)
+        let mut hit_contacts: Vec<usize> = Vec::new();
+        let mut graze_contacts: Vec<usize> = Vec::new();
+        for (i, b) in self.world.bullets.iter().enumerate() {
+            if b.team.is_some() || pos[i].is_none() {
                 continue;
             }
-            let d2 = (bx - px).powi(2) + (by - py).powi(2);
-            let hit_r = b.radius + PLAYER_R;
-            if d2 < hit_r * hit_r && tick >= self.world.iframe_until {
-                b.alive = false;
-                self.world.player_hits += 1;
-                self.world.iframe_until = tick + IFRAMES;
-                self.world.events.push(Event {
-                    tick,
-                    name: "player-hit".into(),
-                    pos: Some((bx, by)),
-                });
-            } else if !b.grazed {
-                let graze_r = b.radius + GRAZE_R;
-                if d2 < graze_r * graze_r {
-                    b.grazed = true;
-                    self.world.graze += 1;
-                    self.world.events.push(Event {
-                        tick,
-                        name: "graze".into(),
-                        pos: Some((bx, by)),
-                    });
+            let Some(d2) = player_d2(b, i) else { continue };
+            for c in b.colliders.iter() {
+                match c.layer {
+                    Layer::Damage => {
+                        let r = c.r + PLAYER_R;
+                        if d2 < r * r {
+                            hit_contacts.push(i);
+                        }
+                    }
+                    Layer::Graze if !b.grazed => {
+                        let r = c.r + PLAYER_R;
+                        if d2 < r * r {
+                            graze_contacts.push(i);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
-
-        // player fire vs :enemy entities — collect pairs, then apply damage
-        // in order (an enemy can die mid-tick; later shots pass through)
-        let mut hits: Vec<(usize, usize)> = Vec::new();
+        // shot × hurt (both sets are small)
+        let mut shot_contacts: Vec<(usize, usize)> = Vec::new();
         for (i, shot) in self.world.bullets.iter().enumerate() {
             if pos[i].is_none() || shot.team.as_deref() != Some("player") {
                 continue;
             }
+            let Some(sc) = shot.colliders.iter().find(|c| c.layer == Layer::Shot) else {
+                continue;
+            };
             let (sx, sy) = pos[i].unwrap();
-            for (j, enemy) in self.world.bullets.iter().enumerate() {
+            'enemies: for (j, enemy) in self.world.bullets.iter().enumerate() {
                 if pos[j].is_none() || enemy.team.as_deref() != Some("enemy") {
                     continue;
                 }
                 let (ex, ey) = pos[j].unwrap();
-                let r = shot.radius + enemy.radius;
-                if (sx - ex).powi(2) + (sy - ey).powi(2) < r * r {
-                    hits.push((i, j));
-                    break; // one shot hits one enemy
+                for ec in enemy.colliders.iter() {
+                    if ec.layer != Layer::Hurt {
+                        continue;
+                    }
+                    let r = sc.r + ec.r;
+                    if (sx - ex).powi(2) + (sy - ey).powi(2) < r * r {
+                        shot_contacts.push((i, j));
+                        break 'enemies; // one shot, one enemy
+                    }
                 }
             }
         }
-        for (i, j) in hits {
+
+        // phase 2: resolve, canonical order
+        for i in hit_contacts {
+            if tick < self.world.iframe_until {
+                continue;
+            }
+            let b = &mut self.world.bullets[i];
+            if !b.alive {
+                continue;
+            }
+            if matches!(b.kind, Kind::Point) {
+                b.alive = false; // beams persist through a hit
+            }
+            self.world.player_hits += 1;
+            self.world.iframe_until = tick + IFRAMES;
+            self.world.events.push(Event { tick, name: "player-hit".into(), pos: pos[i] });
+        }
+        for i in graze_contacts {
+            let b = &mut self.world.bullets[i];
+            if !b.alive || b.grazed {
+                continue;
+            }
+            b.grazed = true;
+            self.world.graze += 1;
+            self.world.events.push(Event { tick, name: "graze".into(), pos: pos[i] });
+        }
+        for (i, j) in shot_contacts {
             if !self.world.bullets[i].alive || !self.world.bullets[j].alive {
                 continue;
             }
-            let dmg = self.world.bullets[i].damage;
+            // resolve damage at contact: numbers pass through; a pure fn
+            // gets (self other) contact maps
+            let dmg_val = self.world.bullets[i].damage.clone();
+            let dmg = match dmg_val {
+                Val::Num(n) => n,
+                f => {
+                    let self_map = contact_map(&self.world.bullets[i], pos[i], vel[i]);
+                    let other_map = contact_map(&self.world.bullets[j], pos[j], vel[j]);
+                    apply_fn(f, &[self_map, other_map], &mut self.ctx, &mut self.world, false)?
+                        .num()
+                        .map_err(|e| format!("damage fn: {}", e))?
+                }
+            };
             self.world.bullets[i].alive = false;
             let enemy = &mut self.world.bullets[j];
             let hp = enemy.hp.get_or_insert(1.0);
             *hp -= dmg;
-            let at = pos[j];
             if *hp <= 0.0 {
                 enemy.alive = false;
-                self.world.events.push(Event { tick, name: "enemy-died".into(), pos: at });
+                self.world.events.push(Event { tick, name: "enemy-died".into(), pos: pos[j] });
             } else {
-                self.world.events.push(Event { tick, name: "enemy-hit".into(), pos: at });
+                self.world.events.push(Event { tick, name: "enemy-hit".into(), pos: pos[j] });
             }
         }
         Ok(())
@@ -433,36 +572,8 @@ impl Sim {
                         });
                     }
                 }
-                Kind::Laser { shape, warn, active: _, u_max, u_max_sig, resolution } => {
-                    let Ok(anchor) = dyn_pose(&b.motion, tau, &b.state, sig) else {
-                        continue;
-                    };
-                    let u_max = match u_max_sig {
-                        Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
-                            .and_then(|v| v.num())
-                            .unwrap_or(*u_max)
-                            .max(0.01),
-                        None => *u_max,
-                    };
-                    let steps = ((u_max / resolution).ceil() as usize).clamp(2, 400);
-                    let mut pts = Vec::with_capacity(steps + 1);
-                    let mut broke = false;
-                    for k in 0..=steps {
-                        let u = u_max * k as f64 / steps as f64;
-                        let local = match shape {
-                            Some(sh) => match dyn_pose_u(sh, tau, u, &b.state, sig) {
-                                Ok(p) => p,
-                                Err(_) => {
-                                    broke = true;
-                                    break;
-                                }
-                            },
-                            None => Pose { x: u, y: 0.0, th: 0.0 }, // straight along +x
-                        };
-                        let w = anchor.compose(&local);
-                        pts.push((w.x, w.y));
-                    }
-                    if !broke {
+                Kind::Laser { warn, .. } => {
+                    if let Some(pts) = sample_laser(b, tau, sig) {
                         out.push(RenderItem::Polyline {
                             pts,
                             style: b.style.clone(),
@@ -1017,6 +1128,76 @@ mod tests {
         let w = &sess.sim.as_ref().unwrap().world;
         assert_eq!(w.graze, 1, "replay re-grazes, not double-counts");
         assert_eq!(w.events.iter().filter(|e| e.name == "graze").count(), 1);
+    }
+
+    /// :damage can be a pure function of both contact entities — here,
+    /// damage = |contact velocity| one-shots a 3hp enemy at speed 4.
+    #[test]
+    fn damage_fn_at_contact() {
+        const CARD: &str = r#"
+(defpattern duel []
+  (seq
+    (spawn (pose c[0 2]) {:team :enemy :hp 3 :hitbox 0.3})
+    (spawn (in-frame (pose c[0 0]) (vel c[0 4]))
+           {:team :player :damage (fn [self other] (mag (:vel self)))})))
+"#;
+        let mut sim = Sim::load(CARD, Some("duel")).unwrap();
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        for _ in 0..60 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(
+            sim.world.events.iter().filter(|e| e.name == "enemy-died").count(),
+            1,
+            "vel-magnitude damage (≈4) beats hp 3 in one contact"
+        );
+    }
+
+    /// Active lasers collide as capsule chains sampled from the same curve
+    /// the renderer draws; beams persist through a hit (no cull).
+    #[test]
+    fn laser_hitbox() {
+        const CARD: &str = r#"
+(defpattern beam []
+  (spawn ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("beam")).unwrap();
+        // player parked ON the beam line, 2 units along it
+        let inputs = Inputs { player: (0.0, 0.0), nearest_enemy: (0.0, 0.0) };
+        // warn phase: no hitbox
+        for _ in 0..50 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(sim.world.player_hits, 0, "warn phase doesn't hit");
+        for _ in 0..30 {
+            sim.step_with(&inputs).unwrap();
+        }
+        assert_eq!(sim.world.player_hits, 1, "active beam hits");
+        assert_eq!(sim.world.bullets.len(), 1, "the beam persists through the hit");
+        assert_eq!(sim.world.graze, 1, "beam grazed on the way in");
+    }
+
+    /// (in-frame f1 f2 body) folds the frame monoid: same pose as nesting.
+    #[test]
+    fn in_frame_variadic() {
+        const CARD: &str = r#"
+(defpattern flat []
+  (spawn (in-frame (pose c[0 1]) (rot 90) (linear c[1 0]))))
+(defpattern nested []
+  (spawn (in-frame (pose c[0 1]) (in-frame (rot 90) (linear c[1 0])))))
+"#;
+        let mut a = Sim::load(CARD, Some("flat")).unwrap();
+        let mut b = Sim::load(CARD, Some("nested")).unwrap();
+        for _ in 0..60 {
+            a.step().unwrap();
+            b.step().unwrap();
+        }
+        let sig = SigEnv::default();
+        let pa = dyn_pose(&a.world.bullets[0].motion, 0.5, &a.world.bullets[0].state, &sig).unwrap();
+        let pb = dyn_pose(&b.world.bullets[0].motion, 0.5, &b.world.bullets[0].state, &sig).unwrap();
+        assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
+        // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 → (0, 1.5)
+        assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
     }
 
     /// The playable demo card exercises the whole gameplay layer at once:

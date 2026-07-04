@@ -432,23 +432,56 @@ pub struct Bullet {
     pub state: MotionState,
     pub scanned: bool,
     pub hue: Option<MetaSig>,
-    /// Collision radius (style-derived; :hitbox meta overrides).
-    pub radius: f64,
+    /// Collider set — archetype data, Rc-shared across a spawn's elements.
+    pub colliders: Rc<[Collider]>,
     /// Hit points for :team :enemy entities (:hp meta).
     pub hp: Option<f64>,
-    /// Damage dealt on hit by :team :player fire (:damage meta — a number,
-    /// or a DMK-style map whose :hit entry is used).
-    pub damage: f64,
+    /// Damage on contact (:damage meta): a number, a DMK player() map whose
+    /// :hit is taken, or a PURE FUNCTION (fn [self other] num) evaluated at
+    /// contact — contacts are rare, so interpreting there is free.
+    pub damage: Val,
     /// Grazes count once per bullet.
     pub grazed: bool,
+    /// Last tick's position (collision pass) — contact velocity is the
+    /// finite difference, uniform across Closed and Scanned motion.
+    pub prev_pos: Option<(f64, f64)>,
 }
 
-/// Style-derived collision radius, in world units.
-pub fn default_radius(family: &str) -> f64 {
-    match family {
+/// Collision layers. The engine's interaction matrix pairs them:
+/// damage × player-hurtbox → hit, graze × player-hurtbox → graze,
+/// shot × hurt → damage resolution. The player hurtbox is implicit
+/// (an engine-side entity at $player).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Layer {
+    Damage, // hostile fire
+    Graze,  // graze ring, conventionally on the bullet
+    Shot,   // player fire
+    Hurt,   // enemy hurtbox
+}
+
+/// One collider: a circle in the owner's frame. Lasers derive capsule
+/// chains from their sampled curve at collision time instead.
+#[derive(Clone, Copy, Debug)]
+pub struct Collider {
+    pub layer: Layer,
+    pub r: f64,
+}
+
+/// Default collider sets by team — archetype data (built once per spawn).
+pub fn default_colliders(team: Option<&str>, family: &str, hitbox: Option<f64>) -> Vec<Collider> {
+    let style_r = match family {
         "lstar" | "gglcircle" => 0.20,
         "gem" | "star" => 0.09,
         _ => 0.12,
+    };
+    match team {
+        None => vec![
+            Collider { layer: Layer::Damage, r: hitbox.unwrap_or(style_r) },
+            Collider { layer: Layer::Graze, r: 0.35 },
+        ],
+        Some("player") => vec![Collider { layer: Layer::Shot, r: hitbox.unwrap_or(style_r) }],
+        Some("enemy") => vec![Collider { layer: Layer::Hurt, r: hitbox.unwrap_or(0.3) }],
+        Some(_) => vec![],
     }
 }
 
@@ -586,8 +619,8 @@ pub enum ActionV {
         hues: Vec<Option<MetaSig>>,
         team: Option<Rc<str>>,
         hp: Option<f64>,
-        damage: f64,
-        hitbox: Option<f64>,
+        damage: Val,
+        colliders: Rc<[Collider]>,
     },
     Manipulate { targets: Vec<u64>, callback: Val },
     Cull { target: u64 },
@@ -974,12 +1007,20 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Vec2 { x: p.x, y: p.y });
             }
             "in-frame" => {
-                let fv = evaluate(&items[1], env, ctx, world)?;
-                let child = evaluate(&items[2], env, ctx, world)?;
-                return match fv {
-                    Val::Dyn(d) => apply_dyn_frame(d, child),
-                    other => apply_frame_val(as_pose(other)?, child),
-                };
+                // frames form a monoid: (in-frame f1 f2 body) folds as
+                // (f1 (f2 body)), outer to inner. Last argument is the body.
+                if items.len() < 3 {
+                    return Err("in-frame: expected (in-frame frame... body)".into());
+                }
+                let mut val = evaluate(&items[items.len() - 1], env, ctx, world)?;
+                for f in items[1..items.len() - 1].iter().rev() {
+                    let fv = evaluate(f, env, ctx, world)?;
+                    val = match fv {
+                        Val::Dyn(d) => apply_dyn_frame(d, val)?,
+                        other => apply_frame_val(as_pose(other)?, val)?,
+                    };
+                }
+                return Ok(val);
             }
             "circle" => return sf_circle(items, env, ctx, world),
             "arrow" => return sf_arrow(items, env, ctx, world),
@@ -1315,7 +1356,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, hues, team, hp, damage, hitbox } => {
+        ActionV::Spawn { dyns, styles, hues, team, hp, damage, colliders } => {
             let mut handles = Vec::new();
             for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
                 let motion = if ctx.ambient == Pose::IDENTITY {
@@ -1340,10 +1381,11 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     state: MotionState::new(),
                     scanned,
                     hue: h.clone(),
-                    radius: hitbox.unwrap_or_else(|| default_radius(&s.family)),
+                    colliders: colliders.clone(),
                     hp: *hp,
-                    damage: *damage,
+                    damage: damage.clone(),
                     grazed: false,
+                    prev_pos: None,
                 });
                 handles.push(Val::Handle(id));
             }
@@ -1822,27 +1864,68 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         Some(Val::Num(n)) => Some(n),
         _ => None,
     };
-    // :damage n, or the DMK player() map {:hit n :graze n :on-hit ...}
+    // :damage n | {:hit n ...} (DMK player() map) | (fn [self other] n)
     let damage = match map_get(&meta, "damage") {
-        Some(Val::Num(n)) => n,
-        Some(Val::Map(kvs)) => kvs
-            .iter()
-            .find_map(|(k, v)| match (k, v) {
-                (Val::Kw(kw), Val::Num(n)) if &**kw == "hit" => Some(*n),
-                _ => None,
-            })
-            .unwrap_or(1.0),
-        _ => 1.0,
+        Some(Val::Num(n)) => Val::Num(n),
+        Some(f @ (Val::Fn { .. } | Val::Builtin(_))) => f,
+        Some(Val::Map(kvs)) => Val::Num(
+            kvs.iter()
+                .find_map(|(k, v)| match (k, v) {
+                    (Val::Kw(kw), Val::Num(n)) if &**kw == "hit" => Some(*n),
+                    _ => None,
+                })
+                .unwrap_or(1.0),
+        ),
+        _ => Val::Num(1.0),
     };
     let hitbox = match map_get(&meta, "hitbox") {
         Some(Val::Num(n)) => Some(n),
         _ => None,
     };
+    // collider set: archetype data, one Rc shared by every spawned element.
+    // :colliders [{:layer :damage :r 0.1} ...] replaces the team default;
+    // :hitbox r resizes the default primary collider.
+    let colliders: Rc<[Collider]> = match map_get(&meta, "colliders") {
+        Some(Val::Arr(items)) => {
+            let mut cs = Vec::new();
+            for it in items.iter() {
+                let Val::Map(kvs) = it else {
+                    return Err("colliders: expected maps".into());
+                };
+                let get = |name: &str| {
+                    kvs.iter().find_map(|(k, v)| match k {
+                        Val::Kw(kw) if &**kw == name => Some(v.clone()),
+                        _ => None,
+                    })
+                };
+                let layer = match get("layer") {
+                    Some(Val::Kw(k)) => match &*k {
+                        "damage" => Layer::Damage,
+                        "graze" => Layer::Graze,
+                        "shot" => Layer::Shot,
+                        "hurt" => Layer::Hurt,
+                        other => return Err(format!("colliders: unknown layer :{}", other)),
+                    },
+                    _ => return Err("colliders: missing :layer".into()),
+                };
+                let r = match get("r") {
+                    Some(Val::Num(n)) => n,
+                    _ => return Err("colliders: missing :r".into()),
+                };
+                cs.push(Collider { layer, r });
+            }
+            cs.into()
+        }
+        _ => {
+            let fam = styles.first().map(|s| s.family.as_str()).unwrap_or("");
+            default_colliders(team.as_deref(), fam, hitbox).into()
+        }
+    };
     let dyns = elems
         .into_iter()
         .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
         .collect();
-    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team, hp, damage, hitbox })))
+    Ok(Val::Action(Rc::new(ActionV::Spawn { dyns, styles, hues, team, hp, damage, colliders })))
 }
 
 fn flatten_elems(

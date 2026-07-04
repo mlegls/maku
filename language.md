@@ -156,7 +156,11 @@ Rate inference is shape inference; hoisting is automatic. The REPL uses inferred
 One ordinary binary function is the core:
 
 ```
-in-frame : Signal Pose → Signal Pose → Signal Pose    -- pointwise SE(2) composition
+in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE(2) composition
+-- variadic: frames form a monoid, so (in-frame f1 f2 body) folds as
+-- (f1 (f2 body)), outer to inner; the last argument is always the body.
+-- The flat spelling of applicable-frame nesting; fewer than 2 args is an
+-- arity error (never a silent drop).
 ```
 
 - Associative, with `(still)` as unit ⇒ dyns form a monoid; deep hierarchies are folds; nesting *depth* is programmable with ordinary list code.
@@ -251,6 +255,14 @@ in-frame : Signal Pose → Signal Pose → Signal Pose    -- pointwise SE(2) com
 - **Epoch model** (remat clock semantics): every rematerializable slot carries an epoch column; birth time is just each slot's initial epoch. `(remat bullet slot new-signal)` writes `epoch := now`; the new signal runs on `τ = t − epoch`, starting at 0 at the event tick. Initial conditions are passed explicitly — the remat call snaps what it needs and hands it to the new signal as ordinary `ir` constants — so C⁰ continuity holds by construction; C¹ is a convention of stock helpers (`remat-straight = linear(snap pos, snap vel)`). Remat is **per-slot**: a half-finished fade keeps running on its own epoch when the motion slot is swapped. A bullet's history is a list of `(epoch, signal, constants)` segments — piecewise-`Closed` bullets remain fully scrubbable, and the segment record is exactly the replay-log entry. `stages` (§3) is this same model statically scheduled. Ancestor clocks stay orthogonal: remat moves only the local epoch.
 - **The F1 lint — no silent strengthening**: velocity constructors with closed-form-integrable integrands (constants, piecewise-affine `lerp` profiles) are `Scanned` as written but have `Closed` equivalents; the compiler never rewrites silently (a scan stays a scan — predictability) but lints with the suggested closed rewrite. This matters compositionally: one `Scanned` guide contaminates every rider by contagion (the cradle: one `vel` makes 126 petals unscrubbable; the closed rewrite restores the whole tree).
 - Scanned state is ordinary columns + step functions ⇒ snapshots are memcpys; manipulation of scanned bullets is writes to scanned state or signal swaps.
+
+### Colliders and contact effects **[spec]**
+
+- **Colliders are archetype data**: an entity owns a *set* of colliders `{shape, layer, radius}`, interned with the style/spawn like everything in §7 — per-instance storage is just the owner pose; world-space collider positions are generated during the collision pass, never stored. Defaults derive from team (`hostile → damage + graze ring`, `:team :player → shot`, `:team :enemy → hurt`); `:hitbox r` resizes the primary; `:colliders [{:layer … :r …} …]` replaces the set. No cap on multiplicity — cost scales with total collider count, and the layer matrix (not a spatial structure) keeps danmaku linear: the big set (hostile colliders, thousands) only ever tests against the player's few colliders.
+- **The interaction matrix maps layer pairs to engine callbacks**: `damage × player-hurtbox → hit`, `graze × player-hurtbox → graze` (once-per-bullet latch), `shot × hurt → damage resolution`. Hit and graze are not special — they are rows of the matrix.
+- **Three-tier frequency stratification** (the load-bearing observation): *checks* are per-pair-per-tick — hot, engine shape tests only. *Contacts* are rare — engine effects (decrement, kill, latch, counter, emit event) whose **parameters may be card-defined pure functions** evaluated at contact with both entities in scope: `:damage (fn [self other] …)` receives contact maps (`:pos`, contact `:vel` by finite difference, `:hp`, `:team`, `:family`), so damage-per-bullet-per-enemy is a function, not a layer explosion. *Reactions* are control-layer — cards respond asynchronously via events (`wait-for`, derived channels `$graze` / `$enemies`). The only thing banned at contact is control-layer actions; event emission is the sole crossing into card code.
+- **Shapes**: circles in the dense fast path; lasers derive capsule chains *per tick from the same sampled curve the renderer draws* (the beam you see is the beam that hits) — active-window-gated, warn phase has no hitbox, beams persist through hits. Heterogeneity is confined to the rare shape.
+- **Everything writes World** (counters, events, latches, hp), so the whole gameplay layer snapshots and scrubs with the timeline; contact resolution order is canonical (owner id) so replays agree. Events carry positions; renderers may draw effect flashes statelessly from the event log — they replay under scrubbing for free.
 
 ---
 
