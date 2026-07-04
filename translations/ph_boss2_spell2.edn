@@ -121,8 +121,8 @@
       (recur))))
 
 ;; In the boss's phasemachine:
-;;   (phase :spell2 {:name "Spell 2" :type :spell :hp 38 :timeout 48
-;;                   :root c[3.6 -0.5]}
+;;   (:spell2 {:name "Spell 2" :type :spell :hp 38 :timeout 48
+;;             :root c[3.6 -0.5]}
 ;;     (spell-2 factor))
 ;; Phase end (hp or timeout) cancels the whole tree: the main loop, both
 ;; forked turrets, and the guide rigs die together -- scope cancellation is

@@ -164,18 +164,22 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 
 ```edn
 (phasemachine
-  (phase :opening (goto :spell1))                ; routing (practice/difficulty)
-  (phase :dialogue (handoff :vn "d2"))           ; no goto: falls through
-  (phase :spell1 {:name "Spell 1" :hp 42 :timeout 48}
+  (:opening (goto :spell1))                      ; routing (practice/difficulty)
+  (:dialogue (handoff :vn "d2"))                 ; no goto: falls through
+  (:spell1 {:name "Spell 1" :hp 42 :timeout 48}
     attack1
     (finally (event :spell-cleared {:bonus true})))
-  (phase :spell2 {:name "Spell 2" :hp 38 :timeout 48}
+  (:spell2 {:name "Spell 2" :hp 38 :timeout 48}
     attack2))
 ```
 
-`(phase label opts? process finally?)`, as **ordered items** — the earlier
-map form was a bug: EDN maps are unordered, and declaration-order
-fall-through (DMK `shiftphase`) needs list order to be stable card data. The
+`(label opts? process… finally?)`, as **ordered clauses** — the label keyword
+heads the clause; a `phase` head-word would be redundant since everything
+inside a `phasemachine` is a phase (the rule: *heterogeneous* items need
+discriminating heads — `stages`' `stage`/`until`/`forever` keep theirs —
+homogeneous clauses don't; cf. `cond`/`case` clauses). The earlier map form
+was a bug: EDN maps are unordered, and declaration-order fall-through (DMK
+`shiftphase`) needs list order to be stable card data. The
 optional opts map drives the implicit `race(hp, timeout, process)` AND
 exports as host-facing card data (hp bar, timer, spell name — DMK's
 `hpi`/`type` props do both jobs too); `finally` is the §8 finalizer as an
