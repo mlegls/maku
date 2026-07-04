@@ -25,6 +25,8 @@
 //!                                    (inputs + program commands); backward =
 //!                                    snapshot + re-step, and add/swap
 //!                                    boundaries replay at their ticks
+//!   (snapshots N)                    snapshot cadence in ticks; 0 = off
+//!                                    (old snapshots auto-thin regardless)
 //!   (pause) (resume)
 
 use danmaku_core::edn::{read_all, Form};
@@ -218,6 +220,17 @@ impl Player {
             "seek" => {
                 if let Some(Form::Num(n)) = items.get(1) {
                     self.seek((*n).max(0.0) as u64);
+                }
+            }
+            "snapshots" => {
+                // (snapshots n): cadence in ticks; 0 disables (soak runs)
+                if let Some(Form::Num(n)) = items.get(1) {
+                    self.session.snap_every = (*n).max(0.0) as u64;
+                    self.status = if self.session.snap_every == 0 {
+                        "snapshots off (scrub-back replays from tick 0)".into()
+                    } else {
+                        format!("snapshots every {} ticks", self.session.snap_every)
+                    };
                 }
             }
             "step" => {

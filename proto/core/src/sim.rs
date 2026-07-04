@@ -328,6 +328,15 @@ impl Sim {
         }
         self.collide(inputs)?;
         self.fire_triggers();
+        // bound the event log: it lives inside World, so every session
+        // snapshot clones it — unpruned it makes snapshot cost O(t) and
+        // total snapshot memory O(t²) (the "lags after a while" failure).
+        // Amortized: prune only past a size threshold.
+        const EVENT_KEEP: u64 = 1200; // 10s of history for host/patterns
+        if self.world.events.len() > 4096 {
+            let cutoff = self.world.tick.saturating_sub(EVENT_KEEP);
+            self.world.events.retain(|e| e.tick >= cutoff);
+        }
         self.world.tick += 1;
         // cull: off-playfield points; lasers past their active window
         let tick = self.world.tick;
@@ -1344,6 +1353,22 @@ mod tests {
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
         // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 → (0, 1.5)
         assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
+    }
+
+    /// The event log is bounded: old events prune once past the size
+    /// threshold, keeping snapshot cost O(world), not O(elapsed time).
+    #[test]
+    fn event_log_bounded() {
+        const CARD: &str = r#"
+(defpattern chatty [] (dotimes [i inf :every (ticks 1)] (event :ping)))
+"#;
+        let mut sim = Sim::load(CARD, Some("chatty")).unwrap();
+        for _ in 0..6000 {
+            sim.step().unwrap();
+        }
+        assert!(sim.world.events.len() < 4200, "pruned: {}", sim.world.events.len());
+        let newest = sim.world.events.last().unwrap().tick;
+        assert!(newest >= 5990, "recent events kept");
     }
 
     /// The playable demo card exercises the whole gameplay layer at once:

@@ -13,8 +13,10 @@
 use crate::edn::read_all;
 use crate::sim::{Inputs, Sim};
 
-/// One snapshot per second of sim time.
+/// One snapshot per second of sim time (default cadence).
 pub const SNAP_EVERY: u64 = 120;
+/// Snapshot count that triggers thinning of the older half.
+pub const MAX_SNAPS: usize = 240;
 
 #[derive(Clone)]
 enum ProgCmd {
@@ -22,7 +24,6 @@ enum ProgCmd {
     Swap(String),
 }
 
-#[derive(Default)]
 pub struct Session {
     pub sim: Option<Sim>,
     /// tape[t] stepped the sim t → t+1.
@@ -36,6 +37,29 @@ pub struct Session {
     /// every fresh timeline as an (add ...) at tick 0 — it rides the command
     /// tape, so card + tapes fully determine a replay (no hidden host state).
     pub rig: Option<String>,
+    /// Snapshot cadence in ticks; 0 disables snapshotting beyond the
+    /// start-tick baseline (long soak runs; scrub-back replays from it).
+    pub snap_every: u64,
+    /// Thinning threshold: past this count the OLDER half drops every other
+    /// snapshot — logarithmic density, so recent scrubbing stays
+    /// fine-grained while memory stays bounded; distant seeks just re-step
+    /// more ticks from a sparser base.
+    pub max_snaps: usize,
+}
+
+impl Default for Session {
+    fn default() -> Session {
+        Session {
+            sim: None,
+            tape: Vec::new(),
+            snaps: Vec::new(),
+            cmds: Vec::new(),
+            last_inputs: Inputs::default(),
+            rig: None,
+            snap_every: SNAP_EVERY,
+            max_snaps: MAX_SNAPS,
+        }
+    }
 }
 
 impl Session {
@@ -90,8 +114,21 @@ impl Session {
         }
         sim.step_with(&inputs)?;
         let now = sim.tick();
-        if now % SNAP_EVERY == 0 && self.snaps.last().map(|(t, _)| *t) != Some(now) {
+        if self.snap_every > 0
+            && now % self.snap_every == 0
+            && self.snaps.last().map(|(t, _)| *t) != Some(now)
+        {
             self.snaps.push((now, sim.clone()));
+            if self.snaps.len() > self.max_snaps.max(4) {
+                // thin the older half (keep the baseline at index 0)
+                let half = self.snaps.len() / 2;
+                let mut idx = 0usize;
+                self.snaps.retain(|_| {
+                    let k = idx;
+                    idx += 1;
+                    k == 0 || k >= half || k % 2 == 0
+                });
+            }
         }
         Ok(())
     }
@@ -264,6 +301,40 @@ mod tests {
         assert_eq!((count(&sess, "x"), count(&sess, "z")), (2, 0));
         sess.seek(CARD, 130).unwrap();
         assert_eq!((count(&sess, "x"), count(&sess, "z")), (4, 5), "swap replayed at tick 70");
+    }
+
+    /// Thinning keeps the snapshot set bounded with the baseline intact,
+    /// and scrubbing still works against the sparser old history.
+    #[test]
+    fn snapshot_thinning() {
+        let mut sess = Session::default();
+        sess.snap_every = 1;
+        sess.max_snaps = 16;
+        sess.start(Sim::load(CARD, Some("a")).unwrap());
+        for _ in 0..300 {
+            sess.advance(CARD).unwrap();
+        }
+        assert!(sess.snaps.len() <= 17, "bounded: {}", sess.snaps.len());
+        assert_eq!(sess.snaps[0].0, 0, "baseline survives thinning");
+        sess.seek(CARD, 61).unwrap(); // volley at 60 must replay exactly
+        assert_eq!(count(&sess, "x"), 4);
+        sess.seek(CARD, 300).unwrap();
+        assert_eq!(count(&sess, "x"), 10);
+    }
+
+    /// snap_every = 0: no snapshots beyond the baseline; scrub-back
+    /// replays from tick 0.
+    #[test]
+    fn snapshots_disabled() {
+        let mut sess = Session::default();
+        sess.snap_every = 0;
+        sess.start(Sim::load(CARD, Some("a")).unwrap());
+        for _ in 0..250 {
+            sess.advance(CARD).unwrap();
+        }
+        assert_eq!(sess.snaps.len(), 1, "baseline only");
+        sess.seek(CARD, 61).unwrap();
+        assert_eq!(count(&sess, "x"), 4, "seek replays from the baseline");
     }
 
     /// Resuming after a rewind branches: future commands past the branch
