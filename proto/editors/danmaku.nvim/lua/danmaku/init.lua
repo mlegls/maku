@@ -266,13 +266,17 @@ function M.setup(opts)
       map("n", "<leader>dr", M.restart, "restart")
       map("n", "<leader>dc", M.clear, "clear (stop pattern)")
       map("n", "<leader>d<space>", M.toggle_pause, "toggle pause")
-      -- scrubbing (count-aware: 30<leader>dk rewinds 30 ticks)
+      -- scrubbing (count-aware: 30<leader>dk rewinds 30 ticks;
+      -- 480<leader>dg goes to tick 480, bare <leader>dg to tick 0)
       map("n", "<leader>dj", function()
         M.step(vim.v.count1)
       end, "scrub forward N ticks")
       map("n", "<leader>dk", function()
         M.step(-vim.v.count1)
       end, "scrub back N ticks")
+      map("n", "<leader>dg", function()
+        M.seek(vim.v.count)
+      end, "scrub to absolute tick N")
     end,
   })
 end

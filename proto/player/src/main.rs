@@ -31,6 +31,7 @@ use std::sync::mpsc::{channel, Receiver};
 const PORT: u16 = 7777;
 const PIXELS_PER_UNIT: f32 = 55.0;
 const SNAP_EVERY: u64 = 120; // one snapshot per second of sim time
+const TIMELINE_H: f32 = 30.0;
 
 struct Player {
     card_path: String,
@@ -46,6 +47,7 @@ struct Player {
     tape: Vec<Inputs>,          // tape[t] stepped the sim t → t+1
     snaps: Vec<(u64, Sim)>,     // periodic snapshots, ascending
     last_inputs: Inputs,
+    dragging: bool,             // scrubbing via the timeline slider
 }
 
 impl Player {
@@ -222,13 +224,29 @@ impl Player {
                     .map(|f| f.to_string())
                     .collect::<Vec<_>>()
                     .join(" ");
+                let cur = self.sim.as_ref().map(|s| s.tick()).unwrap_or(0);
                 match Sim::load_forms(&self.card_src, &src) {
                     Ok(sim) => {
+                        // keep the input tape: replay the recorded timeline
+                        // through the NEW code up to the current tick — the
+                        // pause/rewind/edit/re-run loop (design.md §11)
                         self.sim = Some(sim);
-                        self.reset_history();
+                        self.snaps.clear();
+                        self.snaps.push((0, self.sim.as_ref().unwrap().clone()));
+                        let replay_to = cur.min(self.tape.len() as u64);
+                        while self.sim.as_ref().unwrap().tick() < replay_to {
+                            let live = self.last_inputs;
+                            if let Err(e) = self.advance(live) {
+                                self.status = format!("run replay error: {}", e);
+                                break;
+                            }
+                        }
                         let preview: String = src.chars().take(40).collect();
-                        self.status = format!("run {}…", preview);
-                        self.paused = false;
+                        self.status = if replay_to > 0 {
+                            format!("run {}… (replayed to tick {})", preview, replay_to)
+                        } else {
+                            format!("run {}…", preview)
+                        };
                     }
                     Err(e) => self.status = format!("run error: {}", e),
                 }
@@ -365,6 +383,76 @@ fn style_color(color: &str) -> Color {
     }
 }
 
+/// Bottom strip: play/pause button + timeline slider over the recorded tape.
+/// Dragging the handle scrubs (auto-pauses); clicking play resumes, which
+/// branches the timeline (truncates the future) like every other resume.
+fn timeline_ui(player: &mut Player, mx: f32, my: f32) {
+    let Some(cur) = player.sim.as_ref().map(|s| s.tick()) else { return };
+    let h = screen_height();
+    let w = screen_width();
+    let cy = h - TIMELINE_H / 2.0;
+    let total = player.tape.len().max(1) as f32;
+
+    // play/pause button
+    let (bx, br) = (22.0, 9.0);
+    let over_btn = (mx - bx).abs() < 14.0 && (my - cy).abs() < 14.0;
+    let btn_col = if over_btn { WHITE } else { GRAY };
+    if player.paused {
+        draw_triangle(
+            Vec2::new(bx - br * 0.6, cy - br),
+            Vec2::new(bx - br * 0.6, cy + br),
+            Vec2::new(bx + br, cy),
+            btn_col,
+        );
+    } else {
+        draw_rectangle(bx - br * 0.7, cy - br, br * 0.55, br * 2.0, btn_col);
+        draw_rectangle(bx + br * 0.15, cy - br, br * 0.55, br * 2.0, btn_col);
+    }
+    if over_btn && is_mouse_button_pressed(MouseButton::Left) {
+        player.paused = !player.paused;
+        if !player.paused {
+            player.truncate_future();
+        }
+        return;
+    }
+
+    // slider track
+    let (x0, x1) = (44.0, w - 96.0);
+    let frac = (cur as f32 / total).clamp(0.0, 1.0);
+    let hx = x0 + frac * (x1 - x0);
+    draw_line(x0, cy, x1, cy, 3.0, Color::new(1.0, 1.0, 1.0, 0.15));
+    draw_line(x0, cy, hx, cy, 3.0, Color::new(0.4, 0.7, 1.0, 0.8));
+    // snapshot notches
+    for (st, _) in &player.snaps {
+        let sx = x0 + (*st as f32 / total).clamp(0.0, 1.0) * (x1 - x0);
+        draw_line(sx, cy - 4.0, sx, cy + 4.0, 1.0, Color::new(1.0, 1.0, 1.0, 0.2));
+    }
+    draw_circle(hx, cy, 6.0, if player.dragging { WHITE } else { LIGHTGRAY });
+    draw_text(
+        &format!("{} / {}", cur, player.tape.len()),
+        x1 + 10.0,
+        cy + 5.0,
+        16.0,
+        GRAY,
+    );
+
+    // drag to scrub
+    let over_track = mx >= x0 - 8.0 && mx <= x1 + 8.0 && (my - cy).abs() < 12.0;
+    if over_track && is_mouse_button_pressed(MouseButton::Left) {
+        player.dragging = true;
+    }
+    if !is_mouse_button_down(MouseButton::Left) {
+        player.dragging = false;
+    }
+    if player.dragging {
+        let f = ((mx - x0) / (x1 - x0)).clamp(0.0, 1.0);
+        let target = (f * player.tape.len() as f32).round() as u64;
+        if target != cur {
+            player.seek(target);
+        }
+    }
+}
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "danmaku-player".into(),
@@ -394,6 +482,7 @@ async fn main() {
         tape: Vec::new(),
         snaps: Vec::new(),
         last_inputs: Inputs::default(),
+        dragging: false,
     };
     if player.card_path.is_empty() {
         player.status = format!("no card — listening on 127.0.0.1:{}", PORT);
@@ -545,7 +634,7 @@ async fn main() {
         } else {
             draw_text(&player.status, 12.0, 24.0, 22.0, RED);
         }
-        // pattern menu
+        // pattern menu (above the timeline strip)
         let current = player
             .pattern
             .clone()
@@ -556,11 +645,12 @@ async fn main() {
             draw_text(
                 &format!("{} {}", i + 1, name),
                 12.0,
-                screen_height() - 14.0 * (player.patterns.len() - i) as f32,
+                screen_height() - TIMELINE_H - 14.0 * (player.patterns.len() - i) as f32,
                 18.0,
                 if sel { WHITE } else { GRAY },
             );
         }
+        timeline_ui(&mut player, mx, my);
         next_frame().await;
     }
 }
