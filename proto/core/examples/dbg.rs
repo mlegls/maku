@@ -15,6 +15,7 @@ fn main() {
         ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.edn", "reimu-free-fire", 300),
         ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.edn", "reimu-focus", 400),
         ("/Users/mlegls/dev/danmaku-engine/translations/player_homing.edn", "fantasy-seal", 700),
+        ("/Users/mlegls/dev/danmaku-engine/translations/ph_boss2_spell2.edn", "spell-2", 900),
     ];
     for (path, pattern, ticks) in cases {
         let src = match std::fs::read_to_string(path) {

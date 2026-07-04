@@ -475,6 +475,16 @@ would be double-anchored. Rule: lexical distribution stops at lambdas, the
 same way it stops at embedded patterns (the adapter/caller decides). Verified
 by test (`handles_and_manipulate`). Pending language.md §4 amendment.
 
+**F19 (from the prototype) — difficulty must thread explicitly; pure loops
+fold inline.** Two catches from running Spell 2: (a) `guide-rig` referenced
+`spell-2`'s `factor` parameter free — `defn`s are lexically scoped, so
+difficulty is passed explicitly (DMK's ambient `dl` has no analogue; if that
+proves noisy, an ambient-constants story needs designing, cf. §8's rank
+note). (b) `rand-cell-except`'s rejection loop is a *pure fold* used for its
+value inside a defn — loops containing no temporal actions evaluate inline
+(exactly F3's fold-belongs-to-the-control-layer point); temporal actions
+inside such loops are errors.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure

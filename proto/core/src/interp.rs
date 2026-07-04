@@ -429,15 +429,50 @@ pub struct Bullet {
     pub hue: Option<MetaSig>,
 }
 
-#[derive(Default)]
 pub struct World {
     pub tick: u64,
     pub next_id: u64,
     pub bullets: Vec<Bullet>,
     pub events: Vec<(u64, String)>,
+    pub rng: u64,
+    pub boss: Pose,
+    pub boss_anim: Option<BossAnim>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BossAnim {
+    pub from: Pose,
+    pub to: (f64, f64),
+    pub start: u64,
+    pub dur: u64,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        World {
+            tick: 0,
+            next_id: 0,
+            bullets: Vec::new(),
+            events: Vec::new(),
+            rng: 0x9e37_79b9_7f4a_7c15,
+            boss: Pose::IDENTITY,
+            boss_anim: None,
+        }
+    }
 }
 
 impl World {
+    /// Deterministic splitmix64-ish stream (counter-based enough for the
+    /// prototype: same run order → same stream → replays agree).
+    pub fn next_rand(&mut self) -> f64 {
+        self.rng = self.rng.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.rng;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        (z >> 11) as f64 / (1u64 << 53) as f64
+    }
+
     pub fn find(&self, id: u64) -> Option<usize> {
         self.bullets.iter().position(|b| b.id == id && b.alive)
     }
@@ -500,7 +535,7 @@ pub enum ActionV {
     },
     Loop { names: Vec<Rc<str>>, inits: Vec<Val>, body: Rc<[Form]>, env: Env },
     Recur(Vec<Val>),
-    InFrame { frame: Pose, inner: Rc<ActionV> },
+    InFrame { frame: FrameSpec, inner: Rc<ActionV> },
     /// Bindings whose values are actions execute at scheduler reach-time
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
@@ -508,10 +543,25 @@ pub enum ActionV {
     Manipulate { targets: Vec<u64>, callback: Val },
     Cull { target: u64 },
     Wait { ticks: u64 },
+    WaitFor { pred: Form, env: Env },
+    DefVar { name: Rc<str>, init: Val },
+    SetVar { name: Rc<str>, val: Val },
+    /// Boss/self-entity eased move (derived from remat per the spec; the
+    /// prototype animates the world's boss anchor and blocks for `dur`).
+    Move { dur_ticks: u64, dest: (f64, f64) },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
     Event { channel: Rc<str> },
     Nothing,
+}
+
+#[derive(Debug, Clone)]
+pub enum FrameSpec {
+    Const(Pose),
+    /// A signal-valued frame (e.g. an unexpressed guide). Its scan state
+    /// lives in whichever bullet shares the node (§5 shared instances); the
+    /// scheduler resolves the pose at action time.
+    Node(Rc<DynNode>),
 }
 
 #[derive(Debug)]
@@ -630,11 +680,19 @@ pub struct SigEnv {
     pub defs: Rc<HashMap<String, Form>>,
     pub player: (f64, f64),
     pub nearest_enemy: (f64, f64),
+    /// Pattern-scoped control cells (F16): written by set! (control layer),
+    /// read live by signals; shared between world and signal contexts.
+    pub cells: Rc<std::cell::RefCell<HashMap<String, Val>>>,
 }
 
 impl Default for SigEnv {
     fn default() -> Self {
-        SigEnv { defs: Rc::new(HashMap::new()), player: (0.0, -4.0), nearest_enemy: (0.0, 3.0) }
+        SigEnv {
+            defs: Rc::new(HashMap::new()),
+            player: (0.0, -4.0),
+            nearest_enemy: (0.0, 3.0),
+            cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
+        }
     }
 }
 
@@ -687,6 +745,9 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                         }
                     }
                     return Ok(v);
+                }
+                if let Some(v) = ctx.sig.cells.borrow().get(name) {
+                    return Ok(v.clone());
                 }
                 if let Some(f) = ctx.sig.defs.clone().get(name) {
                     // hygienic except the slot-bound parameters: a def'd
@@ -834,9 +895,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Vec2 { x: p.x, y: p.y });
             }
             "in-frame" => {
-                let frame = as_pose(evaluate(&items[1], env, ctx, world)?)?;
+                let fv = evaluate(&items[1], env, ctx, world)?;
                 let child = evaluate(&items[2], env, ctx, world)?;
-                return apply_frame_val(frame, child);
+                return match fv {
+                    Val::Dyn(d) => apply_dyn_frame(d, child),
+                    other => apply_frame_val(as_pose(other)?, child),
+                };
             }
             "circle" => return sf_circle(items, env, ctx, world),
             "arrow" => return sf_arrow(items, env, ctx, world),
@@ -872,7 +936,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                                 Ok(Val::Dyn(Rc::new(DynNode::Live { channel: ch.clone() })))
                             };
                         }
-                        _ => return Ok(Val::Bool(true)), // unknown host channel stub
+                        other => {
+                            if let Some(v) = ctx.sig.cells.borrow().get(other) {
+                                return Ok(v.clone());
+                            }
+                            return Ok(Val::Bool(true)); // unknown host channel stub
+                        }
                     }
                 }
                 return evaluate(&items[1], env, ctx, world);
@@ -913,7 +982,56 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(Val::Arr(Rc::new(out)));
             }
-            "defvar" | "set!" | "phases" | "stages" | "scan" | "wait-for" => {
+            "defvar" => {
+                let Some(Form::Sym(name)) = items.get(1) else {
+                    return Err("defvar: expected name".into());
+                };
+                let init = evaluate(&items[2], env, ctx, world)?;
+                return Ok(Val::Action(Rc::new(ActionV::DefVar { name: name.clone(), init })));
+            }
+            "set!" => {
+                let Some(Form::Sym(name)) = items.get(1) else {
+                    return Err("set!: expected name".into());
+                };
+                let val = evaluate(&items[2], env, ctx, world)?;
+                return Ok(Val::Action(Rc::new(ActionV::SetVar { name: name.clone(), val })));
+            }
+            "wait-for" => {
+                return Ok(Val::Action(Rc::new(ActionV::WaitFor {
+                    pred: items[1].clone(),
+                    env: env.clone(),
+                })));
+            }
+            "move" => {
+                // (move dur ease dest)
+                let dur = evaluate(&items[1], env, ctx, world)?.num()?;
+                let dest = match evaluate(&items[3], env, ctx, world)? {
+                    Val::Vec2 { x, y } => (x, y),
+                    v => return Err(format!("move: expected point dest, got {:?}", v)),
+                };
+                return Ok(Val::Action(Rc::new(ActionV::Move {
+                    dur_ticks: (dur * TICK_RATE).round().max(0.0) as u64,
+                    dest,
+                })));
+            }
+            "rand" => {
+                let (a, b) = (
+                    evaluate(&items[1], env, ctx, world)?.num()?,
+                    evaluate(&items[2], env, ctx, world)?.num()?,
+                );
+                return Ok(Val::Num(a + world.next_rand() * (b - a)));
+            }
+            "rand-int" => {
+                let (a, b) = (
+                    evaluate(&items[1], env, ctx, world)?.num()?,
+                    evaluate(&items[2], env, ctx, world)?.num()?,
+                );
+                return Ok(Val::Num((a + world.next_rand() * (b - a)).floor()));
+            }
+            "randpm1" => {
+                return Ok(Val::Num(if world.next_rand() < 0.5 { -1.0 } else { 1.0 }));
+            }
+            "phases" | "stages-action" | "scan" => {
                 return Err(format!("'{}' not implemented in this milestone", s));
             }
             _ => {}
@@ -976,6 +1094,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
 /// A dyn in frame (head) position: composes over dyns, exts, and arrays.
 fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
     match child {
+        Val::Action(a) => Ok(Val::Action(Rc::new(ActionV::InFrame {
+            frame: FrameSpec::Node(frame),
+            inner: a,
+        }))),
         Val::Arr(items) => {
             let out = items
                 .iter()
@@ -1037,9 +1159,57 @@ pub fn apply_fn(
                 }
             }
             ctx.ambient = saved_ambient;
-            result.map(|_| last)
+            let last = result.map(|_| last)?;
+            // a loop with no temporal actions is a pure fold (F3): run it now
+            if let Val::Action(a) = &last {
+                if let ActionV::Loop { names, inits, body, env } = &**a {
+                    return run_pure_loop(names, inits.clone(), body, env, ctx, world);
+                }
+            }
+            Ok(last)
         }
         v => Err(format!("cannot apply {:?}", v)),
+    }
+}
+
+/// Execute a loop synchronously as a pure fold. Temporal actions inside are
+/// errors — the scheduler owns time; this path owns only recursion.
+fn run_pure_loop(
+    names: &[Rc<str>],
+    mut cur: Vec<Val>,
+    body: &Rc<[Form]>,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Val, String> {
+    let mut fuel: u32 = 100_000;
+    'outer: loop {
+        fuel -= 1;
+        if fuel == 0 {
+            return Err("pure loop: fuel exhausted".into());
+        }
+        let mut e = env.clone();
+        for (nm, v) in names.iter().zip(cur.iter()) {
+            e = e.bind(nm.clone(), v.clone());
+        }
+        let mut last = Val::Nothing;
+        for form in body.iter() {
+            let v = evaluate(form, &e, ctx, world)?;
+            if let Val::Action(a) = &v {
+                match &**a {
+                    ActionV::Recur(vals) => {
+                        cur = vals.clone();
+                        continue 'outer;
+                    }
+                    ActionV::Nothing => {}
+                    other => {
+                        return Err(format!("temporal action in pure loop: {:?}", other));
+                    }
+                }
+            }
+            last = v;
+        }
+        return Ok(last);
     }
 }
 
@@ -1050,6 +1220,10 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Nothing => Ok(Val::Nothing),
         ActionV::Event { channel } => {
             world.events.push((world.tick, channel.to_string()));
+            Ok(Val::Nothing)
+        }
+        ActionV::DefVar { name, init } | ActionV::SetVar { name, val: init } => {
+            ctx.sig.cells.borrow_mut().insert(name.to_string(), init.clone());
             Ok(Val::Nothing)
         }
         ActionV::Cull { target } => {
@@ -1157,7 +1331,10 @@ fn as_dyn(v: Val) -> Result<Rc<DynNode>, String> {
 
 fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
     match child {
-        Val::Action(a) => Ok(Val::Action(Rc::new(ActionV::InFrame { frame, inner: a }))),
+        Val::Action(a) => Ok(Val::Action(Rc::new(ActionV::InFrame {
+            frame: FrameSpec::Const(frame),
+            inner: a,
+        }))),
         Val::Arr(items) => {
             let out = items
                 .iter()
@@ -1210,15 +1387,35 @@ fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     let mut deferred: Vec<(Rc<str>, Val)> = Vec::new();
     let mut any_action = false;
     for c in binds.chunks(2) {
-        let Form::Sym(name) = &c[0] else {
-            return Err("let: bad binding name (destructuring unimplemented)".into());
-        };
         let v = evaluate(&c[1], &e, ctx, world)?;
-        if matches!(v, Val::Action(_)) {
-            any_action = true;
+        match &c[0] {
+            Form::Sym(name) => {
+                if matches!(v, Val::Action(_)) {
+                    any_action = true;
+                }
+                e = e.bind(name.clone(), v.clone());
+                deferred.push((name.clone(), v));
+            }
+            // {:keys [x y]} destructuring over a map value
+            Form::Map(kvs) => {
+                for (k, kv) in kvs.iter() {
+                    if matches!(k, Form::Kw(kw) if &**kw == "keys") {
+                        let Form::Vector(names) = kv else {
+                            return Err("let: :keys expects a vector".into());
+                        };
+                        for nm in names.iter() {
+                            let Form::Sym(nm) = nm else {
+                                return Err("let: bad :keys name".into());
+                            };
+                            let field = map_get(&v, nm).unwrap_or(Val::Nothing);
+                            e = e.bind(nm.clone(), field.clone());
+                            deferred.push((nm.clone(), field));
+                        }
+                    }
+                }
+            }
+            _ => return Err("let: bad binding form".into()),
         }
-        e = e.bind(name.clone(), v.clone());
-        deferred.push((name.clone(), v));
     }
     if any_action {
         return Ok(Val::Action(Rc::new(ActionV::Let {
@@ -1520,6 +1717,13 @@ fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     };
     let mut elems = Vec::new();
     flatten_elems(dv, &mut Vec::new(), &mut elems)?;
+    // rand in signal expressions is an ir constant per element (§5): clone the
+    // motion tree per element, substituting rand calls with drawn constants
+    for e in elems.iter_mut() {
+        if dyn_has_rand(&e.motion) {
+            e.motion = instantiate_rand(&e.motion, world);
+        }
+    }
     let styles = resolve_styles(&meta, &elems)?;
     let hues = resolve_hue(items.get(2), &meta, env, elems.len());
     let dyns = elems
@@ -1563,6 +1767,90 @@ fn flatten_elems(
             out.push(SpawnElem { motion: as_dyn(other)?, kind: Kind::Point, path: path.clone() });
             Ok(())
         }
+    }
+}
+
+fn form_has_rand(f: &Form) -> bool {
+    match f {
+        Form::List(items) => {
+            matches!(items.first(), Some(Form::Sym(s)) if matches!(s.as_ref(), "rand" | "rand-int" | "randpm1"))
+                || items.iter().any(form_has_rand)
+        }
+        Form::Vector(items) => items.iter().any(form_has_rand),
+        _ => false,
+    }
+}
+
+fn dyn_has_rand(d: &DynNode) -> bool {
+    match d {
+        DynNode::ClosedPt { a, b, .. } | DynNode::Vel { a, b, .. } => {
+            form_has_rand(a) || form_has_rand(b)
+        }
+        DynNode::RotExpr { form, .. } => form_has_rand(form),
+        DynNode::Translate { child, .. } => dyn_has_rand(child),
+        DynNode::Frame(a, b) => dyn_has_rand(a) || dyn_has_rand(b),
+        _ => false,
+    }
+}
+
+fn subst_rand(f: &Form, world: &mut World) -> Form {
+    match f {
+        Form::List(items) => {
+            if let Some(Form::Sym(s)) = items.first() {
+                match s.as_ref() {
+                    "rand" | "rand-int" => {
+                        let a = matches!(&items[1], Form::Num(_))
+                            .then(|| if let Form::Num(n) = items[1] { n } else { 0.0 })
+                            .unwrap_or(0.0);
+                        let b = matches!(&items[2], Form::Num(_))
+                            .then(|| if let Form::Num(n) = items[2] { n } else { 1.0 })
+                            .unwrap_or(1.0);
+                        let v = a + world.next_rand() * (b - a);
+                        return Form::Num(if s.as_ref() == "rand-int" { v.floor() } else { v });
+                    }
+                    "randpm1" => {
+                        return Form::Num(if world.next_rand() < 0.5 { -1.0 } else { 1.0 });
+                    }
+                    _ => {}
+                }
+            }
+            Form::List(items.iter().map(|i| subst_rand(i, world)).collect::<Vec<_>>().into())
+        }
+        Form::Vector(items) => {
+            Form::Vector(items.iter().map(|i| subst_rand(i, world)).collect::<Vec<_>>().into())
+        }
+        other => other.clone(),
+    }
+}
+
+fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode> {
+    match &**d {
+        DynNode::ClosedPt { a, b, polar, env } => Rc::new(DynNode::ClosedPt {
+            a: subst_rand(a, world),
+            b: subst_rand(b, world),
+            polar: *polar,
+            env: env.clone(),
+        }),
+        DynNode::Vel { a, b, polar, env } => Rc::new(DynNode::Vel {
+            a: subst_rand(a, world),
+            b: subst_rand(b, world),
+            polar: *polar,
+            env: env.clone(),
+        }),
+        DynNode::RotExpr { form, env } => Rc::new(DynNode::RotExpr {
+            form: subst_rand(form, world),
+            env: env.clone(),
+        }),
+        DynNode::Translate { dx, dy, child } => Rc::new(DynNode::Translate {
+            dx: *dx,
+            dy: *dy,
+            child: instantiate_rand(child, world),
+        }),
+        DynNode::Frame(a, b) => Rc::new(DynNode::Frame(
+            instantiate_rand(a, world),
+            instantiate_rand(b, world),
+        )),
+        _ => d.clone(),
     }
 }
 
@@ -1692,7 +1980,7 @@ fn sf_fan(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
 
 const BUILTINS: &[&str] = &[
     "+", "-", "*", "/", "mod", "pow", "inc", "dec", "=", "<", ">", "<=", ">=", "min", "max",
-    "abs", "quot", "ticks", "sin", "cos", "sine", "cart", "polar", "pose", "rot", "still",
+    "abs", "quot", "ticks", "sin", "cos", "sine", "lssht", "cart", "polar", "pose", "rot", "still",
     "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerp3", "lerpsmooth",
     "angle-of", "mag", "einsine", "eoutsine", "eiosine",
 ];
@@ -1807,7 +2095,12 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "pow" => Ok(Val::Num(n(0)?.powf(n(1)?))),
         "inc" => Ok(Val::Num(n(0)? + 1.0)),
         "dec" => Ok(Val::Num(n(0)? - 1.0)),
-        "=" => Ok(Val::Bool((n(0)? - n(1)?).abs() < 1e-9)),
+        "=" => match (&args[0], &args[1]) {
+            (Val::Kw(a), Val::Kw(b)) => Ok(Val::Bool(a == b)),
+            (Val::Str(a), Val::Str(b)) => Ok(Val::Bool(a == b)),
+            (Val::Map(a), Val::Map(b)) => Ok(Val::Bool(format!("{:?}", a) == format!("{:?}", b))),
+            _ => Ok(Val::Bool((n(0)? - n(1)?).abs() < 1e-9)),
+        },
         "<" => Ok(Val::Bool(n(0)? < n(1)?)),
         ">" => Ok(Val::Bool(n(0)? > n(1)?)),
         "<=" => Ok(Val::Bool(n(0)? <= n(1)?)),
@@ -1933,6 +2226,20 @@ fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             Ok(Val::Num(v1 + ease(&ename, r) * (v2 - v1)))
         }
         "einsine" | "eoutsine" | "eiosine" => Ok(Val::Num(ease(name, n(0)?))),
+        "lssht" => {
+            // logsumexp soft-switch between curves at a t-pivot (BPYRepo);
+            // prototype: sigmoid blend, sharpness |c|
+            let (c, pv, f1, f2) = (n(0)?, n(1)?, n(2)?, n(3)?);
+            // lssht is used with t pre-substituted into f1/f2; ctrl is implicit
+            // t which we do not have here — blend on the pivot vs f-magnitudes
+            // is not recoverable, so approximate with the pivot on f1's scale:
+            let w = 1.0 / (1.0 + (c.abs() * 4.0 * (pv - pv)).exp());
+            let _ = w;
+            // pragmatic: soft-min/soft-max of the two curves by sharpness sign
+            let k = c;
+            let m = (k * f1).exp() + (k * f2).exp();
+            Ok(Val::Num(m.ln() / k))
+        }
         _ => Err(format!("unknown function '{}'", name)),
     }
 }

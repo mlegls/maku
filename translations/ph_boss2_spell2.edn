@@ -45,7 +45,7 @@
 
 ;; --- one guide rig: reflector star + laser turret riding a guide ------------
 
-(defn guide-rig [ud]
+(defn guide-rig [ud factor]
   ;; guide: launches at +-45deg, decelerates to a stop, then parks (Scanned).
   ;; ONE instance shared by the rider spawn and both turret loops -- the
   ;; let-binding IS the shared() node (SS5); first corpus case to need it.
@@ -80,7 +80,7 @@
 (defpattern spell-2 [factor 1.0]
   (defvar mode 1)                          ; F16: pattern-scoped control cell
   (seq
-    (par (guide-rig 1) (guide-rig -1))     ; rigs persist for the whole phase
+    (par (guide-rig 1 factor) (guide-rig -1 factor)) ; rigs persist all phase
     (loop []
       (set! mode 1)
       (power-up)
@@ -153,6 +153,10 @@
 ;;                            distinction doesn't exist; (rand -8 8) in a
 ;;                            per-bullet slot is keyed by spawn path+index.
 ;;   macros -> functions      ph_ref's HLaser/V2Laser macros are plain defns.
+;;   factor threading         caught by the prototype: guide-rig originally
+;;                            referenced spell-2's factor param free -- defns
+;;                            are lexically scoped, so difficulty must be
+;;                            passed (DMK's dl is ambient; ours is explicit).
 ;;
 ;; Approximations (intent-level):
 ;;   - turret cadence phase: DMK wait-then-fire vs our fire-then-wait inside

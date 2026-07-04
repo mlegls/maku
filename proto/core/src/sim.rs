@@ -32,12 +32,17 @@ enum TF {
         cur: Vec<Val>,
         idx: usize,
     },
-    Frame(Pose),
+    Frame(FrameSpec),
 }
 
 struct Task {
     stack: Vec<TF>,
     wait: u64,
+    wait_pred: Option<(Form, Env)>,
+}
+
+fn new_task(stack: Vec<TF>) -> Task {
+    Task { stack, wait: 0, wait_pred: None }
 }
 
 pub struct Inputs {
@@ -79,10 +84,7 @@ impl Sim {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;
             env = env.bind(pname.clone(), v);
         }
-        let task = Task {
-            stack: vec![TF::Seq { items: pat.body.clone(), idx: 0, env }],
-            wait: 0,
-        };
+        let task = new_task(vec![TF::Seq { items: pat.body.clone(), idx: 0, env }]);
         Ok(Sim { world, tasks: vec![task], ctx })
     }
 
@@ -100,7 +102,7 @@ impl Sim {
         // control layer
         let mut i = 0;
         while i < self.tasks.len() {
-            let mut task = std::mem::replace(&mut self.tasks[i], Task { stack: vec![], wait: 0 });
+            let mut task = std::mem::replace(&mut self.tasks[i], new_task(vec![]));
             let mut new_tasks = Vec::new();
             let done = step_task(&mut task, &mut self.ctx, &mut self.world, &mut new_tasks)?;
             if done {
@@ -110,6 +112,19 @@ impl Sim {
                 i += 1;
             }
             self.tasks.extend(new_tasks);
+        }
+        // boss anchor animation (eased)
+        if let Some(anim) = world_anim(&self.world) {
+            let r = ((self.world.tick - anim.start) as f64 / anim.dur as f64).clamp(0.0, 1.0);
+            let e = (r * std::f64::consts::FRAC_PI_2).sin(); // eoutsine
+            self.world.boss = Pose {
+                x: anim.from.x + e * (anim.to.0 - anim.from.x),
+                y: anim.from.y + e * (anim.to.1 - anim.from.y),
+                th: anim.from.th,
+            };
+            if r >= 1.0 {
+                self.world.boss_anim = None;
+            }
         }
         // integrate Scanned motion
         let dt = 1.0 / TICK_RATE;
@@ -225,15 +240,43 @@ impl Sim {
     }
 }
 
-/// Ambient frame = composition of Frame entries on the task stack.
-fn ambient(stack: &[TF]) -> Pose {
-    let mut p = Pose::IDENTITY;
+fn world_anim(w: &World) -> Option<BossAnim> {
+    w.boss_anim
+}
+
+fn truthy_pub(v: &Val) -> bool {
+    !matches!(v, Val::Bool(false) | Val::Nothing)
+}
+
+/// Ambient frame = composition of Frame entries on the task stack, rooted at
+/// the boss anchor. Dyn-valued frames (unexpressed guides) resolve their pose
+/// from whichever live bullet shares the node's scan state (§5 sharing).
+fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
+    let mut p = world.boss;
     for tf in stack {
-        if let TF::Frame(f) = tf {
-            p = p.compose(f);
+        if let TF::Frame(fs) = tf {
+            let f = match fs {
+                FrameSpec::Const(fp) => *fp,
+                FrameSpec::Node(node) => resolve_node_pose(node, world, sig),
+            };
+            p = p.compose(&f);
         }
     }
     p
+}
+
+fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
+    let key = Rc::as_ptr(node) as usize;
+    for b in &world.bullets {
+        if b.alive && b.state.contains_key(&key) {
+            let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+            if let Ok(p) = dyn_pose(node, tau, &b.state, sig) {
+                return p;
+            }
+        }
+    }
+    // no carrier yet (or stateless node): evaluate with empty state at t=0
+    dyn_pose(node, 0.0, &MotionState::new(), sig).unwrap_or(Pose::IDENTITY)
 }
 
 /// Step one task until it blocks (wait) or completes. Returns true if done.
@@ -248,6 +291,14 @@ fn step_task(
         if task.wait > 0 {
             return Ok(false);
         }
+    }
+    if let Some((pred, env)) = &task.wait_pred {
+        let (pred, env) = (pred.clone(), env.clone());
+        let v = evaluate(&pred, &env, ctx, world)?;
+        if !truthy_pub(&v) {
+            return Ok(false); // still parked (DMK whiletrue = pause)
+        }
+        task.wait_pred = None;
     }
     let mut fuel: u32 = 100_000;
     loop {
@@ -314,7 +365,7 @@ fn step_task(
             }
         };
         let Some((form, env)) = next else { continue };
-        ctx.ambient = ambient(&task.stack);
+        ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
         let v = evaluate(&form, &env, ctx, world)?;
         if let Val::Action(a) = v {
             if run_action(&a, task, ctx, world, new_tasks)? {
@@ -338,7 +389,7 @@ fn run_action(
         | ActionV::Cull { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
-            ctx.ambient = ambient(&task.stack);
+            ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
             exec_instant(a, ctx, world)?;
             Ok(false)
         }
@@ -346,13 +397,36 @@ fn run_action(
             task.wait = *ticks;
             Ok(*ticks > 0)
         }
+        ActionV::WaitFor { pred, env } => {
+            let v = evaluate(pred, env, ctx, world)?;
+            if truthy_pub(&v) {
+                Ok(false)
+            } else {
+                task.wait_pred = Some((pred.clone(), env.clone()));
+                Ok(true)
+            }
+        }
+        ActionV::DefVar { .. } | ActionV::SetVar { .. } => {
+            exec_instant(a, ctx, world)?;
+            Ok(false)
+        }
+        ActionV::Move { dur_ticks, dest } => {
+            world.boss_anim = Some(BossAnim {
+                from: world.boss,
+                to: *dest,
+                start: world.tick,
+                dur: (*dur_ticks).max(1),
+            });
+            task.wait = *dur_ticks;
+            Ok(*dur_ticks > 0)
+        }
         ActionV::Seq { items, env } => {
             task.stack.push(TF::Seq { items: items.clone(), idx: 0, env: env.clone() });
             Ok(false)
         }
         ActionV::Let { binds, body, env } => {
             // action-valued bindings execute here, inside the ambient frame
-            ctx.ambient = ambient(&task.stack);
+            ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
             let mut e = env.clone();
             for (name, v) in binds {
                 let bound = match v {
@@ -365,7 +439,7 @@ fn run_action(
             Ok(false)
         }
         ActionV::InFrame { frame, inner } => {
-            task.stack.push(TF::Frame(*frame));
+            task.stack.push(TF::Frame(frame.clone()));
             run_action(inner, task, ctx, world, new_tasks)
         }
         ActionV::Dotimes { var, n, seq_binds, every_ticks, body, env } => {
@@ -403,24 +477,31 @@ fn run_action(
             Err("recur outside loop".into())
         }
         ActionV::Fork(inner) => {
-            let amb = ambient(&task.stack);
-            let mut stack = Vec::new();
-            if amb != Pose::IDENTITY {
-                stack.push(TF::Frame(amb));
-            }
-            let mut child = Task { stack, wait: 0 };
+            // children keep the frame STACK (dyn frames stay live), not a snapshot
+            let stack: Vec<TF> = task
+                .stack
+                .iter()
+                .filter_map(|tf| match tf {
+                    TF::Frame(f) => Some(TF::Frame(f.clone())),
+                    _ => None,
+                })
+                .collect();
+            let mut child = new_task(stack);
             run_action(inner, &mut child, ctx, world, new_tasks)?;
             new_tasks.push(child);
             Ok(false)
         }
         ActionV::Par(kids) => {
             for k in kids {
-                let amb = ambient(&task.stack);
-                let mut stack = Vec::new();
-                if amb != Pose::IDENTITY {
-                    stack.push(TF::Frame(amb));
-                }
-                let mut child = Task { stack, wait: 0 };
+                let stack: Vec<TF> = task
+                    .stack
+                    .iter()
+                    .filter_map(|tf| match tf {
+                        TF::Frame(f) => Some(TF::Frame(f.clone())),
+                        _ => None,
+                    })
+                    .collect();
+                let mut child = new_task(stack);
                 run_action(k, &mut child, ctx, world, new_tasks)?;
                 new_tasks.push(child);
             }
@@ -449,6 +530,7 @@ mod tests {
             ("../../translations/player_homing.edn", "reimu-free-fire", 300),
             ("../../translations/player_homing.edn", "reimu-focus", 400),
             ("../../translations/player_homing.edn", "fantasy-seal", 700),
+            ("../../translations/ph_boss2_spell2.edn", "spell-2", 900),
         ];
         for (path, pattern, ticks) in cases {
             let src = std::fs::read_to_string(path)
