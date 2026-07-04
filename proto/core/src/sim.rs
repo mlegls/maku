@@ -355,6 +355,34 @@ fn run_action(
 mod tests {
     use super::*;
 
+    /// Conformance: the real translation files, loaded verbatim from disk.
+    #[test]
+    fn translations_run() {
+        let cases: &[(&str, &str, usize)] = &[
+            ("../../translations/130_bowap.edn", "bowap", 300),
+            ("../../translations/130_bowap.edn", "bowap-fold", 300),
+            ("../../translations/020_gsrepeat.edn", "gsrepeat-demo", 300),
+            ("../../translations/040_spread.edn", "spread-demo", 300),
+        ];
+        for (path, pattern, ticks) in cases {
+            let src = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("{}: {}", path, e));
+            let mut sim = Sim::load(&src, Some(pattern))
+                .unwrap_or_else(|e| panic!("{} [{}]: {}", path, pattern, e));
+            for _ in 0..*ticks {
+                sim.step()
+                    .unwrap_or_else(|e| panic!("{} [{}]: {}", path, pattern, e));
+            }
+            assert!(
+                !sim.bullets.is_empty(),
+                "{} [{}]: no bullets after {} ticks",
+                path,
+                pattern,
+                ticks
+            );
+        }
+    }
+
     /// BoWaP Version A, verbatim from translations/130_bowap.edn (code only).
     const BOWAP: &str = r#"
 (defpattern bowap [speed 4.0
