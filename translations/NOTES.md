@@ -418,6 +418,17 @@ Possible future sugar: `(on-axis k xs)`. DMK avoids the ambiguity by
 attaching modifiers to repeater levels — positional information our
 spawn-level meta must encode by length or annotation.
 
+**F16 — pattern-scoped control cells (adopted).** `(defvar name init)` +
+`(set! name v)` actions + reads. The internal analogue of injected channels
+(SC control-bus precedent): writes are frame-stamped events on the log, so
+replay/scrub survives; the control layer reads the cell plainly (it owns it,
+tick-synchronous); *signal* slots must mark `live(name)` — snap-by-default
+applies to cells exactly as to injected channels. Dissolves ph_boss2's
+`exec b{ hvar isAccel }` + `whiletrue` polling + mode-dependent render
+functions. Structure is still preferred where the gating IS structure
+(successive stages of a loop); cells are for state read *concurrently* by
+long-lived signals and independent loops.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure
@@ -458,5 +469,10 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   `stages` = statically-scheduled remat / `remat` = event-driven stage
   transition; the boss script's `switch(reflected, …)` idiom decoded as
   hand-rolled rematerialization.
-- Remaining: a boss spell-card slice (thjam13_mima or ph_boss2_mima), then
-  the language.md consolidation pass.
+- `ph_boss2_spell2.edn` — complete (the ceiling test). Exercises everything
+  at once: `defvar` cells (F16), the first genuinely *shared* scan (the
+  guide), summons-as-fork-in-frame, `whiletrue` = pause (verified) →
+  `wait-for`, random-walk fold, rand/brand dissolution, macros→functions.
+  ~60 lines vs ~100; the whole card except two parked guides is piecewise-
+  Closed.
+- Remaining: the language.md consolidation pass.

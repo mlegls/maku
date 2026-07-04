@@ -1,0 +1,171 @@
+;; Translation of dmk-corpus/ph_boss2_mima.bdsl, phase 3 ("Spell 2",
+;; lines 113-212) -- the ceiling test: a production spell card.
+;; (BDSL original not inlined; see the corpus file.)
+;;
+;; Decoded against source:
+;;   whiletrue(p)   PAUSES the repeater while p is false (IsUnpaused,
+;;                  Patterner.cs:568) -- does not kill it. => (wait-for p)
+;;                  at the loop head.
+;;   lssht(s,pv,f1,f2)  logsumexp soft-switch from curve f1 to f2 as t
+;;                  crosses pv (BPYRepo.cs:234). Kept as vocabulary.
+;;   <4p>           angle-only V2RV2; `p` float suffix = phi => 4phi deg
+;;                  volley increment (golden-ish spacing).
+;;   240f           C# float literal (BDSL2 is C#-ish), not a frame suffix.
+;;   factor         dl^0.3 difficulty ambient -> pattern parameter.
+;;   ph_ref.bdsl    grid helpers + laser macros -> ordinary functions here
+;;                  (HLaser/V2Laser are macros upstream only because BDSL
+;;                  abstraction over style arguments is expensive).
+;;   reflected/vel  per-bullet flags for an external reflection control =
+;;                  hand-rolled remat (SCANNED.md SS3); our bullets carry no
+;;                  flags -- the reflector control remats on contact.
+;;   color "inode" summons ...  an invisible BehaviorEntity riding the guide,
+;;                  running its own action tree. Dissolves: actions forked
+;;                  inside the guide frame (F14 + distribution law + fork).
+
+;; --- helpers (from ph_ref.bdsl) ---------------------------------------------
+
+(defn grid-cell [side xy]                 ; 3x3 grid, cells in {-1,0,1}^2
+  c[(+ (* 2.1 (:x xy)) (if (= side :enemy) 3.6 -3.6))
+    (+ -0.5 (* 2.1 (:y xy)))])
+(defn rand-axis [] (rand-int -1 2))       ; uniform {-1, 0, 1}
+(defn rand-cell [] {:x (rand-axis) :y (rand-axis)})
+(defn rand-cell-except [prev]             ; rejection loop, control layer
+  (loop [c (rand-cell)] (if (= c prev) (recur (rand-cell)) c)))
+
+(defn v2-lasers [style skip]              ; ph_ref V2Laser: slam 2 of 3 columns
+  (spawn (map (fn [a] ((pose c[(+ -3.6 (* 2.1 a)) 8])
+                        ((rot -90)
+                          (laser (still) {:warn 1.5 :active 2
+                                          :u-max 20 :width 3}))))
+              (remove (fn [a] (= a skip)) [-1 0 1]))
+         {:style style}))
+
+(defn power-up []                         ; power1(): charge aura, host-drawn
+  (event :aura {:style :powerup1 :palette [:blue :green]}))
+
+;; --- one guide rig: reflector star + laser turret riding a guide ------------
+
+(defn guide-rig [ud]
+  ;; guide: launches at +-45deg, decelerates to a stop, then parks (Scanned).
+  ;; ONE instance shared by the rider spawn and both turret loops -- the
+  ;; let-binding IS the shared() node (SS5); first corpus case to need it.
+  (let [guide (vel p[(lerp 0.4 1.2 t 5 0) m"45*ud"])]
+    (par
+      ;; rider: visible reflector star, parked on the guide (F14)
+      (spawn (in-frame guide (still))
+             {:style {:family :lstar :color :teal}
+              :scale 1.4
+              :facing m"240 * ud * live(mode)"})   ; tilts with the mode cell
+      ;; "inode summon" = two turret loops forked in the guide frame
+      (in-frame guide
+        (par
+          (fork (seq (wait 1)                       ; DMK delay 1s
+                  (loop []
+                    (wait-for (= mode 1))           ; whiletrue == pause
+                    (spawn ((aim player)
+                             (laser (still) {:warn 1 :active 0.2 :u-max 20}))
+                           {:style {:family :gdlaser :color :blue}})
+                    (wait (ticks m"280/factor"))
+                    (recur))))
+          (fork (loop []
+                  (wait-for (= mode 2))
+                  (spawn ((aim player)
+                           (laser (still) {:warn 1 :active 0.2
+                                           :u-max 20 :width 2}))
+                         {:style {:family :gdlaser :color :blue :variant :w}})
+                  (wait (ticks m"180/factor"))
+                  (recur))))))))
+
+;; --- the spell ---------------------------------------------------------------
+
+(defpattern spell-2 [factor 1.0]
+  (defvar mode 1)                          ; F16: pattern-scoped control cell
+  (seq
+    (par (guide-rig 1) (guide-rig -1))     ; rigs persist for the whole phase
+    (loop []
+      (set! mode 1)
+      (power-up)
+      ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
+      (loop [k 0, cell (rand-cell)]
+        (move (if (= k 0) 1.6 0.7) :out-sine (grid-cell :enemy cell))
+        (spawn ((aim player)
+                 (map (fn [v]
+                        ((fan 5 18)                       ; centered 5-fan, 18deg
+                          (linear p[m"lerp(0, 2, v, 4, 2.4) * factor"
+                                    (rand -8 8)])))       ; per-bullet ir jitter
+                      (iota 3)))
+               {:style {:family :gdcircle :color :green
+                        :variant [:w :c :b]}              ; axis 0: speed tier
+                :cues {:spawn "x-fire-burst-1"}})
+        (wait (ticks 300))
+        (when (< k 3) (recur (inc k) (rand-cell-except cell))))
+      (wait 1)
+      (power-up)
+      (move 1.6 :out-sine (grid-cell :enemy {:x 0 :y 0}))
+      (set! mode 2)
+      (v2-lasers {:family :gdlaser :color :blue :variant :b} 1)
+      ;; star burst: 4 volleys 80 ticks apart, rings of 28; radius soft-
+      ;; switches from a fast to a slow curve; per-bullet random swirl
+      (dotimes [v 4 :every (ticks 80)]
+        (spawn ((rot m"4*phi*v")
+                 (circle 28
+                   (polar m"factor * lssht(-3, 0.6, 6*t, 2*t)"
+                          m"rand(4, 8) * randpm1() * t")))
+               {:style {:family :star :variant :c
+                        :color (nth [:blue :teal :green :pink] (iota 28))}
+                :scale 1.5
+                :cues {:spawn "x-fire-star-3"}}))
+      (wait 1)
+      (set! mode 0)                        ; turrets pause; reflector stops
+      (wait 1)
+      (recur))))
+
+;; In the boss's phasemachine:
+;;   (phase :spell2 {:name "Spell 2" :type :spell :hp 38 :timeout 48
+;;                   :root c[3.6 -0.5]}
+;;     (spell-2 factor))
+;; Phase end (hp or timeout) cancels the whole tree: the main loop, both
+;; forked turrets, and the guide rigs die together -- scope cancellation is
+;; the cleanup DMK gets from phase-token propagation.
+
+;; ---------------------------------------------------------------------------
+;; What this exercised (all recent machinery at once)
+;;
+;;   defvar/set!/live (F16)   DMK's exec b{ hvar isAccel } + whiletrue polling
+;;                            + mode-multiplied facing. Control layer reads
+;;                            the cell plainly ((= mode 1) -- it owns it);
+;;                            SIGNAL slots must mark live(mode) (snap-by-
+;;                            default applies to cells like any channel).
+;;                            Writes are frame-stamped events => replay/scrub
+;;                            intact. SC control-bus precedent.
+;;   shared scan              `guide` let-bound, referenced by rider + two
+;;                            turret frames: one instance (SS5 sharing);
+;;                            first corpus case where identity matters.
+;;   summons dissolution      "inode" invisible entity = (in-frame guide
+;;                            (fork ...)): F14's unexpressed frame + the
+;;                            distribution law + fork. No entity, no pool
+;;                            slot, no special construct.
+;;   whiletrue = pause        verified in source; = (wait-for pred) at loop
+;;                            head. Predicate waits are SS8 vocabulary.
+;;   random-walk fold         gind start/preloop mutation -> loop/recur
+;;                            carried state (the honest fold, F3).
+;;   rand/brand dissolution   ALL our randomness is counter-based (SS5), so
+;;                            DMK's unsafe-rand vs bullet-seeded-brand
+;;                            distinction doesn't exist; (rand -8 8) in a
+;;                            per-bullet slot is keyed by spawn path+index.
+;;   macros -> functions      ph_ref's HLaser/V2Laser macros are plain defns.
+;;
+;; Approximations (intent-level):
+;;   - turret cadence phase: DMK wait-then-fire vs our fire-then-wait inside
+;;     the wait-for gate; first-fire timing differs by <= one cadence.
+;;   - `dir starrotb3` facing helpers omitted (host-default spin); the
+;;     reflector's mode-tilt IS reproduced via live(mode).
+;;   - p-indexed speed lerp reads volley index (p = parent, `p this`), which
+;;     iota(3) reproduces exactly.
+;;
+;; Rate audit (highlights): guide = Scanned (lerp integrand, F1-rewritable);
+;; turret lasers Closed over (t,u); fan bullets Closed (linear, ir jitter);
+;; burst stars Closed (polar of t with ir randoms) -- the WHOLE CARD except
+;; the two parked guides is piecewise-Closed, scrub-safe modulo the mode
+;; cell's event tape. Sixty-ish lines vs DMK's ~100 for the phase, with the
+;; channel/hoisting machinery gone entirely.
