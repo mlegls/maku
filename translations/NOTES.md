@@ -333,6 +333,26 @@ stars born one tick ⇒ explosion times known ⇒ control-layer `dotimes` over
 handles). Queries remain the mechanism when triggers read per-bullet runtime
 state (proximity, hp) — and they're also the vectorizable path.
 
+**F14 — guide objects dissolve into unexpressed frames.** DMK's `guideempty2`
+subsystem (invisible bullets + per-frame channel recording + `dtpoffset`/`@`
+keyed reads) is `in-frame` with an unexpressed dyn: the guide is a level of
+the frame tree that renders nothing and consumes no pool slot (§6's
+express-only-what-renders, derived). 200_cradle: DMK spawns 18 invisible
+bullets; we spawn 0. §10's first-class extraction is only needed when guide
+trajectories cross action-tree boundaries — lexical nesting covers the
+common case.
+
+**F15 — meta axis-targeting is ambiguous under cycling.** 200's product is
+3×6×7 with `:variant` a 3-vector for axis 0 and `:color` three values meant
+to *cycle along axis 1*. Leading-axis-first binding would claim the 3-vector
+:color for axis 0 (exact length match) — wrong. Rule adopted: **meta arrays
+bind to the leading axis, period**; to target a deeper axis, write that
+axis's length explicitly — `(nth [:blue :green :teal] (iota 6))` is a
+6-vector (cyclic nth broadcasts over iota) and binds to axis 1 by length.
+Possible future sugar: `(on-axis k xs)`. DMK avoids the ambiguity by
+attaching modifiers to repeater levels — positional information our
+spawn-level meta must encode by length or annotation.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure
@@ -362,4 +382,10 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
 - `110_exploding_stars.edn` — complete. DMK's per-bullet state + pool control
   + polling dissolves into spawn handles + control-layer scheduling (F13);
   first facing override; `(cull b :soft)`; callback layer-audit exercised.
-- Next per README order: 200 (guides), then a boss spell card.
+- `200_cradle.edn` — complete. `guideempty2`/channels/`dtpoffset` dissolve
+  into an unexpressed frame level (F14 — largest structural win yet: 18
+  invisible bullets → 0); named signals replace BDSL function+$() idiom;
+  Scanned-contagion poster child for the F1 lint; meta axis-targeting rule
+  (F15).
+- Remaining: a boss spell-card slice (thjam13_mima or ph_boss2_mima), then
+  the language.md consolidation pass.
