@@ -60,3 +60,13 @@ shared append-only structure; snapshots hold only a cursor.
 The host layers the stock player rig (`cards/player-rig.dmk`) into every
 fresh timeline via the command tape — swap in your own rig live with the
 editor. The status line shows tick, entity count, graze, hits, lives.
+
+## The web host
+
+`proto/web` compiles `core` to wasm (`wasm-pack build --target web`, or
+`proto/web/build.sh serve`) and runs the same `Instance` in the browser:
+canvas renderer over flat f32 buffers, keyboard/mouse → `Inputs`, cards
+fetched into a virtual filesystem (import expansion runs in core), and an
+eval box speaking the wire protocol (`run`/`swap`/`add`). Same controls,
+same scrubbing (the range slider is the timeline), same colors — the
+palette lives in `core::host`.

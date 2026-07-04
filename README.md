@@ -15,7 +15,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/design.md` | architecture/runtime design notes |
 | `docs/player.md` | the debug player: wire protocol, session/scrubbing, controls |
 | `docs/notes/` | implementation notes, prototype-vs-spec gaps |
-| `proto/` | Rust prototype: `core` (interpreter/sim/session), `player` (macroquad host), `editors/danmaku.nvim` |
+| `proto/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
 | `cards/` | playable cards — start with `reimu_vs_mima.dmk` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
 | `dmk-corpus/` | the upstream DMK scripts translated (MIT) |
@@ -33,3 +33,7 @@ cargo test --manifest-path proto/Cargo.toml -p danmaku-core
 Live editing: the player is a server (`docs/player.md`); install
 `proto/editors/danmaku.nvim` and evaluate forms into the running game
 (`<localleader>e` operator — run/swap/layer, all scrub-safe).
+
+Browser: `proto/web/build.sh serve` then open
+`http://localhost:8000/proto/web/static/` — the same engine as wasm, same
+controls, plus an in-page eval box speaking the wire protocol.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "player"]
+members = ["core", "player", "web"]
 
 [workspace.package]
 edition = "2021"

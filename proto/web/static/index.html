@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>danmaku-engine — web host</title>
+<style>
+  body { background: #0c0c12; color: #aab; font: 13px/1.4 ui-monospace, monospace;
+         margin: 0; display: flex; gap: 12px; padding: 12px; }
+  #left { display: flex; flex-direction: column; gap: 6px; }
+  canvas { background: #12121a; border: 1px solid #2a2a38; }
+  #bar { display: flex; gap: 8px; align-items: center; }
+  #scrub { flex: 1; }
+  #side { width: 340px; display: flex; flex-direction: column; gap: 8px; }
+  textarea { width: 100%; height: 180px; background: #14141e; color: #ccd;
+             border: 1px solid #2a2a38; font: 12px ui-monospace, monospace; }
+  button { background: #1c1c2a; color: #ccd; border: 1px solid #3a3a4c;
+           padding: 4px 10px; cursor: pointer; }
+  button:hover { background: #26263a; }
+  #status { color: #778; min-height: 2.6em; }
+  #menu div { cursor: pointer; } #menu .sel { color: #fff; }
+  h3 { margin: 6px 0 2px; color: #99a; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="left">
+  <canvas id="cv" width="640" height="720"></canvas>
+  <div id="bar">
+    <button id="play">⏸</button>
+    <input id="scrub" type="range" min="0" max="1" value="0" step="1">
+    <span id="tick">0</span>
+  </div>
+</div>
+<div id="side">
+  <div><b>danmaku-engine</b> — web host (wasm)</div>
+  <div id="hud"></div>
+  <div id="status"></div>
+  <h3>patterns (click / 1-9)</h3>
+  <div id="menu"></div>
+  <h3>controls</h3>
+  <div>WASD/arrows move · Shift focus · X bomb<br>
+       Space pause · scrub when paused · mouse = mock $player</div>
+  <h3>eval (wire protocol)</h3>
+  <textarea id="code">(run (spawn ((rot m"20*t")
+  (circle 12 (linear p[2 0])))
+  {:style {:family :star :color :teal}}))</textarea>
+  <div>
+    <button id="run">run</button>
+    <button id="swap">swap</button>
+    <button id="add">add</button>
+    <button id="restart">restart</button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
