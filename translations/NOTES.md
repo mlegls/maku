@@ -163,7 +163,7 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 **Phase machines with labeled `goto` (adopted; revised).**
 
 ```edn
-(phasemachine
+(phases
   (:opening (goto :spell1))                      ; routing (practice/difficulty)
   (:dialogue (handoff :vn "d2"))                 ; no goto: falls through
   (:spell1 {:name "Spell 1" :hp 42 :timeout 48}
@@ -175,7 +175,7 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 
 `(label opts? process… finally?)`, as **ordered clauses** — the label keyword
 heads the clause; a `phase` head-word would be redundant since everything
-inside a `phasemachine` is a phase (the rule: *heterogeneous* items need
+inside a `phases` is a phase (the rule: *heterogeneous* items need
 discriminating heads — `stages`' `stage`/`until`/`forever` keep theirs —
 homogeneous clauses don't; cf. `cond`/`case` clauses). The earlier map form
 was a bug: EDN maps are unordered, and declaration-order fall-through (DMK
@@ -190,7 +190,7 @@ list order; falling off the end completes the machine (which may return a
 value to its embedder). `(goto label)` is a scoped non-local exit: cancel the
 enclosing phase body (finalizers run), re-enter at the label.
 
-**Goto is scoped strictly to the innermost lexical `phasemachine`.** Outer
+**Goto is scoped strictly to the innermost lexical `phases`.** Outer
 machines' labels are *not in scope* — an embedded machine (a card) cannot
 hijack its host's flow; inner machines communicate upward only by completing.
 Combined with the earlier discipline (exit structurally, enter only at phase
@@ -202,7 +202,7 @@ Labels, not indices: DMK's `shiftphaseto 4` breaks when a phase is inserted;
 labels survive tree transformations. Corpus contact (ph_boss2_mima):
 `shiftphaseto 4` = routing goto; dialogue `shiftphase` = fall-through;
 `hpi`/`type`/`root` = phase opts; the `isAccel` mode-flag attack is a nested
-`phasemachine` in a phase body.
+`phases` in a phase body.
 
 **`(fork action)` — dynamic `par`.** Starts `action` concurrently as a child
 *adopted by the nearest enclosing concurrency scope* (`par`/`race`/phase), then
@@ -225,7 +225,14 @@ will accumulate (§1: keep the vocabulary); they are library, not core.
 
 **Array builtins**: `(iota n)` = `[0 1 … n−1]` (APL `!n`, already the notation
 language.md §5 uses for `circle`'s θ column); `(range a b step)` for the general
-case. Usable inside `m""` as `iota(6)`.
+case; `(without x xs)` = xs minus elements equal to x. Usable inside `m""` as
+`iota(6)`.
+
+**`(still)`** — the constant identity pose, §4's monoid unit, named. Rarely
+needed in practice: expressing a bare frame is `(spawn guide meta)` directly
+(the rider IS the guide expressed), and `laser`'s shape argument is optional
+(default: straight along frame +x, u in world units). Both Spell-2 uses of
+`still` turned out to be these two cases and were removed.
 
 **Stock stream vocabulary**: `(stutter n xs)` — each element repeated n times,
 still cycling (SC `Pstutter`); image of DMK's `colorf(xs, i/2)` floored-index
