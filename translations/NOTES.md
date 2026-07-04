@@ -160,39 +160,45 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 - Backtick is *reserved* (quasiquotation for card macros), which is why the
   promotion is `m"…"` and not `` `…` ``.
 
-**Phase machines with labeled `goto` (adopted).**
+**Phase machines with labeled `goto` (adopted; revised).**
 
 ```edn
-(phases :opening
-  {:opening  (goto :spell1)                      ; routing (practice/difficulty)
-   :dialogue (handoff :vn "d2")                  ; no goto: falls through
-   :spell1   (phase {:name "Spell 1" :hp 42 :timeout 48}
-               attack1)
-   :spell2   (phase {:name "Spell 2" :hp 38 :timeout 48}
-               attack2)})
+(phasemachine
+  (phase :opening (goto :spell1))                ; routing (practice/difficulty)
+  (phase :dialogue (handoff :vn "d2"))           ; no goto: falls through
+  (phase :spell1 {:name "Spell 1" :hp 42 :timeout 48}
+    attack1
+    (finally (event :spell-cleared {:bonus true})))
+  (phase :spell2 {:name "Spell 2" :hp 38 :timeout 48}
+    attack2))
 ```
 
-A `phase` is §8's `race(hp, timeout, body)` with finalizers; its outcome is a
-value. The machine is a trampoline: `(loop [l start] (recur (run (get phases
-l))))` — each phase body evaluates to the next label, defaulting to
-declaration order (DMK `shiftphase`). `(goto label)` is a **scoped non-local
-exit**: it cancels the enclosing phase body (finalizers run — cull, items,
-bookkeeping, the §8 discipline) and the trampoline re-enters at the label.
+`(phase label opts? process finally?)`, as **ordered items** — the earlier
+map form was a bug: EDN maps are unordered, and declaration-order
+fall-through (DMK `shiftphase`) needs list order to be stable card data. The
+optional opts map drives the implicit `race(hp, timeout, process)` AND
+exports as host-facing card data (hp bar, timer, spell name — DMK's
+`hpi`/`type` props do both jobs too); `finally` is the §8 finalizer as an
+explicit, serializable slot.
 
-Why this is unambiguous where goto classically isn't: goto's pathologies come
-from jumping *into* the middle of structure. This one can't — it **exits
-structurally** (cancellation semantics already define what happens to
-in-flight children, forks, and finalizers) and **enters only at phase
-heads**. Goto = exit + tail call; the machine is a Mealy machine over phase
-outcomes. Two competing gotos on the same tick (parallel branches) resolve by
-tree order — the same deterministic tie-break `race` already requires.
+Semantics: trampoline — each phase evaluates to the next label, defaulting to
+list order; falling off the end completes the machine (which may return a
+value to its embedder). `(goto label)` is a scoped non-local exit: cancel the
+enclosing phase body (finalizers run), re-enter at the label.
+
+**Goto is scoped strictly to the innermost lexical `phasemachine`.** Outer
+machines' labels are *not in scope* — an embedded machine (a card) cannot
+hijack its host's flow; inner machines communicate upward only by completing.
+Combined with the earlier discipline (exit structurally, enter only at phase
+heads, tree-order tie-break for same-tick competitors), goto's classical
+pathology — jumping *into* structure, or *across* control regimes — is
+unrepresentable, not merely discouraged.
 
 Labels, not indices: DMK's `shiftphaseto 4` breaks when a phase is inserted;
-labels are stable card data, so tree transformations can add phases without
-renumbering. Corpus contact (ph_boss2_mima): `shiftphaseto 4` = routing goto
-from the opening; dialogue `shiftphase` = fall-through; per-phase `hp`/
-`type`/`root` become phase opts. Machines nest: an attack with internal modes
-(the `isAccel` stages) can be a `phases` inside a phase body.
+labels survive tree transformations. Corpus contact (ph_boss2_mima):
+`shiftphaseto 4` = routing goto; dialogue `shiftphase` = fall-through;
+`hpi`/`type`/`root` = phase opts; the `isAccel` mode-flag attack is a nested
+`phasemachine` in a phase body.
 
 **`(fork action)` — dynamic `par`.** Starts `action` concurrently as a child
 *adopted by the nearest enclosing concurrency scope* (`par`/`race`/phase), then
