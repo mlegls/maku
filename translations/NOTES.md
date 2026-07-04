@@ -160,6 +160,40 @@ explicit carried state). BoWaP Version A vs B is literally dotimes vs loop.
 - Backtick is *reserved* (quasiquotation for card macros), which is why the
   promotion is `m"…"` and not `` `…` ``.
 
+**Phase machines with labeled `goto` (adopted).**
+
+```edn
+(phases :opening
+  {:opening  (goto :spell1)                      ; routing (practice/difficulty)
+   :dialogue (handoff :vn "d2")                  ; no goto: falls through
+   :spell1   (phase {:name "Spell 1" :hp 42 :timeout 48}
+               attack1)
+   :spell2   (phase {:name "Spell 2" :hp 38 :timeout 48}
+               attack2)})
+```
+
+A `phase` is §8's `race(hp, timeout, body)` with finalizers; its outcome is a
+value. The machine is a trampoline: `(loop [l start] (recur (run (get phases
+l))))` — each phase body evaluates to the next label, defaulting to
+declaration order (DMK `shiftphase`). `(goto label)` is a **scoped non-local
+exit**: it cancels the enclosing phase body (finalizers run — cull, items,
+bookkeeping, the §8 discipline) and the trampoline re-enters at the label.
+
+Why this is unambiguous where goto classically isn't: goto's pathologies come
+from jumping *into* the middle of structure. This one can't — it **exits
+structurally** (cancellation semantics already define what happens to
+in-flight children, forks, and finalizers) and **enters only at phase
+heads**. Goto = exit + tail call; the machine is a Mealy machine over phase
+outcomes. Two competing gotos on the same tick (parallel branches) resolve by
+tree order — the same deterministic tie-break `race` already requires.
+
+Labels, not indices: DMK's `shiftphaseto 4` breaks when a phase is inserted;
+labels are stable card data, so tree transformations can add phases without
+renumbering. Corpus contact (ph_boss2_mima): `shiftphaseto 4` = routing goto
+from the opening; dialogue `shiftphase` = fall-through; per-phase `hp`/
+`type`/`root` become phase opts. Machines nest: an attack with internal modes
+(the `isAccel` stages) can be a `phases` inside a phase body.
+
 **`(fork action)` — dynamic `par`.** Starts `action` concurrently as a child
 *adopted by the nearest enclosing concurrency scope* (`par`/`race`/phase), then
 continues immediately. The scope's completion waits for adopted children; its
