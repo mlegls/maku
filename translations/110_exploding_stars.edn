@@ -1,0 +1,114 @@
+;; Translation of dmk-corpus/110_exploding_stars.bdsl
+;;
+;; BDSL original (28 lines), for ergonomics comparison:
+;;
+;;   pattern { } {
+;;   phase 0 {
+;;       roott(1, 0, 1.5)
+;;   } {
+;;       paction 0 {
+;;           sync "lstar-blue/w" <> gsr {
+;;               times(8)
+;;               circle
+;;               preloop b{ hvar nStar = i; }
+;;           } simple
+;;               rvelocity(px(lerp(0.2, 1, t, 3, 0)))
+;;               { dir2(cossindeg(200 * t)) }
+;;           bulletcontrol(persist, "lstar-blue/w",
+;;               batch(t > 0.6 + 0.3 * &nStar, {
+;;                   sm(_, sync "star-*/w" <> gsrepeat {
+;;                           circle
+;;                           times(22)
+;;                           sfx("x-fire-burst-1")
+;;                           colorf({ "red", "orange", "yellow", "green",
+;;                               "teal", "blue", "purple", "pink" }, &nStar)
+;;                       } simple
+;;                           rvelocity(px(lerp(0.2, 1, t, 0, 4)))
+;;                           { dir2(cossindeg(300 * t)) })
+;;                   softcull("", _)
+;;               }))
+;;       }
+;;   }
+;;   }
+;;
+;; DMK semantics: 8 big stars ring outward, decelerating 3 -> 0 and spinning
+;; (facing 200 deg/s). Star j explodes at age 0.6 + 0.3*j: a 22-star ring
+;; (color by j, accelerating 0 -> 4, spinning 300 deg/s) spawns at its
+;; position and the big star soft-culls (fade-out).
+;;
+;; DMK's mechanism: hoist the ring index into per-bullet state (&nStar), then
+;; a persistent pool-level control polls `t > 0.6 + 0.3*&nStar` per bullet per
+;; frame, spawning a state machine on the bullet (sm(_)) when it fires.
+;;
+;; Our mechanism: none of that state is needed -- all 8 stars are born on one
+;; tick, so the trigger schedule is STATIC. spawn returns bullet handles
+;; (adopted, F13); the control layer schedules the explosions directly.
+
+(defpattern exploding-stars [n 8
+                             palette [:red :orange :yellow :green
+                                      :teal :blue :purple :pink]]
+  ((pose c[0 1.5])
+    (let [stars (spawn (circle n (vel c[(lerp 0.2 1 t 3 0) 0]))
+                       {:style {:family :lstar :color :blue :variant :w}
+                        :facing m"200*t"})]
+      (seq
+        (wait 0.6)
+        (dotimes [j n, col palette :every 0.3]
+          (manipulate (nth stars j)
+            (fn [b]
+              (event :sfx "x-fire-burst-1")
+              (spawn (+ (pos b) (circle 22 (vel c[(lerp 0.2 1 t 0 4) 0])))
+                     {:style {:family :star :color col :variant :w}
+                      :facing m"300*t"})
+              (cull b :soft))))))))
+
+;; ---------------------------------------------------------------------------
+;; Adopted surface (F13): `spawn` returns an array of Bullet handles, which
+;; the control layer may hold. `manipulate` accepts a handle (or array) where
+;; it accepts a query -- a handle is a degenerate predicate. Handles are
+;; generation-safe: manipulating a dead handle is a no-op (star already culled
+;; by a bomb => its explosion silently doesn't happen, same as DMK, where the
+;; batch predicate simply never fires).
+;;
+;; When to use which:
+;;   - schedule known at spawn time (this script): handles + control-layer
+;;     scheduling; the per-bullet state (&nStar) evaporates.
+;;   - trigger depends on per-bullet runtime state (proximity, hp, position):
+;;     query + predicate over columns (SS9), which is also what vectorizes.
+;;
+;; Layer audit for the callback (SS9 cost rule): it spawns and culls -->
+;; control layer, fuel-billed per matched bullet. Fine here: 1 bullet per
+;; firing, 8 total. The same callback attached to a 10k-bullet query would be
+;; the expensive path, and the compiler can price it because the escape is
+;; syntactically visible.
+;;
+;; Notable details:
+;;   - (+ (pos b) (circle 22 ...)): child ring anchored at the star's snapped
+;;     POSITION only (DMK rv2 <> zeroes rotation) -- anchoring by point-
+;;     addition, no pose application, so no orientation inherited.
+;;   - :facing m"200*t": first corpus use of the facing override (SS4:
+;;     facing is meta, defaults to heading). The big stars fly outward but
+;;     SPIN -- facing decoupled from motion.
+;;   - softcull("", _) -> (cull b :soft): fade-out cull, the SS6 done-action
+;;     with a fade window rather than instant removal.
+;;   - Both velocities are lerp-integrands again (F1): Scanned as written,
+;;     closed-form integrable (piecewise quadratic).
+;;
+;; ---------------------------------------------------------------------------
+;; Rate / constructor audit
+;;
+;;   (circle n), palette      ir arrays
+;;   star vel                 Scanned (integral of lerp; F1 lint) ........ ar
+;;   :facing signals          Closed; consumed by render contract ....... ar
+;;   stars (handle array)     control-layer value; generation-safe refs
+;;   explosion schedule       dotimes: input-independent timeline
+;;   (pos b) at manipulate    snap at event tick -- rematerialization-
+;;                            style capture (SS9); the child ring's anchor
+;;                            is an ir constant thereafter
+;;   whole pattern            no injected signals; scrubbable given the
+;;                            event log (manipulations are frame-stamped)
+;;
+;; DMK needed: per-bullet hoisted state + persistent pool control + per-frame
+;; predicate polling + SM-per-bullet spawn. Ours: an array of handles and a
+;; loop. The faithful query translation exists (age predicate over a :n-star
+;; tag) but is only NEEDED when the trigger reads per-bullet runtime state.

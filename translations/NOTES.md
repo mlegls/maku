@@ -324,6 +324,15 @@ bound by signal-typed slots (BDSL's movement-function model as a typing rule).
 Corpus forcing case: 060's `polar(2*t, lr*20*t)` mixes slot-bound `t` with
 lexically captured `lr`. Pending language.md §3/§11 amendment.
 
+**F13 — `spawn` returns Bullet handles (adopted).** The control layer may hold
+them; `manipulate` accepts a handle where it accepts a query (a handle is a
+degenerate predicate); dead handles are no-ops (generation-safe). This
+dissolves DMK's hoist-index-into-bullet-state + persistent-control +
+per-frame-predicate idiom whenever the trigger schedule is static (110: all
+stars born one tick ⇒ explosion times known ⇒ control-layer `dotimes` over
+handles). Queries remain the mechanism when triggers read per-bullet runtime
+state (proximity, hp) — and they're also the vectorizable path.
+
 **F10 — DMK auto-bindings are formation combinators.** `bindArrow`/`bindLR`/
 `bindUD` inject magic index-derived variables into scope (source: Patterner.cs
 `PrepareIteration`, Math.cs `HMod`/`HNMod`); their entire content is a pure
@@ -350,5 +359,7 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   stagger = render-resolution hint. Surface for open decision 3 proposed
   (`(laser shape {:warn :active :u-max :resolution})`); hueshift's hoisted
   index became one array-broadcast expression; F11.
-- Next per README order: 110 (manipulate/rematerialization), 200 (guides),
-  then a boss spell card.
+- `110_exploding_stars.edn` — complete. DMK's per-bullet state + pool control
+  + polling dissolves into spawn handles + control-layer scheduling (F13);
+  first facing override; `(cull b :soft)`; callback layer-audit exercised.
+- Next per README order: 200 (guides), then a boss spell card.
