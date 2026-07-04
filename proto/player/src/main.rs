@@ -10,10 +10,11 @@
 //!
 //!   (run <forms...>)                 run forms as an anonymous pattern
 //!                                     (current card's defs in scope)
-//!   (load "path/to/card.dmk")        reload from disk
-//!   (load "path" "pattern-name")     ... selecting a pattern
+//!   (load "path/to/card.dmk")        reload from disk (does NOT play)
+//!   (load "path" "pattern-name")     reload and play the named pattern
 //!   (pattern "name")                 switch pattern in the current card
 //!   (restart)                        re-run the current pattern
+//!   (clear)                          stop the running pattern
 //!   (pause) (resume)
 
 use danmaku_core::edn::{read_all, Form};
@@ -39,22 +40,32 @@ struct Player {
 }
 
 impl Player {
-    fn reload_from_disk(&mut self) {
+    /// Read the card from disk and refresh the pattern menu. Does NOT play.
+    fn reload_from_disk(&mut self) -> bool {
         if self.card_path.is_empty() {
             self.status = "no card loaded — send (load \"path\") or (run …)".into();
-            return;
+            return false;
         }
         match std::fs::read_to_string(&self.card_path) {
             Ok(src) => {
                 self.card_src = src;
-                self.restart();
+                self.refresh_menu();
+                self.status = format!(
+                    "{} loaded ({} pattern{})",
+                    self.card_path,
+                    self.patterns.len(),
+                    if self.patterns.len() == 1 { "" } else { "s" }
+                );
+                true
             }
-            Err(e) => self.status = format!("read {}: {}", self.card_path, e),
+            Err(e) => {
+                self.status = format!("read {}: {}", self.card_path, e);
+                false
+            }
         }
     }
 
-    fn restart(&mut self) {
-        // card menu: every defpattern in the file, in order
+    fn refresh_menu(&mut self) {
         self.patterns = read_all(&self.card_src)
             .ok()
             .and_then(|forms| load_card(&forms).ok())
@@ -65,6 +76,11 @@ impl Player {
                 self.pattern = None; // stale selection after reload
             }
         }
+    }
+
+    /// (Re-)instantiate and run the selected (or first) pattern.
+    fn restart(&mut self) {
+        self.refresh_menu();
         match Sim::load(&self.card_src, self.pattern.as_deref()) {
             Ok(sim) => {
                 self.sim = Some(sim);
@@ -80,6 +96,16 @@ impl Player {
                 self.status = format!("load error: {}", e);
             }
         }
+    }
+
+    /// Stop the running pattern; keep the card loaded.
+    fn clear(&mut self) {
+        self.sim = None;
+        self.status = if self.card_src.is_empty() {
+            format!("cleared — listening on 127.0.0.1:{}", PORT)
+        } else {
+            format!("cleared — {} still loaded", self.card_path)
+        };
     }
 
     fn select(&mut self, idx: usize) {
@@ -127,21 +153,24 @@ impl Player {
                 }
             }
             "load" => {
+                // (load "path") = load only; (load "path" "pattern") = play it
                 if let Some(p) = arg_str(1) {
                     self.card_path = p;
                 }
-                if let Some(n) = arg_str(2) {
-                    self.pattern = Some(n);
-                } else {
-                    self.pattern = None;
+                let play = arg_str(2).is_some();
+                if play {
+                    self.pattern = arg_str(2);
                 }
-                self.reload_from_disk();
+                if self.reload_from_disk() && play {
+                    self.restart();
+                }
             }
             "pattern" => {
                 self.pattern = arg_str(1);
                 self.restart();
             }
             "restart" => self.restart(),
+            "clear" => self.clear(),
             "pause" => self.paused = true,
             "resume" => self.paused = false,
             _ => self.status = format!("unknown command '{}'", head),
@@ -266,8 +295,9 @@ async fn main() {
     };
     if player.card_path.is_empty() {
         player.status = format!("no card — listening on 127.0.0.1:{}", PORT);
-    } else {
-        player.reload_from_disk();
+    } else if player.reload_from_disk() {
+        // CLI card argument is explicit intent to watch it: auto-play
+        player.restart();
     }
     let commands = serve(PORT);
 
@@ -283,9 +313,12 @@ async fn main() {
                 Err(e) => player.status = format!("command parse: {}", e),
             }
         }
-        // hotkeys: r = restart from disk, space = pause, esc = quit
-        if is_key_pressed(KeyCode::R) {
-            player.reload_from_disk();
+        // hotkeys: r = restart from disk, c = clear, space = pause, esc = quit
+        if is_key_pressed(KeyCode::R) && player.reload_from_disk() {
+            player.restart();
+        }
+        if is_key_pressed(KeyCode::C) {
+            player.clear();
         }
         if is_key_pressed(KeyCode::Space) {
             player.paused = !player.paused;

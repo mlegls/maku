@@ -15,8 +15,9 @@ Then from any `.dmk` card buffer:
 | `<localleader>e` (visual) | run the selection |
 | `<localleader>ee` | run the innermost form enclosing the cursor |
 | `<localleader>er` | run the root (top-level) form — e.g. the `defpattern` under the cursor |
-| `<leader>dl` / `:DanmakuLoad` | save + load this file (no pattern change) |
+| `<leader>dl` / `:DanmakuLoad` | save + load this file — **does not play** (menu/defs refresh only) |
 | `<leader>dr` / `:DanmakuRestart` | restart the current pattern |
+| `<leader>dc` / `:DanmakuClear` | stop the running pattern (card stays loaded) |
 | `<leader>d<space>` / `:DanmakuPause` | toggle pause |
 | `:DanmakuPlay` | play the `defpattern` nearest the cursor, by name |
 | `:DanmakuSend (pattern "bowap-fold")` | raw EDN command |

@@ -85,6 +85,12 @@ function M.restart()
   M.send("(restart)")
 end
 
+--- Stop the running pattern (card stays loaded).
+function M.clear()
+  M.send("(clear)")
+  notify("clear")
+end
+
 local paused = false
 function M.toggle_pause()
   paused = not paused
@@ -219,6 +225,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("DanmakuPlay", M.play, { desc = "danmaku: play pattern under cursor" })
   vim.api.nvim_create_user_command("DanmakuLoad", M.load, { desc = "danmaku: load current card" })
   vim.api.nvim_create_user_command("DanmakuRestart", M.restart, { desc = "danmaku: restart pattern" })
+  vim.api.nvim_create_user_command("DanmakuClear", M.clear, { desc = "danmaku: stop running pattern" })
   vim.api.nvim_create_user_command("DanmakuPause", M.toggle_pause, { desc = "danmaku: toggle pause" })
   vim.api.nvim_create_user_command("DanmakuSend", function(cmd)
     M.raw(cmd.args)
@@ -239,8 +246,9 @@ function M.setup(opts)
       map("n", "<localleader>ee", M.run_inner_form, "run innermost form")
       map("n", "<localleader>er", M.run_root_form, "run root form")
       -- fixed commands (not selection-sensitive)
-      map("n", "<leader>dl", M.load, "load card")
+      map("n", "<leader>dl", M.load, "load card (no play)")
       map("n", "<leader>dr", M.restart, "restart")
+      map("n", "<leader>dc", M.clear, "clear (stop pattern)")
       map("n", "<leader>d<space>", M.toggle_pause, "toggle pause")
     end,
   })
