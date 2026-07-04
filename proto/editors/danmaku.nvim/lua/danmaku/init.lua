@@ -156,6 +156,11 @@ function M.swap_text(text)
   send_forms("swap", text)
 end
 
+--- Layer onto the running sim (clocks anchor at the add tick).
+function M.add_text(text)
+  send_forms("add", text)
+end
+
 local function text_in_range(srow, scol, erow, ecol) -- 1-indexed, inclusive
   local lines = vim.api.nvim_buf_get_lines(0, srow - 1, erow, false)
   if #lines == 0 then
@@ -242,6 +247,14 @@ function M.swap_root_form()
   end
 end
 
+--- Layer the root form onto the running sim.
+function M.add_root_form()
+  local t = root_form_text()
+  if t then
+    M.add_text(t)
+  end
+end
+
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 
@@ -289,6 +302,7 @@ function M.setup(opts)
       map("n", "<localleader>ee", M.run_inner_form, "run innermost form")
       map("n", "<localleader>er", M.run_root_form, "run root form")
       map("n", "<localleader>es", M.swap_root_form, "hot-swap root form (bullets keep old code)")
+      map("n", "<localleader>eA", M.add_root_form, "add root form in parallel (clocks anchor now)")
       -- fixed commands (not selection-sensitive)
       map("n", "<leader>dl", M.load, "load card (no play)")
       map("n", "<leader>dr", M.restart, "restart")

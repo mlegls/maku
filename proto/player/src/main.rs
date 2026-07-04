@@ -13,6 +13,8 @@
 //!                                     input tape replays through new code)
 //!   (swap <forms...>)                generational hot-swap: in-flight
 //!                                     bullets keep their old code
+//!   (add <forms...>)                 layer onto the running sim; the added
+//!                                     pattern's clocks anchor at this tick
 //!   (load "path/to/card.dmk")        reload from disk (does NOT play)
 //!   (load "path" "pattern-name")     reload and play the named pattern
 //!   (pattern "name")                 switch pattern in the current card
@@ -253,6 +255,32 @@ impl Player {
                         };
                     }
                     Err(e) => self.status = format!("run error: {}", e),
+                }
+            }
+            "add" => {
+                // layer onto the running sim; its clocks anchor at this tick.
+                // (falls back to run when nothing is running)
+                let src = items[1..]
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                match &mut self.sim {
+                    Some(sim) => match sim.add_forms(&self.card_src, &src) {
+                        Ok(()) => {
+                            let preview: String = src.chars().take(40).collect();
+                            self.status = format!("add {}…", preview);
+                        }
+                        Err(e) => self.status = format!("add error: {}", e),
+                    },
+                    None => match Sim::load_forms(&self.card_src, &src) {
+                        Ok(sim) => {
+                            self.sim = Some(sim);
+                            self.reset_history();
+                            self.status = "add (started fresh)".into();
+                        }
+                        Err(e) => self.status = format!("add error: {}", e),
+                    },
                 }
             }
             "swap" => {

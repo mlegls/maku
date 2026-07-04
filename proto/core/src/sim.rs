@@ -113,10 +113,8 @@ impl Sim {
         Ok(Sim { world, tasks: vec![task], ctx })
     }
 
-    /// Generational hot-swap (design.md §11): replace the program, KEEP the
-    /// world — in-flight bullets keep the delegates they spawned with; the
-    /// new pattern's control tree starts now. Cells persist.
-    pub fn swap_forms(&mut self, card_src: &str, form_src: &str) -> Result<(), String> {
+    /// Build a task for new program forms, updating defs. Shared by swap/add.
+    fn program_task(&mut self, card_src: &str, form_src: &str) -> Result<Task, String> {
         let card_forms = read_all(card_src).map_err(|e| e.to_string())?;
         let mut card = load_card(&card_forms)?;
         let body_forms = read_all(form_src).map_err(|e| e.to_string())?;
@@ -143,7 +141,24 @@ impl Sim {
                 (body_forms.into(), Env::empty())
             }
         };
-        self.tasks = vec![new_task(vec![TF::Seq { items: body, idx: 0, env }])];
+        Ok(new_task(vec![TF::Seq { items: body, idx: 0, env }]))
+    }
+
+    /// Generational hot-swap (design.md §11): replace the program, KEEP the
+    /// world — in-flight bullets keep the delegates they spawned with; the
+    /// new pattern's control tree starts now. Cells persist.
+    pub fn swap_forms(&mut self, card_src: &str, form_src: &str) -> Result<(), String> {
+        let task = self.program_task(card_src, form_src)?;
+        self.tasks = vec![task];
+        Ok(())
+    }
+
+    /// Layer a pattern onto the running sim: existing tasks and world are
+    /// untouched; the added pattern's local clocks anchor at THIS tick
+    /// (waits are relative countdowns — §3's action-local clock rule).
+    pub fn add_forms(&mut self, card_src: &str, form_src: &str) -> Result<(), String> {
+        let task = self.program_task(card_src, form_src)?;
+        self.tasks.push(task);
         Ok(())
     }
 
@@ -842,6 +857,35 @@ mod tests {
         sim.step().unwrap();
         assert_eq!(sim.world.bullets.len(), 9, "old 6 keep flying + new 3");
         assert_eq!(sim.tick(), 61, "clock continues");
+    }
+
+    /// Layering starts on the ADD tick, not tick 0: a delayed add fires its
+    /// pattern's timeline relative to when it was added.
+    #[test]
+    fn add_anchors_at_add_tick() {
+        const CARD: &str = r#"
+(defpattern a [] (dotimes [i inf :every (ticks 60)]
+  (spawn (circle 2 (linear c[1 0])) {:style {:family :x}})))
+(defpattern b [] (seq (wait (ticks 30))
+  (spawn (circle 3 (linear c[1 0])) {:style {:family :y}})))
+"#;
+        let mut sim = Sim::load(CARD, Some("a")).unwrap();
+        for _ in 0..100 {
+            sim.step().unwrap();
+        }
+        sim.add_forms(CARD, "(b)").unwrap(); // added at tick 100
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        // b waits 30 ticks from ITS start: nothing through tick 129
+        assert_eq!(sim.world.bullets.iter().filter(|b| b.style.family == "y").count(), 0);
+        sim.step().unwrap(); // the step processing tick 130 = add(100) + 30
+        let ys: Vec<_> =
+            sim.world.bullets.iter().filter(|b| b.style.family == "y").collect();
+        assert_eq!(ys.len(), 3);
+        assert_eq!(ys[0].birth, 130, "b's clock anchored at the add tick");
+        // a kept its own cadence meanwhile (volleys at ticks 0, 60, 120)
+        assert_eq!(sim.world.bullets.iter().filter(|b| b.style.family == "x").count(), 6);
     }
 
     /// Patterns are callable: (par (a) (b)) plays two patterns in parallel.

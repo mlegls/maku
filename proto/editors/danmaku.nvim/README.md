@@ -16,6 +16,7 @@ Then from any `.dmk` card buffer:
 | `<localleader>ee` | run the innermost form enclosing the cursor |
 | `<localleader>er` | run the root (top-level) form — e.g. the `defpattern` under the cursor |
 | `<localleader>es` | hot-swap the root form: in-flight bullets keep their old code, new spawns get the new (§11 generational swap) |
+| `<localleader>eA` | add the root form to the running sim in parallel — its clocks anchor at the add tick (`A` capital: lowercase would shadow `ea(`-style text objects) |
 | `<leader>dl` / `:DanmakuLoad` | save + load this file — **does not play** (menu/defs refresh only) |
 | `<leader>dr` / `:DanmakuRestart` | restart the current pattern |
 | `<leader>dc` / `:DanmakuClear` | stop the running pattern (card stays loaded) |
