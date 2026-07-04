@@ -174,6 +174,21 @@ tag could only be redundant or wrong (unlike SC's `.ar`/`.kr`, which annotates
 a genuine degree of freedom). The compiler infers constructor/rate; the REPL
 displays it (§3); the reader greps for `t`.
 
+**Style is a structured record (adopted — resolves F4).** DMK decoded: a style
+string names a pool generated at startup as family SO (sprite + collision
+geometry + fade config, `SimpleBulletEmptyScript`) × palette color × gradient
+variant (`/` color, `/w` light, `/b` dark — `DefaultColorizing`), interned on
+demand (`GetMaybeCopyPool`). Style is NOT a render signal — it is static pool
+identity bundling render class, collision class, and addressability. Ours:
+`{:family :gem :color :yellow :variant :w}` — family from a host-declared
+registry (render contract: unknown family fails at card load), color/variant
+as keywords. **Pool identity = the interned record**; **style is `ir`, never
+signal-valued** — it determines SoA residency, and residency changes are
+events (manipulate/remat-level pool migration), not signals; animatable
+appearance (`:hue`, alpha, scale) stays in separate signal tags (§7). Queries
+become typed predicates over axes (`(= :family :star)` for `"star-*/w"`);
+card recolor = `assoc` on the `:color` axis.
+
 **Broadcast zips cycle (adopted).** Shorter arrays cycle rather than error —
 SC multichannel expansion (our §5 source) cycles, and DMK color lists cycle by
 `i mod len`; 060/110 exploit it deliberately. Scalar lifting stops being a
@@ -247,12 +262,10 @@ folds included. (Version A shows this recurrence happens to telescope to
 θ(i) = 0.2(i+1)(i+2)°, which a simplifier may exploit, but the semantics shouldn't
 require it.)
 
-**F4 — the style/color merge DSL is real surface area.** `"gem-*/w"` × `"yellow"` →
-`"gem-yellow/w"`; `colorf`, `colorx`, and wildcard variants appear in every corpus
-script. Translated as `{:style "gem-*/w" :color [...]}` with zipwise broadcast
-(§5 length-matching) and merge semantics **deliberately unspecified**. Needs an
-open-decision entry in §7: styles as templates over a color axis vs. flat style
-enum with a color tag the render contract consumes.
+**F4 — the style/color merge DSL is real surface area.** **RESOLVED** — see
+"Style is a structured record": the merge DSL dissolves into a record with
+family/color/variant axes; wildcards become predicates over axes; the DMK
+startup pool product becomes interning of observed records.
 
 **F5 — time-unit hazard.** DMK waits are engine frames (120 fps) except when
 suffixed (`2.5s`), and `paction` delays are seconds. Two corpus-adjacent bugs

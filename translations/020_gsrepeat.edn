@@ -34,12 +34,12 @@
       (seq                                  ; the pattern only anchors.
         (event :sfx "x-fire-burst-1")
         (spawn (circle 14 (linear c[2 0]))
-               {:style "scircle-blue/b"}))
+               {:style {:family :scircle :color :blue :variant :b}}))
       (seq
         (wait 1.0)
         (event :sfx "x-fire-burst-2")
         (spawn (circle 10 (linear c[3 0]))
-               {:style "scircle-red/w"})))))
+               {:style {:family :scircle :color :red :variant :w}})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, first volley)

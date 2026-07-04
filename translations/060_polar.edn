@@ -41,19 +41,19 @@
 (defpattern polar-demo [period (ticks 40)]
   ((pose c[0 1.5])
     (dotimes [vol inf
-              col (stutter 2 ["red" "pink" "purple" "blue"
-                              "teal" "green" "yellow" "orange"])
+              col (stutter 2 [:red :pink :purple :blue
+                              :teal :green :yellow :orange])
               lr  [1 -1]
-              vrt ["/" "/b"]
+              vrt [:c :b]
               :every period]
       (event :sfx "x-fire-burst-1")
       (spawn (circle 15 (polar m"2*t" m"lr*20*t"))
-             {:style "sakura-**" :color col :variant vrt}))))
+             {:style {:family :sakura :color col :variant vrt}}))))
 
 ;; Every DMK modifier in this script became a seq binding:
 ;;   colorf(xs, i/2) -> col (stutter 2 xs)     (SC Pstutter; streams compose)
 ;;   bindLR          -> lr [1 -1]              (F10: auto-bindings are data)
-;;   colorf(vs, pi)  -> vrt ["/" "/b"]         (parent-index = outer loop binding)
+;;   colorf(vs, pi)  -> vrt [:c :b]            (parent-index = outer loop binding)
 ;;
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument)
@@ -75,9 +75,9 @@
 ;;   (circle 15)               Array Pose ............................... ir
 ;;   (polar m"2*t" m"lr*20*t") Closed (t slot-bound; lr an ir constant
 ;;                             captured per volley) ..................... ar
-;;   {:style ...}              "sakura-**" has TWO merge slots (color +
-;;                             variant) -- F4's merge DSL is three-axis
-;;                             (base x color x variant) ................. ir
+;;   {:style {...}}            structured record: family x color x variant
+;;                             axes; pool identity = interned value
+;;                             (F4 resolved) ........................... ir
 ;;   timeline                  constant waits, no injected signals =>
 ;;                             input-independent: scrubbable, extractable
 ;;

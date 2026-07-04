@@ -43,13 +43,12 @@
                          shot-gap   (ticks 10)]
   ((pose c[0 1])
     ((rot 90)
-      (dotimes [vol inf, col ["red" "green" "blue"] :every volley-gap]
+      (dotimes [vol inf, col [:red :green :blue] :every volley-gap]
         (fork
           (dotimes [shot 8 :every shot-gap]
             (spawn ((rot m"120*vol + shot*40/7")
                      (linear c[m"2 + 0.3*shot" 0]))
-                   {:style "arrow-*/w"
-                    :color col})))))))
+                   {:style {:family :arrow :color col :variant :w}})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument, volley `vol`, shot `shot`)

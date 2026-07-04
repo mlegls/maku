@@ -47,15 +47,15 @@
 (defpattern aimed-demo []
   ;; no anchor: DMK roott(1,0,0) is the identity; patterns don't self-anchor --
   ;; the caller applies a frame ((boss-frame (aimed-demo))) if one is wanted.
-  (dotimes [vol inf, sty ["amulet-*/" "amulet-*/w" "amulet-*/b"] :every 2.5]
+  (dotimes [vol inf, vrt [:c :w :b] :every 2.5]
     (event :sfx "x-fire-burst-1")
     (spawn ((aim player)                          ; injected signal in spawn args
              (+ c[-7 0]                           ;   => implicit snap (SS3, class a)
                 (arrow 7 1.0 0.5                  ; + inside the aim frame =
                   (arrow 9 0.15 0.08              ;   rotational offset (rx of <-7;:>)
                     (vel c[(lerp 0.4 0.8 t 12 2) 0])))))
-           {:style sty
-            :color ["red" "yellow" "blue" "purple" "blue" "yellow" "red"]})))
+           {:style {:family :amulet :variant vrt
+                    :color [:red :yellow :blue :purple :blue :yellow :red]}})))
 
 ;; (arrow n back side) is stock formation vocabulary: Array Pose of n offsets
 ;; {(-back*|j|, side*j) : j in -(n-1)/2 .. (n-1)/2}, canonical left-to-right
@@ -94,7 +94,7 @@
 ;;                             closed-form integrable; kept as vel because
 ;;                             designers think in speed (design.md SS2).
 ;;                             The lint should offer the closed rewrite. .. ar
-;;   :style variant            control-layer constant per volley ........ ir
+;;   vrt seq binding           control-layer constant per volley ........ ir
 ;;   :color 7-vector           zips against the LEADING axis (7 arms) of
 ;;                             the 7x9 product; broadcast within arm
 ;;                             (finding F9) ............................. ir

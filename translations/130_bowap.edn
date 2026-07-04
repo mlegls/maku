@@ -48,8 +48,8 @@
     (dotimes [i inf :every period]
       (spawn ((rot m"0.2*(i+1)*(i+2)")
                (circle arms (linear c[speed 0])))
-             {:style "gem-*/w"
-              :color ["yellow" "orange" "red" "pink" "purple"]})))) ; F4: merge DSL
+             {:style {:family :gem :variant :w
+                      :color [:yellow :orange :red :pink :purple]}}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Version B -- the honest fold, for when the recurrence does NOT telescope.
@@ -68,8 +68,8 @@
            base      0.4]
       (spawn ((rot base)
                (circle arms (linear c[speed 0])))
-             {:style "gem-*/w"
-              :color ["yellow" "orange" "red" "pink" "purple"]})
+             {:style {:family :gem :variant :w
+                      :color [:yellow :orange :red :pink :purple]}})
       (wait period)
       (recur (+ increment 0.4)
              (+ base increment 0.4)))))
@@ -85,8 +85,9 @@
 ;;     (map (fn [p] (in-frame p (linear (cart 4 0))))
 ;;          (circle 5)))
 ;;
-;; :color [c0 .. c4] zips against the 5-element pose array (SS5 length-matching);
-;; DMK's indexed color list is exactly this zip.
+;; The :color axis [c0 .. c4] zips against the 5-element pose array (SS5);
+;; DMK's indexed color list is exactly this zip. Style is a structured record
+;; (family x color x variant); the "gem-*/w" wildcard string dissolves.
 ;;
 ;; ---------------------------------------------------------------------------
 ;; Rate / constructor audit
