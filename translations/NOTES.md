@@ -300,13 +300,20 @@ but colors by *arm*: a 7-vector in `:color` must zip against the leading axis of
 the product and broadcast within. §5 specifies length-matching for flat arrays;
 the product case needs the k/APL leading-axis rule stated explicitly.
 
-**F11 — instant vs sustained host effects.** DMK's laser `dsfx` opts in to a
-fire sound (instant) plus an "on" loop that plays while the laser lives. The
-split maps onto machinery we already have: instantaneous effects are outbound
-**events**; lifetime-bound effects are **tags** (§7's export surface) the host
-ties to entity lifecycle — `{:sfx-loop "x-laser-on"}` starts when the entity
-expresses and stops when it culls, for free via done-actions. No new mechanism;
-and no `dsfx`-style suppression flag needed since nothing is implicit.
+**F11 — entity sounds are lifecycle-event data, not meta verbs (corrected).**
+Source check: DMK's `hotsfx` is a one-shot `SFXService.Request` at the
+cold→hot *transition* (collision activation, FrameAnimBullet.cs:109), re-fired
+on hot re-entry — not a managed loop. Model: the sim already emits lifecycle
+transition events for expressed entities (warn→active→off, §6; needed for
+replay regardless); audio is the host subscribing to them. Defaults bind
+family × transition → cue in host config (`dSFX` = "use family defaults",
+zero language surface); a pattern wanting custom audio attaches
+`{:cues {:spawn … :active …}}` — pure data decorating the entity's lifecycle
+events, read off the event stream. Action-time sounds (per-volley fire inside
+a loop) remain ordinary outbound `(event …)` — cues are for entity lifecycle,
+events for control flow. An imperative `:sfx-loop`-style tag was the wrong
+shape: audio is not a property of the bullet but a host reaction to its
+lifecycle.
 
 **F12 — slot-bound time formalized.** See the convention entry: `t`/`u` are
 bound by signal-typed slots (BDSL's movement-function model as a typing rule).

@@ -34,8 +34,10 @@
 ;;   stagger(0.4) sampling resolution: texWidth = length/stagger
 ;;                (CurvedTileRenderLaser.cs:89,94) -- a RENDER hint, not
 ;;                semantics; the semantic shape is the continuous f(t, u).
-;;   dsfx         enables default sounds: "x-laser-fire" at spawn (instant)
-;;                plus "x-laser-on" looping while alive (LaserOptions.cs:110).
+;;   dsfx         enables default sounds: "x-laser-fire" one-shot at creation
+;;                (Laser.cs:45) and "x-laser-on" one-shot at each cold->hot
+;;                TRANSITION, i.e. when collision activates
+;;                (FrameAnimBullet.cs:109) -- not a managed loop.
 ;;   hueshift     doc: "rendering function... do not use rand, or replays
 ;;                desync" -- DMK independently enforcing SS7's pure-render-
 ;;                signal discipline.
@@ -47,16 +49,14 @@
 
 (defpattern lasers-demo []
   ;; roott(1,0,0) is the identity: no anchor (callers apply frames).
-  (seq
-    (event :sfx "x-laser-fire")
-    (spawn (circle 6 (laser p[m"2*t" m"-14*u + sine(2.1, 18, t + 1.1*u)"]
-                            {:warn 1.5
-                             :active inf
-                             :u-max 3.5
-                             :resolution 0.4}))
-           {:style "arrowlaser-blueteal"
-            :hue m"60*[0 1 2 3 4 5] + 120*t"
-            :sfx-loop "x-laser-on"})))
+  (spawn (circle 6 (laser p[m"2*t" m"-14*u + sine(2.1, 18, t + 1.1*u)"]
+                          {:warn 1.5
+                           :active inf
+                           :u-max 3.5
+                           :resolution 0.4}))
+         {:style {:family :arrowlaser :color :blueteal}
+          :hue m"60*[0 1 2 3 4 5] + 120*t"
+          :cues {:spawn "x-laser-fire" :active "x-laser-on"}}))
 
 ;; Surface proposed here for open decision 3 (spawn-extended):
 ;;   (laser shape opts) -- an EXTENDED DYN value; `spawn` materializes it.
@@ -70,11 +70,14 @@
 ;;     one array-broadcast expression = six Closed signals zipping the six
 ;;     lasers (SS5 array-of-signals/signal-of-array interchange); the hoisted
 ;;     `loop` variable disappears entirely.
-;;   dsfx -> (event :sfx ...) for the instant part + {:sfx-loop ...} for the
-;;     sustained part. Instantaneous host effects are EVENTS; lifetime-bound
-;;     ones are TAGS (the export surface, SS7) the host ties to entity
-;;     lifecycle. DMK needs dsfx to opt IN to implicit effects; we have no
-;;     implicit effects to suppress (finding F11).
+;;   dsfx -> {:cues {:spawn ... :active ...}}. The sim already emits lifecycle
+;;     transition events for expressed entities (warn->active->off, SS6 --
+;;     needed for replay regardless); :cues is pure DATA decorating those
+;;     events, which the host's audio layer reads off the event stream. The
+;;     default case (dsfx = family-standard sounds) is host-side config with
+;;     zero language surface. Action-time sounds (per-volley fire in a loop)
+;;     remain ordinary (event ...) -- cues are for entity lifecycle, events
+;;     for control flow (finding F11, corrected).
 ;;
 ;; ---------------------------------------------------------------------------
 ;; Canonical desugared tree (spawn argument)
@@ -97,10 +100,10 @@
 ;;                           (F9); per SS7 sampled by the render contract . kr-ish
 ;;                           (per laser per frame, not per sample)
 ;;   :warn/:active window    lifecycle signals (SS6 doneAction family) ... ir
-;;   :sfx-loop tag           lifetime-bound export (F11) ................ ir
+;;   :cues tag               ir data riding lifecycle events (F11) ...... ir
 ;;   timeline                single sync volley; no injected signals =>
 ;;                           input-independent: scrubbable, extractable
 ;;
 ;; Axis materialization holds: DMK's dynamic laser is literally f(t, u) with
 ;; u = lt, length = u-extent, stagger = sampling. The SS6 unification survives
-;; its first corpus contact. New finding: F11 (instant vs sustained effects).
+;; its first corpus contact. New finding: F11 (cues on lifecycle events).
