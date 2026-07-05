@@ -1,0 +1,19 @@
+;;@prelude — the autoimport sentinel: expansion prepends this card to
+;; every top-level source unless the sentinel is already present, so
+;; re-expanding an expanded source stays idempotent.
+;;
+;; The prelude is LANGUAGE-level sugar only: forms any card would want,
+;; with nothing a genre could disagree with. Genre conventions (bullets,
+;; enemies, bosses, rigs) live in importable libs — (import "touhou").
+;; Like the rest of the stdlib it is authored here and inlined into the
+;; engine at compile time; users don't edit it.
+
+;; (when pred body…): the one-armed if. `if` with a false condition and
+;; no else-branch evaluates to nothing, and nothing is the no-op action,
+;; so `when` works in both value and action position.
+(defmacro when [pred & body]
+  `(if ~pred (seq ~@body)))
+
+;; (unless pred body…)
+(defmacro unless [pred & body]
+  `(if (not ~pred) (seq ~@body)))

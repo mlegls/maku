@@ -1491,3 +1491,36 @@
         }
         assert_eq!(sim.world.bullets.len(), 1, "gate opened at tick 5");
     }
+
+/// Variadic macros (& rest) + macro-time form processing: a macro that
+/// walks its clause list with map/nth and splices the transforms — the
+/// mechanism the stdlib's `phases` is built from.
+#[test]
+fn variadic_macro_processes_clauses() {
+    const CARD: &str = r#"
+(defmacro spawn-each [& specs]
+  `(par ~@(map (fn [c] `(spawn (linear c[~(nth c 1) 0]))) specs)))
+(defpattern p []
+  (spawn-each (:a 1) (:b 2) (:c 3)))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    assert_eq!(sim.world.bullets.len(), 3, "one spawn per clause");
+}
+
+/// `when`/`unless` are prelude macros now (autoimported): a false
+/// condition means the no-op action, in any action position.
+#[test]
+fn prelude_when_unless() {
+    const CARD: &str = r#"
+(defpattern p []
+  (for [i 4 :every (ticks 1)]
+    (when (= (mod i 2) 0) (spawn (pose c[0 0])))
+    (unless true (spawn (pose c[9 9])))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..8 {
+        sim.step().unwrap();
+    }
+    assert_eq!(sim.world.bullets.len(), 2, "even iterations only");
+}

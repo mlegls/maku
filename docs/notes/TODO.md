@@ -47,16 +47,21 @@ language.md.
   (correct); seeks are exploration — branch commits only on resume.
 
 ## Standard library (cards/lib/, compile-time embedded)
-- Shipped: `touhou` (spawn-bullet/spawn-shot/spawn-enemy; spawn-boss =
-  enemy + phase machine; invuln) and `player-rig`. Authored as files,
-  inlined via include_str — every host resolves `(import "touhou")`
-  identically; users import the lib, they don't edit it.
-- Candidates to move next, in expressibility order: `when` (macro over
-  `if`); `for`/`dotimes` (desugar to loop/recur + wait once macro
-  templates can build binding vectors); the `{:hit n}` damage-map unwrap
-  (DMK player() compat, still in sf_spawn); family→hitbox-radius data
-  (currently `:hitbox` by hand at star/gem/lstar/gglcircle call sites);
-  richer spellcard templates (:name/:type/hp bars) over `states`.
+- Shipped: `prelude` (AUTOIMPORTED, sentinel-deduped: `when`/`unless`),
+  `touhou` (spawn-bullet/spawn-shot/spawn-enemy; spawn-boss = enemy +
+  phase machine; invuln) and `player-rig`. Authored as files, inlined
+  via include_str — every host resolves `(import "touhou")` identically;
+  users import the lib, they don't edit it.
+- Macro-time power that carries the stdlib: `& rest` params, form-aware
+  seq vocabulary (count/first/rest/nth/drop/take/concat), total `get`
+  over map forms, form-type/form-name, map/filter specials.
+- Candidates to move next, in expressibility order: `for`/`dotimes`
+  (blocked: `:every`/inf/array-iteration are scheduler semantics, not a
+  desugar — would need a lib-visible wait-loop primitive that performs
+  as well); the `{:hit n}` damage-map unwrap (DMK player() compat,
+  still in sf_spawn); family→hitbox-radius data (currently `:hitbox` by
+  hand at star/gem/lstar/gglcircle call sites); richer spellcard
+  templates (:name/:type/hp bars) over `states`.
 - A lib change is an engine rebuild (deliberate — not user-patchable);
   version the lib with the wire protocol when hosts start pinning.
 

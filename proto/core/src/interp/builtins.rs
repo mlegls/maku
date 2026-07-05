@@ -8,6 +8,8 @@ const BUILTINS: &[&str] = &[
     "abs", "quot", "ticks", "and", "or", "not", "sin", "cos", "sine", "lssht", "cart", "polar", "pose", "rot", "still",
     "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerp3", "lerpsmooth",
     "angle-of", "mag", "einsine", "eoutsine", "eiosine",
+    "count", "first", "rest", "drop", "take", "concat", "forms", "get",
+    "form-type", "form-name", "nothing?",
 ];
 
 pub(crate) fn is_builtin(name: &str) -> bool {
@@ -66,6 +68,48 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
             num_bin(a, b, |x, y| x + y)
         }
         (a, b) => Err(format!("+: cannot add {:?} and {:?}", a, b)),
+    }
+}
+
+/// View a value as a sequence for the generic seq builtins. Arrays view as
+/// themselves; a FORM list/vector views as its subforms (each wrapped back
+/// up as a form value) — which is what lets macro code take unevaluated
+/// clauses apart with the ordinary vocabulary (count/first/rest/nth/…).
+fn seq_view(v: &Val) -> Option<Vec<Val>> {
+    match v {
+        Val::Arr(xs) => Some((**xs).clone()),
+        Val::FormV(f) => match &**f {
+            Form::List(xs) | Form::Vector(xs) => {
+                Some(xs.iter().map(|x| Val::FormV(Rc::new(x.clone()))).collect())
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Look a key up in a map VALUE or a map FORM. Form lookups return the
+/// value subform unevaluated (macro time); missing/non-map yields None —
+/// `get` is total so macro code can probe without pre-checking shapes.
+fn get_in(subject: &Val, key: &Val) -> Option<Val> {
+    match subject {
+        Val::Map(_) => match key {
+            Val::Kw(k) | Val::Str(k) => super::spawn::map_get(subject, k),
+            _ => None,
+        },
+        Val::FormV(f) => match &**f {
+            Form::Map(kvs) => kvs
+                .iter()
+                .find(|(k, _)| match (key, k) {
+                    (Val::Kw(a), Form::Kw(b)) => a == b,
+                    (Val::Str(a), Form::Str(b)) => a == b,
+                    (Val::Num(a), Form::Num(b)) => (a - b).abs() < 1e-9,
+                    _ => false,
+                })
+                .map(|(_, v)| Val::FormV(Rc::new(v.clone()))),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -191,7 +235,13 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             }
             Ok(Val::Arr(Rc::new(out)))
         }
-        "nth" => match (&args[0], &args[1]) {
+        // nth also indexes form lists/vectors (macro-time clause access)
+        "nth" => {
+            let subject = match seq_view(&args[0]) {
+                Some(xs) => Val::Arr(Rc::new(xs)),
+                None => args[0].clone(),
+            };
+            match (&subject, &args[1]) {
             (Val::Arr(items), Val::Arr(idxs)) if !items.is_empty() => {
                 // broadcast: (nth xs (iota n))
                 let out = idxs
@@ -208,7 +258,8 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                 Ok(items[(k.rem_euclid(items.len() as i64)) as usize].clone())
             }
             (v, _) => Err(format!("nth: expected non-empty array, got {:?}", v)),
-        },
+            }
+        }
         "without" => {
             let Val::Arr(items) = &args[1] else {
                 return Err("without: expected array".into());
@@ -277,6 +328,90 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             let m = (k * f1).exp() + (k * f2).exp();
             Ok(Val::Num(m.ln() / k))
         }
+        // --- generic seq/form vocabulary (macro-time tooling, but not
+        // form-specific: everything also works on ordinary arrays/maps) ---
+        "count" => match (&args[0], seq_view(&args[0])) {
+            (_, Some(xs)) => Ok(Val::Num(xs.len() as f64)),
+            (Val::Map(kvs), _) => Ok(Val::Num(kvs.len() as f64)),
+            (Val::FormV(f), _) => match &**f {
+                Form::Map(kvs) => Ok(Val::Num(kvs.len() as f64)),
+                v => Err(format!("count: not a sequence: {:?}", v)),
+            },
+            (v, _) => Err(format!("count: not a sequence: {:?}", v)),
+        },
+        "first" => match seq_view(&args[0]) {
+            Some(xs) => Ok(xs.first().cloned().unwrap_or(Val::Nothing)),
+            None => Err(format!("first: not a sequence: {:?}", args[0])),
+        },
+        "rest" => match seq_view(&args[0]) {
+            Some(xs) => Ok(Val::Arr(Rc::new(xs.get(1..).unwrap_or(&[]).to_vec()))),
+            None => Err(format!("rest: not a sequence: {:?}", args[0])),
+        },
+        "drop" | "take" => {
+            let k = (n(0)?.max(0.0)) as usize;
+            let xs = seq_view(&args[1])
+                .ok_or_else(|| format!("{}: not a sequence: {:?}", name, args[1]))?;
+            let out = if name == "drop" {
+                xs.get(k.min(xs.len())..).unwrap_or(&[]).to_vec()
+            } else {
+                xs.get(..k.min(xs.len())).unwrap_or(&[]).to_vec()
+            };
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        "concat" => {
+            let mut out = Vec::new();
+            for a in args {
+                match seq_view(a) {
+                    Some(xs) => out.extend(xs),
+                    None => return Err(format!("concat: not a sequence: {:?}", a)),
+                }
+            }
+            Ok(Val::Arr(Rc::new(out)))
+        }
+        // a form list/vector as an array of subform values (what ~@ splices)
+        "forms" => match seq_view(&args[0]) {
+            Some(xs) => Ok(Val::Arr(Rc::new(xs))),
+            None => Err(format!("forms: not a form sequence: {:?}", args[0])),
+        },
+        // total lookup: map values AND map forms; missing/non-map → default
+        // (3rd arg) or nothing — macro code probes without shape checks
+        "get" => Ok(get_in(&args[0], &args[1])
+            .or_else(|| args.get(2).cloned())
+            .unwrap_or(Val::Nothing)),
+        // the shape of a form (or the kind of any other value), as a keyword
+        "form-type" => Ok(Val::Kw(
+            match &args[0] {
+                Val::FormV(f) => match &**f {
+                    Form::Num(_) => "num",
+                    Form::Str(_) => "str",
+                    Form::Sym(_) => "sym",
+                    Form::Kw(_) => "kw",
+                    Form::Bool(_) => "bool",
+                    Form::List(_) => "list",
+                    Form::Vector(_) => "vector",
+                    Form::Map(_) => "map",
+                },
+                Val::Num(_) => "num",
+                Val::Str(_) => "str",
+                Val::Kw(_) => "kw",
+                Val::Bool(_) => "bool",
+                Val::Arr(_) => "arr",
+                Val::Map(_) => "map",
+                Val::Nothing => "nothing",
+                _ => "opaque",
+            }
+            .into(),
+        )),
+        // name of a sym/kw (form or value); "" otherwise — total on purpose
+        "form-name" => Ok(Val::Str(match &args[0] {
+            Val::FormV(f) => match &**f {
+                Form::Sym(s) | Form::Kw(s) | Form::Str(s) => s.clone(),
+                _ => "".into(),
+            },
+            Val::Kw(s) | Val::Str(s) => s.clone(),
+            _ => "".into(),
+        })),
+        "nothing?" => Ok(Val::Bool(matches!(args[0], Val::Nothing))),
         _ => Err(format!("unknown function '{}'", name)),
     }
 }

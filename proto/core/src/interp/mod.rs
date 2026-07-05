@@ -422,17 +422,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let inner = as_action(evaluate(&items[1], env, ctx, world)?)?;
                 return Ok(Val::Action(Rc::new(ActionV::Fork(inner))));
             }
-            "when" => {
-                let c = evaluate(&items[1], env, ctx, world)?;
-                return if truthy(&c) {
-                    Ok(Val::Action(Rc::new(ActionV::Seq {
-                        items: items[2..].to_vec().into(),
-                        env: env.clone(),
-                    })))
-                } else {
-                    Ok(Val::Action(Rc::new(ActionV::Nothing)))
-                };
-            }
+            // `when` is a prelude macro over `if` — no special. `if` with a
+            // false condition and no else yields nothing, and nothing
+            // coerces to the no-op action (as_action), so (when p …) works
+            // in action position.
             "if" => {
                 let c = evaluate(&items[1], env, ctx, world)?;
                 return if truthy(&c) {
@@ -819,6 +812,31 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "quasiquote" => {
                 return qq(&items[1], env, ctx, world).map(|f| Val::FormV(Rc::new(f)));
             }
+            // (map f xs) / (filter f xs): eager, value-level. Sequences are
+            // arrays or form lists/vectors (macro code maps clause
+            // transformers over its rest-args). These need the evaluator —
+            // f may be a defn — hence specials, not builtins.
+            "map" | "filter" => {
+                let f = evaluate(&items[1], env, ctx, world)?;
+                let xs = match evaluate(&items[2], env, ctx, world)? {
+                    Val::Arr(xs) => (*xs).clone(),
+                    v @ Val::FormV(_) => match builtin("forms", &[v])? {
+                        Val::Arr(xs) => (*xs).clone(),
+                        _ => unreachable!(),
+                    },
+                    v => return Err(format!("{}: not a sequence: {:?}", s, v)),
+                };
+                let mut out = Vec::with_capacity(xs.len());
+                for x in xs {
+                    let r = apply_fn(f.clone(), &[x.clone()], ctx, world, false)?;
+                    if &**s == "map" {
+                        out.push(r);
+                    } else if truthy(&r) {
+                        out.push(x);
+                    }
+                }
+                return Ok(Val::Arr(Rc::new(out)));
+            }
             "pather" => {
                 // (pather window dyn): a trailing time-window of the
                 // trajectory, materialized as geometry (§6)
@@ -933,17 +951,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let world_ang = (y - ctx.ambient.y).atan2(x - ctx.ambient.x).to_degrees();
                 return Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: world_ang - ctx.ambient.th }));
             }
-            "map" => {
-                let f = evaluate(&items[1], env, ctx, world)?;
-                let Val::Arr(xs) = evaluate(&items[2], env, ctx, world)? else {
-                    return Err("map: expected array".into());
-                };
-                let out = xs
-                    .iter()
-                    .map(|x| apply_fn(f.clone(), &[x.clone()], ctx, world, false))
-                    .collect::<Result<Vec<_>, _>>()?;
-                return Ok(Val::Arr(Rc::new(out)));
-            }
             "export" => {
                 let Form::Sym(name) = &items[1] else {
                     return Err("export: expected a cell name".into());
@@ -1021,10 +1028,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             && !name.starts_with('$')
         {
             if let Some(mac) = ctx.macros.clone().get(&**name) {
-                let mut menv = Env::empty();
-                for (p, arg) in mac.params.iter().zip(items[1..].iter()) {
-                    menv = menv.bind(p.clone(), Val::FormV(Rc::new(arg.clone())));
-                }
+                // args arrive unevaluated as forms; & rest binds the tail
+                let menv = bind_params(Env::empty(), &mac.params, &items[1..], |f| {
+                    Val::FormV(Rc::new(f.clone()))
+                })?;
                 let mut expansion = Val::Nothing;
                 for f in mac.body.iter() {
                     expansion = evaluate(f, &menv, ctx, world)?;
@@ -1237,6 +1244,32 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
     Ok(out)
 }
 
+/// Bind a param vector to arguments, honoring a `& rest` tail (fns and
+/// macros share this): fixed params bind positionally — missing trailing
+/// args stay unbound, as before — and the param after `&` binds the
+/// remaining args as one array (possibly empty).
+fn bind_params<T>(
+    mut env: Env,
+    params: &[Rc<str>],
+    args: &[T],
+    to_val: impl Fn(&T) -> Val,
+) -> Result<Env, String> {
+    for (pi, p) in params.iter().enumerate() {
+        if &**p == "&" {
+            let Some(rest_name) = params.get(pi + 1) else {
+                return Err("params: & must be followed by a rest name".into());
+            };
+            let rest: Vec<Val> =
+                args.get(pi..).unwrap_or(&[]).iter().map(&to_val).collect();
+            return Ok(env.bind(rest_name.clone(), Val::Arr(Rc::new(rest))));
+        }
+        if let Some(a) = args.get(pi) {
+            env = env.bind(p.clone(), to_val(a));
+        }
+    }
+    Ok(env)
+}
+
 pub fn apply_fn(
     f: Val,
     args: &[Val],
@@ -1247,10 +1280,7 @@ pub fn apply_fn(
     match f {
         Val::Builtin(name) => builtin(&name, args),
         Val::Fn { params, body, env } => {
-            let mut e = env.clone();
-            for (p, a) in params.iter().zip(args.iter()) {
-                e = e.bind(p.clone(), a.clone());
-            }
+            let e = bind_params(env.clone(), &params, args, |a: &Val| a.clone())?;
             let saved_ambient = ctx.ambient;
             ctx.ambient = Pose::IDENTITY;
             let mut last = Val::Nothing;
@@ -1687,6 +1717,9 @@ pub(crate) fn truthy(v: &Val) -> bool {
 fn as_action(v: Val) -> Result<Rc<ActionV>, String> {
     match v {
         Val::Action(a) => Ok(a),
+        // nothing is the no-op action: (if p body) with p false, in an
+        // action slot, simply does nothing — what the prelude's `when` means
+        Val::Nothing => Ok(Rc::new(ActionV::Nothing)),
         v => Err(format!("expected action, got {:?}", v)),
     }
 }
@@ -2146,6 +2179,33 @@ mod tests {
         assert!((ev("(eoutsine 1)").num().unwrap() - 1.0).abs() < 1e-9);
         let v = ev("(lerpsmooth eoutsine 0 4 2 0 480)").num().unwrap();
         assert!((v - 480.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn form_vocabulary() {
+        // seq ops see a form list as a sequence of subforms
+        assert_eq!(ev("(count `(:a {:x 1} b))").num().unwrap(), 3.0);
+        assert!(matches!(ev("(form-type (first `(:a b)))"), Val::Kw(k) if &*k == "kw"));
+        assert!(matches!(ev("(form-name (first `(:a b)))"), Val::Str(s) if &*s == "a"));
+        assert_eq!(ev("(count (rest `(:a b c)))").num().unwrap(), 2.0);
+        assert_eq!(ev("(count (drop 2 `(a b c)))").num().unwrap(), 1.0);
+        assert_eq!(ev("(count (take 2 [1 2 3]))").num().unwrap(), 2.0);
+        assert_eq!(ev("(count (concat [1] `(a b)))").num().unwrap(), 3.0);
+        // get is total: map forms give the value SUBFORM; misses give nothing
+        let Val::FormV(f) = ev("(get `{:until (<= x 2)} :until)") else { panic!() };
+        assert!(matches!(&*f, Form::List(_)));
+        assert!(matches!(ev("(get `{:a 1} :b)"), Val::Nothing));
+        assert!(matches!(ev("(get `(no map) :b)"), Val::Nothing));
+        assert!(matches!(ev("(nothing? (get `{:a 1} :b))"), Val::Bool(true)));
+        // nth indexes form lists too (cyclic, like arrays)
+        assert!(matches!(ev("(form-name (nth `(a b c) 1))"), Val::Str(s) if &*s == "b"));
+        // filter over a form list keeps subform values
+        assert_eq!(
+            ev("(count (filter (fn [f] (= (form-type f) :map)) `(a {:x 1} b)))")
+                .num()
+                .unwrap(),
+            1.0
+        );
     }
 
     #[test]

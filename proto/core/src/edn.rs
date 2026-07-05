@@ -287,7 +287,8 @@ impl<'a> Reader<'a> {
         let start = self.pos;
         while !self.at_end() {
             let c = self.peek();
-            if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'*' | b'+' | b'/' | b'<' | b'>' | b'=' | b'!' | b'?' | b'.') {
+            // '&' is a symbol char solely for the `& rest` param marker
+            if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'*' | b'+' | b'/' | b'<' | b'>' | b'=' | b'!' | b'?' | b'.' | b'&') {
                 self.pos += 1;
             } else {
                 break;
@@ -713,9 +714,32 @@ const LIB_PREFIX: &str = "@lib/";
 /// files under cards/lib/, shipped inside the engine artifact (users
 /// import it; they don't edit it). One entry per library card.
 const STDLIB: &[(&str, &str)] = &[
+    ("@lib/prelude.dmk", include_str!("../../../cards/lib/prelude.dmk")),
     ("@lib/touhou.dmk", include_str!("../../../cards/lib/touhou.dmk")),
     ("@lib/player-rig.dmk", include_str!("../../../cards/lib/player-rig.dmk")),
 ];
+
+/// The prelude is AUTOIMPORTED: every top-level expansion prepends it
+/// unless the expanded source already carries the sentinel (its first
+/// line), which keeps re-expansion of an already-expanded source — and
+/// an explicit (import "prelude") — idempotent. Definition order doesn't
+/// matter (macros/defs resolve at evaluation), so prepending after the
+/// fact is sound.
+const PRELUDE_KEY: &str = "@lib/prelude.dmk";
+const PRELUDE_SENTINEL: &str = ";;@prelude";
+
+fn with_prelude(
+    expanded: String,
+    read: &dyn Fn(&str) -> Result<String, String>,
+    visited: &mut HashSet<String>,
+) -> Result<String, String> {
+    if expanded.contains(PRELUDE_SENTINEL) {
+        return Ok(expanded);
+    }
+    let mut out = expand_inner(PRELUDE_KEY, read, visited)?;
+    out.push_str(&expanded);
+    Ok(out)
+}
 
 /// A stdlib card's source by bare name ("touhou") — hosts use this to
 /// build rig strings without carrying card files around.
@@ -737,10 +761,11 @@ pub fn expand_card(path: &Path) -> Result<String, String> {
 
 /// Expand imports in an in-memory source (tests, REPL, rig strings):
 /// bare imports hit the library; relative paths resolve against the
-/// process cwd. Sources without import lines pass through untouched.
+/// process cwd. The prelude is prepended unless already present.
 pub fn expand_src(src: &str) -> Result<String, String> {
     let mut visited = HashSet::new();
-    expand_lines(src, "", &fs_reader, &mut visited)
+    let expanded = expand_lines(src, "", &fs_reader, &mut visited)?;
+    with_prelude(expanded, &fs_reader, &mut visited)
 }
 
 /// Import expansion over an abstract reader (filesystem natively; a fetched
@@ -750,7 +775,8 @@ pub fn expand_card_with(
     read: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     let mut visited = HashSet::new();
-    expand_inner(&normalize(path), read, &mut visited)
+    let expanded = expand_inner(&normalize(path), read, &mut visited)?;
+    with_prelude(expanded, read, &mut visited)
 }
 
 fn expand_inner(
