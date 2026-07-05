@@ -99,7 +99,7 @@ pub struct SpawnElem {
     pub path: Vec<(usize, usize)>,
 }
 
-/// One state of a `states` machine (§8): `(label body… (finally …)?)`.
+/// One state of a `states` machine (§8): `(label body…)`.
 /// The machine is a bare FSM — labeled states, default successor = next in
 /// order, `goto` for everything else. End conditions are ordinary body
 /// code (`(until pred …)` as the body, `(fork (seq (wait d) (goto)))` for
@@ -109,7 +109,6 @@ pub struct SpawnElem {
 pub struct StateClause {
     pub label: Rc<str>,
     pub body: Rc<[Form]>,
-    pub finally: Rc<[Form]>,
 }
 
 /// Inert action descriptions. Bodies are unevaluated forms + env (lazy seq).
@@ -171,10 +170,14 @@ pub enum ActionV {
     /// phase-end scope-cancellation primitive ((race (wait-for p) body)
     /// degenerate case).
     Until { pred: Form, body: Rc<[Form]>, env: Env },
+    /// (finally body cleanup...): unwind-protect for the scheduler's
+    /// structured cancellation paths.
+    Finally { body: Form, cleanup: Rc<[Form]>, env: Env },
+    /// (race arm...): fork all arms; first completion cancels the rest.
+    Race { arms: Rc<[Form]>, env: Env },
     /// The §8 state machine: ordered labeled states run as a trampoline —
-    /// a state ends by goto or body completion; finalizers run on every
-    /// exit path; next = goto target, defaulting to state order; falling
-    /// off the end completes the machine.
+    /// a state ends by goto or body completion; next = goto target,
+    /// defaulting to state order; falling off the end completes the machine.
     States { clauses: Rc<[StateClause]>, env: Env },
     /// (goto label?): scoped non-local exit — cancel the enclosing state
     /// body (finalizers run), re-enter at the label; bare (goto) takes the
@@ -558,8 +561,27 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     env: env.clone(),
                 })));
             }
+            "finally" => {
+                if items.len() < 3 {
+                    return Err("finally: expected (finally body cleanup...)".into());
+                }
+                return Ok(Val::Action(Rc::new(ActionV::Finally {
+                    body: items[1].clone(),
+                    cleanup: items[2..].to_vec().into(),
+                    env: env.clone(),
+                })));
+            }
+            "race" => {
+                if items.len() < 3 {
+                    return Err("race: expected at least two arms".into());
+                }
+                return Ok(Val::Action(Rc::new(ActionV::Race {
+                    arms: items[1..].to_vec().into(),
+                    env: env.clone(),
+                })));
+            }
             "states" => {
-                // (states (label body… (finally body…)?) …) — the bare FSM
+                // (states (label body…) …) — the bare FSM
                 // primitive: ordered labeled states, label keyword as head.
                 // End conditions are body code — (until pred …) as the
                 // body, (fork (seq (wait d) (goto))) for timeouts. General
@@ -621,6 +643,20 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     _ => expect,
                 };
                 return Ok(Val::Bool(req_set || g != expect));
+            }
+            "race-done?" => {
+                // internal: race children and the waiting parent share this
+                // cell; true means one arm has completed.
+                let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
+                let cells = ctx.sig.cells.borrow();
+                return Ok(Val::Bool(matches!(cells.get(&cell), Some((_, Val::Bool(true))))));
+            }
+            "race-won!" => {
+                // internal: first completion wins; later writes are
+                // idempotent because the cell stays true.
+                let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
+                ctx.sig.cells.borrow_mut().insert(cell, ("#race".to_string(), Val::Bool(true)));
+                return Ok(Val::Nothing);
             }
             "cull" => {
                 // (cull): clear all hostile fire (bomb semantics);
@@ -1587,8 +1623,7 @@ fn collect_handles(v: &Val, out: &mut Vec<u64>) -> Result<(), String> {
     }
 }
 
-/// Parse one (label body… (finally body…)?) state clause of a `states`
-/// machine (`phases` desugars its opts into this same shape).
+/// Parse one (label body…) state clause of a `states` machine.
 fn parse_state_clause(cf: &Form) -> Result<StateClause, String> {
     let Form::List(parts) = cf else {
         return Err("states: expected (:label body…) states".into());
@@ -1596,15 +1631,7 @@ fn parse_state_clause(cf: &Form) -> Result<StateClause, String> {
     let Some(Form::Kw(label)) = parts.first() else {
         return Err("states: state head must be a :label keyword".into());
     };
-    let mut body: Vec<Form> = parts[1..].to_vec();
-    let mut finally: Vec<Form> = Vec::new();
-    if let Some(Form::List(last)) = body.last() {
-        if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
-            finally = last[1..].to_vec();
-            body.pop();
-        }
-    }
-    Ok(StateClause { label: label.clone(), body: body.into(), finally: finally.into() })
+    Ok(StateClause { label: label.clone(), body: parts[1..].to_vec().into() })
 }
 
 /// Quasiquote: walk the template, evaluating (unquote e) and splicing

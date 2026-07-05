@@ -26,8 +26,9 @@ pub(super) enum TF {
     Frame(FrameSpec),
     /// A running `states` machine: the trampoline over ordered states.
     /// stage: 0 = enter cur (arm the goto guard, push the body), 1 = body
-    /// exited (completed/cancelled) → run finally, 2 = route (goto target
-    /// or state order) and loop to 0.
+    /// exited (completed/cancelled) → bump generation, 2 = route (goto
+    /// target or state order) and loop to 0. Core `finally` cleanups run
+    /// before the bump when a state body is wrapped by phases sugar.
     States {
         clauses: Rc<[StateClause]>,
         env: Env,
@@ -40,6 +41,10 @@ pub(super) enum TF {
         cur: usize,
         stage: u8,
     },
+    /// Core `(finally body cleanup...)`: idx None while body is active,
+    /// Some(k) while cleanup is being replayed after normal completion or
+    /// protected cancellation.
+    Finally { cleanup: Rc<[Form]>, env: Env, idx: Option<usize> },
 }
 
 #[derive(Clone)]
@@ -108,6 +113,21 @@ fn active_guards(task: &Task) -> Vec<(Form, Env)> {
     gs
 }
 
+fn protected_finally(tf: &TF) -> Option<TF> {
+    match tf {
+        TF::Finally { cleanup, env, idx } => Some(TF::Finally {
+            cleanup: cleanup.clone(),
+            env: env.clone(),
+            idx: Some(idx.unwrap_or(0)),
+        }),
+        _ => None,
+    }
+}
+
+fn protected_finally_frames<'a>(frames: impl Iterator<Item = &'a TF>) -> Vec<TF> {
+    frames.filter_map(protected_finally).collect()
+}
+
 pub(super) fn step_task(
     task: &mut Task,
     ctx: &mut Ctx,
@@ -118,7 +138,15 @@ pub(super) fn step_task(
     // task (the fork lives entirely inside the cancelled scope)…
     for (pred, env) in task.guards.clone() {
         if truthy_pub(&evaluate(&pred, &env, ctx, world)?) {
-            return Ok(true);
+            let cleanups = protected_finally_frames(task.stack.iter());
+            if cleanups.is_empty() {
+                return Ok(true);
+            }
+            task.stack = cleanups;
+            task.guards.clear();
+            task.wait = 0;
+            task.wait_pred = None;
+            break;
         }
     }
     // …while a stack guard cancels its SCOPE: unwind to the guard frame and
@@ -135,7 +163,9 @@ pub(super) fn step_task(
         }
     }
     if let Some(i) = fired {
+        let cleanups = protected_finally_frames(task.stack[i..].iter());
         task.stack.truncate(i);
+        task.stack.extend(cleanups);
         // any pending block was issued inside the cancelled scope
         task.wait = 0;
         task.wait_pred = None;
@@ -181,6 +211,21 @@ pub(super) fn step_task(
                 *idx += 1;
                 Some((f, env.clone()))
             }
+            TF::Finally { cleanup, env, idx } => match idx {
+                None => {
+                    *idx = Some(0);
+                    continue;
+                }
+                Some(k) if *k >= cleanup.len() => {
+                    task.stack.pop();
+                    continue;
+                }
+                Some(k) => {
+                    let f = cleanup[*k].clone();
+                    *k += 1;
+                    Some((f, env.clone()))
+                }
+            },
             TF::Dot { var, n, seq_binds, every, body, env, i, started } => {
                 if *i >= *n {
                     task.stack.pop();
@@ -257,23 +302,15 @@ pub(super) fn step_task(
                         task.stack.push(TF::Seq { items: c.body.clone(), idx: 0, env: benv });
                         continue;
                     }
-                    // body exited (completed or goto'd): bump the generation
-                    // — everything forked under the state dies with it —
-                    // then run the finalizer OUTSIDE the state's guard
+                    // body exited (completed or goto'd): core `finally`
+                    // cleanups have already run if the body had them. Now
+                    // bump the generation so forks under the state die.
+                    // This means cleanup precedes the generation bump; for
+                    // instant cleanup it is still within the same tick.
                     1 => {
-                        let c = clauses[*cur].clone();
-                        let (cell, gen_cell) = (*cell, *gen_cell);
+                        let gen_cell = *gen_cell;
                         *stage = 2;
                         bump_gen(gen_cell, ctx);
-                        if !c.finally.is_empty() {
-                            let benv =
-                                env.bind("#state-cell".into(), Val::Num(cell as f64));
-                            task.stack.push(TF::Seq {
-                                items: c.finally.clone(),
-                                idx: 0,
-                                env: benv,
-                            });
-                        }
                         continue;
                     }
                     // route: a goto target wins; bare goto and body
@@ -466,6 +503,47 @@ fn run_action(
             task.stack.push(TF::Seq { items: body.clone(), idx: 0, env: env.clone() });
             Ok(false)
         }
+        ActionV::Finally { body, cleanup, env } => {
+            task.stack.push(TF::Finally {
+                cleanup: cleanup.clone(),
+                env: env.clone(),
+                idx: None,
+            });
+            task.stack.push(TF::Seq {
+                items: vec![body.clone()].into(),
+                idx: 0,
+                env: env.clone(),
+            });
+            Ok(false)
+        }
+        ActionV::Race { arms, env } => {
+            let cell = world.next_id;
+            world.next_id += 1;
+            ctx.sig.cells.borrow_mut().insert(cell, ("#race".to_string(), Val::Nothing));
+            let done = Form::list(vec![Form::sym("race-done?"), Form::Num(cell as f64)]);
+            for arm in arms.iter() {
+                let stack: Vec<TF> = task
+                    .stack
+                    .iter()
+                    .filter_map(|tf| match tf {
+                        TF::Frame(f) => Some(TF::Frame(f.clone())),
+                        _ => None,
+                    })
+                    .collect();
+                let mut child = new_task(stack);
+                child.guards = active_guards(task);
+                child.guards.push((done.clone(), env.clone()));
+                let won = Form::list(vec![Form::sym("race-won!"), Form::Num(cell as f64)]);
+                child.stack.push(TF::Seq {
+                    items: vec![arm.clone(), won].into(),
+                    idx: 0,
+                    env: env.clone(),
+                });
+                new_tasks.push(child);
+            }
+            task.wait_pred = Some((done, env.clone()));
+            Ok(true)
+        }
         ActionV::States { clauses, env } => {
             // allocate the goto-request and generation cells from the world
             // counter (ids are deterministic, so they snapshot and replay)
@@ -499,12 +577,17 @@ fn run_action(
                 .iter()
                 .any(|tf| matches!(tf, TF::States { cell: c, .. } if c == cell));
             if owns {
+                let mut cleanups = Vec::new();
                 while let Some(tf) = task.stack.last() {
                     if matches!(tf, TF::States { cell: c, .. } if c == cell) {
                         break;
                     }
-                    task.stack.pop();
+                    if let Some(cleanup) = task.stack.pop().and_then(|tf| protected_finally(&tf)) {
+                        cleanups.push(cleanup);
+                    }
                 }
+                cleanups.reverse();
+                task.stack.extend(cleanups);
             }
             Ok(false)
         }

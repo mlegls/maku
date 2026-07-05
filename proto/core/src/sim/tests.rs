@@ -1252,6 +1252,125 @@
         );
     }
 
+    #[test]
+    fn finally_runs_on_completion() {
+        const CARD: &str = r#"
+(defpattern f []
+  (seq
+    (finally
+      (seq (event :a) (wait (ticks 5)))
+      (event :cleanup))
+    (event :after)))
+"#;
+        let mut sim = Sim::load(CARD, Some("f")).unwrap();
+        for _ in 0..12 {
+            sim.step().unwrap();
+        }
+        let names: Vec<String> =
+            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+        let a = names.iter().position(|n| n == "a");
+        let cleanup = names.iter().position(|n| n == "cleanup");
+        let after = names.iter().position(|n| n == "after");
+        assert!(a.is_some(), "body started");
+        assert!(cleanup.is_some(), "cleanup ran after body completion");
+        assert!(after.is_some(), "sequence continued after cleanup");
+        assert!(a < cleanup && cleanup < after, "event order: {:?}", names);
+    }
+
+    #[test]
+    fn finally_runs_on_cancellation() {
+        const CARD: &str = r#"
+(defpattern f []
+  (seq
+    (defvar stop 0)
+    (fork (seq (wait 0.05) (set! stop 1)))
+    (until (> stop 0)
+      (finally
+        (seq (event :body-start) (wait 999) (event :body-late))
+        (event :cleanup)))
+    (event :after)))
+"#;
+        let mut sim = Sim::load(CARD, Some("f")).unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        let names: Vec<String> =
+            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+        assert!(names.iter().any(|n| n == "body-start"));
+        assert!(names.iter().any(|n| n == "cleanup"), "cleanup ran on cancellation");
+        assert!(names.iter().any(|n| n == "after"), "outer seq resumed");
+        assert!(!names.iter().any(|n| n == "body-late"), "cancelled body did not continue");
+    }
+
+    /// New capability: a fork killed by an inherited guard still runs
+    /// protected cleanup before the task ends.
+    #[test]
+    fn finally_runs_when_fork_dies() {
+        const CARD: &str = r#"
+(defpattern f []
+  (seq
+    (defvar p 0)
+    (fork (seq (wait 0.05) (set! p 1)))
+    (until (> p 0)
+      (fork (finally
+        (seq (wait 999))
+        (event :fork-cleanup)))
+      (wait 999))))
+"#;
+        let mut sim = Sim::load(CARD, Some("f")).unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.world.log.borrow().entries.iter().any(|e| &*e.name == "fork-cleanup"),
+            "fork cleanup ran after inherited guard killed the task"
+        );
+    }
+
+    #[test]
+    fn race_first_wins() {
+        const CARD: &str = r#"
+(defpattern r []
+  (seq
+    (race
+      (seq (wait (ticks 3)) (event :fast))
+      (seq (wait (ticks 100)) (event :slow)))
+    (event :after)))
+"#;
+        let mut sim = Sim::load(CARD, Some("r")).unwrap();
+        for _ in 0..20 {
+            sim.step().unwrap();
+        }
+        let names: Vec<String> =
+            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+        let fast = names.iter().position(|n| n == "fast");
+        let after = names.iter().position(|n| n == "after");
+        assert!(fast.is_some(), "fast arm won");
+        assert!(!names.iter().any(|n| n == "slow"), "slow arm was cancelled");
+        assert!(after.is_some() && fast < after, "parent resumed after win: {:?}", names);
+    }
+
+    #[test]
+    fn race_loser_cleanup() {
+        const CARD: &str = r#"
+(defpattern r []
+  (race
+    (seq (wait (ticks 3)) (event :fast))
+    (finally
+      (seq (wait (ticks 100)) (event :slow))
+      (event :slow-cleanup))))
+"#;
+        let mut sim = Sim::load(CARD, Some("r")).unwrap();
+        for _ in 0..20 {
+            sim.step().unwrap();
+        }
+        let names: Vec<String> =
+            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+        assert!(names.iter().any(|n| n == "fast"), "fast arm won");
+        assert!(names.iter().any(|n| n == "slow-cleanup"), "loser cleanup ran");
+        assert!(!names.iter().any(|n| n == "slow"), "loser body did not finish");
+    }
+
     /// The states FSM: routing goto skips states, a timeout expressed as
     /// body code (fork + wait + bare goto) ends a looping body, finalizers
     /// run on the way out, and fall-through completes the machine.
@@ -1264,9 +1383,11 @@
       (:opening (goto :b))
       (:a (spawn (circle 3 (still))))            ; skipped by the goto
       (:b
-        (fork (seq (wait 0.05) (goto)))          ; timeout: exit to successor
-        (for [i inf :every 1] (spawn (circle 5 (still))))
-        (finally (event :b-done))))
+        (finally
+          (seq
+            (fork (seq (wait 0.05) (goto)))      ; timeout: exit to successor
+            (for [i inf :every 1] (spawn (circle 5 (still)))))
+          (event :b-done))))
     (event :machine-done)))
 "#;
         let mut sim = Sim::load(CARD, Some("m")).unwrap();
@@ -1297,10 +1418,12 @@
     (export hp)
     (states
       (:spell
-        (fork (seq (wait 0.05) (goto :post)))
-        (until (<= $hp 0)                        ; the hp gate, as body code
-          (for [i inf :every (ticks 2)] (spawn (still))))
-        (finally (event :spell-out)))
+        (finally
+          (seq
+            (fork (seq (wait 0.05) (goto :post)))
+            (until (<= $hp 0)                    ; the hp gate, as body code
+              (for [i inf :every (ticks 2)] (spawn (still)))))
+          (event :spell-out)))
       (:post (event :post)))))
 "#;
         let mut sim = Sim::load(CARD, Some("m")).unwrap();

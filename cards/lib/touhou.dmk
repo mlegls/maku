@@ -68,9 +68,10 @@
 ;;   :timeout d → (fork (seq (wait d) (goto)))    [timer arms on arrival]
 ;;   :root pos  → (move 0.9 :out-sine pos)        [reposition the boss
 ;;                anchor first — boss dyns follow (live $boss)]
-;; The (finally …) tail passes through: `states` runs it on every exit
-;; path. Macro-time plumbing only — same machine underneath, and richer
-;; templates (:name/:type/hp bars) belong in cards, over these.
+;; The (finally …) tail is phase sugar for core `(finally body cleanup…)`:
+;; cancellation-safe cleanup lives in the scheduler, while `states` stays a
+;; plain FSM. Macro-time plumbing only — same machine underneath, and
+;; richer templates (:name/:type/hp bars) belong in cards, over these.
 
 ;; gate predicate from a clause's opts map form (nothing when ungated)
 (defn phase-gate* [opts]
@@ -93,13 +94,15 @@
         rooted (if (nothing? root)
                  timed
                  (concat [`(move 0.9 :out-sine ~root)] timed))]
-    `(~label ~@rooted ~@fin)))
+    (if (= (count fin) 0)
+      `(~label ~@rooted)
+      `(~label (finally (seq ~@rooted) ~@fin)))))
 
-;; split the optional (finally …) tail; `states` owns the finalizer.
+;; split the optional (finally …) tail; pass only cleanup forms onward.
 (defn phase-split* [label opts rest]
   (match rest
-    [& body (as f ['finally & _])] (phase-emit* label opts body [f])
-    _                              (phase-emit* label opts rest [])))
+    [& body ['finally & fin]] (phase-emit* label opts body fin)
+    _                         (phase-emit* label opts rest [])))
 
 ;; one (:label opts? body… (finally …)?) clause → a `states` clause
 (defn phase-clause* [clause]

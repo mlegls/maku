@@ -5,13 +5,12 @@ The spec (docs/language.md) is authoritative; this tracks what the prototype
 language.md.
 
 ## Language features spec'd but unimplemented
-- `race` general form (§8) — only the `until` degenerate case exists (it is
-  also how `states` arms each state's guard).
 - `states` leftovers (§8): state-body return value as the next label
   (routing is goto-or-state-order); richer spellcard templates than the
   `phases` macro (:name/:type/hp bars) as card macros once the boss
-  tutorial demands them (`phases` itself is lib code now — extend it
-  there, not in the engine).
+  tutorial demands them (`phases` itself is lib code now, with its
+  `(finally …)` tail compiling to core `finally` — extend it there, not in
+  the engine).
 - `(with {$chan v} body)` scoped channel overrides (§3/§13.8).
 - Pattern-embedding scope adapters (§10) — callable patterns embed bare:
   defaults only, no argument passing, shared cells.
@@ -99,6 +98,8 @@ language.md.
   still in sf_spawn); family→hitbox-radius data (currently `:hitbox` by
   hand at star/gem/lstar/gglcircle call sites); richer spellcard
   templates (:name/:type/hp bars) over `states`.
+- Core `finally` now runs on fork task death through inherited guards; keep
+  docs/examples using that instead of states-owned finalizers.
 - A lib change is an engine rebuild (deliberate — not user-patchable);
   version the lib with the wire protocol when hosts start pinning.
 - Styles, under "the engine has no bullet-hell domain understanding":
