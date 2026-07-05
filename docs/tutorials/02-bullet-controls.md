@@ -104,6 +104,15 @@ Callbacks can spawn, anchored wherever you like (`ex4-burst`):
 coordinates — a control firing under some rotated frame hierarchy won't
 double-anchor its spawns.
 
+## When *not* to use a query
+
+Every example above watches for a *runtime condition* (position,
+velocity) or selects across styles — that's query territory. But if the
+trigger is just "at age X, do Y" and you're the one who spawned the
+bullets, you don't need to watch anything: `spawn` returns handles, and
+each bullet can carry its own forked timeline. Tutorial 3 makes that
+the default shape; the rule of thumb lives there.
+
 ## A note on cost
 
 Controls run per matched bullet, every iteration of their loop. At

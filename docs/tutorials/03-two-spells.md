@@ -17,40 +17,44 @@ stage). The design: slow "seed" bullets spread out in a ring; after a
 moment, each seed bursts into rings of shots expanding from where it
 died; repeat.
 
-Start with everything inline — an emitter and a watcher
-(`ex1-fruit-basic`):
+The key structural fact: **`spawn` returns handles**, one per bullet.
+When *you* spawned the bullets and the schedule is known in advance,
+each bullet can carry its own forked timeline — no watching, no
+selecting (`ex1-fruit-basic`):
 
 ```clojure
-(par
-  ;; the emitter: 8 seeds, every 3 seconds
-  (for [vol inf :every 3]
-    (spawn (circle 8 (linear p[3 0]))
-           {:style {:family :lellipse :color :red :variant :w}}))
-  ;; the watcher: seeds older than 0.7s burst and die
-  (fork
-    (for [i inf :every (ticks 5)]
-      (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
-        (fn [b]
-          (seq
-            ((pose (pos b))
-              (spawn (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))
-                     {:style {:family :ellipse :color :red :variant :w}}))
-            (cull b)))))))
+(for [vol inf :every 3]
+  (let [seeds (spawn (circle 8 (linear p[3 0]))
+                     {:style {:family :lellipse :color :red :variant :w}})]
+    (for [b seeds]
+      (fork
+        (seq
+          (wait 0.7)                          ; ripen
+          ((pose (pos b))
+            (spawn (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))
+                   {:style {:family :ellipse :color :red :variant :w}}))
+          (cull b))))))
 ```
 
-One new thing: `(vel p[(lerp 0.3 1.4 t 0 2.6) 0])` is motion in the
+Read it as each seed's *biography*: wait 0.7 seconds, burst where you
+are, die. `for` over an array iterates its elements (here, the handles),
+and each `fork` gives that seed an independent clock. A dead handle —
+say the player bombed the seed first — makes the rest of its timeline a
+harmless no-op.
+
+Two smaller things: `(vel p[(lerp 0.3 1.4 t 0 2.6) 0])` is motion in the
 *velocity* domain with a time-varying speed — `(lerp a b t from to)`
 ramps as `t` goes `a → b`, so the burst eases in from a standstill.
 
 ### The burst grows — so name the parts
 
 Miracle Fruit's signature is six rings unfolding over time at growing
-radius. Upgrading the inline version would mean copying the emitter
-verbatim and inflating the callback — this is the moment to factor.
+radius. Inflating the timeline inline would bury the spell's shape —
+this is the moment to factor.
 
 **`defn`** names the burst as a function of *where* and *which color*.
 Actions are values, so the function's result slots straight into the
-callback:
+timeline:
 
 ```clojure
 (def palette [:red :pink :purple :blue :teal :green :yellow :orange])
@@ -66,48 +70,40 @@ callback:
                       :variant :w}}))))
 ```
 
-**`defpattern` with parameters** names the emitter. Parameters are
-name/default pairs; each seed also gets its palette index as a *column*
-(per-bullet data — `:cols` arrays bind per element, like style arrays):
+**`defpattern` takes parameters** — name/default pairs — so the whole
+spell becomes tunable (`ex2-fruit-staged`):
 
 ```clojure
-(defpattern seeds [n 8]
+(defpattern ex2-fruit-staged [n 8 ripen 0.7]
   (for [vol inf :every 3]
-    (spawn (circle n (linear p[3 0]))
-           {:style {:family :lellipse :color palette :variant :w}
-            :cols {:ci (iota n)}})))
-```
-
-Now the staged version is just composition — patterns invoke like
-functions (`ex2-fruit-staged`):
-
-```clojure
-(par
-  (seeds)
-  (fork
-    (for [i inf :every (ticks 5)]
-      (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
-        (fn [b]
-          (seq (fork (burst (pos b) 0))     ; one color for now
+    (let [seeds (spawn (circle n (linear p[3 0]))
+                       {:style {:family :lellipse :color palette :variant :w}})]
+      (for [b seeds, ci (iota n)]
+        (fork
+          (seq (wait ripen)
+               (fork (burst (pos b) 0))       ; one color for now
                (cull b)))))))
 ```
 
-The `fork` inside the callback schedules the six-ring sequence as a
-child task — the rings keep unfolding after the seed is culled.
+The inner `fork (burst …)` schedules the six-ring sequence as its own
+child — the rings keep unfolding after the seed is culled. And note the
+paired binding `[b seeds, ci (iota n)]`: each seed's timeline knows its
+own index, lexically.
 
-### Color inheritance costs one character
+### Color inheritance costs one token
 
-The seeds already carry their palette index; pass it through
-(`ex3-fruit-colors`):
+The index is already in scope; pass it through (`ex3-fruit-colors`):
 
 ```clojure
-(fn [b]
-  (seq (fork (burst (pos b) b.ci))
-       (cull b)))
+(fork (burst (pos b) ci))                    ; ← the whole diff
 ```
 
-That `0` → `b.ci` is the whole diff between `ex2` and `ex3` — which is
-the payoff of having factored: variations are one-line changes.
+That `0` → `ci` is the entire difference between `ex2` and `ex3` — the
+payoff of having factored: variations are one-token changes. (If a
+*query* triggered the burst instead, the index would have to ride the
+bullet as a column — `:cols {:ci (iota n)}` at spawn, `b.ci` in the
+callback. Columns are how data crosses stage boundaries you don't hold
+handles across.)
 
 ## Spell 2: Danmaku Chimera
 
@@ -148,6 +144,14 @@ fork-a-watcher shape three times in this card, the idiom earns a
 Backtick quotes a code template; `~` splices arguments in. Macros
 receive their arguments as unevaluated code — that's why `where` can
 turn a bare expression into a predicate function.
+
+Unlike the fruit, this spell genuinely **needs a query**: regeneration
+(act 2, below) re-fires bullets that *re-enter* act 1's watch — the
+watched set is open, growing with bullets no timeline is holding. That's
+the rule of thumb in one sentence: **hold handles and write timelines
+when you spawned it and the schedule is static; watch with queries when
+the set is open or the trigger reads runtime state** (position,
+velocity, proximity — like tutorial 2's ceiling bounce).
 
 The spell itself runs in two acts.
 

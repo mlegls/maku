@@ -157,8 +157,50 @@ returning the pose (with tangent) at that point —
 supplies `t`. Use `sample` when the curve is data; use `on-laser` when
 an actual beam is on screen and you want to stay synced to it.
 
+## Lifecycle trees
+
+Everything in this tutorial composes. Here is a four-stage lifecycle —
+ring → each bullet becomes a laser → each laser fires perpendicular
+shots → each shot explodes by the parity of its index — written as
+nested timelines, with no queries at all (`ex7-lifecycle`):
+
+```clojure
+(let [ring (spawn (circle 12 (linear p[1.5 0])) {…})]
+  (for [b ring]
+    (fork
+      (seq
+        (wait 1)
+        (let [at (pos b) th (angle-of b.vel)]
+          (seq
+            (cull b)
+            (let [l (spawn ((pose at) ((rot th) (laser {…}))) {…})]
+              (seq
+                (wait 0.8)
+                (let [shots (spawn (map (fn [k]
+                                          ((pose (on-laser (nth l 0) (* 0.5 k)))
+                                            ((rot 90) (linear p[1 0]))))
+                                        (iota 5)) {…})]
+                  (seq
+                    (wait 0.9)
+                    (for [s shots, k (iota 5)]
+                      (seq
+                        ((pose (pos s))
+                          (spawn (nth [(circle 8 (linear p[2 0]))
+                                       (fan 6 20 (linear p[2.5 0]))]
+                                      k) {…}))
+                        (cull s)))))))))))))
+```
+
+Each `let` holds the handles for a stage; each `fork` gives a bullet its
+own clock; a kind-change (bullet → laser) is a cull + spawn; and because
+actions are values, "a different pattern by parity" is just `nth` over
+an array of patterns. Sleeping timelines cost almost nothing per tick —
+this is cheaper than polling queries, not just cleaner. Dead handles
+no-op, so a bombed stage-2 bullet simply never has a stage 3.
+
 **Try it:** make `ex5`'s gems fire from *random* points on the beam; give
-`ex4`'s tip-fire a spread by replacing the single spawn with a `fan`.
+`ex4`'s tip-fire a spread by replacing the single spawn with a `fan`;
+give `ex7` a fifth stage.
 
 ---
 

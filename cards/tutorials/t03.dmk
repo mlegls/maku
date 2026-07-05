@@ -9,28 +9,27 @@
 ;; Spell 1: Miracle Fruit (Touhou 11 extra) — seed bullets that each
 ;; burst into expanding rings.
 
-;; 1. everything inline first: a ring of seeds every 3 seconds; a watcher
-;; replaces seeds older than 0.7s with one ring of shots.
+;; 1. everything inline first: a ring of seeds every 3 seconds; each seed
+;; runs its own little TIMELINE — spawn hands back handles, and a forked
+;; (wait → burst → cull) rides each one. No watcher, no query: the
+;; spawner holds the pointers and the schedule is static.
 (defpattern ex1-fruit-basic []
-  (par
-    (for [vol inf :every 3]
-      (spawn (circle 8 (linear p[3 0]))
-             {:style {:family :lellipse :color :red :variant :w}}))
-    (fork
-      (for [i inf :every (ticks 5)]
-        (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
-          (fn [b]
-            (seq
-              ((pose (pos b))
-                (spawn (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))
-                       {:style {:family :ellipse :color :red :variant :w}}))
-              (cull b))))))))
+  (for [vol inf :every 3]
+    (let [seeds (spawn (circle 8 (linear p[3 0]))
+                       {:style {:family :lellipse :color :red :variant :w}})]
+      (for [b seeds]
+        (fork
+          (seq
+            (wait 0.7)
+            ((pose (pos b))
+              (spawn (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))
+                     {:style {:family :ellipse :color :red :variant :w}}))
+            (cull b)))))))
 
-;; 2. the burst gets fancier (six rings unfolding at growing radius) and
-;; the emitter would be copied verbatim — so both get NAMES now.
-;; A defn for the burst (actions are values; it slots into the callback),
-;; a defpattern for the emitter (parameterized; the palette-index column
-;; pays off in part 3).
+;; 2. the burst gets fancier (six rings unfolding at growing radius) —
+;; it earns a NAME: a defn of where and which color (actions are values,
+;; so the function's result slots straight into the timeline). The
+;; pattern itself takes parameters (seed count, ripen time).
 (def palette [:red :pink :purple :blue :teal :green :yellow :orange])
 
 (defn burst [at ci]
@@ -43,33 +42,27 @@
                       :color (nth palette ci)
                       :variant :w}}))))
 
-(defpattern seeds [n 8]
+(defpattern ex2-fruit-staged [n 8 ripen 0.7]
   (for [vol inf :every 3]
-    (spawn (circle n (linear p[3 0]))
-           {:style {:family :lellipse :color palette :variant :w}
-            :cols {:ci (iota n)}})))
+    (let [seeds (spawn (circle n (linear p[3 0]))
+                       {:style {:family :lellipse :color palette :variant :w}})]
+      (for [b seeds, ci (iota n)]
+        (fork
+          (seq (wait ripen)
+               (fork (burst (pos b) 0))       ; one color for now
+               (cull b)))))))
 
-(defpattern ex2-fruit-staged []
-  (par
-    (seeds)
-    (fork
-      (for [i inf :every (ticks 5)]
-        (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
-          (fn [b]
-            (seq (fork (burst (pos b) 0))     ; one color for now
-                 (cull b))))))))
-
-;; 3. color inheritance costs one character: each seed already carries its
-;; palette index as a column (:cols in `seeds`); pass it through.
-(defpattern ex3-fruit-colors []
-  (par
-    (seeds)
-    (fork
-      (for [i inf :every (ticks 5)]
-        (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
-          (fn [b]
-            (seq (fork (burst (pos b) b.ci))
-                 (cull b))))))))
+;; 3. color inheritance costs one token: each seed's timeline already
+;; binds its index ci lexically — pass it through.
+(defpattern ex3-fruit-colors [n 8 ripen 0.7]
+  (for [vol inf :every 3]
+    (let [seeds (spawn (circle n (linear p[3 0]))
+                       {:style {:family :lellipse :color palette :variant :w}})]
+      (for [b seeds, ci (iota n)]
+        (fork
+          (seq (wait ripen)
+               (fork (burst (pos b) ci))      ; ← the whole diff
+               (cull b)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Spell 2: Danmaku Chimera (Touhou 8) — a weaving emitter fires long
@@ -86,8 +79,10 @@
              {:style {:family :keine :color :purple :variant :w}}))))
 
 ;; 5. the full spell REUSES ex4 — patterns invoke like functions, so the
-;; previous example is simply a part of this one. And having now written
-;; the fork-for-manip watcher three times, the idiom earns a macro.
+;; previous example is simply a part of this one. And unlike the fruit,
+;; this spell NEEDS a query: regeneration means keine re-enter the world
+;; that no timeline is holding — the watched set is OPEN. The watcher
+;; shape (from tutorial 2) earns a macro.
 (defmacro control [period query effect]
   `(fork (for [i inf :every ~period] (manip ~query ~effect))))
 

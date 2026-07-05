@@ -1684,6 +1684,37 @@ mod tests {
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → bullets
     /// head down at the player, not up.
+    /// Lifecycle trees: handles + per-bullet forked timelines express
+    /// multi-stage lifecycles with no queries — (for [b handles] …)
+    /// iterates an array in the lead binding.
+    #[test]
+    fn lifecycle_tree_via_handles() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [ring (spawn (circle 4 (linear p[1.5 0]))
+                    {:style {:family :circle}})]
+    (for [b ring, i (iota 4)]
+      (fork
+        (seq
+          (wait 0.5)
+          (seq
+            ((pose (pos b))
+              (spawn (nth [(circle 6 (linear p[2 0]))
+                           (fan 3 20 (linear p[2 0]))]
+                          i)
+                     {:style {:family (nth [:gem :star] i)}}))
+            (cull b)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..90 {
+            sim.step().unwrap();
+        }
+        let count = |f: &str| sim.world.bullets.iter().filter(|b| b.style.family == f).count();
+        assert_eq!(count("circle"), 0, "stage-1 bullets consumed");
+        assert_eq!(count("gem"), 12, "even indices: two 6-rings");
+        assert_eq!(count("star"), 6, "odd indices: two 3-fans");
+    }
+
     /// Invulnerability windows: (invuln b dur) writes iframe-until, which
     /// BOTH resolve paths honor — shots are absorbed (die, no hp write)
     /// while a boss is invulnerable, and hp flows again after expiry.

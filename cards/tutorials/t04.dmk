@@ -77,3 +77,43 @@
            ((rot m"-90 + 15 * iota(3)")
              (laser {:warn [0.8 1.2 1.6] :active 4 :u-max 7 :fill 1.5})))
          {:style {:family :laser :color [:red :yellow :pink]}}))
+
+;; 7. lifecycle trees: multi-stage bullet lives with NO queries — spawn
+;; returns handles (the pointers), and each bullet forks its own timeline.
+;; Ring → each becomes a laser → each laser fires perpendicular shots →
+;; each shot explodes by parity of its index.
+(defpattern ex7-lifecycle []
+  (let [ring (spawn (circle 12 (linear p[1.5 0]))
+                    {:style {:family :circle :color :red :variant :w}})]
+    (for [b ring]
+      (fork
+        (seq
+          (wait 1)
+          (let [at (pos b)
+                th (angle-of b.vel)]
+            (seq
+              (cull b)
+              (let [l (spawn ((pose at) ((rot th)
+                               (laser {:warn 0.3 :active 2 :u-max 2.5 :width 0.5})))
+                             {:style {:family :gdlaser :color :purple}})]
+                (seq
+                  (wait 0.8)
+                  (let [shots (spawn (map (fn [k]
+                                            ((pose (on-laser (nth l 0) (* 0.5 k)))
+                                              ((rot 90) (linear p[1 0]))))
+                                          (iota 5))
+                                     {:style {:family :star :color :yellow :variant :w}})]
+                    (seq
+                      (wait 0.9)
+                      ;; actions are values: the two explosion patterns sit
+                      ;; in an array and parity picks
+                      (for [s shots, k (iota 5)]
+                        (seq
+                          ((pose (pos s))
+                            (spawn (nth [(circle 8 (linear p[2 0]))
+                                         (fan 6 20 (linear p[2.5 0]))]
+                                        k)
+                                   {:style {:family :gem
+                                            :color (nth [:teal :pink] k)
+                                            :variant :w}}))
+                          (cull s))))))))))))))

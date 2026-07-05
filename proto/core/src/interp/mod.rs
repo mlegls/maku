@@ -1655,8 +1655,17 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Re
     let Form::Sym(var) = counter.0 else {
         return Err("dotimes: bad counter name".into());
     };
-    let n = evaluate(counter.1, env, ctx, world)?.num()?;
-    let seq_binds = rest
+    // an ARRAY in the leading position iterates its elements:
+    // (for [b handles] …) — the loop var binds each element in turn
+    let (n, lead_seq) = match evaluate(counter.1, env, ctx, world)? {
+        Val::Arr(xs) => (xs.len() as f64, Some(Val::Arr(xs))),
+        v => (v.num()?, None),
+    };
+    let mut seq_binds: Vec<(Rc<str>, Val)> = Vec::new();
+    if let Some(xs) = lead_seq {
+        seq_binds.push((var.clone(), xs));
+    }
+    let rest_binds = rest
         .iter()
         .map(|(name, src)| {
             let Form::Sym(nm) = name else {
@@ -1665,6 +1674,7 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Re
             Ok((nm.clone(), evaluate(src, env, ctx, world)?))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    seq_binds.extend(rest_binds);
     Ok(Val::Action(Rc::new(ActionV::Dotimes {
         var: var.clone(),
         n,
