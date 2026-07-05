@@ -16,11 +16,9 @@
     (fork
       (dotimes [i 480 :every (ticks 1)]      ; the control, for 4 seconds
         (manipulate {:family :circle
-                     :where (fn [b] (and (> (:y (:pos b)) 3)
-                                         (> (:y (:vel b)) 0)))}
+                     :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
           (fn [b] (remat b (fn [exit]
-            (linear c[(:x (:vel exit))
-                      (- 0 (:y (:vel exit)))])))))))
+            (linear c[exit.vel.x (- 0 exit.vel.y)])))))))
     (dotimes [vol inf :every (ticks 50)]
       (spawn (circle 24 (linear p[2.5 0]))
              {:style {:family :circle :color :red :variant :w}}))))
@@ -34,7 +32,7 @@
       (dotimes [i inf :every (ticks 1)]
         (manipulate {:family [:circle :star]
                      :color [:red :blue]
-                     :where (fn [b] (< (:y (:pos b)) -2))}
+                     :where (fn [b] (< b.pos.y -2))}
           (fn [b] (cull b)))))
     (dotimes [vol inf :every (ticks 40)]
       (spawn (circle 16 (linear p[2 0]))
@@ -51,7 +49,7 @@
     (fork
       (dotimes [i inf :every (ticks 10)]
         (manipulate {:family :circle
-                     :where (fn [b] (> (:t b) 1))}
+                     :where (fn [b] (> b.t 1))}
           (fn [b]
             (seq
               (event :sfx "x-transform-1")
@@ -70,7 +68,7 @@
       (spawn (circle 6 (linear p[1.5 0]))
              {:style {:family :star :color :teal :variant :w}})
       (wait 1.2)
-      (manipulate {:family :star :where (fn [b] (> (:t b) 1.1))}
+      (manipulate {:family :star :where (fn [b] (> b.t 1.1))}
         (fn [b]
           (seq
             ((pose (pos b))

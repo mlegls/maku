@@ -803,8 +803,17 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
         Val::Kw(k) => {
             // keyword application: map access, e.g. (:vel exit); on
-            // Vec2/Pose, :x/:y/:th read components
+            // Vec2/Pose, :x/:y/:th read components; on a bullet Handle,
+            // fields of the live bullet view (b.pos.y just works in
+            // callbacks and :where alike)
             let arg = evaluate(&items[1], env, ctx, world)?;
+            if let Val::Handle(id) = &arg {
+                if let Some(i) = world.find(*id) {
+                    let view = bullet_view(i, world, &ctx.sig.clone())?;
+                    return Ok(map_get(&view, &k).unwrap_or(Val::Nothing));
+                }
+                return Ok(Val::Nothing);
+            }
             match (&*k, &arg) {
                 ("x", Val::Vec2 { x, .. }) => return Ok(Val::Num(*x)),
                 ("y", Val::Vec2 { y, .. }) => return Ok(Val::Num(*y)),
@@ -869,6 +878,28 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 /// Evaluate a manipulate query map against the world in canonical order:
 /// style axes / team match exactly (Kw) or any-of (Arr); :where is a pure
 /// fn over the bullet view {:pos :vel :t :family :color :variant + cols}.
+/// The bullet view: what predicates and field access see — current
+/// {:pos :vel :t :family} plus the bullet's columns.
+pub(crate) fn bullet_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
+    let b = &world.bullets[i];
+    let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+    let p = dyn_pose(&b.motion, tau, &b.state, sig)?;
+    let vel = match b.prev_pos {
+        Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
+        None => (0.0, 0.0),
+    };
+    let mut view = vec![
+        (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
+        (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
+        (Val::Kw("t".into()), Val::Num(tau)),
+        (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
+    ];
+    for (k, v) in &b.cols {
+        view.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
+    }
+    Ok(Val::Map(Rc::new(view)))
+}
+
 fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, String> {
     let Val::Map(kvs) = q else { return Err("query: expected a map".into()) };
     let get = |name: &str| {
@@ -888,7 +919,7 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
     let where_f = get("where");
     let tick = world.tick;
     let sig = ctx.sig.clone();
-    let mut candidates: Vec<(u64, Val)> = Vec::new();
+    let mut candidates: Vec<u64> = Vec::new();
     for b in &world.bullets {
         if !b.alive
             || !axis_ok(&family, &b.style.family)
@@ -898,32 +929,18 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
         {
             continue;
         }
-        let view = if where_f.is_some() {
-            let tau = (tick - b.birth) as f64 / TICK_RATE;
-            let p = dyn_pose(&b.motion, tau, &b.state, &sig)?;
-            let vel = match b.prev_pos {
-                Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
-                None => (0.0, 0.0),
-            };
-            let mut view = vec![
-                (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
-                (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
-                (Val::Kw("t".into()), Val::Num(tau)),
-                (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
-            ];
-            for (k, v) in &b.cols {
-                view.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
-            }
-            Val::Map(Rc::new(view))
-        } else {
-            Val::Nothing
-        };
-        candidates.push((b.id, view));
+        candidates.push(b.id);
     }
     let mut out = Vec::new();
-    for (id, view) in candidates {
+    for id in candidates {
         let keep = match &where_f {
-            Some(f) => truthy(&apply_fn(f.clone(), &[view], ctx, world, false)?),
+            Some(f) => {
+                let view = match world.find(id) {
+                    Some(i) => bullet_view(i, world, &sig)?,
+                    None => continue,
+                };
+                truthy(&apply_fn(f.clone(), &[view], ctx, world, false)?)
+            }
             None => true,
         };
         if keep {

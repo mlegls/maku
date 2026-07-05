@@ -36,7 +36,13 @@ written honestly (`ex1-flip`):
   `(until pred …)` around it.
 - The **query** selects by style axes and an arbitrary pure predicate over
   the bullet's view: `:pos`, `:vel`, `:t` (age), plus any columns it
-  carries. `(:x v)` / `(:y v)` read vector components.
+  carries. **Dotted symbols are accessor chains**: `b.pos.y` is reader
+  sugar for `(:y (:pos b))`, and it works on handles, views, and vectors
+  alike; in `m"…"` strings you also get indexing — `xs[0]`, `xs[0 1]`
+  (gather), `xs[iota(3)]`.
+- One footgun: spawns without `:style` have an empty family — a
+  `{:family :circle}` query will not match them; selection matches what
+  the record actually says.
 - The **flip is a rematerialization** — the one blessed event mechanism for
   changing motion in flight. `(remat b (fn [exit] dyn))` snaps the bullet's
   state (`:pos`, `:vel`, `:t`), swaps its motion for the new signal (which

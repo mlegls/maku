@@ -1726,6 +1726,36 @@ mod tests {
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
     }
 
+    /// Accessor sugar: dotted symbols are keyword chains (reader-level);
+    /// they read handles (live bullet view), maps, and vectors; m-strings
+    /// add postfix indexing with array gather.
+    #[test]
+    fn accessor_sugar() {
+        const CARD: &str = r#"
+(defpattern p []
+  (seq
+    (defvar probe 0)
+    (export probe)
+    (spawn (pose c[3 4]) {:style {:family :circle}})
+    (manipulate {:family :circle :where (fn [b] (> b.pos.y 1))}
+      (fn [b] (set! probe b.pos.y)))))
+(defpattern gather []
+  (spawn ((rot m"(30 * iota(12))[iota(3)]") (linear c[1 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert!(
+            matches!(sim.channel_val("probe"), Some(Val::Num(n)) if n == 4.0),
+            "handle field through :where and callback: {:?}",
+            sim.channel_val("probe")
+        );
+        let mut sim = Sim::load(CARD, Some("gather")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.bullets.len(), 3, "m-string postfix array gather");
+    }
+
     /// Nested meta arrays resolve structurally: depth = axis along the
     /// element's path, cycling per level, scalars broadcasting down.
     #[test]

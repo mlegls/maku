@@ -172,7 +172,7 @@ impl<'a> Reader<'a> {
             b'$' => {
                 self.bump();
                 let s = self.read_symbol_chars()?;
-                Ok(Form::Sym(format!("${}", s).into()))
+                Ok(desugar_dotted(format!("${}", s)))
             }
             b'c' | b'p' if self.peek2() == b'[' => {
                 let head = if self.bump() == b'c' { "cart" } else { "polar" };
@@ -194,7 +194,7 @@ impl<'a> Reader<'a> {
                 Ok(match s.as_str() {
                     "true" => Form::Bool(true),
                     "false" => Form::Bool(false),
-                    _ => Form::Sym(s.into()),
+                    _ => desugar_dotted(s),
                 })
             }
         }
@@ -298,6 +298,7 @@ pub mod math {
         LBracket,
         RBracket,
         Comma,
+        Dot,
         CoordCart,  // c[
         CoordPolar, // p[
     }
@@ -377,6 +378,10 @@ pub mod math {
                     let text = &src[start..i];
                     out.push(Tok::Num(text.parse().map_err(|_| format!("bad number '{}'", text))?));
                 }
+                b'.' => {
+                    out.push(Tok::Dot);
+                    i += 1;
+                }
                 b'$' => {
                     if i + 1 < b.len() && b[i + 1] == b'(' {
                         return Err("$(...) splice not yet implemented in math".into());
@@ -453,7 +458,7 @@ pub mod math {
         }
 
         fn expr(&mut self, min_bp: u8) -> Result<Form, String> {
-            let mut lhs = self.atom()?;
+            let mut lhs = self.postfix()?;
             loop {
                 let op = match self.peek() {
                     Some(Tok::Op(o)) => *o,
@@ -474,6 +479,36 @@ pub mod math {
                 lhs = Form::call(head, vec![lhs, rhs]);
             }
             Ok(lhs)
+        }
+
+        /// atom followed by any chain of `.field` accesses and `[index]`
+        /// gathers: `nth(bs, 0).pos.y`, `xs[0 1]`, `xs[iota(3)]`. Desugars
+        /// to keyword application / (nth …) — cyclic nth broadcasts, so an
+        /// array index selects many.
+        fn postfix(&mut self) -> Result<Form, String> {
+            let mut e = self.atom()?;
+            loop {
+                match self.peek() {
+                    Some(Tok::Dot) => {
+                        self.bump();
+                        let Some(Tok::Ident(field)) = self.bump() else {
+                            return Err("expected field name after '.'".into());
+                        };
+                        e = Form::list(vec![Form::Kw(field.into()), e]);
+                    }
+                    Some(Tok::LBracket) => {
+                        self.bump();
+                        let items = self.seq_until(Tok::RBracket)?;
+                        let idx = match items.len() {
+                            1 => items.into_iter().next().unwrap(),
+                            _ => Form::Vector(items.into()),
+                        };
+                        e = Form::call("nth", vec![e, idx]);
+                    }
+                    _ => break,
+                }
+            }
+            Ok(e)
         }
 
         fn atom(&mut self) -> Result<Form, String> {
@@ -621,6 +656,25 @@ mod tests {
         assert!(printed.contains("(rot (* (* 0.2 (+ i 1)) (+ i 2)))"));
         assert!(printed.contains("{:family :gem :variant :w"));
     }
+}
+
+/// Accessor sugar: a symbol containing dots reads as a field chain —
+/// `b.pos.y` desugars in the READER to `(:y (:pos b))`, so the canonical
+/// tree is ordinary keyword application (card transformations never see
+/// dots). Malformed chains (empty segments) stay plain symbols.
+fn desugar_dotted(s: String) -> Form {
+    if !s.contains('.') {
+        return Form::Sym(s.into());
+    }
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.iter().any(|p| p.is_empty()) {
+        return Form::Sym(s.into());
+    }
+    let mut form = Form::Sym(parts[0].into());
+    for field in &parts[1..] {
+        form = Form::list(vec![Form::Kw((*field).into()), form]);
+    }
+    form
 }
 
 // ---------------------------------------------------------------------------
