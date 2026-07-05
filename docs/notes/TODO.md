@@ -6,12 +6,11 @@ language.md.
 
 ## Language features spec'd but unimplemented
 - `race` general form (§8) — only the `until` degenerate case exists (it is
-  also how `phases` arms each phase's implicit goto/timeout/:until race).
-- `phases` leftovers (§8): `:hp n` as a per-phase hp POOL (needs a boss
-  subject to write the column on — today hp gates are `:until (<= $boss-hp
-  n)` and `:hp` rides along as card data); phase-body return value as the
-  next label (routing is goto-or-clause-order); host HUD wiring for
-  `:name`/`:timeout` (only `$phase` exports now).
+  also how `phases` arms each state's goto guard).
+- `phases` leftovers (§8): phase-body return value as the next label
+  (routing is goto-or-state-order); a stock spellcard-template macro
+  (DMK's hpi/type/root/timer opts record expanding to body code) once the
+  boss tutorial demands one.
 - `(with {$chan v} body)` scoped channel overrides (§3/§13.8).
 - Pattern-embedding scope adapters (§10) — callable patterns embed bare:
   defaults only, no argument passing, shared cells.

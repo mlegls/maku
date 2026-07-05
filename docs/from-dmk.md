@@ -93,11 +93,13 @@ decode notes.
 
 | DMK | here |
 |---|---|
-| `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — ordered labeled clauses |
-| `phase X { type(spell, "Name") hp(4000) root(0,2) }` | clause opts: `{:name "Name" :type :spell :timeout X :until (<= $boss-hp n) :root c[0 2]}` |
-| phase timeout / hp race | the clause's implicit race: `:timeout` + `:until` + goto, guarding the body |
-| `shiftphaseto(N)` (index) | `(goto :label)` — labels survive phase insertion; scoped to the innermost machine |
-| the zeroeth setup phase convention | a routing clause: `(:opening (goto :spell1))` — or nothing; setup is just code before `phases` |
+| `pattern { } { phase … phase … }` | `(phases (:label body… (finally …)?) …)` — a bare FSM of ordered labeled states |
+| `hp(4000)` phase property | body code: `(until (<= $boss-hp n) attack)` *as* the state body |
+| phase timeout `phase X {…}` | body code: `(fork (seq (wait X) (goto)))` — bare goto = exit to successor |
+| `root(0, 2)` phase property | body code: `(move dur ease c[0 2])` at the body head — the card knows its boss |
+| `type(spell, "Name")` | card data: an exported cell written at state heads (or a card-level template macro) |
+| `shiftphaseto(N)` (index) | `(goto :label)` — labels survive phase insertion; scoped to the innermost machine; labels are values, so routing may be computed |
+| the zeroeth setup phase convention | a routing state: `(:opening (goto :spell1))` — or nothing; setup is just code before `phases` |
 | phase-end task cancellation (token propagation) | the phase guard cancels the body's whole task subtree (`until` semantics) |
 | end-of-phase item drops / cleanup | the clause's `finally` block — runs on every exit path |
 | `vulnerable(false)` phase property | `(invuln boss dur)` in the previous phase's `finally` — a column both resolve paths honor |

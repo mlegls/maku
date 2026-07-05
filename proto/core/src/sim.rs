@@ -135,17 +135,15 @@ enum TF {
         idx: usize,
     },
     Frame(FrameSpec),
-    /// A running `phases` machine: the trampoline over ordered clauses.
-    /// stage: 0 = enter cur (root move), 1 = arm the implicit race + push
-    /// the body, 2 = body exited (completed/cancelled) → run finally,
-    /// 3 = route (goto target or clause order) and loop to 0.
+    /// A running `phases` machine: the trampoline over ordered states.
+    /// stage: 0 = enter cur (arm the goto guard, push the body), 1 = body
+    /// exited (completed/cancelled) → run finally, 2 = route (goto target
+    /// or state order) and loop to 0.
     Phases {
         clauses: Rc<[PhaseClause]>,
         env: Env,
         /// goto-request cell (world-counter id, so it snapshots/replays).
         cell: u64,
-        /// cell publishing the current label as the $phase channel.
-        label_cell: u64,
         cur: usize,
         stage: u8,
     },
@@ -1139,75 +1137,38 @@ fn step_task(
                 *idx += 1;
                 Some((f, e))
             }
-            TF::Phases { clauses, env, cell, label_cell, cur, stage } => {
+            TF::Phases { clauses, env, cell, cur, stage } => {
                 match *stage {
-                    // enter the current clause: publish the label, clear any
-                    // stale goto request, reposition to :root first
+                    // enter the current state: clear any stale goto request,
+                    // arm the goto guard over the body scope (forks under it
+                    // inherit it), push the body
                     0 => {
                         if *cur >= clauses.len() {
-                            // fell off the end: the machine completes and
-                            // retires its $phase export
-                            let lc = *label_cell;
-                            ctx.sig.exports.borrow_mut().retain(|(_, id)| *id != lc);
-                            task.stack.pop();
+                            task.stack.pop(); // fell off the end: complete
                             continue;
                         }
                         let c = clauses[*cur].clone();
-                        let (cell, label_cell) = (*cell, *label_cell);
-                        *stage = 1;
-                        {
-                            let mut cells = ctx.sig.cells.borrow_mut();
-                            cells.insert(cell, ("#goto".to_string(), Val::Nothing));
-                            cells.insert(
-                                label_cell,
-                                ("phase".to_string(), Val::Kw(c.label.clone())),
-                            );
-                        }
-                        if let Some((x, y)) = c.root {
-                            // DMK's root prop: the boss moves into position
-                            // first; the phase (and its timer) starts on
-                            // arrival
-                            let dur = (0.9 * TICK_RATE) as u64;
-                            world.boss_anim = Some(BossAnim {
-                                from: world.boss,
-                                to: (x, y),
-                                start: world.tick,
-                                dur,
-                            });
-                            task.wait = dur;
-                            return Ok(false);
-                        }
-                        continue;
-                    }
-                    // arm the implicit race(goto, timeout, :until) as the
-                    // guard over the body scope; forks under it inherit it
-                    1 => {
-                        let c = clauses[*cur].clone();
                         let cell = *cell;
-                        *stage = 2;
-                        let deadline = c
-                            .timeout
-                            .map(|s| world.tick as f64 + s * TICK_RATE)
-                            .unwrap_or(-1.0);
-                        let mut pred = Form::list(vec![
-                            Form::sym("phase-end?"),
-                            Form::Num(cell as f64),
-                            Form::Num(deadline),
-                        ]);
-                        if let Some(u) = &c.until {
-                            pred = Form::list(vec![Form::sym("or"), pred, u.clone()]);
-                        }
                         let benv = env.bind("#phase-cell".into(), Val::Num(cell as f64));
+                        *stage = 1;
+                        ctx.sig
+                            .cells
+                            .borrow_mut()
+                            .insert(cell, ("#goto".to_string(), Val::Nothing));
+                        let pred = Form::list(vec![
+                            Form::sym("phase-goto?"),
+                            Form::Num(cell as f64),
+                        ]);
                         task.stack.push(TF::Guard { pred, env: benv.clone() });
                         task.stack.push(TF::Seq { items: c.body.clone(), idx: 0, env: benv });
                         continue;
                     }
-                    // body exited (completed, timed out, or goto'd): the
-                    // finalizer runs OUTSIDE the phase guard, on every path
-                    2 => {
+                    // body exited (completed or goto'd): the finalizer runs
+                    // OUTSIDE the state's guard, on every path
+                    1 => {
                         let c = clauses[*cur].clone();
                         let cell = *cell;
-                        *stage = 3;
+                        *stage = 2;
                         if !c.finally.is_empty() {
                             let benv =
                                 env.bind("#phase-cell".into(), Val::Num(cell as f64));
@@ -1219,7 +1180,8 @@ fn step_task(
                         }
                         continue;
                     }
-                    // route: a goto target wins; default is clause order
+                    // route: a goto target wins; bare goto and body
+                    // completion take the default successor (state order)
                     _ => {
                         let next = match ctx.sig.cells.borrow().get(cell) {
                             Some((_, Val::Kw(l))) => Some(l.clone()),
@@ -1231,7 +1193,7 @@ fn step_task(
                                     clauses.iter().position(|c| c.label == l)
                                 else {
                                     return Err(format!(
-                                        "goto: no phase :{} in this machine",
+                                        "goto: no state :{} in this machine",
                                         l
                                     ));
                                 };
@@ -1410,19 +1372,15 @@ fn run_action(
             Ok(false)
         }
         ActionV::Phases { clauses, env } => {
-            // allocate the machine's cells from the world counter (ids are
-            // deterministic, so goto requests snapshot and replay); the
-            // label cell publishes as the $phase channel while it runs
+            // allocate the goto-request cell from the world counter (ids
+            // are deterministic, so requests snapshot and replay)
             let cell = world.next_id;
-            let label_cell = world.next_id + 1;
-            world.next_id += 2;
+            world.next_id += 1;
             ctx.sig.cells.borrow_mut().insert(cell, ("#goto".to_string(), Val::Nothing));
-            ctx.sig.exports.borrow_mut().push(("phase".to_string(), label_cell));
             task.stack.push(TF::Phases {
                 clauses: clauses.clone(),
                 env: env.clone(),
                 cell,
-                label_cell,
                 cur: 0,
                 stage: 0,
             });
@@ -2715,9 +2673,9 @@ mod tests {
         );
     }
 
-    /// The phases machine: routing goto skips clauses, the implicit
-    /// timeout race ends a looping body, finalizers run on the way out,
-    /// fall-through completes the machine, and $phase publishes the label.
+    /// The phases FSM: routing goto skips states, a timeout expressed as
+    /// body code (fork + wait + bare goto) ends a looping body, finalizers
+    /// run on the way out, and fall-through completes the machine.
     #[test]
     fn phases_trampoline() {
         const CARD: &str = r#"
@@ -2726,7 +2684,8 @@ mod tests {
     (phases
       (:opening (goto :b))
       (:a (spawn (circle 3 (still))))            ; skipped by the goto
-      (:b {:timeout 0.05}
+      (:b
+        (fork (seq (wait 0.05) (goto)))          ; timeout: exit to successor
         (for [i inf :every 1] (spawn (circle 5 (still))))
         (finally (event :b-done))))
     (event :machine-done)))
@@ -2734,14 +2693,7 @@ mod tests {
         let mut sim = Sim::load(CARD, Some("m")).unwrap();
         sim.step().unwrap();
         assert_eq!(sim.world.bullets.len(), 5, ":opening routed straight to :b");
-        // channels refresh from exports at the START of a step: the label
-        // registered during step 1 is readable from step 2 on
-        sim.step().unwrap();
-        assert!(
-            matches!(sim.ctx.sig.channels.get("phase"), Some(Val::Kw(l)) if &**l == "b"),
-            "$phase publishes the running label"
-        );
-        for _ in 0..19 {
+        for _ in 0..20 {
             sim.step().unwrap();
         }
         assert_eq!(sim.world.bullets.len(), 5, "the :b loop died at the timeout");
@@ -2752,15 +2704,11 @@ mod tests {
         assert!(b_done.is_some(), "finalizer ran on timeout exit");
         assert!(m_done.is_some(), "falling off the end completed the machine");
         assert!(b_done < m_done, "finalizer before machine completion");
-        assert!(
-            !sim.ctx.sig.exports.borrow().iter().any(|(n, _)| n == "phase"),
-            "the machine retired its $phase export"
-        );
     }
 
-    /// goto is a scoped exit: from a fork inside the phase body it cancels
-    /// the whole phase scope (the forked spawner dies with it) and re-enters
-    /// at the target label; :until gates a phase on a channel.
+    /// goto is a scoped exit: from a fork inside the state body it cancels
+    /// the whole state scope — including a nested (until …) guard the body
+    /// wrapped itself in — and re-enters at the target label.
     #[test]
     fn phases_goto_from_fork_and_until() {
         const CARD: &str = r#"
@@ -2769,9 +2717,10 @@ mod tests {
     (defvar hp 10)
     (export hp)
     (phases
-      (:spell {:until (<= $hp 0)}
+      (:spell
         (fork (seq (wait 0.05) (goto :post)))
-        (for [i inf :every (ticks 2)] (spawn (still)))
+        (until (<= $hp 0)                        ; the hp gate, as body code
+          (for [i inf :every (ticks 2)] (spawn (still))))
         (finally (event :spell-out)))
       (:post (event :post)))))
 "#;
@@ -2785,6 +2734,32 @@ mod tests {
             sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
         assert!(names.iter().any(|n| n == "spell-out"), "finalizer ran on goto exit");
         assert!(names.iter().any(|n| n == "post"), "re-entered at the target label");
+    }
+
+    /// Labels are values: computed goto routing makes the machine a Markov
+    /// chain (here over the deterministic world rng).
+    #[test]
+    fn phases_markov_routing() {
+        const CARD: &str = r#"
+(defpattern m []
+  (phases
+    (:a (event :in-a)
+        (wait (ticks 4))
+        (goto (nth [:a :b] (rand-int 0 2))))
+    (:b (event :in-b)
+        (wait (ticks 4))
+        (goto (nth [:a :b] (rand-int 0 2))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("m")).unwrap();
+        for _ in 0..200 {
+            sim.step().unwrap();
+        }
+        let names: Vec<String> =
+            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+        let a = names.iter().filter(|n| *n == "in-a").count();
+        let b = names.iter().filter(|n| *n == "in-b").count();
+        assert!(a + b >= 40, "the chain kept walking: {} + {}", a, b);
+        assert!(a > 0 && b > 0, "both states visited: a={} b={}", a, b);
     }
 
     /// goto outside any phases machine is an error, and machines are

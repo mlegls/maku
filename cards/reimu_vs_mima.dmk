@@ -9,11 +9,12 @@
 ;;   lives/game-over and boss hp/phases are columns + triggers.
 ;;
 ;;   boss phases: a (phases ...) machine — non-spell while hp > 60, then
-;;   Spell 2 (imported ph_boss2_mima translation) until hp 0. Each
-;;   clause's :until arms the implicit race that cancels the phase's
-;;   whole task subtree (turret forks, guide loops) the tick it holds;
-;;   the finally block is the phase-edge bookkeeping (field clear,
-;;   transition mercy window). The machine exports $phase.
+;;   Spell 2 (imported ph_boss2_mima translation) until hp 0. The machine
+;;   is a bare FSM; each state's end condition is body code — (until
+;;   (<= $boss-hp n) attack) — whose cancellation kills the phase's whole
+;;   task subtree (turret forks, guide loops) the tick it holds, and the
+;;   finally block is the phase-edge bookkeeping (field clear, transition
+;;   mercy window).
 ;;
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
 ;;   anchor); the player kit opts out with (in-frame :world ...).
@@ -100,14 +101,16 @@
       (seq
         (wait-for (> $boss-hp 0))          ; boss registered
         (phases
-          (:nonspell {:until (<= $boss-hp 60)}
-            (nonspell)
+          (:nonspell
+            (until (<= $boss-hp 60)        ; the hp gate ends the state
+              (nonspell))
             (finally
               (event :spell)
               (cull)                       ; field clear at the phase edge
               (invuln (nth boss 0) 1.5)))  ; transition mercy window
-          (:spell2 {:until (<= $boss-hp 0)}
-            (spell-2)))))))
+          (:spell2
+            (until (<= $boss-hp 0)
+              (spell-2))))))))
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks
 (defpattern nonspell []

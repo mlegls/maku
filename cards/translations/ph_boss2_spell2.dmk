@@ -124,10 +124,14 @@
       (wait 1)
       (recur))))
 
-;; In the boss's phases:
-;;   (:spell2 {:name "Spell 2" :type :spell :hp 38 :timeout 48
-;;             :root c[3.6 -0.5]}
-;;     (spell-2 factor))
+;; In the boss's phases (the machine is a bare FSM; hp gate, timeout, and
+;; repositioning are body code — DMK's hpi/type/root props are a template
+;; a card can macro on top of it):
+;;   (:spell2
+;;     (move 0.9 :out-sine c[3.6 -0.5])         ; root
+;;     (fork (seq (wait 48) (goto)))            ; timeout -> successor
+;;     (until (<= $boss-hp 0)                   ; hp gate
+;;       (spell-2 factor)))
 ;; Phase end (hp or timeout) cancels the whole tree: the main loop, both
 ;; forked turrets, and the guide rigs die together -- scope cancellation is
 ;; the cleanup DMK gets from phase-token propagation.

@@ -207,6 +207,22 @@ labels survive tree transformations. Corpus contact (ph_boss2_mima):
 `hpi`/`type`/`root` = phase opts; the `isAccel` mode-flag attack is a nested
 `phases` in a phase body.
 
+**Revised again (implementation contact): the primitive is a bare FSM; the
+opts map was a boss template in disguise.** `(phases (label body… finally?)
+…)` — no opts. Everything the opts did is expressible as state-body code
+with two small generalizations of `goto`: labels are *values* (evaluated —
+`(goto (nth [:a :b] (rand-int 0 2)))` makes the machine a Markov chain) and
+bare `(goto)` exits to the default successor (state order). Then: the hp
+race is `(until (<= $boss-hp n) attack)` *as* the body (scope cancellation
+falls through), a timeout is `(fork (seq (wait d) (goto)))` (it can't name
+what comes next; bare goto is exactly that), `root` is `(move …)` at the
+body head — the card knows who its boss is, the machine doesn't — and
+publishing the phase is an ordinary exported cell. `finally` stays
+primitive: running on the *cancelled* path is the one thing body code
+cannot do (something must survive the scope's unwind). The DMK spellcard
+record (`hpi`/`type`/`root`/timer) becomes a card-level macro over this,
+not engine surface.
+
 **`move` — entity motion is remat, not frame mutation (clarified).** There IS
 a thing being moved: the boss (or player option) is an expressed entity — it
 renders, collides, has hp — and patterns anchor to its live pose signal (the

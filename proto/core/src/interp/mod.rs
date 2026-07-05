@@ -99,22 +99,14 @@ pub struct SpawnElem {
     pub path: Vec<(usize, usize)>,
 }
 
-/// One clause of a `phases` machine (§8): `(label opts? body… (finally …)?)`.
-/// The opts drive the implicit race(goto, timeout, until) AND ride along as
-/// host-facing card data (:name/:type/:hp — DMK's hpi/type props do both
-/// jobs too).
+/// One state of a `phases` machine (§8): `(label body… (finally …)?)`.
+/// The machine is a bare FSM — labeled states, default successor = next in
+/// order, `goto` for everything else. Phase-end conditions are ordinary
+/// body code (`(until pred …)` as the body, `(fork (seq (wait d) (goto)))`
+/// for timeouts); boss templates layer on top as functions/macros, not here.
 #[derive(Debug, Clone)]
 pub struct PhaseClause {
     pub label: Rc<str>,
-    /// :timeout secs — implicit phase end.
-    pub timeout: Option<f64>,
-    /// :until pred — implicit phase end (unevaluated form; hp gates over
-    /// exposed channels live here: `:until (<= $boss-hp 60)`).
-    pub until: Option<Form>,
-    /// :root — the boss repositions here before the phase body starts.
-    pub root: Option<(f64, f64)>,
-    /// Remaining opts (:name :type :hp …) — card data, evaluated once.
-    pub data: Vec<(Rc<str>, Val)>,
     pub body: Rc<[Form]>,
     pub finally: Rc<[Form]>,
 }
@@ -181,16 +173,19 @@ pub enum ActionV {
     /// phase-end scope-cancellation primitive ((race (wait-for p) body)
     /// degenerate case).
     Until { pred: Form, body: Rc<[Form]>, env: Env },
-    /// The §8 phase machine: ordered labeled clauses run as a trampoline —
-    /// each phase ends by goto, timeout, :until, or body completion;
-    /// finalizers run on every exit path; next = goto target, defaulting
-    /// to clause order; falling off the end completes the machine.
+    /// The §8 state machine: ordered labeled states run as a trampoline —
+    /// a state ends by goto or body completion; finalizers run on every
+    /// exit path; next = goto target, defaulting to state order; falling
+    /// off the end completes the machine.
     Phases { clauses: Rc<[PhaseClause]>, env: Env },
-    /// (goto :label): scoped non-local exit — cancel the enclosing phase
-    /// body (finalizers run), re-enter at the label. The cell identifies
-    /// the innermost lexical machine (bound as #phase-cell in phase bodies,
-    /// so outer machines' labels are simply not in scope).
-    Goto { cell: u64, label: Rc<str> },
+    /// (goto label?): scoped non-local exit — cancel the enclosing state
+    /// body (finalizers run), re-enter at the label; bare (goto) takes the
+    /// default successor (state order). Labels are VALUES (evaluated), so
+    /// routing may be computed — `(goto (nth [:a :b] (rand-int 0 2)))` is a
+    /// Markov chain. The cell identifies the innermost lexical machine
+    /// (bound as #phase-cell in state bodies, so outer machines' labels
+    /// are simply not in scope).
+    Goto { cell: u64, label: Option<Rc<str>> },
     Wait { ticks: u64 },
     WaitFor { pred: Form, env: Env },
     DefVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, init: Val },
@@ -585,50 +580,20 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 })));
             }
             "phases" => {
-                // (phases (label opts? body… (finally body…)?) …) — ordered
-                // clauses, label keyword as head. Opts evaluate once, here
-                // (card data); :until stays a form (a per-tick predicate).
+                // (phases (label body… (finally body…)?) …) — a bare FSM:
+                // ordered labeled states, label keyword as head. End
+                // conditions are body code — (until pred …) as the body,
+                // (fork (seq (wait d) (goto))) for timeouts — and boss
+                // templates (hp bars, roots, names) are userland layers.
                 let mut clauses = Vec::new();
                 for cf in &items[1..] {
                     let Form::List(parts) = cf else {
-                        return Err("phases: expected (:label opts? body…) clauses".into());
+                        return Err("phases: expected (:label body…) states".into());
                     };
                     let Some(Form::Kw(label)) = parts.first() else {
-                        return Err("phases: clause head must be a :label keyword".into());
+                        return Err("phases: state head must be a :label keyword".into());
                     };
-                    let mut at = 1;
-                    let (mut timeout, mut until, mut root) = (None, None, None);
-                    let mut data = Vec::new();
-                    if let Some(Form::Map(kvs)) = parts.get(1) {
-                        at = 2;
-                        for (k, v) in kvs.iter() {
-                            let Form::Kw(k) = k else {
-                                return Err("phases: opts keys are keywords".into());
-                            };
-                            match &**k {
-                                "timeout" => {
-                                    timeout = Some(evaluate(v, env, ctx, world)?.num()?)
-                                }
-                                "until" => until = Some(v.clone()),
-                                "root" => match evaluate(v, env, ctx, world)? {
-                                    Val::Vec2 { x, y } => root = Some((x, y)),
-                                    v => {
-                                        return Err(format!(
-                                            "phases: :root expects a point, got {:?}",
-                                            v
-                                        ))
-                                    }
-                                },
-                                other => {
-                                    data.push((
-                                        Rc::from(other),
-                                        evaluate(v, env, ctx, world)?,
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    let mut body: Vec<Form> = parts[at..].to_vec();
+                    let mut body: Vec<Form> = parts[1..].to_vec();
                     let mut finally: Vec<Form> = Vec::new();
                     if let Some(Form::List(last)) = body.last() {
                         if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
@@ -638,16 +603,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     }
                     clauses.push(PhaseClause {
                         label: label.clone(),
-                        timeout,
-                        until,
-                        root,
-                        data,
                         body: body.into(),
                         finally: finally.into(),
                     });
                 }
                 if clauses.is_empty() {
-                    return Err("phases: no clauses".into());
+                    return Err("phases: no states".into());
                 }
                 return Ok(Val::Action(Rc::new(ActionV::Phases {
                     clauses: clauses.into(),
@@ -655,32 +616,34 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 })));
             }
             "goto" => {
-                let Some(Form::Kw(label)) = items.get(1) else {
-                    return Err("goto: expected (goto :label)".into());
+                // (goto label?) — the label is a VALUE (computed routing is
+                // a Markov chain); bare (goto) exits to the default
+                // successor (state order — what a timeout fork wants, since
+                // it can't name what comes next).
+                let label = match items.get(1) {
+                    None => None,
+                    Some(f) => match evaluate(f, env, ctx, world)? {
+                        Val::Kw(l) => Some(l),
+                        v => return Err(format!("goto: expected a :label, got {:?}", v)),
+                    },
                 };
                 // scoped strictly to the innermost lexical phases: the
-                // machine binds its request cell as #phase-cell in phase
+                // machine binds its request cell as #phase-cell in state
                 // bodies; inner machines shadow, called patterns don't see it
                 let cell = match env.lookup("#phase-cell") {
                     Some(Val::Num(n)) => n as u64,
                     _ => return Err("goto: no enclosing phases machine".into()),
                 };
-                return Ok(Val::Action(Rc::new(ActionV::Goto {
-                    cell,
-                    label: label.clone(),
-                })));
+                return Ok(Val::Action(Rc::new(ActionV::Goto { cell, label })));
             }
-            "phase-end?" => {
-                // internal (synthesized by the machine's implicit race):
-                // (phase-end? cell deadline) — goto requested, or the
-                // deadline tick passed (deadline < 0 = no timeout)
+            "phase-goto?" => {
+                // internal (the machine's guard over each state body):
+                // has a goto been requested on this machine's cell?
                 let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
-                let deadline = evaluate(&items[2], env, ctx, world)?.num()?;
-                let goto_set =
-                    matches!(ctx.sig.cells.borrow().get(&cell), Some((_, Val::Kw(_))));
-                return Ok(Val::Bool(
-                    goto_set || (deadline >= 0.0 && world.tick as f64 >= deadline),
-                ));
+                return Ok(Val::Bool(matches!(
+                    ctx.sig.cells.borrow().get(&cell),
+                    Some((_, Val::Kw(_) | Val::Bool(true)))
+                )));
             }
             "cull" => {
                 // (cull): clear all hostile fire (bomb semantics);
@@ -1535,12 +1498,17 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::Nothing)
         }
         // a goto from an instant context (manip callback) just files the
-        // request; the machine's implicit race picks it up on its next step
+        // request; the machine's guard picks it up on its next step
         ActionV::Goto { cell, label } => {
             let mut cells = ctx.sig.cells.borrow_mut();
-            // first request wins until the machine clears it (tree order)
-            if !matches!(cells.get(cell), Some((_, Val::Kw(_)))) {
-                cells.insert(*cell, ("#goto".to_string(), Val::Kw(label.clone())));
+            // first request wins until the machine clears it (tree order);
+            // bare (goto) files Bool(true) = "default successor"
+            if !matches!(cells.get(cell), Some((_, Val::Kw(_) | Val::Bool(true)))) {
+                let v = match label {
+                    Some(l) => Val::Kw(l.clone()),
+                    None => Val::Bool(true),
+                };
+                cells.insert(*cell, ("#goto".to_string(), v));
             }
             Ok(Val::Nothing)
         }
