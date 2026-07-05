@@ -11,12 +11,12 @@
 ;; seeds older than 0.7s and replaces each with one ring of shots.
 (defpattern ex1-fruit-basic []
   (par
-    (dotimes [vol inf :every 3]
+    (for [vol inf :every 3]
       (spawn (circle 8 (linear p[3 0]))
              {:style {:family :lellipse :color :red :variant :w}}))
     (fork
-      (dotimes [i inf :every (ticks 5)]
-        (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+      (for [i inf :every (ticks 5)]
+        (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
           (fn [b]
             (seq
               ((pose (pos b))
@@ -29,17 +29,17 @@
 ;; scheduled work is adopted by the pattern's scope.
 (defpattern ex2-fruit-staged []
   (par
-    (dotimes [vol inf :every 3]
+    (for [vol inf :every 3]
       (spawn (circle 8 (linear p[3 0]))
              {:style {:family :lellipse :color :red :variant :w}}))
     (fork
-      (dotimes [i inf :every (ticks 5)]
-        (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+      (for [i inf :every (ticks 5)]
+        (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
           (fn [b]
             (seq
               (fork
                 ((pose (pos b))
-                  (dotimes [ring 6 :every (ticks 12)]
+                  (for [ring 6 :every (ticks 12)]
                     (spawn (circle 20
                              ((pose c[(* 0.4 ring) 0])
                                (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
@@ -53,19 +53,19 @@
 
 (defpattern ex3-fruit-colors []
   (par
-    (dotimes [vol inf :every 3]
+    (for [vol inf :every 3]
       (spawn (circle 8 (linear p[3 0]))
              {:style {:family :lellipse :color palette :variant :w}
               :cols {:ci (iota 8)}}))
     (fork
-      (dotimes [i inf :every (ticks 5)]
-        (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+      (for [i inf :every (ticks 5)]
+        (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
           (fn [b]
             (let [ci b.ci]
               (seq
                 (fork
                   ((pose (pos b))
-                    (dotimes [ring 6 :every (ticks 12)]
+                    (for [ring 6 :every (ticks 12)]
                       (spawn (circle 20
                                ((pose c[(* 0.4 ring) 0])
                                  (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
@@ -82,7 +82,7 @@
 ;; every 2 seconds it fires a rotated ring of long bullets.
 (defpattern ex4-weave []
   (in-frame (cart m"2 * sine(8, 1, t)" 0)
-    (dotimes [vol inf :every 2]
+    (for [vol inf :every 2]
       (spawn ((rot m"22 * vol") (circle 16 (linear p[2 0])))
              {:style {:family :keine :color :purple :variant :w}}))))
 
@@ -92,12 +92,12 @@
 (defpattern ex5-chimera []
   (par
     (in-frame (cart m"2 * sine(8, 1, t)" 0)
-      (dotimes [vol inf :every 2]
+      (for [vol inf :every 2]
         (spawn ((rot m"22 * vol") (circle 16 (linear p[2 0])))
                {:style {:family :keine :color :purple :variant :w}})))
     (fork
-      (dotimes [i inf :every (ticks 5)]
-        (manipulate {:family :keine :where (fn [b] (> b.t 1))}
+      (for [i inf :every (ticks 5)]
+        (manip {:family :keine :where (fn [b] (> b.t 1))}
           (fn [b]
             (let [tx (- b.pos.x (* b.vel.x b.t))
                   ty (- b.pos.y (* b.vel.y b.t))]

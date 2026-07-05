@@ -362,7 +362,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
 
     if let Form::Sym(s) = head {
         match &**s {
-            "dotimes" => return sf_dotimes(items, env, ctx, world),
+            // "for" is the surface name; "dotimes" kept as an alias
+            "for" | "dotimes" => return sf_dotimes(items, env, ctx, world),
             "loop" => return sf_loop(items, env, ctx, world),
             "recur" => {
                 let vals = items[1..]
@@ -441,7 +442,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Action(Rc::new(ActionV::Event { channel: ch })));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
-            "manipulate" => {
+            // "manip" is the surface name; "manipulate" kept as an alias
+            "manip" | "manipulate" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
                 let callback = evaluate(&items[2], env, ctx, world)?;
                 // a query map selects by style axes (Kw exact / Arr any-of)

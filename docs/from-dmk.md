@@ -29,7 +29,7 @@ decode notes.
 
 | DMK | here |
 |---|---|
-| `bulletcontrol(persist, sel, ctrl)` | `(fork (dotimes [i inf :every (ticks 1)] (manipulate sel ctrl)))` |
+| `bulletcontrol(persist, sel, ctrl)` | `(fork (for [i inf :every (ticks 1)] (manip sel ctrl)))` |
 | persistence predicate / `newtimer()` | loop bounds, or `(until pred …)` |
 | `poolcontrol(sel, reset)` | cancel the control's scope |
 | style selector `{{ "circle-*" }, { "red/w" }}` | query map `{:family :circle :color :red}`; arrays mean any-of |
@@ -45,9 +45,9 @@ decode notes.
 
 | DMK | here |
 |---|---|
-| `async … gcrepeat { wait(60) times(inf) }` | `(dotimes [i inf :every t] …)` |
+| `async … gcrepeat { wait(60) times(inf) }` | `(for [i inf :every t] …)` |
 | `paction` / `saction` | `(par …)` / `(seq …)` |
-| `gtrepeat { … waitchild }` | `dotimes` + `fork` for children the loop shouldn't wait on |
+| `gtrepeat { … waitchild }` | `for` + `fork` for children the loop shouldn't wait on |
 | `lerpt(a, b, from, to)` in movement | `(lerp a b t from to)` in a `vel`/signal slot |
 | `preloop b{ hvar colorIndex = i }` | `:cols {:ci (iota n)}` — column arrays bind per element |
 | `&colorIndex` in a control | `b.ci` on the bullet view |
@@ -61,7 +61,7 @@ decode notes.
 - **Repeaters vs arrays.** DMK expresses multiplicity through repeater
   state machines with modifiers; here simultaneous multiplicity is array
   broadcasting (frames × children) and only *sequential* firing uses a
-  loop (`dotimes`). If a `gsrepeat` has no waits, it's an array here.
+  loop (`for`). If a `gsrepeat` has no waits, it's an array here.
 - **Movement functions vs signals.** Both engines treat motion as pure
   functions of a bullet-local clock. Here that's typed: closed-form
   motion (evaluable at any `t`) and integrated motion (`vel`/`acc`,

@@ -21,13 +21,13 @@ ripe seeds (`ex1-fruit-basic`):
 ```clojure
 (par
   ;; the emitter: 8 seeds, every 3 seconds
-  (dotimes [vol inf :every 3]
+  (for [vol inf :every 3]
     (spawn (circle 8 (linear p[3 0]))
            {:style {:family :lellipse :color :red :variant :w}}))
   ;; the control: seeds older than 0.7s burst and die
   (fork
-    (dotimes [i inf :every (ticks 5)]
-      (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+    (for [i inf :every (ticks 5)]
+      (manip {:family :lellipse :where (fn [b] (> b.t 0.7))}
         (fn [b]
           (seq
             ((pose (pos b))
@@ -52,7 +52,7 @@ it from inside the callback (`ex2-fruit-staged`):
   (seq
     (fork
       ((pose (pos b))
-        (dotimes [ring 6 :every (ticks 12)]
+        (for [ring 6 :every (ticks 12)]
           (spawn (circle 20
                    ((pose c[(* 0.4 ring) 0])
                      (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
@@ -106,7 +106,7 @@ The weave is a frame whose position is a function of time
 
 ```clojure
 (in-frame (cart m"2 * sine(8, 1, t)" 0)
-  (dotimes [vol inf :every 2]
+  (for [vol inf :every 2]
     (spawn ((rot m"22 * vol") (circle 16 (linear p[2 0])))
            {:style {:family :keine :color :purple :variant :w}})))
 ```
@@ -120,7 +120,7 @@ straight-line motion means *tail = pos − vel·t*. Thirteen beads are laid
 along the segment from tail to head (`ex5-chimera`):
 
 ```clojure
-(manipulate {:family :keine :where (fn [b] (> b.t 1))}
+(manip {:family :keine :where (fn [b] (> b.t 1))}
   (fn [b]
     (let [tx (- b.pos.x (* b.vel.x b.t))
           ty (- b.pos.y (* b.vel.y b.t))]

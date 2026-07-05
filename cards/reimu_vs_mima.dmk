@@ -47,7 +47,7 @@
 ;; focus switches the fire mode (player_homing's A/B split): homing
 ;; amulets unfocused; tight forward needles focused (more dps, must aim)
 (defpattern free-fire []
-  (dotimes [i inf :every (ticks 8)]
+  (for [i inf :every (ticks 8)]
     (when (> $boss-hp 0)
       (when (< $focus-firing 0.5)
         (spawn (in-frame $player
@@ -75,7 +75,7 @@
     (recur (dec stock))))
 
 (defpattern seal []
-  (dotimes [k 6 :every (ticks 6)]
+  (for [k 6 :every (ticks 6)]
     (spawn (seal-orb k 1.2)
            {:style {:family :gglcircle
                     :color (nth [:red :green :yellow :blue] k)
@@ -107,7 +107,7 @@
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks
 (defpattern nonspell []
-  (dotimes [vol inf :every (ticks 46)]
+  (for [vol inf :every (ticks 46)]
     (seq
       (spawn ((aim $player)
                (fan 5 16 (linear p[(* factor 2.6) 0])))

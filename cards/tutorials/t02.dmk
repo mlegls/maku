@@ -12,12 +12,12 @@
 (defpattern ex1-flip []
   (par
     (fork
-      (dotimes [i 480 :every (ticks 1)]      ; the control, for 4 seconds
-        (manipulate {:family :circle
+      (for [i 480 :every (ticks 1)]      ; the control, for 4 seconds
+        (manip {:family :circle
                      :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
           (fn [b] (remat b (fn [exit]
             (linear c[exit.vel.x (- 0 exit.vel.y)])))))))
-    (dotimes [vol inf :every (ticks 50)]
+    (for [vol inf :every (ticks 50)]
       (spawn (circle 24 (linear p[2.5 0]))
              {:style {:family :circle :color :red :variant :w}}))))
 
@@ -27,12 +27,12 @@
 (defpattern ex2-select-cull []
   (par
     (fork
-      (dotimes [i inf :every (ticks 1)]
-        (manipulate {:family [:circle :star]
+      (for [i inf :every (ticks 1)]
+        (manip {:family [:circle :star]
                      :color [:red :blue]
                      :where (fn [b] (< b.pos.y -2))}
           (fn [b] (cull b)))))
-    (dotimes [vol inf :every (ticks 40)]
+    (for [vol inf :every (ticks 40)]
       (spawn (circle 16 (linear p[2 0]))
              {:style {:family (nth [:circle :star] vol)
                       :color [:red :blue :green]
@@ -45,14 +45,14 @@
 (defpattern ex3-restyle-at-age []
   (par
     (fork
-      (dotimes [i inf :every (ticks 10)]
-        (manipulate {:family :circle
+      (for [i inf :every (ticks 10)]
+        (manip {:family :circle
                      :where (fn [b] (> b.t 1))}
           (fn [b]
             (seq
               (event :sfx "x-transform-1")
               (set-style b {:family :arrow :color :red :variant :b}))))))
-    (dotimes [vol inf :every (ticks 45)]
+    (for [vol inf :every (ticks 45)]
       (spawn (circle 12 (linear p[1.2 0]))
              {:style {:family :circle :color :blue :variant :w}}))))
 
@@ -61,12 +61,12 @@
 ;; culls. (Callbacks spawn in world coordinates: ambient frames stop at
 ;; lambdas.)
 (defpattern ex4-burst []
-  (dotimes [vol inf :every (ticks 70)]
+  (for [vol inf :every (ticks 70)]
     (seq
       (spawn (circle 6 (linear p[1.5 0]))
              {:style {:family :star :color :teal :variant :w}})
       (wait 1.2)
-      (manipulate {:family :star :where (fn [b] (> b.t 1.1))}
+      (manip {:family :star :where (fn [b] (> b.t 1.1))}
         (fn [b]
           (seq
             ((pose (pos b))

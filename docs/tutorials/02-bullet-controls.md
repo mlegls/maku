@@ -20,14 +20,14 @@ seconds" (`ex1-flip`):
 
 ```clojure
 (fork
-  (dotimes [i 480 :every (ticks 1)]              ; four seconds, every tick
-    (manipulate {:family :circle
+  (for [i 480 :every (ticks 1)]              ; four seconds, every tick
+    (manip {:family :circle
                  :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
       (fn [b] (remat b (fn [exit]
         (linear c[exit.vel.x (- 0 exit.vel.y)])))))))
 ```
 
-- `(manipulate query callback)` runs the callback on every live bullet the
+- `(manip query callback)` runs the callback on every live bullet the
   query matches, *right now*. To keep watching, put it in a loop; to stop
   after a while, make the loop finite (480 iterations here) or wrap it in
   `(until pred …)` for an event-driven stop.
@@ -55,7 +55,7 @@ record actually says.
 An array in a query field means *any of* (`ex2-select-cull`):
 
 ```clojure
-(manipulate {:family [:circle :star]
+(manip {:family [:circle :star]
              :color [:red :blue]
              :where (fn [b] (< b.pos.y -2))}
   (fn [b] (cull b)))
@@ -71,7 +71,7 @@ The callback body is ordinary code, so several effects under one
 predicate is just a `seq` (`ex3-restyle-at-age`):
 
 ```clojure
-(manipulate {:family :circle :where (fn [b] (> b.t 1))}
+(manip {:family :circle :where (fn [b] (> b.t 1))}
   (fn [b]
     (seq
       (event :sfx "x-transform-1")
@@ -87,7 +87,7 @@ predicate is just a `seq` (`ex3-restyle-at-age`):
 Callbacks can spawn, anchored wherever you like (`ex4-burst`):
 
 ```clojure
-(manipulate {:family :star :where (fn [b] (> b.t 1.1))}
+(manip {:family :star :where (fn [b] (> b.t 1.1))}
   (fn [b]
     (seq
       ((pose (pos b))
