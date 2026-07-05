@@ -1669,6 +1669,22 @@ mod tests {
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → bullets
     /// head down at the player, not up.
+    /// Curves are values: (sample curve t u) evaluates a u-parameterized
+    /// dyn without expressing an entity — pose plus tangent heading.
+    #[test]
+    fn sample_evaluates_curves() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [curve (polar m"2 * u" 0)]
+    (spawn ((pose (sample curve 0 1)) (pose c[0 0]))
+           {:style {:family :gem}})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let (x, y) = sim.world.bullets[0].prev_pos.unwrap_or((f64::NAN, f64::NAN));
+        assert!((x - 2.0).abs() < 1e-6 && y.abs() < 1e-6, "point at u=1 on a straight radial curve: ({}, {})", x, y);
+    }
+
     /// Slow lasers: the telegraph shows the whole path immediately, but
     /// the hitbox sweeps out from the source over the :fill window.
     #[test]

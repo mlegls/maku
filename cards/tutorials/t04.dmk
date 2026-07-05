@@ -43,7 +43,8 @@
 
 ;; 4. subfiring from a pather tip: let-bind the guide dyn so the ribbon
 ;; and the firing loop share ONE instance, then fork the loop inside the
-;; guide's frame — it rides the tip.
+;; guide's frame — it rides the tip (the HEAD; the amulets fire backward
+;; over the ribbon, which can read as tail-emission).
 (defpattern ex4-tip-fire []
   (let [guide (cart m"1.4 * t" m"sine(1.1, 0.3, t)")]
     (par

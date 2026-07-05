@@ -121,9 +121,10 @@ time (`ex4-weave`):
 
 ```clojure
 (defpattern ex4-weave []
-  (in-frame (cart m"2 * sine(8, 1, t)" 0)
+  (in-frame (cart m"sine(12.94, 2, t)" 0)
     (for [vol inf :every 2]
-      (spawn ((rot m"22 * vol") (circle 16 (linear p[2 0])))
+      (spawn ((rot m"13.6 * vol")
+               (circle 16 ((pose c[1 0]) (linear p[2 0]))))
              {:style {:family :keine :color :purple :variant :w}}))))
 ```
 
@@ -161,16 +162,16 @@ at the volley origin and each one's motion is a `rot` frame whose angle
          {:family :keine :where (where (> b.t 1))}
          (fn [b]
            (let [th (angle-of b.vel)
-                 r  (* (mag b.vel) b.t)
-                 tx (- b.pos.x (* b.vel.x b.t))
-                 ty (- b.pos.y (* b.vel.y b.t))]
+                 r  (+ 1 (* (mag b.vel) b.t))   ; spawned at radius 1
+                 tx (- b.pos.x (* r (cos th)))  ; the volley origin
+                 ty (- b.pos.y (* r (sin th)))]
              (seq
                (spawn ((pose c[tx ty])
                         (map (fn [k]
                                ((rot (lerpsmooth eiosine 0 3 t
                                        th
                                        (+ th (* (- 1 (* 2 (mod k 2))) 33.75))))
-                                 (pose c[(- r (* 0.16 k)) 0])))
+                                 (pose c[(- r (* 0.2 k)) 0])))
                              (iota 13)))
                       {:style {:family :gcircle
                                :color [:blue :purple]

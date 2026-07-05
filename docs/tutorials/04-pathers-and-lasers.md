@@ -140,6 +140,23 @@ is the tangent plus 90° (`ex5-on-laser`):
 gems peel off the beam from base to tip — and because the pose is sampled
 live, they track the writhing curve.
 
+The way to think about all of this: **points over time are bullets;
+curves over time are lasers.** A curve is just a motion expression that
+mentions `u`, and a laser *expresses* one as an entity — the same way
+`spawn` expresses a point motion. Which means curves don't need an
+entity at all to be useful: `(sample curve t u)` evaluates one anywhere,
+returning the pose (with tangent) at that point —
+
+```clojure
+(let [curve (polar m"1.8 * u" m"sine(2.8, 40, u + t)")]
+  ((pose (sample curve 0.5 0.7))    ; a point on the curve, no laser
+    ((rot 90) (spawn (linear p[1.5 0])))))
+```
+
+`on-laser` is the entity-clocked convenience: the live laser's own age
+supplies `t`. Use `sample` when the curve is data; use `on-laser` when
+an actual beam is on screen and you want to stay synced to it.
+
 **Try it:** make `ex5`'s gems fire from *random* points on the beam; give
 `ex4`'s tip-fire a spread by replacing the single spawn with a `fan`.
 

@@ -631,6 +631,28 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let dv = as_dyn(evaluate(&items[2], env, ctx, world)?)?;
                 return Ok(Val::PatherV(Rc::new(ExtPather { anchor: dv, window })));
             }
+            "sample" => {
+                // (sample dyn t) / (sample dyn t u): pure evaluation of a
+                // dyn at a given time (and beam parameter) — pose with
+                // tangent heading. The laser-free version of on-laser: any
+                // shape can be sampled without spawning an entity.
+                let dv = as_dyn(evaluate(&items[1], env, ctx, world)?)?;
+                let tv = evaluate(&items[2], env, ctx, world)?.num()?;
+                let uv = match items.get(3) {
+                    Some(uf) => Some(evaluate(uf, env, ctx, world)?.num()?),
+                    None => None,
+                };
+                let st = MotionState::new();
+                return match uv {
+                    Some(u) => {
+                        let p0 = dyn_pose_u(&dv, tv, u, &st, &ctx.sig)?;
+                        let p1 = dyn_pose_u(&dv, tv, u + 0.01, &st, &ctx.sig)?;
+                        let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
+                        Ok(Val::Pose(Pose { x: p0.x, y: p0.y, th }))
+                    }
+                    None => Ok(Val::Pose(dyn_pose(&dv, tv, &st, &ctx.sig)?)),
+                };
+            }
             "on-laser" => {
                 // (on-laser b u): pose (position + tangent heading) of the
                 // point at parameter u along a live laser — subfiring
