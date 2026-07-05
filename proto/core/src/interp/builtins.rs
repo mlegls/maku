@@ -25,21 +25,21 @@ pub(crate) fn num_bin(a: Val, b: Val, f: fn(f64, f64) -> f64) -> Result<Val, Str
             let out = (0..len)
                 .map(|k| num_bin(xs[k % xs.len()].clone(), ys[k % ys.len()].clone(), f))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         (Val::Arr(xs), y) => {
             let out = xs
                 .iter()
                 .map(|x| num_bin(x.clone(), y.clone(), f))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         (x, Val::Arr(ys)) => {
             let out = ys
                 .iter()
                 .map(|y| num_bin(x.clone(), y.clone(), f))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         (a, b) => Err(format!("numeric op on {:?} and {:?}", a, b)),
     }
@@ -59,7 +59,7 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
                 .iter()
                 .map(|i| add2(v.clone(), i.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         (Val::Vec2 { x, y }, Val::Dyn(d)) | (Val::Dyn(d), Val::Vec2 { x, y }) => Ok(Val::Dyn(
             Rc::new(DynNode::Translate { dx: x, dy: y, child: d }),
@@ -75,12 +75,14 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
 /// themselves; a FORM list/vector views as its subforms (each wrapped back
 /// up as a form value) — which is what lets macro code take unevaluated
 /// clauses apart with the ordinary vocabulary (count/first/rest/nth/…).
-pub(crate) fn seq_view(v: &Val) -> Option<Vec<Val>> {
+pub(crate) fn seq_view(v: &Val) -> Option<Seq> {
     match v {
-        Val::Arr(xs) => Some((**xs).clone()),
+        Val::Arr(xs) => Some(xs.clone()),
         Val::FormV(f) => match &**f {
+            // Forms need one materialization into Val::FormV elements; after
+            // that, recursive rest/drop/take over the result is all views.
             Form::List(xs) | Form::Vector(xs) => {
-                Some(xs.iter().map(|x| Val::FormV(Rc::new(x.clone()))).collect())
+                Some(Seq::from_vec(xs.iter().map(|x| Val::FormV(Rc::new(x.clone()))).collect()))
             }
             _ => None,
         },
@@ -203,11 +205,11 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "rot" => match &args[0] {
             // broadcasts: (rot (* 10 (iota 30))) is 30 rotation frames —
             // spawn combinators are arithmetic on pose arrays (§5)
-            Val::Arr(xs) => Ok(Val::Arr(Rc::new(
+            Val::Arr(xs) => Ok(Val::arr(
                 xs.iter()
                     .map(|v| v.num().map(|th| Val::Pose(Pose { x: 0.0, y: 0.0, th })))
                     .collect::<Result<Vec<_>, _>>()?,
-            ))),
+            )),
             v => Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: v.num()? })),
         },
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
@@ -228,9 +230,9 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         },
         "iota" => {
             let count = n(0)? as usize;
-            Ok(Val::Arr(Rc::new(
+            Ok(Val::arr(
                 (0..count).map(|k| Val::Num(k as f64)).collect(),
-            )))
+            ))
         }
         "range" => {
             let (a, b) = (n(0)?, n(1)?);
@@ -241,12 +243,12 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                 out.push(Val::Num(x));
                 x += step;
             }
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         // nth also indexes form lists/vectors (macro-time clause access)
         "nth" => {
             let subject = match seq_view(&args[0]) {
-                Some(xs) => Val::Arr(Rc::new(xs)),
+                Some(xs) => Val::Arr(xs),
                 None => args[0].clone(),
             };
             match (&subject, &args[1]) {
@@ -259,7 +261,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                         Ok(items[(k.rem_euclid(items.len() as i64)) as usize].clone())
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                Ok(Val::Arr(Rc::new(out)))
+                Ok(Val::arr(out))
             }
             (Val::Arr(items), i) if !items.is_empty() => {
                 let k = i.num()? as i64;
@@ -278,7 +280,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                 .filter(|v| !matches!(v, Val::Num(y) if (*y - x).abs() < 1e-9))
                 .cloned()
                 .collect();
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         "stutter" => {
             let reps = n(0)? as usize;
@@ -291,7 +293,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                     out.push(it.clone());
                 }
             }
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         "lerp" => {
             let (a, b, ctrl, v1, v2) = (n(0)?, n(1)?, n(2)?, n(3)?, n(4)?);
@@ -352,7 +354,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             None => Err(format!("first: not a sequence: {:?}", args[0])),
         },
         "rest" => match seq_view(&args[0]) {
-            Some(xs) => Ok(Val::Arr(Rc::new(xs.get(1..).unwrap_or(&[]).to_vec()))),
+            Some(xs) => Ok(Val::Arr(xs.view(1.min(xs.len()), xs.len().saturating_sub(1)))),
             None => Err(format!("rest: not a sequence: {:?}", args[0])),
         },
         "drop" | "take" => {
@@ -360,25 +362,25 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             let xs = seq_view(&args[1])
                 .ok_or_else(|| format!("{}: not a sequence: {:?}", name, args[1]))?;
             let out = if name == "drop" {
-                xs.get(k.min(xs.len())..).unwrap_or(&[]).to_vec()
+                xs.view(k.min(xs.len()), xs.len() - k.min(xs.len()))
             } else {
-                xs.get(..k.min(xs.len())).unwrap_or(&[]).to_vec()
+                xs.view(0, k.min(xs.len()))
             };
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::Arr(out))
         }
         "concat" => {
             let mut out = Vec::new();
             for a in args {
                 match seq_view(a) {
-                    Some(xs) => out.extend(xs),
+                    Some(xs) => out.extend(xs.iter().cloned()),
                     None => return Err(format!("concat: not a sequence: {:?}", a)),
                 }
             }
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         // a form list/vector as an array of subform values (what ~@ splices)
         "forms" => match seq_view(&args[0]) {
-            Some(xs) => Ok(Val::Arr(Rc::new(xs))),
+            Some(xs) => Ok(Val::Arr(xs)),
             None => Err(format!("forms: not a form sequence: {:?}", args[0])),
         },
         // total lookup: map values AND map forms; missing/non-map → default

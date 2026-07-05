@@ -19,6 +19,7 @@
 
 use crate::edn::Form;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::rc::Rc;
 
 mod builtins;
@@ -33,6 +34,40 @@ pub use motion::*;
 pub(crate) use spawn::*;
 pub use world::*;
 
+/// A seq value: shared immutable backing + a window. rest/drop/take are
+/// O(1) pointer bumps (fat-pointer semantics — the compiled rep, used now);
+/// a view pins its whole backing, which is fine at card scales.
+#[derive(Clone, Debug)]
+pub struct Seq {
+    backing: Rc<[Val]>,
+    start: usize,
+    len: usize,
+}
+
+impl Seq {
+    pub fn from_vec(v: Vec<Val>) -> Seq {
+        let len = v.len();
+        Seq { backing: v.into(), start: 0, len }
+    }
+    pub fn view(&self, start: usize, len: usize) -> Seq {
+        assert!(start <= self.len);
+        assert!(len <= self.len - start);
+        Seq { backing: self.backing.clone(), start: self.start + start, len }
+    }
+    #[cfg(test)]
+    pub(crate) fn backing_ptr(&self) -> *const Val {
+        self.backing.as_ptr()
+    }
+}
+
+impl Deref for Seq {
+    type Target = [Val];
+
+    fn deref(&self) -> &Self::Target {
+        &self.backing[self.start..self.start + self.len]
+    }
+}
+
 
 #[derive(Clone, Debug)]
 pub enum Val {
@@ -42,7 +77,7 @@ pub enum Val {
     Str(Rc<str>),
     Vec2 { x: f64, y: f64 },
     Pose(Pose),
-    Arr(Rc<Vec<Val>>),
+    Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     Dyn(Rc<DynNode>),
     Ext(Rc<ExtLaser>),
@@ -82,6 +117,10 @@ pub(crate) fn fresh_cell_scope() -> Val {
 }
 
 impl Val {
+    pub fn arr(v: Vec<Val>) -> Val {
+        Val::Arr(Seq::from_vec(v))
+    }
+
     pub fn num(&self) -> Result<f64, String> {
         match self {
             Val::Num(n) => Ok(*n),
@@ -381,7 +420,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 .iter()
                 .map(|i| evaluate(i, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(vals)))
+            Ok(Val::arr(vals))
         }
         Form::Map(kvs) => {
             let pairs = kvs
@@ -776,24 +815,21 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             // f may be a defn — hence specials, not builtins.
             "map" | "filter" => {
                 let f = evaluate(&items[1], env, ctx, world)?;
-                let xs = match evaluate(&items[2], env, ctx, world)? {
-                    Val::Arr(xs) => (*xs).clone(),
-                    v @ Val::FormV(_) => match builtin("forms", &[v])? {
-                        Val::Arr(xs) => (*xs).clone(),
-                        _ => unreachable!(),
-                    },
-                    v => return Err(format!("{}: not a sequence: {:?}", s, v)),
+                let subject = evaluate(&items[2], env, ctx, world)?;
+                let xs = match seq_view(&subject) {
+                    Some(xs) => xs,
+                    None => return Err(format!("{}: not a sequence: {:?}", s, subject)),
                 };
                 let mut out = Vec::with_capacity(xs.len());
-                for x in xs {
+                for x in xs.iter() {
                     let r = apply_fn(f.clone(), &[x.clone()], ctx, world, false)?;
                     if &**s == "map" {
                         out.push(r);
                     } else if truthy(&r) {
-                        out.push(x);
+                        out.push(x.clone());
                     }
                 }
-                return Ok(Val::Arr(Rc::new(out)));
+                return Ok(Val::arr(out));
             }
             "pather" => {
                 // (pather window dyn): a trailing time-window of the
@@ -1140,7 +1176,7 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
                 .iter()
                 .map(|c| apply_dyn_frame(frame.clone(), c.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         Val::Ext(l) => Ok(Val::Ext(Rc::new(ExtLaser {
             anchor: Rc::new(DynNode::Frame(frame, l.anchor.clone())),
@@ -1256,7 +1292,7 @@ fn bind_params<T>(
             };
             let rest: Vec<Val> =
                 args.get(pi..).unwrap_or(&[]).iter().map(&to_val).collect();
-            return Ok(env.bind(rest_name.clone(), Val::Arr(Rc::new(rest))));
+            return Ok(env.bind(rest_name.clone(), Val::arr(rest)));
         }
         if let Some(a) = args.get(pi) {
             env = env.bind(p.clone(), to_val(a));
@@ -1458,7 +1494,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 }
                 handles.push(Val::Handle(id));
             }
-            Ok(Val::Arr(Rc::new(handles)))
+            Ok(Val::arr(handles))
         }
         ActionV::Manipulate { targets, query, callback } => {
             let ids: Vec<u64> = match query {
@@ -1738,7 +1774,7 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
                 .iter()
                 .map(|c| apply_frame_val(frame, c.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Val::Arr(Rc::new(out)))
+            Ok(Val::arr(out))
         }
         Val::Ext(l) => Ok(Val::Ext(Rc::new(ExtLaser {
             anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), l.anchor.clone())),
@@ -1772,7 +1808,7 @@ fn apply_frame_arr(frames: &Val, child: Val) -> Result<Val, String> {
         .iter()
         .map(|f| apply_frame_val(as_pose(f.clone())?, child.clone()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Val::Arr(Rc::new(out)))
+    Ok(Val::arr(out))
 }
 
 // ---------------------------------------------------------------------------
@@ -1898,8 +1934,7 @@ fn match_seq_pattern(
         return Ok(false);
     }
     if &**rest_name != "_" {
-        let mid = xs[before.len()..xs.len() - after.len()].to_vec();
-        binds.push((rest_name.clone(), Val::Arr(Rc::new(mid))));
+        binds.push((rest_name.clone(), Val::Arr(xs.view(before.len(), xs.len() - before.len() - after.len()))));
     }
     Ok(true)
 }
@@ -2123,7 +2158,7 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
                             Ok(Val::Dyn(Rc::new(DynNode::Frame(node.clone(), as_dyn(k.clone())?))))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    Ok(Val::Arr(Rc::new(out)))
+                    Ok(Val::arr(out))
                 }
                 other => Ok(Val::Dyn(Rc::new(DynNode::Frame(node, as_dyn(other)?)))),
             }
@@ -2368,6 +2403,63 @@ mod tests {
                 .num()
                 .unwrap(),
             1.0
+        );
+    }
+
+    #[test]
+    fn seq_views_share_backing() {
+        let subject = ev("[1 2 3 4]");
+        let Val::Arr(orig) = &subject else { panic!() };
+        let orig_ptr = orig.backing_ptr();
+
+        let rest = builtin("rest", &[subject.clone()]).unwrap();
+        let Val::Arr(rest_seq) = &rest else { panic!() };
+        assert_eq!(rest_seq.len(), 3);
+        assert!(matches!(&rest_seq[0], Val::Num(n) if (*n - 2.0).abs() < 1e-9));
+        assert_eq!(rest_seq.backing_ptr(), orig_ptr);
+
+        let rest_rest = builtin("rest", &[rest.clone()]).unwrap();
+        let Val::Arr(rest_rest_seq) = &rest_rest else { panic!() };
+        assert_eq!(rest_rest_seq.backing_ptr(), orig_ptr);
+        assert_eq!(rest_rest_seq.len(), 2);
+        assert!(matches!(&rest_rest_seq[0], Val::Num(n) if (*n - 3.0).abs() < 1e-9));
+
+        let taken = builtin("take", &[Val::Num(2.0), rest.clone()]).unwrap();
+        let Val::Arr(taken_seq) = &taken else { panic!() };
+        assert_eq!(taken_seq.backing_ptr(), orig_ptr);
+        assert_eq!(taken_seq.len(), 2);
+
+        let dropped = builtin("drop", &[Val::Num(2.0), subject.clone()]).unwrap();
+        let Val::Arr(dropped_seq) = &dropped else { panic!() };
+        assert_eq!(dropped_seq.backing_ptr(), orig_ptr);
+        assert_eq!(dropped_seq.len(), 2);
+
+        let Form::Vector(pat) = read_one("[a & r]").unwrap() else { panic!() };
+        let mut binds = Vec::new();
+        assert!(match_seq_pattern(&pat, &subject, &mut binds).unwrap());
+        let r = binds
+            .iter()
+            .find_map(|(name, val)| (&**name == "r").then_some(val))
+            .unwrap();
+        let Val::Arr(r_seq) = r else { panic!() };
+        assert_eq!(r_seq.backing_ptr(), orig_ptr);
+        assert_eq!(r_seq.len(), 3);
+    }
+
+    #[test]
+    fn seq_view_language_regressions() {
+        let Val::Arr(items) = ev("(take 2 (drop 1 (rest [0 10 20 30 40])))") else {
+            panic!()
+        };
+        let got: Vec<f64> = items.iter().map(|v| v.num().unwrap()).collect();
+        assert_eq!(got, vec![20.0, 30.0]);
+        assert_eq!(ev("(nth (rest [10 20 30]) 5)").num().unwrap(), 30.0);
+        assert_eq!(ev("(count (drop 2 [1 2 3]))").num().unwrap(), 1.0);
+        assert_eq!(
+            ev("(match (rest [0 1 2 3 4]) [a & mid 4] (nth mid 1))")
+                .num()
+                .unwrap(),
+            3.0
         );
     }
 

@@ -513,7 +513,7 @@ pub(crate) fn formation(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Val, String> {
-    let arr = Val::Arr(Rc::new(poses.into_iter().map(Val::Pose).collect()));
+    let arr = Val::arr(poses.into_iter().map(Val::Pose).collect());
     match child {
         None => Ok(arr),
         Some(cf) => {

@@ -91,6 +91,8 @@ language.md.
 - Macro-time power that carries the stdlib: `& rest` params, form-aware
   seq vocabulary (count/first/rest/nth/drop/take/concat), total `get`
   over map forms, form-type/form-name, map/filter specials.
+- Seq values now use the tail-sharing rep: shared immutable backing plus
+  O(1) rest/drop/take views, so match-recursive stdlib walkers are viable.
 - Candidates to move next, in expressibility order: `for`/`dotimes`
   (blocked: `:every`/inf/array-iteration are scheduler semantics, not a
   desugar — would need a lib-visible wait-loop primitive that performs
@@ -129,8 +131,9 @@ language.md.
 - AOT/wasm: hot-layer compilation unstarted; core-vs-lib builtin
   stratification undecided. Specials are the IR, builtins are intrinsics;
   `match` replaced no builtins but makes `map`/`filter` demotable to lib
-  code later, blocked on a tail-sharing seq rep because naive match
-  recursion over `Rc<Vec>` rest-copies is O(n²).
+  code later. The tail-sharing seq rep now exists; demotion is deliberately
+  deferred because map/filter are used at runtime over entity arrays, so move
+  them when interpreter cost is measured or the JIT lands.
 
 ## Doc roadmap
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
