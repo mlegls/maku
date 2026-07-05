@@ -67,3 +67,12 @@
         ((rot 90)
           (spawn (linear p[1.5 0])
                  {:style {:family :gem :color :green :variant :w}}))))))
+
+;; 6. slow lasers: :fill makes the hot front sweep source→tip over d
+;; seconds after the warn — the full path stays telegraphed (dim) while
+;; only the swept prefix is bright and deadly. Three staggered sweeps.
+(defpattern ex6-slow []
+  (spawn ((pose c[-3 3])
+           ((rot m"-90 + 15 * iota(3)")
+             (laser {:warn [0.8 1.2 1.6] :active 4 :u-max 7 :fill 1.5})))
+         {:style {:family :laser :color [:red :yellow :pink]}}))

@@ -68,7 +68,8 @@ decode notes.
 | `straight(angle)` / `rotate(base, fn)` options | frame rotation: `((rot angle) laser)` / `((rot m"…t…") laser)` |
 | `static(path)` / `dynamic(path)` with `lt` | one shape slot over `(t, u)`: u-only = static, t entering = dynamic |
 | `s(width)` / `stagger(x)` options | `:width` (also scales the hitbox) / `:resolution` |
-| `varLength` | signal-valued `:u-max` |
+| `varLength` | signal-valued `:u-max` (grows the beam AND hitbox together) |
+| slow/filling lasers | `:fill d` — full path telegraphs, the hitbox sweeps from the source |
 | `hueshift(x*t)` option | signal-valued `:hue` tag |
 | `sm` option (SM at the tip) | `let`-bound guide + `(in-frame guide (fork …))` |
 | `onlaser(fn)` modifier | `(on-laser h u)` — pose with tangent heading at u |

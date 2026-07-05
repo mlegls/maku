@@ -25,6 +25,10 @@ pub enum Kind {
         resolution: f64,
         /// Width multiplier: render thickness AND collision half-width.
         width: f64,
+        /// Slow laser: seconds for the hot front to sweep source→tip after
+        /// the warn ends. The telegraph always shows the full path; the
+        /// hitbox (and bright render) fills out from u=0.
+        fill: Option<f64>,
     },
     /// A trailing time-window of the trajectory, materialized as geometry
     /// (§6): positions are recorded per tick into Bullet.trail.

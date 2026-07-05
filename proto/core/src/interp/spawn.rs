@@ -242,6 +242,7 @@ pub(crate) fn flatten_elems(
                     u_max_sig: l.u_max_sig.clone(),
                     resolution: l.resolution,
                     width: l.width,
+                    fill: l.fill,
                 },
                 path: path.clone(),
             });

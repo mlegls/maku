@@ -932,6 +932,7 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             u_max_sig: l.u_max_sig.clone(),
             resolution: l.resolution,
             width: l.width,
+            fill: l.fill,
         }))),
         Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
             anchor: Rc::new(DynNode::Frame(frame, pv.anchor.clone())),
@@ -1471,6 +1472,7 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             u_max_sig: l.u_max_sig.clone(),
             resolution: l.resolution,
             width: l.width,
+            fill: l.fill,
         }))),
         Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
             anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), pv.anchor.clone())),
@@ -1713,6 +1715,10 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         u_max_sig,
         resolution: getf("resolution", 0.1),
         width: getf("width", 1.0),
+        fill: match map_get(&opts, "fill") {
+            Some(v) => Some(v.num()?),
+            None => None,
+        },
     })))
 }
 

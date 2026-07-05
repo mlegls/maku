@@ -10,9 +10,23 @@ const PLAYFIELD: f64 = 12.0; // cull margin (units)
 /// Sample a laser's world-space curve at `tau` (shared by render and the
 /// collision pass — the beam you see is the beam that hits).
 pub fn sample_laser(b: &Bullet, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)>> {
+    sample_laser_frac(b, tau, sig, 1.0)
+}
+
+/// Sample the beam up to `frac` of its length (slow lasers: the hot
+/// front's reach). frac 1.0 = the whole path.
+pub fn sample_laser_frac(
+    b: &Bullet,
+    tau: f64,
+    sig: &SigEnv,
+    frac: f64,
+) -> Option<Vec<(f64, f64)>> {
     let Kind::Laser { shape, u_max, u_max_sig, resolution, .. } = &b.kind else {
         return None;
     };
+    if frac <= 0.0 {
+        return None;
+    }
     let anchor = dyn_pose(&b.motion, tau, &b.state, sig).ok()?;
     let u_max = match u_max_sig {
         Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
@@ -20,7 +34,7 @@ pub fn sample_laser(b: &Bullet, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)
             .unwrap_or(*u_max)
             .max(0.01),
         None => *u_max,
-    };
+    } * frac.min(1.0);
     let steps = ((u_max / resolution).ceil() as usize).clamp(2, 400);
     let mut pts = Vec::with_capacity(steps + 1);
     for k in 0..=steps {
@@ -33,6 +47,17 @@ pub fn sample_laser(b: &Bullet, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)
         pts.push((w.x, w.y));
     }
     Some(pts)
+}
+
+/// A slow laser's hot fraction at age tau: 0 before the warn ends, then
+/// sweeping to 1 over the :fill window. Lasers without :fill are hot in
+/// full the moment the warn ends.
+fn hot_frac(kind: &Kind, tau: f64) -> f64 {
+    let Kind::Laser { warn, fill, .. } = kind else { return 1.0 };
+    match fill {
+        Some(d) if *d > 0.0 => ((tau - warn) / d).clamp(0.0, 1.0),
+        _ => 1.0,
+    }
 }
 
 /// Distance from a point to a polyline (capsule-chain narrow phase).
@@ -601,7 +626,8 @@ impl Sim {
                     if tau < *warn {
                         return None; // warn phase: no hitbox yet
                     }
-                    let pts = sample_laser(b, tau, &sig)?;
+                    // slow lasers: only the swept-out prefix is hot
+                    let pts = sample_laser_frac(b, tau, &sig, hot_frac(&b.kind, tau))?;
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - LASER_R * width).max(0.0).powi(2))
                 }
@@ -870,13 +896,27 @@ impl Sim {
                     }
                 }
                 Kind::Laser { warn, .. } => {
+                    let hot = hot_frac(&b.kind, tau);
+                    let partly = tau >= *warn && hot < 1.0;
                     if let Some(pts) = sample_laser(b, tau, sig) {
                         out.push(RenderItem::Polyline {
                             pts,
                             style: b.style.clone(),
-                            active: tau >= *warn,
+                            // a filling laser's full path stays a telegraph
+                            active: tau >= *warn && !partly,
                             hue: self.sample_hue(b, tau),
                         });
+                    }
+                    // slow laser: the hot prefix renders bright on top
+                    if partly {
+                        if let Some(pts) = sample_laser_frac(b, tau, sig, hot) {
+                            out.push(RenderItem::Polyline {
+                                pts,
+                                style: b.style.clone(),
+                                active: true,
+                                hue: self.sample_hue(b, tau),
+                            });
+                        }
                     }
                 }
             }
@@ -1622,6 +1662,49 @@ mod tests {
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → bullets
     /// head down at the player, not up.
+    /// Slow lasers: the telegraph shows the whole path immediately, but
+    /// the hitbox sweeps out from the source over the :fill window.
+    #[test]
+    fn slow_laser_fills() {
+        const CARD: &str = r#"
+(defpattern rig []
+  (spawn (live $player)
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+(defpattern beam []
+  (par (rig)
+       (spawn ((pose c[-2 0])
+                (laser {:warn 0.5 :active 6 :u-max 6 :fill 2}))
+              {:style {:family :laser :color :red}})))
+"#;
+        let mut sim = Sim::load(CARD, Some("beam")).unwrap();
+        // player parked on the beam line at u = 2 (x = 0); 120 ticks/s
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
+        // warn ends at 0.5s (tick 60); the front reaches u=2 at
+        // tau = 0.5 + (2/6)*2 ≈ 1.17s (tick ~140, less the capsule radii)
+        for _ in 0..100 {
+            sim.step_with(&inputs).unwrap(); // t ≈ 0.83s: front at u ≈ 1.0
+        }
+        assert_eq!(sim.world.player_hits, 0, "front hasn't reached the player");
+        for _ in 0..60 {
+            sim.step_with(&inputs).unwrap(); // t ≈ 1.33s: front at u = 2.5
+        }
+        assert_eq!(sim.world.player_hits, 1, "the sweeping front arrived");
+        // full path is still telegraphed while filling: dim + bright polylines
+        let mut sim2 = Sim::load(CARD, Some("beam")).unwrap();
+        for _ in 0..90 {
+            sim2.step_with(&inputs).unwrap(); // t = 0.75s: mid-fill
+        }
+        let polys: Vec<bool> = sim2
+            .render()
+            .iter()
+            .filter_map(|r| match r {
+                RenderItem::Polyline { active, .. } => Some(*active),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(polys, vec![false, true], "dim full path + bright hot prefix");
+    }
+
     #[test]
     fn aim_sees_expression_frame_ambient() {
         const CARD: &str = r#"

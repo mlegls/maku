@@ -72,6 +72,21 @@ both the drawn thickness and the hitbox; `:resolution` is a sampling
 hint for rendering; a signal-valued `:u-max` grows or shrinks the beam
 over time.
 
+## Slow lasers
+
+A classic shape: the *whole path* telegraphs at once, but the deadly part
+sweeps out from the source. That's `:fill` — seconds for the hot front to
+travel source→tip once the warn ends (`ex6-slow`):
+
+```clojure
+(laser {:warn 0.8 :active 4 :u-max 7 :fill 1.5})
+```
+
+While filling, the full path renders dim (still a telegraph) and the
+swept prefix renders bright; the hitbox covers only the prefix. Players
+standing on the far end of a telegraphed line have exactly `warn +
+fill·(u/u-max)` seconds to move — the fairness knob is explicit.
+
 ## Firing from a pather's tip
 
 To fire from the moving tip, name the guide motion with `let` and use it
