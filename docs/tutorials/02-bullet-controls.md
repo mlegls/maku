@@ -23,8 +23,7 @@ seconds" (`ex1-flip`):
   (for [i 480 :every (ticks 1)]              ; four seconds, every tick
     (manip {:family :circle
                  :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
-      (fn [b] (remat b (fn [exit]
-        (linear c[exit.vel.x (- 0 exit.vel.y)])))))))
+      (fn [b] (remat b (linear c[b.vel.x (- 0 b.vel.y)]))))))
 ```
 
 - `(manip query callback)` runs the callback on every live bullet the
@@ -37,11 +36,15 @@ seconds" (`ex1-flip`):
   the position — and they work on handles, views, and vectors alike. In
   `m"…"` strings you also get indexing: `xs.[0]`, `xs.[0 1]` (gather),
   `xs.[iota(3)]`.
-- The bounce itself is `remat` (*rematerialize*): snap the bullet's state
-  (`:pos`, `:vel`, `:t`), and swap in new motion built from the snapshot —
-  here, straight-line motion with the vertical velocity negated. The new
-  motion starts at the bullet's current position with a fresh local clock.
-  This is the standard way to change a bullet's course mid-flight.
+- The bounce itself is `remat` (*rematerialize*): `(remat b dyn)` swaps
+  the bullet's motion for a new one anchored at its current position, with
+  a fresh local clock — here, straight-line motion with the vertical
+  velocity negated (`b.vel.x` and `b.vel.y` read the live values at the
+  moment of the swap). This is the standard way to change a bullet's
+  course mid-flight. There is also a callback form, `(remat b (fn [exit]
+  dyn))`, where `exit` is the snapped `{:pos :vel :t}` — equivalent here,
+  but it matches the `stages` convention where the boundary state only
+  exists in the future.
 
 Note the predicate checks `(> b.vel.y 0)` — only bullets still moving up
 get flipped, so a bullet doesn't re-flip forever while above the line.

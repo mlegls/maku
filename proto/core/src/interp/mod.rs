@@ -472,10 +472,13 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 })));
             }
             "remat" => {
-                // (remat b (fn [exit] dyn)): snap {:pos :vel :t}, swap the
-                // motion signal, rebase the epoch — the §9 event mechanism.
-                // C⁰ holds by construction (the new dyn anchors at the
-                // snapped pose).
+                // (remat b dyn) or (remat b (fn [exit] dyn)): snap
+                // {:pos :vel :t}, swap the motion signal, rebase the epoch —
+                // the §9 event mechanism. C⁰ holds by construction (the new
+                // dyn anchors at the snapped pose). The direct form suits
+                // immediate remats (handles expose the view, so b.vel.x
+                // reads the same numbers exit carries); the callback form
+                // matches stages, where the boundary is in the future.
                 let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
                     return Err("remat: expected bullet handle".into());
                 };
@@ -1248,7 +1251,12 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 ]));
                 (exit, Pose { x: p.x, y: p.y, th: heading })
             };
-            let new_dyn = as_dyn(apply_fn(f.clone(), &[exit], ctx, world, false)?)?;
+            let new_dyn = match &f {
+                Val::Fn { .. } | Val::Builtin(_) => {
+                    as_dyn(apply_fn(f.clone(), &[exit], ctx, world, false)?)?
+                }
+                direct => as_dyn((*direct).clone())?,
+            };
             let b = &mut world.bullets[i];
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
