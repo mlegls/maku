@@ -39,9 +39,31 @@ language.md.
   global/fixed (per-entity column; named-channel Inputs) — and after the
   stdlib extraction (spawn defaults, death trigger, invuln, rig are all
   library code now) the matrix rows + the three contact-resolution bodies
-  are THE remaining genre hardcoding. Extraction path: contacts emit,
-  resolution handlers become library functions over contact maps — needs
-  a cheap per-contact call story first (same fuel concern as manipulate).
+  are THE remaining genre hardcoding. Design settled (next big chunk),
+  the principled line being CHECKS ARE DATA, CONTACTS ARE CODE:
+  * `(defcontact [:a-layer :b-layer] opts? (fn [a b] …))` — card-level
+    rule table replacing the hardcoded matrix. Layers become opaque tags
+    (Rust Layer enum → interned str); TEAMS DROP OUT of collision
+    entirely (layer pairs already partition the sets — :team stays as a
+    plain queryable meta tag). The touhou rules (:damage/:graze ×
+    :player-hurt, :shot × :hurt) move into lib/touhou.dmk next to the
+    spawn templates that create those layers.
+  * Detection: per-tick per-layer entity index; per rule iterate the
+    smaller side outer (player-hurt is 1-2, hurt is few — same
+    asymmetry the hardcoded pass exploits).
+  * Hot prefilters as rule DATA, not callback code: {:once-latch :col}
+    (graze's once-ever), {:skip-if [:b :col :gt $tick]} (iframe skip) —
+    engine-evaluated per pair, so overlapping pairs don't re-enter the
+    interpreter every tick. Cold resolution = manip-style callback
+    (views + instant actions, canonical order, contact-rate only).
+  * world.graze / world.player_hits die: counters become columns on the
+    player entity written by the callbacks, published via :expose —
+    hosts read $graze/$hits channels (host/UI contract change, native +
+    web). Laser-persists-through-hit becomes callback policy (view
+    exposes :kind; cull points only).
+  * Risks: behavioral drift in latch/iframe edge cases (smoke must stay
+    tick-identical), callback cost under sustained overlap (prefilters
+    are the mitigation), event ordering (keep bullet-index order).
 - RNG is sequential splitmix, not counter-keyed by spawn path (§5) — replay
   determinism holds, order-independence does not.
 - Scrub-back across a swap/add boundary restores the pre-change program
@@ -80,6 +102,17 @@ language.md.
   templates (:name/:type/hp bars) over `states`.
 - A lib change is an engine rebuild (deliberate — not user-patchable);
   version the lib with the wire protocol when hosts start pinning.
+- Styles, under "the engine has no bullet-hell domain understanding":
+  a style is an interned OPAQUE record — identity for batching, data
+  for queries, vehicle for render-signal tags. The engine keeps
+  interning, query-by-record, the :hue/:scale/:facing/:opacity tags,
+  and the flat draw-list contract (kind + pose + style + tag values);
+  it should NOT privilege family/color/variant (currently hardcoded
+  fields on the Rust Style struct — generalize to a small interned
+  map). The family/color/variant vocabulary belongs to touhou.dmk; the
+  family→sprite and color→palette tables (now core::host) become host
+  config shipped alongside the lib. DMK-style pools = interning as an
+  optimization, never semantics.
 
 ## Engineering debt
 - ~~`core/src/interp.rs` / `sim.rs` monoliths~~ both module-split
