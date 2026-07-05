@@ -130,7 +130,12 @@ pub fn eval_sig(
     if let Some((px, py)) = pos {
         e = e.bind("pos".into(), Val::Vec2 { x: px, y: py });
     }
-    let mut ctx = Ctx { sig: sig.clone(), ambient: Pose::IDENTITY, scan };
+    let mut ctx = Ctx {
+        sig: sig.clone(),
+        ambient: Pose::IDENTITY,
+        scan,
+        patterns: Rc::new(HashMap::new()),
+    };
     let mut w = World::default(); // signals never touch the world (§2)
     evaluate(form, &e, &mut ctx, &mut w)
 }
@@ -317,7 +322,12 @@ pub fn step_motion(
                 idx += 1.0;
                 epoch = tau;
                 if let StageMake::Lazy(f) = &segs[idx as usize].make {
-                    let mut ctx = Ctx { sig: sig.clone(), ambient: Pose::IDENTITY, scan: None };
+                    let mut ctx = Ctx {
+                        sig: sig.clone(),
+                        ambient: Pose::IDENTITY,
+                        scan: None,
+                        patterns: Rc::new(HashMap::new()),
+                    };
                     let mut w = World::default();
                     let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
                     state.insert(key + 1, Cell::D(as_dyn(dv)?));

@@ -222,8 +222,10 @@ impl Sim {
         }
         let mut ctx = Ctx::default();
         ctx.sig.defs = Rc::new(card.defs.clone());
+        ctx.patterns = Rc::new(card.patterns.clone());
         let world = World::default();
-        let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env: Env::empty() }]);
+        let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+        let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
         Ok(Sim { world, tasks: vec![task], ctx })
     }
 
@@ -241,8 +243,9 @@ impl Sim {
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
-                let pat = &card.patterns[&first];
-                let mut env = Env::empty();
+                self.ctx.patterns = Rc::new(card.patterns.clone());
+                let pat = &self.ctx.patterns.clone()[&first];
+                let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 let mut w = World::default();
                 for (pname, default) in &pat.params {
                     let v = evaluate(default, &env, &mut self.ctx, &mut w)?;
@@ -252,7 +255,9 @@ impl Sim {
             }
             _ => {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
-                (body_forms.into(), Env::empty())
+                self.ctx.patterns = Rc::new(card.patterns.clone());
+                let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+                (body_forms.into(), env)
             }
         };
         Ok(new_task(vec![TF::Seq { items: body, idx: 0, env }]))
@@ -283,8 +288,9 @@ impl Sim {
             .ok_or_else(|| format!("no pattern '{}' in card", name))?;
         let mut ctx = Ctx::default();
         ctx.sig.defs = Rc::new(card.defs.clone());
+        ctx.patterns = Rc::new(card.patterns.clone());
         let mut world = World::default();
-        let mut env = Env::empty();
+        let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         for (pname, default) in &pat.params {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;
             env = env.bind(pname.clone(), v);
@@ -413,8 +419,8 @@ impl Sim {
             ch.insert(chan.to_string(), Val::Num(v));
         }
         // (export cell) — pattern cells published as read-only channels
-        for name in self.ctx.sig.exports.borrow().iter() {
-            if let Some(v) = self.ctx.sig.cells.borrow().get(name) {
+        for (name, id) in self.ctx.sig.exports.borrow().iter() {
+            if let Some((_, v)) = self.ctx.sig.cells.borrow().get(id) {
                 ch.insert(name.clone(), v.clone());
             }
         }
@@ -754,8 +760,8 @@ impl Sim {
             .sig
             .cells
             .borrow()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .values()
+            .cloned()
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
@@ -780,7 +786,12 @@ impl Sim {
     fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
         let Some(h) = &b.hue else { return 0.0 };
         let env = h.env.bind("t".into(), Val::Num(tau));
-        let mut ctx = Ctx { sig: self.ctx.sig.clone(), ambient: Pose::IDENTITY, scan: None };
+        let mut ctx = Ctx {
+            sig: self.ctx.sig.clone(),
+            ambient: Pose::IDENTITY,
+            scan: None,
+            patterns: self.ctx.patterns.clone(),
+        };
         let mut w = World::default();
         match evaluate(&h.form, &env, &mut ctx, &mut w) {
             Ok(Val::Num(x)) => x,
@@ -1121,6 +1132,25 @@ fn run_action(
         ActionV::Until { pred, body, env } => {
             task.stack.push(TF::Guard { pred: pred.clone(), env: env.clone() });
             task.stack.push(TF::Seq { items: body.clone(), idx: 0, env: env.clone() });
+            Ok(false)
+        }
+        ActionV::CallPattern { params, body, args, caller_cells, fresh_cells } => {
+            // the §10 embedding adapter: fresh cells by default (isolated
+            // defvar state per instance), the caller's for (inline …)
+            let cells = if *fresh_cells {
+                fresh_cell_scope()
+            } else {
+                caller_cells.clone().unwrap_or_else(fresh_cell_scope)
+            };
+            let mut env = Env::empty().bind(CELLS_KEY.into(), cells);
+            for (i, (pname, default)) in params.iter().enumerate() {
+                let v = match args.get(i) {
+                    Some(v) => v.clone(),
+                    None => evaluate(default, &env, ctx, world)?,
+                };
+                env = env.bind(pname.clone(), v);
+            }
+            task.stack.push(TF::Seq { items: body.clone(), idx: 0, env });
             Ok(false)
         }
     }
@@ -1692,6 +1722,47 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
+    }
+
+    /// The §10 embedding adapters: pattern instances get ISOLATED cells by
+    /// default (two embeddings of the same pattern don't share defvar
+    /// state); (inline …) shares the caller's scope; defns called from a
+    /// pattern see its cells dynamically (spell-2's guide-rig idiom).
+    #[test]
+    fn embedding_adapters() {
+        const CARD: &str = r#"
+(defn helper-reads [] (spawn (circle (live n) (linear c[1 0]))))
+(defpattern counter [start 1]
+  (seq
+    (defvar n start)
+    (set! n (+ (live n) 1))
+    (helper-reads)))                      ; defn sees THIS instance's n
+(defpattern outer []
+  (seq
+    (defvar n 100)
+    (export n)
+    (par (counter 1) (counter 5))         ; isolated: 2 and 6, not shared
+    (wait (ticks 2))
+    (inline (bump))))                     ; inline: mutates OUR n
+(defpattern bump []
+  (set! n 200))
+"#;
+        let mut sim = Sim::load(CARD, Some("outer")).unwrap();
+        for _ in 0..5 {
+            sim.step().unwrap();
+        }
+        // two counter instances spawned rings of 2 and 6 — isolated cells
+        // (shared cells would give 2 and 3, or collide with outer's 100)
+        let mut sizes: Vec<usize> = Vec::new();
+        let counts = sim.world.bullets.len();
+        assert_eq!(counts, 8, "2 + 6 bullets: {}", counts);
+        sizes.push(counts);
+        // inline (bump) wrote through to OUTER's exported cell
+        assert!(
+            matches!(sim.channel_val("n"), Some(Val::Num(v)) if v == 200.0),
+            "inline shares the caller's cells: {:?}",
+            sim.channel_val("n")
+        );
     }
 
     /// :expose publishes an entity column as a channel (0 after death, so

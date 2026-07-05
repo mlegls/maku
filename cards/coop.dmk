@@ -18,17 +18,16 @@
       (vel c[(* 4.5 (live (nth [$p1-move-x $p2-move-x] (dec k))))
              (* 4.5 (live (nth [$p1-move-y $p2-move-y] (dec k))))]))))
 
-;; defns, not defpatterns: pattern invocation is zero-arg (§13.12 — scope
-;; adapters undesigned), while functions apply with arguments and return
-;; ordinary Actions.
-(defn pilot-rig [k]
+;; parameterized patterns: (pilot-rig 2) binds k=2, defaults fill the
+;; rest; each invocation gets its own cell scope (the §10 adapter default).
+(defpattern pilot-rig [k 1]
   (spawn (pilot-rig-motion k)
          {:team :player-body
           :colliders [{:layer :player-hurt :r 0.05}]
           :cols {:lives 3 :pilot k}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 
-(defn autofire [k]
+(defpattern autofire [k 1]
   (seq
     (wait (ticks 2))            ; rigs register their derived channels first
     (dotimes [i inf :every (ticks 9)]

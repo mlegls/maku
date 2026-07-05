@@ -53,7 +53,29 @@ pub enum Val {
     /// A deferred signal expression (shared stateful instance, §5): forced
     /// when referenced inside a scan context.
     Thunk(Rc<(Form, Env)>),
+    /// The pattern instance's cell scope (name → cell id), bound in the Env
+    /// under "#cells" — it rides every captured (Form, Env) pair, so signal
+    /// reads resolve the right instance's cells at tick time. Shared-map
+    /// mutation across snapshots is replay-safe because ids allocate from
+    /// the deterministic world counter (re-stepping converges).
+    Cells(Rc<std::cell::RefCell<HashMap<String, u64>>>),
     Nothing,
+}
+
+/// The hidden Env key carrying the pattern instance's cell scope. Passed
+/// through defn application and def resolution like the slot-bound t/u —
+/// cells are DYNAMIC pattern-scoped ambient (§3), not lexical.
+pub const CELLS_KEY: &str = "#cells";
+
+pub(crate) fn cell_scope(env: &Env) -> Option<Rc<std::cell::RefCell<HashMap<String, u64>>>> {
+    match env.lookup(CELLS_KEY) {
+        Some(Val::Cells(m)) => Some(m),
+        _ => None,
+    }
+}
+
+pub(crate) fn fresh_cell_scope() -> Val {
+    Val::Cells(Rc::new(std::cell::RefCell::new(HashMap::new())))
 }
 
 impl Val {
@@ -108,7 +130,19 @@ pub enum ActionV {
     /// (export cell): publish a pattern cell as a read-only channel of the
     /// same name — the pattern-level export surface (host renders it; the
     /// pattern stays the single writer).
-    Export { name: Rc<str> },
+    Export { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str> },
+    /// Pattern invocation: args pre-evaluated in the CALLER's scope (ir
+    /// values); params fill from defaults. The §10 embedding adapter:
+    /// fresh_cells=true (the default — isolated defvar state per instance),
+    /// false for (inline …) — the embedded pattern shares the caller's
+    /// cells ("binds into the embedding pattern's scope").
+    CallPattern {
+        params: Vec<(Rc<str>, Form)>,
+        body: Rc<[Form]>,
+        args: Vec<Val>,
+        caller_cells: Option<Val>,
+        fresh_cells: bool,
+    },
     /// Clear all hostile (team-less) fire — bomb semantics.
     CullHostile,
     /// (until pred body...): structured cancellation — run body; the tick
@@ -118,8 +152,8 @@ pub enum ActionV {
     Until { pred: Form, body: Rc<[Form]>, env: Env },
     Wait { ticks: u64 },
     WaitFor { pred: Form, env: Env },
-    DefVar { name: Rc<str>, init: Val },
-    SetVar { name: Rc<str>, val: Val },
+    DefVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, init: Val },
+    SetVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, val: Val },
     /// Boss/self-entity eased move (derived from remat per the spec; the
     /// prototype animates the world's boss anchor and blocks for `dur`).
     Move { dur_ticks: u64, dest: (f64, f64) },
@@ -187,9 +221,9 @@ pub struct SigEnv {
     pub channels: Rc<HashMap<String, Val>>,
     /// Pattern-scoped control cells (F16): written by set! (control layer),
     /// read live by signals; shared between world and signal contexts.
-    pub cells: Rc<std::cell::RefCell<HashMap<String, Val>>>,
-    /// Cells published as channels via (export cell).
-    pub exports: Rc<std::cell::RefCell<Vec<String>>>,
+    pub cells: Rc<std::cell::RefCell<HashMap<u64, (String, Val)>>>,
+    /// Cells published as channels via (export cell): (public name, id).
+    pub exports: Rc<std::cell::RefCell<Vec<(String, u64)>>>,
 }
 
 impl Default for SigEnv {
@@ -228,11 +262,19 @@ pub struct Ctx {
     pub ambient: Pose,
     /// Some(...) while evaluating inside a scan (stateful sites active).
     pub scan: Option<ScanShared>,
+    /// Card patterns, callable by name: (bowap 6.0) resolves here when the
+    /// head isn't lexically bound.
+    pub patterns: Rc<HashMap<String, Pattern>>,
 }
 
 impl Default for Ctx {
     fn default() -> Self {
-        Ctx { sig: SigEnv::default(), ambient: Pose::IDENTITY, scan: None }
+        Ctx {
+            sig: SigEnv::default(),
+            ambient: Pose::IDENTITY,
+            scan: None,
+            patterns: Rc::new(HashMap::new()),
+        }
     }
 }
 
@@ -263,14 +305,20 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                     }
                     return Ok(v);
                 }
-                if let Some(v) = ctx.sig.cells.borrow().get(name) {
-                    return Ok(v.clone());
+                if let Some(scope) = cell_scope(env) {
+                    let id = scope.borrow().get(name).copied();
+                    if let Some(id) = id {
+                        if let Some((_, v)) = ctx.sig.cells.borrow().get(&id) {
+                            return Ok(v.clone());
+                        }
+                    }
                 }
                 if let Some(f) = ctx.sig.defs.clone().get(name) {
-                    // hygienic except the slot-bound parameters: a def'd
+                    // hygienic except the slot-bound parameters (and the
+                    // cell scope, which is dynamic ambient): a def'd
                     // signal's t IS the referencing slot's t (F12)
                     let mut e = Env::empty();
-                    for slot in ["t", "u"] {
+                    for slot in ["t", "u", CELLS_KEY] {
                         if let Some(v) = env.lookup(slot) {
                             e = e.bind(slot.into(), v);
                         }
@@ -391,6 +439,24 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let mut targets = Vec::new();
                 collect_handles(&target, &mut targets)?;
                 return Ok(Val::Action(Rc::new(ActionV::Manipulate { targets, callback })));
+            }
+            "inline" => {
+                // adapter: run the embedded pattern IN the caller's cell
+                // scope ("binds into the embedding pattern's scope", §10)
+                let inner = evaluate(&items[1], env, ctx, world)?;
+                let Val::Action(a) = &inner else {
+                    return Err("inline: expected a pattern call".into());
+                };
+                let ActionV::CallPattern { params, body, args, caller_cells, .. } = &**a else {
+                    return Err("inline: expected a pattern call".into());
+                };
+                return Ok(Val::Action(Rc::new(ActionV::CallPattern {
+                    params: params.clone(),
+                    body: body.clone(),
+                    args: args.clone(),
+                    caller_cells: caller_cells.clone(),
+                    fresh_cells: false,
+                })));
             }
             "until" => {
                 if items.len() < 3 {
@@ -526,9 +592,14 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                             }
                         };
                     }
-                    // cells read live by name
-                    if let Some(v) = ctx.sig.cells.borrow().get(ch.as_ref()) {
-                        return Ok(v.clone());
+                    // cells read live via the env-carried scope
+                    if let Some(scope) = cell_scope(env) {
+                        let id = scope.borrow().get(ch.as_ref()).copied();
+                        if let Some(id) = id {
+                            if let Some((_, v)) = ctx.sig.cells.borrow().get(&id) {
+                                return Ok(v.clone());
+                            }
+                        }
                     }
                 }
                 return evaluate(&items[1], env, ctx, world);
@@ -573,21 +644,24 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Form::Sym(name) = &items[1] else {
                     return Err("export: expected a cell name".into());
                 };
-                return Ok(Val::Action(Rc::new(ActionV::Export { name: name.clone() })));
+                let scope = cell_scope(env).ok_or("export: no cell scope")?;
+                return Ok(Val::Action(Rc::new(ActionV::Export { scope, name: name.clone() })));
             }
             "defvar" => {
                 let Some(Form::Sym(name)) = items.get(1) else {
                     return Err("defvar: expected name".into());
                 };
                 let init = evaluate(&items[2], env, ctx, world)?;
-                return Ok(Val::Action(Rc::new(ActionV::DefVar { name: name.clone(), init })));
+                let scope = cell_scope(env).ok_or("defvar: no cell scope")?;
+                return Ok(Val::Action(Rc::new(ActionV::DefVar { scope, name: name.clone(), init })));
             }
             "set!" => {
                 let Some(Form::Sym(name)) = items.get(1) else {
                     return Err("set!: expected name".into());
                 };
                 let val = evaluate(&items[2], env, ctx, world)?;
-                return Ok(Val::Action(Rc::new(ActionV::SetVar { name: name.clone(), val })));
+                let scope = cell_scope(env).ok_or("set!: no cell scope")?;
+                return Ok(Val::Action(Rc::new(ActionV::SetVar { scope, name: name.clone(), val })));
             }
             "wait-for" => {
                 return Ok(Val::Action(Rc::new(ActionV::WaitFor {
@@ -631,7 +705,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
     }
 
-    // Ordinary application.
+    // Ordinary application. Unbound symbol heads resolve pattern-first
+    // (§10 embedding: args evaluated in the CALLER's scope as ir values,
+    // defaults filling the rest; default adapter = isolated cells, (inline
+    // …) shares the caller's), then fall back to builtins.
     if let Form::Sym(name) = head {
         if env.lookup(name).is_none()
             && !ctx.sig.defs.contains_key(&**name)
@@ -641,6 +718,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 .iter()
                 .map(|f| evaluate(f, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
+            if let Some(pat) = ctx.patterns.clone().get(&**name) {
+                return Ok(Val::Action(Rc::new(ActionV::CallPattern {
+                    params: pat.params.clone(),
+                    body: pat.body.clone(),
+                    args,
+                    caller_cells: env.lookup(CELLS_KEY),
+                    fresh_cells: true,
+                })));
+            }
             return builtin(name, &args);
         }
     }
@@ -688,6 +774,16 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 .iter()
                 .map(|x| evaluate(x, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
+            // cells are dynamic ambient: the caller's scope flows into the
+            // callee (hygiene excepts #cells, like the slot-bound t/u)
+            let f = match (f, env.lookup(CELLS_KEY)) {
+                (Val::Fn { params, body, env: fenv }, Some(cells))
+                    if fenv.lookup(CELLS_KEY).is_none() =>
+                {
+                    Val::Fn { params, body, env: fenv.bind(CELLS_KEY.into(), cells) }
+                }
+                (f, _) => f,
+            };
             apply_fn(f, &args, ctx, world, false)
         }
         _ => Err(format!("cannot apply {:?}", hv)),
@@ -825,15 +921,20 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.push_event(Event { tick: world.tick, name: channel.as_ref().into(), pos: None });
             Ok(Val::Nothing)
         }
-        ActionV::Export { name } => {
+        ActionV::Export { scope, name } => {
+            let id = scope
+                .borrow()
+                .get(&**name)
+                .copied()
+                .ok_or_else(|| format!("export: no cell '{}' in scope", name))?;
             {
                 let mut ex = ctx.sig.exports.borrow_mut();
-                if !ex.iter().any(|n| n == &**name) {
-                    ex.push(name.to_string());
+                if !ex.iter().any(|(_, i)| *i == id) {
+                    ex.push((name.to_string(), id));
                 }
             }
             // same-tick availability
-            let v = ctx.sig.cells.borrow().get(&**name).cloned();
+            let v = ctx.sig.cells.borrow().get(&id).map(|(_, v)| v.clone());
             if let Some(v) = v {
                 let mut m = (*ctx.sig.channels).clone();
                 m.insert(name.to_string(), v);
@@ -841,8 +942,20 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::DefVar { name, init } | ActionV::SetVar { name, val: init } => {
-            ctx.sig.cells.borrow_mut().insert(name.to_string(), init.clone());
+        ActionV::DefVar { scope, name, init } => {
+            let id = world.next_id;
+            world.next_id += 1;
+            scope.borrow_mut().insert(name.to_string(), id);
+            ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), init.clone()));
+            Ok(Val::Nothing)
+        }
+        ActionV::SetVar { scope, name, val } => {
+            let id = scope
+                .borrow()
+                .get(&**name)
+                .copied()
+                .ok_or_else(|| format!("set!: no cell '{}' in scope", name))?;
+            ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), val.clone()));
             Ok(Val::Nothing)
         }
         ActionV::CullHostile => {
@@ -914,7 +1027,12 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::Seq { items, env } => {
             // instantaneous only: run each item now
-            let mut e = Ctx { sig: ctx.sig.clone(), ambient: ctx.ambient, scan: None };
+            let mut e = Ctx {
+                sig: ctx.sig.clone(),
+                ambient: ctx.ambient,
+                scan: None,
+                patterns: ctx.patterns.clone(),
+            };
             for f in items.iter() {
                 let v = evaluate(f, env, &mut e, world)?;
                 if let Val::Action(a) = &v {
