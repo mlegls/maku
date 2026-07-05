@@ -1,0 +1,110 @@
+;; Tutorial 3: two spell cards — the runnable companion to
+;; docs/tutorials/03-two-spells.md. Press 1-9 to run each example.
+;;
+;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t03.dmk
+
+;; ---------------------------------------------------------------------------
+;; Spell 1: Miracle Fruit (Touhou 11 extra) — seed bullets that each
+;; burst into expanding rings.
+
+;; 1. the skeleton: a ring of seeds every 3 seconds; a control watches for
+;; seeds older than 0.7s and replaces each with one ring of shots.
+(defpattern ex1-fruit-basic []
+  (par
+    (dotimes [vol inf :every 3]
+      (spawn (circle 8 (linear p[3 0]))
+             {:style {:family :lellipse :color :red :variant :w}}))
+    (fork
+      (dotimes [i inf :every (ticks 5)]
+        (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+          (fn [b]
+            (seq
+              ((pose (pos b))
+                (spawn (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))
+                       {:style {:family :ellipse :color :red :variant :w}}))
+              (cull b))))))))
+
+;; 2. staged burst: each seed becomes SIX rings, appearing over time at
+;; growing radius. The timed part forks from inside the callback — the
+;; scheduled work is adopted by the pattern's scope.
+(defpattern ex2-fruit-staged []
+  (par
+    (dotimes [vol inf :every 3]
+      (spawn (circle 8 (linear p[3 0]))
+             {:style {:family :lellipse :color :red :variant :w}}))
+    (fork
+      (dotimes [i inf :every (ticks 5)]
+        (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+          (fn [b]
+            (seq
+              (fork
+                ((pose (pos b))
+                  (dotimes [ring 6 :every (ticks 12)]
+                    (spawn (circle 20
+                             ((pose c[(* 0.4 ring) 0])
+                               (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
+                           {:style {:family :ellipse :color :red :variant :w}}))))
+              (cull b))))))))
+
+;; 3. color inheritance: each seed carries its palette index as a COLUMN
+;; (:cols values bind per element like style arrays), and the burst reads
+;; it back from the bullet view — the rings match their seed.
+(def palette [:red :pink :purple :blue :teal :green :yellow :orange])
+
+(defpattern ex3-fruit-colors []
+  (par
+    (dotimes [vol inf :every 3]
+      (spawn (circle 8 (linear p[3 0]))
+             {:style {:family :lellipse :color palette :variant :w}
+              :cols {:ci (iota 8)}}))
+    (fork
+      (dotimes [i inf :every (ticks 5)]
+        (manipulate {:family :lellipse :where (fn [b] (> b.t 0.7))}
+          (fn [b]
+            (let [ci b.ci]
+              (seq
+                (fork
+                  ((pose (pos b))
+                    (dotimes [ring 6 :every (ticks 12)]
+                      (spawn (circle 20
+                               ((pose c[(* 0.4 ring) 0])
+                                 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
+                             {:style {:family :ellipse
+                                      :color (nth palette ci)
+                                      :variant :w}}))))
+                (cull b)))))))))
+
+;; ---------------------------------------------------------------------------
+;; Spell 2: Danmaku Chimera (Touhou 8) — a weaving emitter fires long
+;; bullets that freeze into beads along their own flight path.
+
+;; 4. the emitter weaves side to side (a closed pose signal as the frame);
+;; every 2 seconds it fires a rotated ring of long bullets.
+(defpattern ex4-weave []
+  (in-frame (cart m"2 * sine(8, 1, t)" 0)
+    (dotimes [vol inf :every 2]
+      (spawn ((rot m"22 * vol") (circle 16 (linear p[2 0])))
+             {:style {:family :keine :color :purple :variant :w}}))))
+
+;; 5. the transform: after a second of flight, each long bullet is replaced
+;; by 13 beads laid along the segment it traveled. The tail is recovered
+;; from the view alone — for straight motion, tail = pos − vel·t.
+(defpattern ex5-chimera []
+  (par
+    (in-frame (cart m"2 * sine(8, 1, t)" 0)
+      (dotimes [vol inf :every 2]
+        (spawn ((rot m"22 * vol") (circle 16 (linear p[2 0])))
+               {:style {:family :keine :color :purple :variant :w}})))
+    (fork
+      (dotimes [i inf :every (ticks 5)]
+        (manipulate {:family :keine :where (fn [b] (> b.t 1))}
+          (fn [b]
+            (let [tx (- b.pos.x (* b.vel.x b.t))
+                  ty (- b.pos.y (* b.vel.y b.t))]
+              (seq
+                (spawn (map (fn [k]
+                              (pose c[(lerp 0 12 k tx b.pos.x)
+                                      (lerp 0 12 k ty b.pos.y)]))
+                            (iota 13))
+                       {:style {:family :gcircle :color :blue :variant :w}})
+                (cull b)))))))))

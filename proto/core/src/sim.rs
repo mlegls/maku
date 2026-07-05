@@ -791,6 +791,7 @@ impl Sim {
             ambient: Pose::IDENTITY,
             scan: None,
             patterns: self.ctx.patterns.clone(),
+            deferred: Vec::new(),
         };
         let mut w = World::default();
         match evaluate(&h.form, &env, &mut ctx, &mut w) {
@@ -1013,6 +1014,14 @@ fn run_action(
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
             exec_instant(a, ctx, world)?;
+            // forks issued inside the instant (callback timed work) are
+            // adopted here, inheriting this task's guards
+            for inner in std::mem::take(&mut ctx.deferred) {
+                let mut child = new_task(Vec::new());
+                child.guards = active_guards(task);
+                run_action(&inner, &mut child, ctx, world, new_tasks)?;
+                new_tasks.push(child);
+            }
             Ok(false)
         }
         ActionV::Wait { ticks } => {
@@ -1724,6 +1733,46 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
+    }
+
+    /// Per-element columns (:cols arrays bind like style axes) and
+    /// deferred forks (timed work scheduled from inside a callback).
+    #[test]
+    fn cols_per_element_and_deferred_fork() {
+        const CARD: &str = r#"
+(defpattern p []
+  (seq
+    (spawn (circle 4 (linear c[0.5 0]))
+           {:style {:family :seed} :cols {:ci (iota 4)}})
+    (wait (ticks 2))
+    (manipulate {:family :seed :where (fn [b] (> b.ci 2.5))}
+      (fn [b]
+        (seq
+          (fork (seq (wait (ticks 10))
+                     (spawn (circle 6 (linear c[1 0]))
+                            {:style {:family :burst}})))
+          (cull b))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..5 {
+            sim.step().unwrap();
+        }
+        // only the seed with ci=3 matched the query and died
+        assert_eq!(
+            sim.world.bullets.iter().filter(|b| b.style.family == "seed").count(),
+            3,
+            "per-element column selected exactly one seed"
+        );
+        assert_eq!(sim.world.bullets.iter().filter(|b| b.style.family == "burst").count(), 0);
+        for _ in 0..15 {
+            sim.step().unwrap();
+        }
+        // the deferred fork's timed spawn landed after its wait
+        assert_eq!(
+            sim.world.bullets.iter().filter(|b| b.style.family == "burst").count(),
+            6,
+            "callback-forked timed work ran as an adopted task"
+        );
     }
 
     /// Accessor sugar: dotted symbols are keyword chains (reader-level);

@@ -50,7 +50,8 @@ language.md.
 ## Doc roadmap
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
   tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
-  tutorial_cards_run): 01, 02 done; 03 next (movement functions — time in
-  expressions, easing, the closed/integrated split).
+  tutorial_cards_run): 01–03 done (03 = Miracle Fruit + Danmaku Chimera);
+  04 next (lasers). Tutorials are standalone; DMK mappings live in
+  docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

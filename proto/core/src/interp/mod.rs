@@ -119,7 +119,8 @@ pub enum ActionV {
         styles: Vec<Style>,
         hues: Vec<Option<MetaSig>>,
         team: Option<Rc<str>>,
-        cols: Vec<(Rc<str>, f64)>,
+        /// Per-element resolved columns (axis-bound at construction).
+        cols: Vec<Vec<(Rc<str>, f64)>>,
         triggers: Rc<[TriggerRule]>,
         damage: Val,
         colliders: Rc<[Collider]>,
@@ -267,6 +268,10 @@ pub struct Ctx {
     /// Card patterns, callable by name: (bowap 6.0) resolves here when the
     /// head isn't lexically bound.
     pub patterns: Rc<HashMap<String, Pattern>>,
+    /// Forks issued inside instantaneous contexts (manipulate callbacks —
+    /// DMK's temporal-control-at-a-bullet case): collected here, adopted as
+    /// child tasks by the executing task's scope after the instant returns.
+    pub deferred: Vec<Rc<ActionV>>,
 }
 
 impl Default for Ctx {
@@ -276,6 +281,7 @@ impl Default for Ctx {
             ambient: Pose::IDENTITY,
             scan: None,
             patterns: Rc::new(HashMap::new()),
+            deferred: Vec::new(),
         }
     }
 }
@@ -1104,7 +1110,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders, expose } => {
             let mut handles = Vec::new();
-            for ((d, s), h) in dyns.iter().zip(styles.iter()).zip(hues.iter()) {
+            for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(hues.iter()).enumerate() {
                 let motion = if ctx.ambient == Pose::IDENTITY {
                     d.motion.clone()
                 } else {
@@ -1128,7 +1134,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     hue: h.clone(),
                     colliders: colliders.clone(),
-                    cols: cols.clone(),
+                    cols: cols.get(ei).cloned().unwrap_or_default(),
                     triggers: triggers.clone(),
                     damage: damage.clone(),
                     grazed: false,
@@ -1213,19 +1219,44 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::Nothing)
         }
         ActionV::Seq { items, env } => {
-            // instantaneous only: run each item now
-            let mut e = Ctx {
-                sig: ctx.sig.clone(),
-                ambient: ctx.ambient,
-                scan: None,
-                patterns: ctx.patterns.clone(),
-            };
+            // instantaneous only: run each item now, on the REAL ctx —
+            // effects like deferred forks and same-tick channel writes
+            // must survive; only scan state and the ambient are scoped
+            let saved_scan = ctx.scan.take();
+            let saved_ambient = ctx.ambient;
+            let mut result = Ok(());
             for f in items.iter() {
-                let v = evaluate(f, env, &mut e, world)?;
-                if let Val::Action(a) = &v {
-                    exec_instant(a, &mut e, world)?;
+                match evaluate(f, env, ctx, world) {
+                    Ok(Val::Action(a)) => {
+                        if let Err(e) = exec_instant(&a, ctx, world) {
+                            result = Err(e);
+                            break;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        result = Err(e);
+                        break;
+                    }
                 }
             }
+            ctx.scan = saved_scan;
+            ctx.ambient = saved_ambient;
+            result?;
+            Ok(Val::Nothing)
+        }
+        // fork in an instant context defers: the callback's timed work is
+        // adopted by the executing task after the instant completes
+        ActionV::Fork(inner) => {
+            let inner = if ctx.ambient == Pose::IDENTITY {
+                inner.clone()
+            } else {
+                Rc::new(ActionV::InFrame {
+                    frame: FrameSpec::Const(ctx.ambient),
+                    inner: inner.clone(),
+                })
+            };
+            ctx.deferred.push(inner);
             Ok(Val::Nothing)
         }
         // a const frame is instantaneous: compose the ambient, run inner

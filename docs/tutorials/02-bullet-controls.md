@@ -1,26 +1,26 @@
 # Tutorial 2: Bullet Controls
 
-Runnable companion: **`cards/tutorials/t02.dmk`** — press the number keys to
-run each example.
+Runnable companion: **`cards/tutorials/t02.dmk`** — press the number keys
+to run each example.
 
 ```sh
 cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t02.dmk
 ```
 
-The concept sequence follows [DMK's Tutorial 2](https://dmk.bagoum.com/docs/articles/t02.html)
-(MIT, © Bagoum). DMK introduces *bullet controls* — persistent objects
-applied per-style every frame, with their own lifecycle commands. Here the
-whole apparatus dissolves into two things you already have: **queries** and
-**the control layer**.
+Tutorial 1 created bullets; this one changes them in flight. The two tools
+are **queries** (select live bullets) and **manipulate** (do something to
+each match). Everything else — bouncing, cleanup rules, transformations,
+bullets that spawn bullets — is built from those two plus the control flow
+you already have.
 
-## Part 1: A control is a loop
+## A control is a loop
 
-A "bullet control that flips circles at the ceiling for four seconds" is,
-written honestly (`ex1-flip`):
+Here is "bounce circles off an invisible ceiling at y = 3, for four
+seconds" (`ex1-flip`):
 
 ```clojure
 (fork
-  (dotimes [i 480 :every (ticks 1)]              ; four seconds of control
+  (dotimes [i 480 :every (ticks 1)]              ; four seconds, every tick
     (manipulate {:family :circle
                  :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
       (fn [b] (remat b (fn [exit]
@@ -28,37 +28,31 @@ written honestly (`ex1-flip`):
 ```
 
 - `(manipulate query callback)` runs the callback on every live bullet the
-  query matches, *right now*. Persistence isn't a property of the control —
-  it's a loop. The "timer" that destroys the control after four seconds is
-  the loop being finite (`480` iterations); an event-driven stop is
-  `(until pred …)` around it.
-- The **query** selects by style axes and an arbitrary pure predicate over
-  the bullet's view: `:pos`, `:vel`, `:t` (age), plus any columns it
-  carries. **Dotted symbols are accessor chains**: `b.pos.y` is reader
-  sugar for `(:y (:pos b))`, and it works on handles, views, and vectors
-  alike; in `m"…"` strings you also get indexing — `xs.[0]`, `xs.[0 1]`
-  (gather), `xs.[iota(3)]` (dot-bracket: bare `[` stays a literal).
-- One footgun: spawns without `:style` have an empty family — a
-  `{:family :circle}` query will not match them; selection matches what
-  the record actually says.
-- The **flip is a rematerialization** — the one blessed event mechanism for
-  changing motion in flight. `(remat b (fn [exit] dyn))` snaps the bullet's
-  state (`:pos`, `:vel`, `:t`), swaps its motion for the new signal (which
-  anchors at the snapped pose and restarts its local clock), and clears its
-  scan state. The flipped bullet is a *fresh closed signal* — it stays
-  scrub-safe, piecewise. DMK implements flipping with per-bullet mutation
-  flags inside the motion function; remat is that idea made a single
-  explicit operation.
+  query matches, *right now*. To keep watching, put it in a loop; to stop
+  after a while, make the loop finite (480 iterations here) or wrap it in
+  `(until pred …)` for an event-driven stop.
+- The **query** selects by style fields plus an arbitrary predicate over
+  the bullet's *view*: its `:pos`, `:vel`, `:t` (age), and any columns it
+  carries. Dotted symbols are accessor chains — `b.pos.y` reads the y of
+  the position — and they work on handles, views, and vectors alike. In
+  `m"…"` strings you also get indexing: `xs.[0]`, `xs.[0 1]` (gather),
+  `xs.[iota(3)]`.
+- The bounce itself is `remat` (*rematerialize*): snap the bullet's state
+  (`:pos`, `:vel`, `:t`), and swap in new motion built from the snapshot —
+  here, straight-line motion with the vertical velocity negated. The new
+  motion starts at the bullet's current position with a fresh local clock.
+  This is the standard way to change a bullet's course mid-flight.
 
-Note the predicate includes `(> b.vel.y 0)` — flip only while moving
-up. A stateful "already flipped" flag is what DMK's control keeps
-internally; here the condition is simply written out.
+Note the predicate checks `(> b.vel.y 0)` — only bullets still moving up
+get flipped, so a bullet doesn't re-flip forever while above the line.
 
-## Part 2: Selection
+One footgun: bullets spawned without `:style` have an empty family, so a
+`{:family :circle}` query won't match them. Selection matches what the
+record actually says.
 
-DMK selects styles with wildcard-string cross-products. Style here is a
-structured record, so selection is a typed query — an array on an axis
-means *any of* (`ex2-select-cull`):
+## Selecting across styles
+
+An array in a query field means *any of* (`ex2-select-cull`):
 
 ```clojure
 (manipulate {:family [:circle :star]
@@ -67,15 +61,14 @@ means *any of* (`ex2-select-cull`):
   (fn [b] (cull b)))
 ```
 
-That's "circles and stars, in red or blue, below y = −2" — the
-cross-product is implicit in matching a record against per-axis
-alternatives, and there are no wildcard strings to resolve. Green bullets
-of the same families sail past untouched; run the example and watch.
+That reads: circles and stars, in red or blue, below y = −2 — delete them.
+Green bullets of the same families sail past untouched; run the example
+and watch.
 
-## Part 3: Batches are just seq — and ordering is honest
+## Several effects per match
 
-Several effects under one predicate need no dedicated `batch` construct;
-the callback body is a `seq` (`ex3-restyle-at-age`):
+The callback body is ordinary code, so several effects under one
+predicate is just a `seq` (`ex3-restyle-at-age`):
 
 ```clojure
 (manipulate {:family :circle :where (fn [b] (> b.t 1))}
@@ -85,19 +78,13 @@ the callback body is a `seq` (`ex3-restyle-at-age`):
       (set-style b {:family :arrow :color :red :variant :b}))))
 ```
 
-- `(set-style b {...})` is restyle — legal as an *event-level* operation
-  precisely because style is `ir` (pool identity), never a signal (§7).
-- DMK documents a trap: putting the restyle before the sound silently
-  drops the sound, because controls stop when the bullet transfers styles.
-  Here the same ordering question is visible in the `seq` — and the failure
-  mode is gentler: verbs after a `(cull b)` are dead-handle no-ops
-  (generation-safe), not silent cross-control interactions.
+`(set-style b {...})` changes a live bullet's appearance. Order within the
+`seq` matters in the obvious way — and it fails gently: any verb after a
+`(cull b)` is a no-op on the dead handle rather than an error.
 
-## Part 4: Spawning from bullets
+## Bullets that spawn bullets
 
-The last DMK control runs a whole StateMachine at a bullet's position.
-Here a callback is control-layer code, so it can simply spawn — anchored
-wherever you like (`ex4-burst`):
+Callbacks can spawn, anchored wherever you like (`ex4-burst`):
 
 ```clojure
 (manipulate {:family :star :where (fn [b] (> b.t 1.1))}
@@ -111,32 +98,21 @@ wherever you like (`ex4-burst`):
 
 `(pos b)` reads the bullet's current world position; wrapping the spawn in
 `(pose …)` anchors the ring there. Callbacks always spawn in world
-coordinates — ambient frames deliberately stop at lambdas (§4), so a
-control firing under some rotated hierarchy doesn't double-anchor its
-spawns. The cull afterward is DMK's `softcull` minus the fade effect
-(spawn your own effect bullet first if you want one).
+coordinates — a control firing under some rotated frame hierarchy won't
+double-anchor its spawns.
 
-## Cost model, in one paragraph
+## A note on cost
 
-Everything above runs on the control layer and bills fuel per matched
-bullet — fine at tutorial scale, and the honest semantics. The §9 design
-splits the same API by *inspection*: callbacks that only write built-in
-columns compile to masked SoA updates (hot layer, no fuel); callbacks that
-spawn or run actions stay control-layer. You write one thing; the split is
-inferred.
+Controls run per matched bullet, every iteration of their loop. At
+tutorial scale this is nothing; for heavy effects prefer tighter queries
+(match on style fields first — they're cheap) and coarser loop periods
+(`:every (ticks 5)` is usually indistinguishable from every tick).
 
-| DMK Tutorial 2 concept | here |
-|---|---|
-| `bulletcontrol(persist, sel, ctrl)` | `(fork (dotimes [i inf :every (ticks 1)] (manipulate sel ctrl)))` |
-| persistence predicate / timers | loop bounds, or `(until pred …)` |
-| `poolcontrol(sel, reset)` | stop the loop (cancel its scope) |
-| style selector `{{ "circle-*" }, { "red/w" }}` | query map: `{:family :circle :color :red}` — arrays = any-of |
-| `flipygt(4, _)` | `(remat b (fn [exit] …))` with the flip written out |
-| `cull(y < -2)` | `:where (fn [b] (< b.pos.y -2))` + `(cull b)` |
-| `batch(pred, {…})` | a `seq` in the callback |
-| `restyleeffect(style, fx, _)` | `(set-style b {...})`, plus your own effect spawn |
-| `sm(_, sync …)` | spawn directly in the callback, anchored by `((pose (pos b)) …)` |
-| `softcull("cwheel-…", _)` | effect spawn + `(cull b)` |
+Next: [Tutorial 3](03-two-spells.md) — putting both tutorials together
+into two complete spell patterns.
 
-Next: [Tutorial 3](03-movement-functions.md) — movement functions (time in
-expressions, easing, and the closed/integrated split).
+---
+
+*The topic sequence of this tutorial series follows the
+[Danmokou](https://dmk.bagoum.com/) engine's tutorials (MIT, © Bagoum).
+Coming from DMK/BDSL? See the [migration notes](../from-dmk.md).*

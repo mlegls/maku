@@ -135,6 +135,7 @@ pub fn eval_sig(
         ambient: Pose::IDENTITY,
         scan,
         patterns: Rc::new(HashMap::new()),
+        deferred: Vec::new(),
     };
     let mut w = World::default(); // signals never touch the world (§2)
     evaluate(form, &e, &mut ctx, &mut w)
@@ -327,6 +328,7 @@ pub fn step_motion(
                         ambient: Pose::IDENTITY,
                         scan: None,
                         patterns: Rc::new(HashMap::new()),
+                        deferred: Vec::new(),
                     };
                     let mut w = World::default();
                     let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;

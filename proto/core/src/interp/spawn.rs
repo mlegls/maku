@@ -68,20 +68,23 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         _ => None,
     };
     // columns: :hp n is sugar for a col; :cols {:armor 2 ...} adds more.
+    // Column values may be ARRAYS, binding per spawn element exactly like
+    // style axes (leading-axis / by-length / nested-structural) — per-bullet
+    // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
     // :team :enemy defaults hp to 1 so untyped enemies still die to a shot.
-    let mut cols: Vec<(Rc<str>, f64)> = Vec::new();
+    let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
     match map_get(&meta, "hp") {
-        Some(Val::Num(n)) => cols.push(("hp".into(), n)),
+        Some(v @ (Val::Num(_) | Val::Arr(_))) => cols.push(("hp".into(), v)),
         _ => {
             if team.as_deref() == Some("enemy") {
-                cols.push(("hp".into(), 1.0));
+                cols.push(("hp".into(), Val::Num(1.0)));
             }
         }
     }
     if let Some(Val::Map(kvs)) = map_get(&meta, "cols") {
         for (k, v) in kvs.iter() {
-            if let (Val::Kw(k), Val::Num(n)) = (k, v) {
-                cols.push((k.as_ref().into(), *n));
+            if let Val::Kw(k) = k {
+                cols.push((k.as_ref().into(), v.clone()));
             }
         }
     }
@@ -118,7 +121,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             rules.into()
         }
         _ => {
-            if cols.iter().any(|(k, _)| &**k == "hp") {
+            if cols.iter().any(|(k, _): &(Rc<str>, _)| &**k == "hp") {
                 vec![TriggerRule::new("died", "hp", 0.0, true)].into()
             } else {
                 Vec::new().into()
@@ -188,6 +191,14 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             default_colliders(team.as_deref(), fam, hitbox).into()
         }
     };
+    // per-element column resolution: same axis rules as styles
+    let cols: Vec<Vec<(Rc<str>, f64)>> = elems
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            cols.iter().map(|(k, v)| (k.clone(), axis_num(v, e, i))).collect()
+        })
+        .collect();
     let dyns = elems
         .into_iter()
         .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
@@ -349,6 +360,37 @@ pub(crate) fn kw_str(v: &Val) -> String {
 
 /// §5/F15: a meta axis array binds to the first array level (root to leaf)
 /// whose length matches; otherwise it cycles on the flat index.
+/// Numeric per-element resolution: same axis rules as style values
+/// (nested-structural, else by-length, else leading-cycle), for columns.
+pub(crate) fn axis_num(v: &Val, elem: &SpawnElem, flat: usize) -> f64 {
+    match v {
+        Val::Arr(items) if items.iter().any(|x| matches!(x, Val::Arr(_))) => {
+            let mut cur = v.clone();
+            let mut depth = 0;
+            loop {
+                match cur {
+                    Val::Arr(xs) if !xs.is_empty() => {
+                        let idx = elem.path.get(depth).map(|(_, i)| *i).unwrap_or(flat);
+                        cur = xs[idx % xs.len()].clone();
+                        depth += 1;
+                    }
+                    other => return other.num().unwrap_or(0.0),
+                }
+            }
+        }
+        Val::Arr(items) if !items.is_empty() => {
+            let len = items.len();
+            for (axis_len, idx) in &elem.path {
+                if *axis_len == len {
+                    return items[idx % len].num().unwrap_or(0.0);
+                }
+            }
+            items[flat % len].num().unwrap_or(0.0)
+        }
+        v => v.num().unwrap_or(0.0),
+    }
+}
+
 pub(crate) fn axis_value(v: &Val, elem: &SpawnElem, flat: usize) -> String {
     match v {
         // NESTED arrays resolve STRUCTURALLY: depth in the meta value =

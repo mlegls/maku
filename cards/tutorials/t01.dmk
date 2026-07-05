@@ -4,9 +4,8 @@
 ;;
 ;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t01.dmk
 ;;
-;; The example sequence follows DMK's Tutorial 1 (MIT, (c) Bagoum,
-;; https://dmk.bagoum.com/docs/articles/t01.html), re-taught for this
-;; language; see the doc for the prose.
+;; Topic sequence after Danmokou's tutorials (MIT, (c) Bagoum); see
+;; docs/from-dmk.md if you're coming from DMK/BDSL.
 
 ;; 1. one bullet: 2 units right of the origin, speed 2, heading -90°
 (defpattern ex1-one-bullet []

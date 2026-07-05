@@ -3,10 +3,8 @@
 ;;
 ;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t02.dmk
 ;;
-;; The concept sequence follows DMK's Tutorial 2 (MIT, (c) Bagoum,
-;; https://dmk.bagoum.com/docs/articles/t02.html), re-taught for this
-;; language: a "bullet control" here is nothing but an ordinary control-
-;; layer loop running (manipulate query effect) — no dedicated machinery.
+;; Topic sequence after Danmokou's tutorials (MIT, (c) Bagoum); see
+;; docs/from-dmk.md if you're coming from DMK/BDSL.
 
 ;; 1. flipping: rings rise; a 4-second control bounces circles off an
 ;; invisible ceiling at y=3. The flip is a REMAT: snap {:pos :vel}, swap
