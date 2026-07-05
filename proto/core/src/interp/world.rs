@@ -29,6 +29,9 @@ pub enum Kind {
         /// the warn ends. The telegraph always shows the full path; the
         /// hitbox (and bright render) fills out from u=0.
         fill: Option<f64>,
+        /// Signal-valued :fill — the swept FRACTION (clamped 0..1) as a
+        /// function of laser age t, for non-linear fill rates.
+        fill_sig: Option<(Form, Env)>,
     },
     /// A trailing time-window of the trajectory, materialized as geometry
     /// (§6): positions are recorded per tick into Bullet.trail.

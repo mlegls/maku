@@ -18,6 +18,10 @@ language.md.
   set-style landed with tutorial 02. Still missing: per-slot epochs
   (a half-finished fade surviving a motion remat), soft-cull fades,
   the F1 lint, and the masked-SoA fast path (all callbacks bill fuel).
+  SoA now has a concrete benchmark: t03 ex2 runs ~2.5ms/tick (release)
+  at its ~1700-bullet steady state, dominated by per-bullet tree-walked
+  signal eval; debug builds are 10-20x worse (tutorial run lines now
+  say --release).
 - Extraction (§10), ancestor clocks (§13.1), 3D embedding (§12).
 
 ## Known approximations (documented in code)

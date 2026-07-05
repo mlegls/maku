@@ -117,6 +117,7 @@ pub struct ExtLaser {
     pub resolution: f64,
     pub width: f64,
     pub fill: Option<f64>,
+    pub fill_sig: Option<(Form, Env)>,
 }
 
 /// A pather value pre-spawn: the guide dyn plus its remembrance window.

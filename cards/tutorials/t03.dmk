@@ -3,7 +3,7 @@
 ;; The card is factored the way it was built: parts get names at the
 ;; moment they'd otherwise be repeated.
 ;;
-;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t03.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t03.dmk
 
 ;; ---------------------------------------------------------------------------
 ;; Spell 1: Miracle Fruit (Touhou 11 extra) — seed bullets that each
@@ -100,9 +100,13 @@
                (let [tx (- b.pos.x (* b.vel.x b.t))
                      ty (- b.pos.y (* b.vel.y b.t))]
                  (seq
+                   ;; each bead keeps a quarter of the keine's velocity, so
+                   ;; the frozen line bursts outward and clears the field
                    (spawn (map (fn [k]
-                                 (pose c[(lerp 0 12 k tx b.pos.x)
-                                         (lerp 0 12 k ty b.pos.y)]))
+                                 ((pose c[(lerp 0 12 k tx b.pos.x)
+                                          (lerp 0 12 k ty b.pos.y)])
+                                   (linear c[(* 0.25 b.vel.x)
+                                             (* 0.25 b.vel.y)])))
                                (iota 13))
                           {:style {:family :gcircle :color :blue :variant :w}})
                    (cull b)))))))

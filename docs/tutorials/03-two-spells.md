@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t03.dmk`**.
 
 ```sh
-cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t03.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t03.dmk
 ```
 
 This tutorial builds two recognizable spell cards from the tools of the
@@ -159,8 +159,10 @@ turn a bare expression into a predicate function.
                      ty (- b.pos.y (* b.vel.y b.t))]
                  (seq
                    (spawn (map (fn [k]
-                                 (pose c[(lerp 0 12 k tx b.pos.x)
-                                         (lerp 0 12 k ty b.pos.y)]))
+                                 ((pose c[(lerp 0 12 k tx b.pos.x)
+                                          (lerp 0 12 k ty b.pos.y)])
+                                   (linear c[(* 0.25 b.vel.x)
+                                             (* 0.25 b.vel.y)])))
                                (iota 13))
                           {:style {:family :gcircle :color :blue :variant :w}})
                    (cull b)))))))
@@ -168,7 +170,9 @@ turn a bare expression into a predicate function.
 
 The bead line needs no saved state: for straight motion the launch point
 is recoverable from the view alone — *tail = pos − vel·t* — and
-`(map f (iota 13))` lays 13 stationary poses along the segment.
+`(map f (iota 13))` lays 13 poses along the segment. Each bead keeps a
+quarter of its parent's velocity, so the frozen line bursts slowly
+outward and clears the field instead of accumulating at the center.
 
 ## The abstraction ladder
 

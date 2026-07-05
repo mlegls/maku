@@ -234,6 +234,20 @@ async fn main() {
                 app.inst.select(i);
             }
         }
+        // Tab / Shift-Tab step through ALL patterns (hotkeys stop at 9)
+        if is_key_pressed(KeyCode::Tab) {
+            let names = app.inst.patterns().to_vec();
+            if !names.is_empty() {
+                let cur = app.inst.current_pattern().unwrap_or_default();
+                let at = names.iter().position(|n| *n == cur);
+                let next = if is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift) {
+                    at.map(|i| (i + names.len() - 1) % names.len()).unwrap_or(names.len() - 1)
+                } else {
+                    at.map(|i| (i + 1) % names.len()).unwrap_or(0)
+                };
+                app.inst.select(next);
+            }
+        }
         if is_key_pressed(KeyCode::Escape) {
             break;
         }
@@ -392,18 +406,41 @@ async fn main() {
         } else {
             draw_text(app.inst.status(), 12.0, 24.0, 22.0, RED);
         }
-        // pattern menu (above the timeline strip)
+        // pattern menu (above the timeline strip): every entry is a
+        // click target — hotkeys 1-9 only reach the first nine
         let current = app.inst.current_pattern().unwrap_or_default();
         let n_patterns = app.inst.patterns().len();
-        for (i, name) in app.inst.patterns().iter().enumerate() {
+        let names: Vec<String> = app.inst.patterns().to_vec();
+        let mut clicked: Option<usize> = None;
+        for (i, name) in names.iter().enumerate() {
             let sel = *name == current;
+            let y = screen_height() - TIMELINE_H - 14.0 * (n_patterns - i) as f32;
+            let label = if i < 9 {
+                format!("{} {}", i + 1, name)
+            } else {
+                format!("  {}", name)
+            };
+            let w = measure_text(&label, None, 18, 1.0).width;
+            let hover = mx >= 12.0 && mx <= 12.0 + w && my >= y - 14.0 && my <= y + 4.0;
+            if hover && is_mouse_button_pressed(MouseButton::Left) {
+                clicked = Some(i);
+            }
             draw_text(
-                &format!("{} {}", i + 1, name),
+                &label,
                 12.0,
-                screen_height() - TIMELINE_H - 14.0 * (n_patterns - i) as f32,
+                y,
                 18.0,
-                if sel { WHITE } else { GRAY },
+                if sel {
+                    WHITE
+                } else if hover {
+                    YELLOW
+                } else {
+                    GRAY
+                },
             );
+        }
+        if let Some(i) = clicked {
+            app.inst.select(i);
         }
         timeline_ui(&mut app, mx, my);
         next_frame().await;

@@ -2,7 +2,7 @@
 ;; docs/tutorials/01-first-bullets.md. Each example is a pattern: press
 ;; 1-9 in the player (or click the menu in the web host) to run it.
 ;;
-;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t01.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t01.dmk
 ;;
 ;; Topic sequence after Danmokou's tutorials (MIT, (c) Bagoum); see
 ;; docs/from-dmk.md if you're coming from DMK/BDSL.

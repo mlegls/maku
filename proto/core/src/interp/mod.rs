@@ -933,6 +933,7 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             resolution: l.resolution,
             width: l.width,
             fill: l.fill,
+            fill_sig: l.fill_sig.clone(),
         }))),
         Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
             anchor: Rc::new(DynNode::Frame(frame, pv.anchor.clone())),
@@ -1473,6 +1474,7 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             resolution: l.resolution,
             width: l.width,
             fill: l.fill,
+            fill_sig: l.fill_sig.clone(),
         }))),
         Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
             anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), pv.anchor.clone())),
@@ -1683,6 +1685,7 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     };
     // evaluate options, keeping signal-valued entries (contain t) as forms
     let mut u_max_sig = None;
+    let mut fill_sig = None;
     let opts = match items.get(opts_idx) {
         Some(Form::Map(kvs)) => {
             let mut pairs = Vec::new();
@@ -1691,6 +1694,9 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
                 if contains_t(v) {
                     if matches!(&kv, Val::Kw(kw) if &**kw == "u-max") {
                         u_max_sig = Some((v.clone(), env.clone()));
+                    }
+                    if matches!(&kv, Val::Kw(kw) if &**kw == "fill") {
+                        fill_sig = Some((v.clone(), env.clone()));
                     }
                     pairs.push((kv, Val::Nothing));
                 } else {
@@ -1716,9 +1722,10 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         resolution: getf("resolution", 0.1),
         width: getf("width", 1.0),
         fill: match map_get(&opts, "fill") {
+            Some(Val::Nothing) | None => None, // signal-valued or absent
             Some(v) => Some(v.num()?),
-            None => None,
         },
+        fill_sig,
     })))
 }
 

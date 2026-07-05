@@ -52,8 +52,15 @@ pub fn sample_laser_frac(
 /// A slow laser's hot fraction at age tau: 0 before the warn ends, then
 /// sweeping to 1 over the :fill window. Lasers without :fill are hot in
 /// full the moment the warn ends.
-fn hot_frac(kind: &Kind, tau: f64) -> f64 {
-    let Kind::Laser { warn, fill, .. } = kind else { return 1.0 };
+fn hot_frac(kind: &Kind, tau: f64, sig: &SigEnv) -> f64 {
+    let Kind::Laser { warn, fill, fill_sig, .. } = kind else { return 1.0 };
+    if let Some((f, e)) = fill_sig {
+        // signal :fill = swept fraction as a function of laser age
+        return eval_sig(f, e, sig, tau, 0.0, None, None)
+            .and_then(|v| v.num())
+            .map(|x| x.clamp(0.0, 1.0))
+            .unwrap_or(1.0);
+    }
     match fill {
         Some(d) if *d > 0.0 => ((tau - warn) / d).clamp(0.0, 1.0),
         _ => 1.0,
@@ -627,7 +634,7 @@ impl Sim {
                         return None; // warn phase: no hitbox yet
                     }
                     // slow lasers: only the swept-out prefix is hot
-                    let pts = sample_laser_frac(b, tau, &sig, hot_frac(&b.kind, tau))?;
+                    let pts = sample_laser_frac(b, tau, &sig, hot_frac(&b.kind, tau, &sig))?;
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - LASER_R * width).max(0.0).powi(2))
                 }
@@ -896,7 +903,7 @@ impl Sim {
                     }
                 }
                 Kind::Laser { warn, .. } => {
-                    let hot = hot_frac(&b.kind, tau);
+                    let hot = hot_frac(&b.kind, tau, sig);
                     let partly = tau >= *warn && hot < 1.0;
                     if let Some(pts) = sample_laser(b, tau, sig) {
                         out.push(RenderItem::Polyline {

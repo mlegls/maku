@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t04.dmk`**.
 
 ```sh
-cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t04.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t04.dmk
 ```
 
 Bullets so far have been points. This tutorial covers the two extended
@@ -86,6 +86,15 @@ While filling, the full path renders dim (still a telegraph) and the
 swept prefix renders bright; the hitbox covers only the prefix. Players
 standing on the far end of a telegraphed line have exactly `warn +
 fill·(u/u-max)` seconds to move — the fairness knob is explicit.
+
+For a non-linear sweep, give `:fill` a *signal*: an expression over the
+laser's age `t` returning the swept fraction (clamped to 0…1). A fast
+start that decelerates toward the tip:
+
+```clojure
+(laser {:warn 0.8 :active 4 :u-max 7
+        :fill m"1 - (1 - (t - 0.8) / 1.5)^2"})   ; ease-out sweep
+```
 
 ## Firing from a pather's tip
 

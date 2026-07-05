@@ -243,6 +243,7 @@ pub(crate) fn flatten_elems(
                     resolution: l.resolution,
                     width: l.width,
                     fill: l.fill,
+                    fill_sig: l.fill_sig.clone(),
                 },
                 path: path.clone(),
             });
