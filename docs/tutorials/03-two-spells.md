@@ -17,10 +17,9 @@ stage). The design: slow "seed" bullets spread out in a ring; after a
 moment, each seed bursts into rings of shots expanding from where it
 died; repeat.
 
-The key structural fact: **`spawn` returns handles**, one per bullet.
-When *you* spawned the bullets and the schedule is known in advance,
-each bullet can carry its own forked timeline — no watching, no
-selecting (`ex1-fruit-basic`):
+Seeds ripen on a fixed schedule, so this is timeline territory
+(tutorial 2): each seed carries its own forked biography
+(`ex1-fruit-basic`):
 
 ```clojure
 (for [vol inf :every 3]
@@ -36,13 +35,7 @@ selecting (`ex1-fruit-basic`):
           (cull b))))))
 ```
 
-Read it as each seed's *biography*: wait 0.7 seconds, burst where you
-are, die. `for` over an array iterates its elements (here, the handles),
-and each `fork` gives that seed an independent clock. A dead handle —
-say the player bombed the seed first — makes the rest of its timeline a
-harmless no-op.
-
-Two smaller things: `(vel p[(lerp 0.3 1.4 t 0 2.6) 0])` is motion in the
+One new thing: `(vel p[(lerp 0.3 1.4 t 0 2.6) 0])` is motion in the
 *velocity* domain with a time-varying speed — `(lerp a b t from to)`
 ramps as `t` goes `a → b`, so the burst eases in from a standstill.
 
