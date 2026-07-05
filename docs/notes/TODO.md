@@ -90,6 +90,34 @@ language.md.
   templates (:name/:type/hp bars) over `states`.
 - Core `finally` now runs on fork task death through inherited guards; keep
   docs/examples using that instead of states-owned finalizers.
+- Intrinsics-pass leanings (2026-07 discussion, for the post-doc-port pass):
+  * Math/matrix intrinsics are OUR spec; external linalg libraries are at
+    most implementations behind it, never the definition — replay/scrub
+    demands bit-identical results native↔wasm (libm-style transcendentals,
+    no SIMD/FMA-variant results), and a dependency upgrade must never be a
+    silent language change. The interesting parts (cyclic broadcast,
+    signal lifting over t/u) exist in no library anyway; libs only ever
+    cover inner kernels, relevant again when the JIT's typed strided
+    descriptors arrive.
+  * Generative-art vocabulary: bezier/curves are pure dyns over u (laser
+    :shape already samples dyn_pose_u) — lib code first, intrinsify if
+    hot; the easing family is the same species and already builtin.
+    Smooth noise (perlin/simplex) is a PURE fn of coords+seed — hot-layer
+    intrinsic, integer-hash based for bit determinism, replay-clean
+    (unlike the sequential-splitmix RNG). FFT sits at the determinism
+    boundary: audio-reactive cards want HOST-side analysis published as
+    channels riding the input tape; engine-side FFT deferred until a
+    procedural (spectral-synthesis) use case appears.
+  * Seq/dict verb set: steal k's adverb semantics (over/scan/each/
+    each-prior/each-left/each-right) as prelude match-recursion over seq
+    views — non-intrinsic. Keep cyclic broadcast (ours) over k's
+    equal-length-or-atom conformance. Dicts need one entries/keys/vals
+    intrinsic to be seq-able; dict verbs are then lib code. Optional
+    later: m"" grows postfix adverb SPELLING that expands to the same lib
+    fns at read time (zero IR growth; arity is syntactically visible
+    inside the macro, which is the monadic/dyadic disambiguation k
+    lacks). Distinct names in function space (fold/scan/each-prior), no
+    overloaded glyphs outside the reader macro.
 - A lib change is an engine rebuild (deliberate — not user-patchable);
   version the lib with the wire protocol when hosts start pinning.
 - Styles, under "the engine has no bullet-hell domain understanding":
