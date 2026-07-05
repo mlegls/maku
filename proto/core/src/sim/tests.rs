@@ -1341,12 +1341,14 @@
         assert!(a > 0 && b > 0, "both states visited: a={} b={}", a, b);
     }
 
-    /// The `phases` sugar over `states`: clause opts desugar to body code —
-    /// :timeout to a fork racing the body, :until to an until wrapper
-    /// (a bare wait-for when the clause has no body).
+    /// The `phases` sugar over `states` — a touhou.dmk MACRO now: clause
+    /// opts desugar to body code at macro time — :timeout to a fork racing
+    /// the body, :until to an until wrapper (a bare wait-for when the
+    /// clause has no body).
     #[test]
     fn phases_sugar_desugars() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern m []
   (phases
     (:spell {:timeout 0.05}
@@ -1366,6 +1368,7 @@
         assert!(has(&sim, "end"), "fell through to the next phase");
 
         const CARD2: &str = r#"
+(import "touhou")
 (defpattern m []
   (seq
     (defvar hp 5)
@@ -1523,4 +1526,37 @@ fn prelude_when_unless() {
         sim.step().unwrap();
     }
     assert_eq!(sim.world.bullets.len(), 2, "even iterations only");
+}
+
+/// spawn-boss owns the boss conventions: hp exposed as $boss-hp, the
+/// machine held until the boss registers, `boss` bound for the body,
+/// and phases' {:hp n} gate reading the same channel.
+#[test]
+fn spawn_boss_owns_conventions() {
+    const CARD: &str = r#"
+(import "touhou")
+(defpattern m []
+  (spawn-boss (pose c[0 2])
+              {:hp 3 :hitbox 0.4 :style {:family :lstar}}
+    (phases
+      (:one {:hp 1} (seq (event :phase-one) (wait 99))
+        (finally (event :one-out) (invuln (nth boss 0) 0.1)))
+      (:two {:hp 0} (seq (event :phase-two) (wait 99))))))
+"#;
+    let mut sim = Sim::load(CARD, Some("m")).unwrap();
+    for _ in 0..4 {
+        sim.step().unwrap();
+    }
+    let has = |sim: &Sim, n: &str| {
+        sim.world.log.borrow().entries.iter().any(|e| &*e.name == n)
+    };
+    assert!(has(&sim, "phase-one"), "machine started once $boss-hp registered");
+    assert!(!has(&sim, "phase-two"), "hp gate holds while hp > 1");
+    // knock hp down: the exposure publishes, the gate releases
+    sim.world.bullets[0].col_set(&"hp".into(), 1.0);
+    for _ in 0..4 {
+        sim.step().unwrap();
+    }
+    assert!(has(&sim, "one-out"), "finally ran at the phase edge");
+    assert!(has(&sim, "phase-two"), "hp gate released into the next phase");
 }

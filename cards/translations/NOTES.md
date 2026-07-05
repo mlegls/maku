@@ -261,6 +261,28 @@ still knows by name: the interaction-matrix rows and the three
 contact-resolution bodies (`lives`/`iframe-until`/`hp` writes) — the
 next extraction, blocked on a cheap per-contact call story.
 
+**`phases` is genre policy, so the lib defines it — and macros became
+able to.** Mima showed the spawn-boss boundary sitting wrong: the card
+was hand-writing `:expose {:hp $boss-hp}`, the registration wait, and
+`{:until (<= $boss-hp n)}` gates — pure boss *convention*, repeated at
+every boss. Two moves fixed it. First, macro-time power became real
+language surface: macro bodies were always full evaluations, so what
+was missing was only vocabulary — `& rest` params (macros and fns), the
+seq builtins reading form lists as sequences of subforms, total `get`
+over map forms, `form-type`/`form-name`, and evaluator-backed
+`map`/`filter`. With those, `phases` moved out of Rust entirely: a
+touhou.dmk macro walking its clause list with a helper defn and
+splicing `states` clauses. Second, `spawn-boss` now owns the boss
+conventions: it publishes hp as `$boss-hp` (a defaulted, overridable
+`:expose`), holds the machine until the boss registers, and binds
+`boss`; `phases` gained `{:hp n}` as the gate sugar reading that same
+channel. The engine keeps only the bare FSM (`states`/`goto`) — what a
+"phase" means is entirely the library's business. The prelude rode the
+same wave: `when`/`unless` are autoimported stdlib macros over `if`
+(nothing coerces to the no-op action), with the `;;@prelude` sentinel
+keeping expansion idempotent. `for` stays engine — its `:every`/inf
+semantics are scheduler behavior, not a desugar.
+
 **`move` — entity motion is remat, not frame mutation (clarified).** There IS
 a thing being moved: the boss (or player option) is an expressed entity — it
 renders, collides, has hp — and patterns anchor to its live pose signal (the

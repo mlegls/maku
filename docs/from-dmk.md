@@ -94,9 +94,9 @@ decode notes.
 
 | DMK | here |
 |---|---|
-| `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — sugar over the `states` FSM primitive |
-| the boss BEH entity | `(spawn-boss dyn meta machine)` — library macro: an *enemy with a phase machine* (binds `boss` for the machine body); hp/hurtbox/exposure are ordinary meta |
-| `hp(4000)` phase property | `{:until (<= $boss-hp n)}` — desugars to `(until pred body)` as the state body |
+| `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — a `(import "touhou")` macro over the `states` FSM primitive |
+| the boss BEH entity | `(spawn-boss dyn meta machine…)` — library macro: an *enemy with a phase machine*. It owns the boss conventions: publishes hp as `$boss-hp`, holds the machine until the boss registers, binds `boss` for the machine body; hp/hurtbox/triggers are ordinary meta |
+| `hp(4000)` phase property | `{:hp n}` — desugars to `(until (<= $boss-hp n) body)`, reading the channel `spawn-boss` publishes; `{:until pred}` is the general gate |
 | phase timeout `phase X {…}` | `{:timeout X}` — desugars to `(fork (seq (wait X) (goto)))`; bare goto = exit to successor |
 | `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to a `(move …)` at the body head; the card knows its boss |
 | `type(spell, "Name")` | card data: an exported cell written at state heads (or a card-level template macro) |

@@ -103,7 +103,8 @@ pub struct SpawnElem {
 /// The machine is a bare FSM — labeled states, default successor = next in
 /// order, `goto` for everything else. End conditions are ordinary body
 /// code (`(until pred …)` as the body, `(fork (seq (wait d) (goto)))` for
-/// timeouts); `phases` is the shipped boss-shaped sugar over it.
+/// timeouts); `phases` — the boss-shaped sugar over it — is a stdlib
+/// macro (lib/touhou.dmk), not engine code.
 #[derive(Debug, Clone)]
 pub struct StateClause {
     pub label: Rc<str>,
@@ -577,99 +578,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     env: env.clone(),
                 })));
             }
-            "phases" => {
-                // The boss-shaped layer over `states` — sugar only, same
-                // machine underneath. Clause opts desugar to body code:
-                //   :root pos  → (move 0.9 :out-sine pos)     [reposition first]
-                //   :timeout d → (fork (seq (wait d) (goto))) [timer arms on arrival]
-                //   :until p   → (until p body…)              [the hp race]
-                let mut clauses = Vec::new();
-                for cf in &items[1..] {
-                    let Form::List(parts) = cf else {
-                        return Err("phases: expected (:label opts? body…) clauses".into());
-                    };
-                    let Some(head) = parts.first().filter(|f| matches!(f, Form::Kw(_)))
-                    else {
-                        return Err("phases: clause head must be a :label keyword".into());
-                    };
-                    let mut at = 1;
-                    let (mut until, mut timeout, mut root) = (None, None, None);
-                    if let Some(Form::Map(kvs)) = parts.get(1) {
-                        at = 2;
-                        for (k, v) in kvs.iter() {
-                            let Form::Kw(k) = k else {
-                                return Err("phases: opts keys are keywords".into());
-                            };
-                            match &**k {
-                                "until" => until = Some(v.clone()),
-                                "timeout" => timeout = Some(v.clone()),
-                                "root" => root = Some(v.clone()),
-                                other => {
-                                    return Err(format!(
-                                        "phases: unsupported opt :{} (only :until \
-                                         :timeout :root — build richer templates as \
-                                         card macros over `states`)",
-                                        other
-                                    ))
-                                }
-                            }
-                        }
-                    }
-                    let mut body: Vec<Form> = parts[at..].to_vec();
-                    let mut finally: Option<Form> = None;
-                    if let Some(Form::List(last)) = body.last() {
-                        if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
-                            finally = body.pop();
-                        }
-                    }
-                    if let Some(p) = until {
-                        body = if body.is_empty() {
-                            vec![Form::list(vec![Form::sym("wait-for"), p])]
-                        } else {
-                            let mut u = vec![Form::sym("until"), p];
-                            u.extend(body);
-                            vec![Form::list(u)]
-                        };
-                    }
-                    if let Some(d) = timeout {
-                        body.insert(
-                            0,
-                            Form::list(vec![
-                                Form::sym("fork"),
-                                Form::list(vec![
-                                    Form::sym("seq"),
-                                    Form::list(vec![Form::sym("wait"), d]),
-                                    Form::list(vec![Form::sym("goto")]),
-                                ]),
-                            ]),
-                        );
-                    }
-                    if let Some(pos) = root {
-                        body.insert(
-                            0,
-                            Form::list(vec![
-                                Form::sym("move"),
-                                Form::Num(0.9),
-                                Form::Kw("out-sine".into()),
-                                pos,
-                            ]),
-                        );
-                    }
-                    let mut out: Vec<Form> = vec![head.clone()];
-                    out.extend(body);
-                    if let Some(f) = finally {
-                        out.push(f);
-                    }
-                    clauses.push(parse_state_clause(&Form::list(out))?);
-                }
-                if clauses.is_empty() {
-                    return Err("phases: no clauses".into());
-                }
-                return Ok(Val::Action(Rc::new(ActionV::States {
-                    clauses: clauses.into(),
-                    env: env.clone(),
-                })));
-            }
+            // `phases` — the boss-shaped layer over `states` — is a stdlib
+            // macro now (lib/touhou.dmk): what a "phase" means is genre
+            // policy, and the macro-time form vocabulary expresses the
+            // whole desugar as card code.
             "goto" => {
                 // (goto label?) — the label is a VALUE (computed routing is
                 // a Markov chain); bare (goto) exits to the default

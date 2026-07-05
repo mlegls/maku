@@ -9,8 +9,9 @@ language.md.
   also how `states` arms each state's guard).
 - `states` leftovers (§8): state-body return value as the next label
   (routing is goto-or-state-order); richer spellcard templates than the
-  `phases` sugar (:name/:type/hp bars) as card macros once the boss
-  tutorial demands them.
+  `phases` macro (:name/:type/hp bars) as card macros once the boss
+  tutorial demands them (`phases` itself is lib code now — extend it
+  there, not in the engine).
 - `(with {$chan v} body)` scoped channel overrides (§3/§13.8).
 - Pattern-embedding scope adapters (§10) — callable patterns embed bare:
   defaults only, no argument passing, shared cells.
@@ -48,10 +49,18 @@ language.md.
 
 ## Standard library (cards/lib/, compile-time embedded)
 - Shipped: `prelude` (AUTOIMPORTED, sentinel-deduped: `when`/`unless`),
-  `touhou` (spawn-bullet/spawn-shot/spawn-enemy; spawn-boss = enemy +
-  phase machine; invuln) and `player-rig`. Authored as files, inlined
-  via include_str — every host resolves `(import "touhou")` identically;
+  `touhou` (spawn templates, variadic metas; spawn-boss = enemy + phase
+  machine owning the boss conventions — $boss-hp exposure, registration
+  wait, bound `boss`; `phases` as a macro over `states` with {:hp n}
+  gates; invuln) and `player-rig`. Authored as files, inlined via
+  include_str — every host resolves `(import "touhou")` identically;
   users import the lib, they don't edit it.
+- A general `match` special (destructuring over forms AND values) would
+  subsume the inspection half of the macro vocabulary (form-type/
+  form-name/get-on-forms/fixed-shape nth) and make clause transforms
+  read as one pattern per shape; wants literal-vs-binder + rest-pattern
+  design (mid-rest tails for the finally split). Front-end over the
+  same builtins — add once phases-style macros show the pattern set.
 - Macro-time power that carries the stdlib: `& rest` params, form-aware
   seq vocabulary (count/first/rest/nth/drop/take/concat), total `get`
   over map forms, form-type/form-name, map/filter specials.

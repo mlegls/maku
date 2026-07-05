@@ -8,12 +8,14 @@
 ;;   control-layer loop over the raw button with stock as fold state,
 ;;   lives/game-over and boss hp/phases are columns + triggers.
 ;;
-;;   boss phases: (phases ...) — the boss-shaped sugar over the `states`
-;;   FSM — non-spell while hp > 60, then Spell 2 (imported ph_boss2_mima
-;;   translation) until hp 0. Each clause's :until desugars to (until pred
-;;   body): its cancellation kills the phase's whole task subtree (turret
-;;   forks, guide loops) the tick it holds, and the finally block is the
-;;   phase-edge bookkeeping (field clear, transition mercy window).
+;;   boss phases: (phases ...) — touhou's boss-shaped sugar over the
+;;   `states` FSM — non-spell while hp > 60, then Spell 2 (imported
+;;   ph_boss2_mima translation) until hp 0. Each clause's {:hp n} gate
+;;   desugars to (until (<= $boss-hp n) body): its cancellation kills the
+;;   phase's whole task subtree (turret forks, guide loops) the tick it
+;;   holds, and the finally block is the phase-edge bookkeeping (field
+;;   clear, transition mercy window). spawn-boss publishes $boss-hp and
+;;   holds the machine until the boss registers.
 ;;
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
 ;;   anchor); the player kit opts out with (in-frame :world ...).
@@ -85,25 +87,23 @@
 (defpattern mima []
   (seq
     (move 0.9 :out-sine c[0 2.6])
+    ;; spawn-boss owns the boss conventions: hp published as $boss-hp,
+    ;; machine held until the boss registers, `boss` handles bound.
     (spawn-boss (live $boss)
                 {:hp 100 :hitbox 0.45
-                  :expose {:hp $boss-hp}   ; publish MY hp as $boss-hp
-                  :cols {:boss 1}
                   :triggers [{:col :hp :leq 60 :event :spell-break}
                              {:col :hp :leq 0 :event :died :cull true}]
                   :style {:family :lstar :color :purple}
                   :scale 2}
-      (seq
-        (wait-for (> $boss-hp 0))          ; boss registered
-        (phases                            ; the boss sugar over `states`:
-          (:nonspell {:until (<= $boss-hp 60)}   ; ≡ (until … (nonspell))
-            (nonspell)
-            (finally
-              (event :spell)
-              (cull)                       ; field clear at the phase edge
-              (invuln (nth boss 0) 1.5)))  ; transition mercy window
-          (:spell2 {:until (<= $boss-hp 0)}
-            (spell-2)))))))
+      (phases                            ; touhou's sugar over `states`:
+        (:nonspell {:hp 60}              ; ≡ (until (<= $boss-hp 60) …)
+          (nonspell)
+          (finally
+            (event :spell)
+            (cull)                       ; field clear at the phase edge
+            (invuln (nth boss 0) 1.5)))  ; transition mercy window
+        (:spell2 {:hp 0}
+          (spell-2))))))
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks
 (defpattern nonspell []

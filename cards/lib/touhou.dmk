@@ -17,35 +17,95 @@
 ;; 0.20 were the classic values.
 
 ;; hostile bullet: a damage core inside a graze ring
-(defmacro spawn-bullet [dyn meta]
+(defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
           {:colliders [{:layer :damage :r 0.12}
                        {:layer :graze :r 0.35}]}
-          ~meta))
+          ~@metas))
 
 ;; player fire: engine default damage 1 applies at contact
-(defmacro spawn-shot [dyn meta]
+(defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
           {:team :player
            :colliders [{:layer :shot :r 0.12}]}
-          ~meta))
+          ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
-(defmacro spawn-enemy [dyn meta]
+(defmacro spawn-enemy [dyn & metas]
   `(spawn ~dyn
           {:team :enemy :hp 1
            :colliders [{:layer :hurt :r 0.3}]
            :triggers [{:col :hp :leq 0 :event :died :cull true}]}
-          ~meta))
+          ~@metas))
 
 ;; boss: an enemy WITH A PHASE MACHINE — that is the whole difference.
-;; Spawns the entity as an enemy (meta supplies :hp/:hitbox/:expose/
-;; :triggers as usual), binds `boss` — the spawn's handle array — for the
-;; machine body, and runs the machine. Cards gate states on whatever
-;; they exposed: {:expose {:hp $boss-hp}} then {:until (<= $boss-hp n)}.
-(defmacro spawn-boss [dyn meta machine]
-  `(let [boss (spawn-enemy ~dyn ~meta)]
-     ~machine))
+;; The macro owns the boss conventions, so every touhou boss gets them
+;; without writing them out:
+;;   - hp published as $boss-hp (:expose is defaulted; override to rename)
+;;   - the machine starts only once the boss is REGISTERED (its exposure
+;;     is live: $boss-hp > 0) — no hand-written wait-for at call sites
+;;   - `boss` (the spawn's handle array) is bound for the machine body
+;; Meta supplies :hp/:hitbox/:triggers/:style as usual. Gate phases with
+;; {:hp n} (below), which reads the same $boss-hp this macro publishes.
+(defmacro spawn-boss [dyn meta & machine]
+  `(let [boss (spawn-enemy ~dyn {:expose {:hp $boss-hp}} ~meta)]
+     (seq (wait-for (> $boss-hp 0))
+          ~@machine)))
+
+;; ---------------------------------------------------------------------
+;; (phases (:label opts? body… (finally …)?) …) — the boss-shaped layer
+;; over the bare `states` FSM, defined HERE because what a "phase" means
+;; is genre policy. Clause opts desugar to state-body code:
+;;   :hp n      → :until (<= $boss-hp n)          [the health-bar gate]
+;;   :until p   → body becomes (until p body…)    [the gate race]
+;;   :timeout d → (fork (seq (wait d) (goto)))    [timer arms on arrival]
+;;   :root pos  → (move 0.9 :out-sine pos)        [reposition the boss
+;;                anchor first — boss dyns follow (live $boss)]
+;; The (finally …) tail passes through: `states` runs it on every exit
+;; path. Macro-time plumbing only — same machine underneath, and richer
+;; templates (:name/:type/hp bars) belong in cards, over these.
+
+;; gate predicate from a clause's opts map form (nothing when ungated)
+(defn phase-gate* [opts]
+  (let [hp (get opts :hp)]
+    (if (nothing? hp) (get opts :until) `(<= $boss-hp ~hp))))
+
+;; is this body form the (finally …) tail?
+(defn phase-finally?* [f]
+  (if (= (form-type f) :list)
+    (if (> (count f) 0) (= (form-name (first f)) "finally") false)
+    false))
+
+;; one (:label opts? body… (finally …)?) clause → a `states` clause
+(defn phase-clause* [clause]
+  (let [label (first clause)
+        has-opts (if (> (count clause) 1)
+                   (= (form-type (nth clause 1)) :map)
+                   false)
+        opts (if has-opts (nth clause 1) clause)   ; total get: non-map → nothing
+        whole (drop (if has-opts 2 1) clause)
+        n (count whole)
+        has-fin (if (> n 0) (phase-finally?* (nth whole (- n 1))) false)
+        body (if has-fin (take (- n 1) whole) whole)
+        fin (if has-fin (drop (- n 1) whole) [])
+        gate (phase-gate* opts)
+        gated (if (nothing? gate)
+                body
+                (if (= (count body) 0)
+                  [`(wait-for ~gate)]
+                  [`(until ~gate ~@body)]))
+        timeout (get opts :timeout)
+        timed (if (nothing? timeout)
+                gated
+                (concat [`(fork (seq (wait ~timeout) (goto)))] gated))
+        root (get opts :root)
+        rooted (if (nothing? root)
+                 timed
+                 (concat [`(move 0.9 :out-sine ~root)] timed))]
+    `(~label ~@rooted ~@fin)))
+
+(defmacro phases [& clauses]
+  `(states ~@(map phase-clause* clauses)))
 
 ;; (invuln b dur): mercy window for dur seconds — a DEADLINE COLUMN both
 ;; contact paths honor (player hits skip the lives write; enemy damage is
