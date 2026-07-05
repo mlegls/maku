@@ -33,36 +33,16 @@ language.md.
   hitbox, bounded by the window); `:width` scales laser collision.
   Remaining §13.7: blocking lasers (world geometry → extent).
 - Trigger predicates: single-column `≤` crossings only (§13.13).
-- Interaction matrix rows engine-fixed; hit effect knows the `lives` and
-  `iframe-until` columns by name (§13.10). Iframes and inputs are no longer
-  global/fixed (per-entity column; named-channel Inputs) — and after the
-  stdlib extraction (spawn defaults, death trigger, invuln, rig are all
-  library code now) the matrix rows + the three contact-resolution bodies
-  are THE remaining genre hardcoding. Design settled (next big chunk),
-  the principled line being CHECKS ARE DATA, CONTACTS ARE CODE:
-  * `(defcontact [:a-layer :b-layer] opts? (fn [a b] …))` — card-level
-    rule table replacing the hardcoded matrix. Layers become opaque tags
-    (Rust Layer enum → interned str); TEAMS DROP OUT of collision
-    entirely (layer pairs already partition the sets — :team stays as a
-    plain queryable meta tag). The touhou rules (:damage/:graze ×
-    :player-hurt, :shot × :hurt) move into lib/touhou.dmk next to the
-    spawn templates that create those layers.
-  * Detection: per-tick per-layer entity index; per rule iterate the
-    smaller side outer (player-hurt is 1-2, hurt is few — same
-    asymmetry the hardcoded pass exploits).
-  * Hot prefilters as rule DATA, not callback code: {:once-latch :col}
-    (graze's once-ever), {:skip-if [:b :col :gt $tick]} (iframe skip) —
-    engine-evaluated per pair, so overlapping pairs don't re-enter the
-    interpreter every tick. Cold resolution = manip-style callback
-    (views + instant actions, canonical order, contact-rate only).
-  * world.graze / world.player_hits die: counters become columns on the
-    player entity written by the callbacks, published via :expose —
-    hosts read $graze/$hits channels (host/UI contract change, native +
-    web). Laser-persists-through-hit becomes callback policy (view
-    exposes :kind; cull points only).
-  * Risks: behavioral drift in latch/iframe edge cases (smoke must stay
-    tick-identical), callback cost under sustained overlap (prefilters
-    are the mitigation), event ordering (keep bullet-index order).
+- Shipped: `defcontact` moved contact resolution out of the engine. Layers
+  are opaque tags, teams are query metadata only, Touhou hit/graze/shot
+  rules live in `cards/lib/touhou.dmk`, and `$graze`/`$hits` are stdlib
+  derived channels — `(sum-entities {:team :player-body} :col)` over
+  per-entity counter columns, NOT per-entity :expose registrations: a host
+  may layer its stock rig over a card that ships its own (the smoke does),
+  and two exposes would fight over one channel name while the sum over
+  every player body is what the HUD means. The engine keeps hot shape
+  detection plus the two data prefilters (`:once`, `:skip-if`): CHECKS ARE
+  DATA, CONTACTS ARE CODE.
 - RNG is sequential splitmix, not counter-keyed by spawn path (§5) — replay
   determinism holds, order-independence does not.
 - Scrub-back across a swap/add boundary restores the pre-change program
@@ -78,11 +58,19 @@ language.md.
   resolves `(import "touhou")` identically; users import the lib, they
   don't edit it.
 - Channel conventions still engine (sim/channels.rs): the per-pilot
-  families ($player-k/$lives-k/$nearest-enemy-k — need computed channel
-  names to move), the host-contract default/mock list (move-x…boss-hp),
-  $graze/$lives counters, and $boss = world.boss (the move anchor as
-  engine state; wants generic named anchors, which would also de-genre
-  `move`).
+  families ($player-k/$lives-k/$nearest-enemy-k), the host-contract
+  default/mock list (move-x…boss-hp), $lives counters, and $boss =
+  world.boss (the move anchor as engine state; wants generic named
+  anchors, which would also de-genre `move`). Per-pilot DECISION
+  (2026-07): no computed channel names — they'd make the channel
+  namespace dynamic (bad for host bindings and eventual static
+  analysis). Instead the engine block just DELETES: touhou stays
+  single-player (scalar $player/$lives/$nearest-enemy as derived
+  channels over the one piloted entity — no per-tick map build for the
+  common case), and multiplayer becomes an opt-in lib/template that
+  defines a map-valued $players channel ad hoc (needs strict non-cyclic
+  `get` at read sites; pilot ids are sparse, so a map keyed by pilot
+  number, not an array).
 - `match` special SHIPPED: destructuring over forms AND values with `_`,
   binders, literals, quote-form patterns, `(as n p)`, vector rest/mid-rest
   patterns, and map key-presence discrimination. It now covers the phase
@@ -136,6 +124,13 @@ language.md.
   them when interpreter cost is measured or the JIT lands.
 
 ## Doc roadmap
+- The plan of record (2026-07): with defcontact shipped as the collision
+  foundation, port the REST of the DMK docs first, placing each piece
+  core-vs-lib by the settled principles (checks/data vs contacts/code,
+  genre in cards/lib). After the full port, one dedicated pass: define
+  the intrinsic set (lang, math, array/matrix, engine), move everything
+  non-intrinsic out of Rust into lib, then start on compilation
+  (specials are the IR, intrinsics are the builtins).
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
   tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
   tutorial_cards_run): 01–05 done (05 = channels/host boundary/rig;

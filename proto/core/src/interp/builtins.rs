@@ -9,7 +9,7 @@ const BUILTINS: &[&str] = &[
     "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerp3", "lerpsmooth",
     "angle-of", "mag", "einsine", "eoutsine", "eiosine",
     "count", "first", "rest", "drop", "take", "concat", "forms", "get",
-    "form-type", "form-name", "nothing?",
+    "form-type", "form-name", "nothing?", "num?",
 ];
 
 pub(crate) fn is_builtin(name: &str) -> bool {
@@ -422,6 +422,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             _ => "".into(),
         })),
         "nothing?" => Ok(Val::Bool(matches!(args[0], Val::Nothing))),
+        "num?" => Ok(Val::Bool(matches!(args[0], Val::Num(_)))),
         _ => Err(format!("unknown function '{}'", name)),
     }
 }

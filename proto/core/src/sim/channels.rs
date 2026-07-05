@@ -65,9 +65,6 @@ impl Sim {
         {
             ch.insert("nearest-pilot".into(), Val::Vec2 { x, y });
         }
-        // gameplay counters as signals ($enemies is stdlib: a defchannel
-        // over (count-entities {:team :enemy}))
-        ch.insert("graze".into(), Val::Num(self.world.graze as f64));
         // lives: per pilot ($lives-k), plus $lives from the first
         // player-body (compat with pilotless mouse rigs)
         for b in &self.world.bullets {

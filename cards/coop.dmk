@@ -25,7 +25,7 @@
   (spawn (pilot-rig-motion k)
          {:team :player-body
           :colliders [{:layer :player-hurt :r 0.05}]
-          :cols {:lives 3 :pilot k}
+          :cols {:lives 3 :pilot k :graze 0 :hits 0}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 
 (defpattern autofire [k 1]

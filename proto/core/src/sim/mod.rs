@@ -67,6 +67,13 @@ pub struct Sim {
     card_channels: Vec<(Rc<str>, Form)>,
 }
 
+fn install_contacts(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
+    for form in &card.contacts {
+        evaluate(form, &Env::empty(), ctx, world)?;
+    }
+    Ok(())
+}
+
 /// Snapshot = clone: everything is Rc-shared immutable or plain data, except
 /// control cells, which are mutable and must deep-copy (a scrubbed-back sim
 /// must not see future cell writes). This is what makes scrubbing "restore
@@ -121,6 +128,7 @@ impl Sim {
                 let first = sent.order.first().cloned().ok_or("no defpattern")?;
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
+                card.contacts.extend(sent.contacts);
                 return Sim::from_pattern(&card, &first);
             }
         }
@@ -128,7 +136,8 @@ impl Sim {
         ctx.sig.defs = Rc::new(card.defs.clone());
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
-        let world = World::default();
+        let mut world = World::default();
+        install_contacts(&card, &mut ctx, &mut world)?;
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
         Ok(Sim { world, tasks: vec![task], ctx, card_channels: card.channels })
@@ -150,10 +159,12 @@ impl Sim {
                 let first = sent.order.first().cloned().ok_or("no defpattern")?;
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
+                card.contacts.extend(sent.contacts);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
+                install_contacts(&card, &mut self.ctx, &mut self.world)?;
                 let pat = &self.ctx.patterns.clone()[&first];
                 let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 let mut w = World::default();
@@ -168,6 +179,7 @@ impl Sim {
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
+                install_contacts(&card, &mut self.ctx, &mut self.world)?;
                 let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 (body_forms.into(), env)
             }
@@ -203,6 +215,7 @@ impl Sim {
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
+        install_contacts(card, &mut ctx, &mut world)?;
         let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         for (pname, default) in &pat.params {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;
@@ -214,6 +227,15 @@ impl Sim {
 
     pub fn tick(&self) -> u64 {
         self.world.tick
+    }
+
+    pub(crate) fn channel_u64(&self, name: &str) -> u64 {
+        self.ctx
+            .sig
+            .channel(name)
+            .and_then(|v| v.num().ok())
+            .map(|v| v as u64)
+            .unwrap_or(0)
     }
 
     pub fn step(&mut self) -> Result<(), String> {

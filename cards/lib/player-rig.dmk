@@ -11,5 +11,5 @@
   (spawn (live $player)
          {:team :player-body
           :colliders [{:layer :player-hurt :r 0.06}]
-          :cols {:lives lives}
+          :cols {:lives lives :graze 0 :hits 0}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))

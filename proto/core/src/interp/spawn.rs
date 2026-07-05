@@ -188,14 +188,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     })
                 };
                 let layer = match get("layer") {
-                    Some(Val::Kw(k)) => match &*k {
-                        "damage" => Layer::Damage,
-                        "graze" => Layer::Graze,
-                        "shot" => Layer::Shot,
-                        "hurt" => Layer::Hurt,
-                        "player-hurt" => Layer::PlayerHurt,
-                        other => return Err(format!("colliders: unknown layer :{}", other)),
-                    },
+                    Some(Val::Kw(k)) => k,
                     _ => return Err("colliders: missing :layer".into()),
                 };
                 let r = match get("r") {

@@ -80,38 +80,11 @@ fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
     best
 }
 
-/// Entity view handed to contact-time pure functions (:damage fns).
-fn contact_map(b: &Bullet, pos: Option<(f64, f64)>, vel: (f64, f64)) -> Val {
-    let mut kvs = vec![
-        (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
-        (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
-    ];
-    if let Some((x, y)) = pos {
-        kvs.push((Val::Kw("pos".into()), Val::Vec2 { x, y }));
-    }
-    for (k, v) in &b.cols {
-        kvs.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
-    }
-    if let Some(t) = &b.team {
-        kvs.push((Val::Kw("team".into()), Val::Kw(t.as_ref().into())));
-    }
-    Val::Map(Rc::new(kvs))
-}
-
 impl Sim {
-    /// Collision pass, detect-then-resolve over the layer matrix:
-    ///   damage × player-hurtbox → hit;  graze × player-hurtbox → graze;
-    ///   shot × hurt → damage resolution.
-    /// CHECKS are per-pair-per-tick and shape-only (hot). CONTACTS are rare,
-    /// so effect parameters may be card-defined pure functions — :damage as
-    /// (fn [self other] n) is evaluated at contact with both entities (pos,
-    /// contact velocity via finite difference, hp, team, family) in scope.
-    /// Everything writes World, so the gameplay layer scrubs with the
-    /// timeline; resolve order is canonical (bullet index) for determinism.
-    /// Lasers derive capsule chains from their sampled curve while active.
+    /// Collision pass, detect-then-resolve over card-defined contact rules.
+    /// Checks are hot, shape-only data; contacts are rare callback code.
     pub(super) fn collide(&mut self, _inputs: &Inputs) -> Result<(), String> {
         const LASER_R: f64 = 0.08; // beam half-width for collision
-        const IFRAMES: u64 = 60;
 
         let sig = self.ctx.sig.clone();
         let tick = self.world.tick;
@@ -119,48 +92,20 @@ impl Sim {
         // phase 0: world-space collider anchors + contact velocities
         let n = self.world.bullets.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
-        let mut vel: Vec<(f64, f64)> = Vec::with_capacity(n);
         // :scale multiplies collider radii (a scaled sprite scales its
         // hitbox); sampled once per bullet per tick, 1.0 when absent
         let mut scl: Vec<f64> = Vec::with_capacity(n);
         for b in &self.world.bullets {
             if !b.alive {
                 pos.push(None);
-                vel.push((0.0, 0.0));
                 scl.push(1.0);
                 continue;
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
             let p = dyn_pose(&b.motion, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
-            vel.push(match b.prev_pos {
-                Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
-                None => (0.0, 0.0),
-            });
             scl.push(self.sample_sig(&b.sigs.scale, tau, 1.0));
         }
-        for (b, p) in self.world.bullets.iter_mut().zip(pos.iter()) {
-            b.prev_pos = *p;
-        }
-
-        // player hurtboxes: PlayerHurt colliders on host-mounted entities
-        let hurts: Vec<(usize, f64, (f64, f64))> = self
-            .world
-            .bullets
-            .iter()
-            .enumerate()
-            .filter(|(i, b)| {
-                b.team.as_deref() == Some("player-body") && pos[*i].is_some()
-            })
-            .flat_map(|(i, b)| {
-                let at = pos[i].unwrap();
-                b.colliders
-                    .iter()
-                    .filter(|c| c.layer == Layer::PlayerHurt)
-                    .map(move |c| (i, c.r, at))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
 
         // squared distance from a target point to bullet i's collision
         // anchor: points measure center distance; active lasers measure
@@ -188,132 +133,77 @@ impl Sim {
             }
         };
 
-        // phase 1: detect — the big set (hostile colliders) tests only
-        // against the player's few hurtboxes: O(bullets × few)
-        let mut hit_contacts: Vec<(usize, usize)> = Vec::new(); // (bullet, player)
-        let mut graze_contacts: Vec<usize> = Vec::new();
-        for (i, b) in self.world.bullets.iter().enumerate() {
-            if b.team.is_some() || pos[i].is_none() {
-                continue;
-            }
-            for &(pj, pr, at) in &hurts {
-                let Some(d2) = target_d2(b, i, at) else { continue };
-                for c in b.colliders.iter() {
-                    match c.layer {
-                        Layer::Damage => {
-                            let r = c.r * scl[i] + pr;
-                            if d2 < r * r {
-                                hit_contacts.push((i, pj));
-                            }
-                        }
-                        Layer::Graze if !b.grazed => {
-                            let r = c.r * scl[i] + pr;
-                            if d2 < r * r {
-                                graze_contacts.push(i);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        // shot × hurt (both sets are small)
-        let mut shot_contacts: Vec<(usize, usize)> = Vec::new();
-        for (i, shot) in self.world.bullets.iter().enumerate() {
-            if pos[i].is_none() || shot.team.as_deref() != Some("player") {
-                continue;
-            }
-            let Some(sc) = shot.colliders.iter().find(|c| c.layer == Layer::Shot) else {
-                continue;
-            };
-            let (sx, sy) = pos[i].unwrap();
-            'enemies: for (j, enemy) in self.world.bullets.iter().enumerate() {
-                if pos[j].is_none() || enemy.team.as_deref() != Some("enemy") {
+        let rules = self.world.contacts.clone();
+        let mut contacts: Vec<Vec<(usize, usize)>> = Vec::with_capacity(rules.len());
+        for rule in &rules {
+            let mut pairs = Vec::new();
+            for (i, a) in self.world.bullets.iter().enumerate() {
+                if !a.alive || pos[i].is_none() {
                     continue;
                 }
-                let (ex, ey) = pos[j].unwrap();
-                for ec in enemy.colliders.iter() {
-                    if ec.layer != Layer::Hurt {
+                for (j, b) in self.world.bullets.iter().enumerate() {
+                    if i == j || !b.alive {
                         continue;
                     }
-                    let r = sc.r * scl[i] + ec.r * scl[j];
-                    if (sx - ex).powi(2) + (sy - ey).powi(2) < r * r {
-                        shot_contacts.push((i, j));
-                        break 'enemies; // one shot, one enemy
+                    let Some(at) = pos[j] else { continue };
+                    let Some(d2) = target_d2(a, i, at) else { continue };
+                    for ac in a.colliders.iter().filter(|c| c.layer.as_ref() == rule.a.as_ref()) {
+                        for bc in b.colliders.iter().filter(|c| c.layer.as_ref() == rule.b.as_ref()) {
+                            let r = ac.r * scl[i] + bc.r * scl[j];
+                            if d2 < r * r {
+                                pairs.push((i, j));
+                            }
+                        }
+                    }
+                }
+            }
+            contacts.push(pairs);
+        }
+
+        for (rule, pairs) in rules.iter().zip(contacts.iter()) {
+            for &(i, j) in pairs {
+                if !self.world.bullets[i].alive || !self.world.bullets[j].alive {
+                    continue;
+                }
+                if let Some(col) = &rule.once {
+                    if self.world.bullets[i].col_get(col).is_some() {
+                        continue;
+                    }
+                }
+                if let Some(skip) = &rule.skip_if {
+                    let side = if skip.on_b { j } else { i };
+                    let lhs = self.world.bullets[side].col_get(&skip.col).unwrap_or(0.0);
+                    let rhs = match &skip.rhs {
+                        SkipRhs::Tick => tick as f64,
+                        SkipRhs::Num(n) => *n,
+                    };
+                    if (skip.gt && lhs > rhs) || (!skip.gt && lhs < rhs) {
+                        continue;
+                    }
+                }
+                let a_id = self.world.bullets[i].id;
+                let b_id = self.world.bullets[j].id;
+                apply_fn(
+                    rule.callback.clone(),
+                    &[Val::Handle(a_id), Val::Handle(b_id)],
+                    &mut self.ctx,
+                    &mut self.world,
+                    true,
+                )?;
+                if let Some(col) = &rule.once {
+                    // dead-inclusive: the callback may have culled A, and the
+                    // latch must still stick (find() only sees live bullets)
+                    if let Some(b) = self.world.bullets.iter_mut().find(|b| b.id == a_id) {
+                        b.col_set(col, 1.0);
                     }
                 }
             }
         }
-
-        // phase 2: resolve, canonical order. iframes are a PER-ENTITY
-        // column (two pilots dodge independently), not a world global.
-        for (i, pj) in hit_contacts {
-            let until = self.world.bullets[pj].col_get("iframe-until").unwrap_or(0.0);
-            if (tick as f64) < until {
-                continue;
-            }
-            let b = &mut self.world.bullets[i];
-            if !b.alive {
-                continue;
-            }
-            if matches!(b.kind, Kind::Point) {
-                b.alive = false; // beams persist through a hit
-            }
-            self.world.player_hits += 1;
-            // the hit effect is column writes; game-over is the player
-            // entity's trigger, not the contact's business
-            let player = &mut self.world.bullets[pj];
-            // the mercy window is per-entity DATA: an :iframes column
-            // (seconds) overrides the engine default
-            let window = player
-                .col_get("iframes")
-                .map(|s| (s * TICK_RATE) as u64)
-                .unwrap_or(IFRAMES);
-            player.col_set(&"iframe-until".into(), (tick + window) as f64);
-            let lives = player.col_get("lives").unwrap_or(0.0);
-            player.col_set(&"lives".into(), lives - 1.0);
-            self.world.push_event(Event { tick, name: "player-hit".into(), pos: pos[i] });
-        }
-        for i in graze_contacts {
-            let b = &mut self.world.bullets[i];
-            if !b.alive || b.grazed {
-                continue;
-            }
-            b.grazed = true;
-            self.world.graze += 1;
-            self.world.push_event(Event { tick, name: "graze".into(), pos: pos[i] });
-        }
-        for (i, j) in shot_contacts {
-            if !self.world.bullets[i].alive || !self.world.bullets[j].alive {
-                continue;
-            }
-            // resolve damage at contact: numbers pass through; a pure fn
-            // gets (self other) contact maps
-            let dmg_val = self.world.bullets[i].damage.clone();
-            let dmg = match dmg_val {
-                Val::Num(n) => n,
-                f => {
-                    let self_map = contact_map(&self.world.bullets[i], pos[i], vel[i]);
-                    let other_map = contact_map(&self.world.bullets[j], pos[j], vel[j]);
-                    apply_fn(f, &[self_map, other_map], &mut self.ctx, &mut self.world, false)?
-                        .num()
-                        .map_err(|e| format!("damage fn: {}", e))?
-                }
-            };
-            self.world.bullets[i].alive = false;
-            // invulnerability window: the shot still dies (absorbed), the
-            // column write is skipped — same iframe-until both sides honor
-            let until = self.world.bullets[j].col_get("iframe-until").unwrap_or(0.0);
-            if (tick as f64) < until {
-                self.world.push_event(Event { tick, name: "absorbed".into(), pos: pos[j] });
-                continue;
-            }
-            // the effect is a COLUMN WRITE, nothing more — what zero hp
-            // means is the enemy's trigger's business, not the contact's
-            let enemy = &mut self.world.bullets[j];
-            let hp = enemy.col_get("hp").unwrap_or(1.0);
-            enemy.col_set(&"hp".into(), hp - dmg);
-            self.world.push_event(Event { tick, name: "enemy-hit".into(), pos: pos[j] });
+        // Contact callbacks read :vel through bullet views, which finite-
+        // difference against prev_pos. Updating prev_pos before resolution
+        // would zero every contact velocity.
+        for (b, p) in self.world.bullets.iter_mut().zip(pos.iter()) {
+            b.prev_pos = *p;
         }
         Ok(())
     }

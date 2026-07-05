@@ -186,7 +186,8 @@
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
-          :cols {:lives 3}
+          :cols {:lives 3 :graze 0 :hits 0}
+          :expose {:graze $graze :hits $hits}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 (defpattern atk []
   (par (rig)
@@ -198,13 +199,13 @@
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.player_hits, 1, "second bullet fell in iframes");
+        assert!(matches!(sim.channel_val("hits"), Some(Val::Num(n)) if n == 1.0), "second bullet fell in iframes");
         let hits: Vec<_> =
             sim.events_vec().into_iter().filter(|e| &*e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
         assert_eq!(sim.world.bullets.iter().filter(|b| b.team.is_none()).count(), 1);
-        assert_eq!(sim.world.graze, 2, "graze ring precedes the hitbox; iframes graze too");
+        assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 2.0), "graze ring precedes the hitbox; iframes graze too");
         // the hit effect is a column write; $lives is a channel
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == 2.0));
     }
@@ -216,7 +217,9 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:graze 0 :hits 0}
+          :expose {:graze $graze :hits $hits}}))
 (defpattern g []
   (par (rig) (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
 "#;
@@ -225,10 +228,83 @@
         for _ in 0..120 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.player_hits, 0, "0.25 off-axis misses the 0.06 hitbox");
-        assert_eq!(sim.world.graze, 1, "graze latches once per bullet");
+        assert!(matches!(sim.channel_val("hits"), Some(Val::Num(n)) if n == 0.0), "0.25 off-axis misses the 0.06 hitbox");
+        assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 1.0), "graze latches once per bullet");
         // and the counter is a channel patterns can read
         assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 1.0));
+    }
+
+    #[test]
+    fn defcontact_custom_rule() {
+        const CARD: &str = r#"
+(defcontact [:zap :zappable]
+  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) {:colliders [{:layer :zap :r 0.2}]})
+    (spawn (pose c[0 0]) {:colliders [{:layer :zappable :r 0.2}]})))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 1);
+    }
+
+    #[test]
+    fn defcontact_once_latch() {
+        const CARD: &str = r#"
+(defcontact [:zap :zappable] {:once :latched}
+  (fn [a b] (event :zapped (:pos a))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) {:colliders [{:layer :zap :r 0.2}]})
+    (spawn (pose c[0 0]) {:colliders [{:layer :zappable :r 0.2}]})))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..5 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 1);
+        assert!(sim.world.bullets.iter().any(|b| b.col_get("latched") == Some(1.0)));
+    }
+
+    #[test]
+    fn defcontact_skip_if() {
+        const CARD: &str = r#"
+(defcontact [:zap :zappable] {:skip-if [:b :shield :gt 0]}
+  (fn [a b] (event :zapped (:pos b))))
+(defpattern t []
+  (let [a (spawn (pose c[0 0]) {:colliders [{:layer :zap :r 0.2}]})
+        b (spawn (pose c[0 0]) {:cols {:shield 1}
+                                :colliders [{:layer :zappable :r 0.2}]})]
+    (seq (wait 0.05) (set-col (first b) :shield 0))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 0);
+        for _ in 0..10 {
+            sim.step().unwrap();
+        }
+        assert!(sim.events_vec().iter().any(|e| &*e.name == "zapped"));
+    }
+
+    #[test]
+    fn defcontact_replaces() {
+        const CARD: &str = r#"
+(defcontact [:zap :zappable] (fn [a b] (event :first (:pos b))))
+(defcontact [:zap :zappable] (fn [a b] (event :second (:pos b))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) {:colliders [{:layer :zap :r 0.2}]})
+    (spawn (pose c[0 0]) {:colliders [{:layer :zappable :r 0.2}]})))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "first").count(), 0);
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "second").count(), 1);
     }
 
     /// Player fire decrements :hp; at zero the enemy dies with an event and
@@ -272,7 +348,8 @@
         let mut sess = Session::default();
         sess.rig = Some(
             "(defpattern rig [] (spawn (live $player) {:team :player-body \
-             :colliders [{:layer :player-hurt :r 0.06}]}))"
+             :colliders [{:layer :player-hurt :r 0.06}] \
+             :cols {:graze 0 :hits 0} :expose {:graze $graze :hits $hits}}))"
                 .into(),
         );
         sess.last_inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -280,12 +357,12 @@
         for _ in 0..120 {
             sess.advance(CARD).unwrap();
         }
-        assert_eq!(sess.sim.as_ref().unwrap().world.graze, 1);
+        assert_eq!(sess.sim.as_ref().unwrap().channel_u64("graze"), 1);
         sess.seek(CARD, 10).unwrap();
-        assert_eq!(sess.sim.as_ref().unwrap().world.graze, 0, "rewound past the graze");
+        assert_eq!(sess.sim.as_ref().unwrap().channel_u64("graze"), 0, "rewound past the graze");
         sess.seek(CARD, 120).unwrap();
         let sim = sess.sim.as_ref().unwrap();
-        assert_eq!(sim.world.graze, 1, "replay re-grazes, not double-counts");
+        assert_eq!(sim.channel_u64("graze"), 1, "replay re-grazes, not double-counts");
         assert_eq!(
             sim.events_vec().iter().filter(|e| &*e.name == "graze").count(),
             1,
@@ -302,7 +379,8 @@
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
-          :cols {:lives 2}
+          :cols {:lives 2 :graze 0 :hits 0}
+          :expose {:graze $graze :hits $hits}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 (defpattern atk []
   (par (rig)
@@ -385,7 +463,9 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:graze 0 :hits 0}
+          :expose {:graze $graze :hits $hits}}))
 (defpattern beam []
   (par (rig) (spawn-bullet ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})) {})))
 "#;
@@ -396,17 +476,17 @@
         for _ in 0..50 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.player_hits, 0, "warn phase doesn't hit");
+        assert_eq!(sim.channel_u64("hits"), 0, "warn phase doesn't hit");
         for _ in 0..30 {
             sim.step_with(&inputs).unwrap();
         }
-        assert_eq!(sim.world.player_hits, 1, "active beam hits");
+        assert_eq!(sim.channel_u64("hits"), 1, "active beam hits");
         assert_eq!(
             sim.world.bullets.iter().filter(|b| b.team.is_none()).count(),
             1,
             "the beam persists through the hit"
         );
-        assert_eq!(sim.world.graze, 1, "beam grazed on the way in");
+        assert_eq!(sim.channel_u64("graze"), 1, "beam grazed on the way in");
     }
 
     /// The duel-card bug: aim inside an expression-level frame must aim
@@ -509,7 +589,9 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:graze 0 :hits 0}
+          :expose {:graze $graze :hits $hits}}))
 (defpattern beam []
   (par (rig)
        (spawn-bullet ((pose c[-2 0])
@@ -524,11 +606,11 @@
         for _ in 0..100 {
             sim.step_with(&inputs).unwrap(); // t ≈ 0.83s: front at u ≈ 1.0
         }
-        assert_eq!(sim.world.player_hits, 0, "front hasn't reached the player");
+        assert_eq!(sim.channel_u64("hits"), 0, "front hasn't reached the player");
         for _ in 0..60 {
             sim.step_with(&inputs).unwrap(); // t ≈ 1.33s: front at u = 2.5
         }
-        assert_eq!(sim.world.player_hits, 1, "the sweeping front arrived");
+        assert_eq!(sim.channel_u64("hits"), 1, "the sweeping front arrived");
         // full path is still telegraphed while filling: dim + bright polylines
         let mut sim2 = Sim::load(CARD, Some("beam")).unwrap();
         for _ in 0..90 {
@@ -1038,8 +1120,8 @@
         for _ in 0..1200 {
             sim.step_with(&inputs).unwrap();
         }
-        assert!(sim.world.player_hits > 0, "aimed spray reaches a stationary player");
-        assert!(sim.world.graze > 0, "fan neighbors graze");
+        assert!(sim.channel_u64("hits") > 0, "aimed spray reaches a stationary player");
+        assert!(sim.channel_u64("graze") > 0, "fan neighbors graze");
         assert!(
             sim.events_vec().iter().any(|e| &*e.name == "died"),
             "autofire kills drones"
@@ -1204,9 +1286,12 @@
         // once :scale grows the collider (constant-valued tags work too —
         // a constant is just a constant signal)
         const HIT: &str = r#"
+(import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
+          :cols {:graze 0 :hits 0}
+          :expose {:graze $graze :hits $hits}}))
 (defpattern scaled [s 1]
   (par (rig)
        (spawn ((pose c[0.5 0]) (still))
@@ -1217,12 +1302,12 @@
         for _ in 0..10 {
             near.step_with(&inputs).unwrap();
         }
-        assert_eq!(near.world.player_hits, 0, "base radius misses at 0.5");
+        assert_eq!(near.channel_u64("hits"), 0, "base radius misses at 0.5");
         let mut big = Sim::load_forms(HIT, "(scaled 6)").unwrap();
         for _ in 0..10 {
             big.step_with(&inputs).unwrap();
         }
-        assert_eq!(big.world.player_hits, 1, "scaled collider connects");
+        assert_eq!(big.channel_u64("hits"), 1, "scaled collider connects");
     }
 
     /// §8 scope semantics under the guard-unwind rule: cancellation kills

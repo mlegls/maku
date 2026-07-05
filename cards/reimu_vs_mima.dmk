@@ -45,7 +45,7 @@
                     (* (live $move-y) (- 4.5 (* 2.7 (live $focus-firing))))])))
          {:team :player-body
           :colliders [{:layer :player-hurt :r 0.05}]
-          :cols {:lives 3 :pilot 1}
+          :cols {:lives 3 :pilot 1 :graze 0 :hits 0}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 
 ;; focus switches the fire mode (player_homing's A/B split): homing

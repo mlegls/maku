@@ -30,7 +30,7 @@
                        {:layer :graze :r 0.35}]}
           ~@metas))
 
-;; player fire: engine default damage 1 applies at contact
+;; player fire: omitted :damage defaults to 1 in the contact rule
 (defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
           {:team :player
@@ -58,6 +58,56 @@
   `(let [boss (spawn-enemy ~dyn {:expose {:hp $boss-hp}} ~meta)]
      (seq (wait-for (> $boss-hp 0))
           ~@machine)))
+
+;; ---------------------------------------------------------------------
+;; Contacts are card code. The engine now detects overlaps between opaque
+;; layer tags and evaluates two data prefilters (:once and :skip-if); it
+;; does not know what damage, graze, shots, hurtboxes, or mercy windows are.
+;; These Touhou rules sit next to the spawn templates that create the tags.
+
+;; a col read that defaults when the column is absent
+(defn col-or [x d] (if (nothing? x) d x))
+
+;; player hit: bullets pass through during the mercy window (:skip-if is the
+;; engine-evaluated prefilter — same-tick double hits suppress themselves);
+;; beams persist through a hit (cull points only); the mercy window is
+;; per-entity data (:iframes col, seconds), default 0.5s; 120 = tick rate
+(defcontact [:damage :player-hurt] {:skip-if [:b :iframe-until :gt :tick]}
+  (fn [a b]
+    (seq
+      (when (= (:kind a) :point) (cull a))
+      (set-col b :hits (+ (col-or (:hits b) 0) 1))
+      (set-col b :iframe-until (+ (:tick b) (* (col-or (:iframes b) 0.5) 120)))
+      (set-col b :lives (- (col-or (:lives b) 0) 1))
+      (event :player-hit (:pos a)))))
+
+;; graze: once per bullet ever (:once latches a column on the bullet)
+(defcontact [:graze :player-hurt] {:once :grazed}
+  (fn [a b]
+    (seq
+      (set-col b :graze (+ (col-or (:graze b) 0) 1))
+      (event :graze (:pos a)))))
+
+;; The HUD counters are derived channels, not exposes: a host may layer its
+;; own player rig over a card that ships one (two hurtboxes, one screen), and
+;; per-entity :expose registrations would fight over the channel name. The
+;; sum over every player body is what "the run's graze count" means.
+(defchannel $graze (sum-entities {:team :player-body} :graze))
+(defchannel $hits (sum-entities {:team :player-body} :hits))
+
+;; shot damage: the shot dies either way (absorbed during the target's mercy
+;; window); :damage is a number or a pure (fn [self other] n) resolved here
+(defcontact [:shot :hurt]
+  (fn [a b]
+    (seq
+      (cull a)
+      (if (> (col-or (:iframe-until b) 0) (:tick b))
+        (event :absorbed (:pos b))
+        (let [d (:damage a)
+              dmg (if (num? d) d (if (nothing? d) 1 (d a b)))]
+          (seq
+            (set-col b :hp (- (col-or (:hp b) 1) dmg))
+            (event :enemy-hit (:pos b))))))))
 
 ;; ---------------------------------------------------------------------
 ;; (phases (:label opts? body… (finally …)?) …) — the boss-shaped layer

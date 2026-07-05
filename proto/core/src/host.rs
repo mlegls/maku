@@ -386,11 +386,11 @@ impl Instance {
     }
 
     pub fn graze(&self) -> u64 {
-        self.session.sim.as_ref().map(|s| s.world.graze).unwrap_or(0)
+        self.session.sim.as_ref().map(|s| s.channel_u64("graze")).unwrap_or(0)
     }
 
     pub fn player_hits(&self) -> u64 {
-        self.session.sim.as_ref().map(|s| s.world.player_hits).unwrap_or(0)
+        self.session.sim.as_ref().map(|s| s.channel_u64("hits")).unwrap_or(0)
     }
 
     /// Post-hit invulnerability active on any player entity (marker

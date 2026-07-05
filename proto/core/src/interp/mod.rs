@@ -235,7 +235,7 @@ pub enum ActionV {
     Move { dur_ticks: u64, dest: (f64, f64) },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
-    Event { channel: Rc<str> },
+    Event { channel: Rc<str>, pos: Option<(f64, f64)> },
     Nothing,
 }
 
@@ -508,8 +508,17 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     Val::Kw(k) => k,
                     v => return Err(format!("event: expected channel keyword, got {:?}", v)),
                 };
-                return Ok(Val::Action(Rc::new(ActionV::Event { channel: ch })));
+                let pos = if let Some(p) = items.get(2) {
+                    match evaluate(p, env, ctx, world)? {
+                        Val::Vec2 { x, y } => Some((x, y)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                return Ok(Val::Action(Rc::new(ActionV::Event { channel: ch, pos })));
             }
+            "defcontact" => return sf_defcontact(items, env, ctx, world),
             "spawn" => return sf_spawn(items, env, ctx, world),
             // "manip" is the surface name; "manipulate" kept as an alias
             "manip" | "manipulate" => {
@@ -954,6 +963,24 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let ids = resolve_query(&q, ctx, world)?;
                 return Ok(Val::Num(ids.len() as f64));
             }
+            "sum-entities" => {
+                // (sum-entities query :col): the column summed over matches
+                // (absent reads 0). Counters live on entities now; this is
+                // how the stdlib publishes totals ($graze across every
+                // player body) without caring which entity took the contact.
+                let q = evaluate(&items[1], env, ctx, world)?;
+                let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
+                    return Err("sum-entities: expected a keyword column".into());
+                };
+                let ids = resolve_query(&q, ctx, world)?;
+                let mut total = 0.0;
+                for id in ids {
+                    if let Some(i) = world.find(id) {
+                        total += world.bullets[i].col_get(&col).unwrap_or(0.0);
+                    }
+                }
+                return Ok(Val::Num(total));
+            }
             "nearest-entity" => {
                 // (nearest-entity query to): position of the nearest match,
                 // or nothing when none — a defchannel yielding nothing
@@ -1127,7 +1154,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             // callbacks and :where alike)
             let arg = evaluate(&items[1], env, ctx, world)?;
             if let Val::Handle(id) = &arg {
-                if let Some(i) = world.find(*id) {
+                if let Some(i) = world.bullets.iter().position(|b| b.id == *id) {
                     let view = bullet_view(i, world, &ctx.sig.clone())?;
                     return Ok(map_get(&view, &k).unwrap_or(Val::Nothing));
                 }
@@ -1218,8 +1245,22 @@ pub(crate) fn bullet_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
         (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
         (Val::Kw("t".into()), Val::Num(tau)),
+        (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
+        (Val::Kw("kind".into()), Val::Kw(match &b.kind {
+            Kind::Point => "point",
+            Kind::Laser { .. } => "laser",
+            Kind::Pather { .. } => "pather",
+        }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
+        (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
+        (Val::Kw("variant".into()), Val::Kw(b.style.variant.as_str().into())),
     ];
+    if let Some(t) = &b.team {
+        view.push((Val::Kw("team".into()), Val::Kw(t.clone())));
+    }
+    if !matches!(b.damage, Val::Nothing) {
+        view.push((Val::Kw("damage".into()), b.damage.clone()));
+    }
     for (k, v) in &b.cols {
         view.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
     }
@@ -1273,6 +1314,86 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
         }
     }
     Ok(out)
+}
+
+fn sf_defcontact(
+    items: &[Form],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Val, String> {
+    if items.len() != 3 && items.len() != 4 {
+        return Err("defcontact: expected pair, optional opts, callback".into());
+    }
+    let pair = match items.get(1) {
+        Some(Form::Vector(xs)) if xs.len() == 2 => {
+            let a = match &xs[0] {
+                Form::Kw(k) => k.clone(),
+                _ => return Err("defcontact: pair entries must be keywords".into()),
+            };
+            let b = match &xs[1] {
+                Form::Kw(k) => k.clone(),
+                _ => return Err("defcontact: pair entries must be keywords".into()),
+            };
+            (a, b)
+        }
+        _ => return Err("defcontact: expected [:a :b] layer pair".into()),
+    };
+    let (opts, cb_idx) = if items.len() == 4 {
+        (evaluate(&items[2], env, ctx, world)?, 3)
+    } else {
+        (Val::Map(Rc::new(Vec::new())), 2)
+    };
+    let Val::Map(kvs) = opts else {
+        return Err("defcontact: opts must be a map".into());
+    };
+    let mut once: Option<Rc<str>> = None;
+    let mut skip_if: Option<SkipIf> = None;
+    for (k, v) in kvs.iter() {
+        let Val::Kw(key) = k else { return Err("defcontact: opts keys must be keywords".into()) };
+        match &**key {
+            "once" => match v {
+                Val::Kw(c) => once = Some(c.clone()),
+                _ => return Err("defcontact: :once expects a keyword column".into()),
+            },
+            "skip-if" => {
+                let Val::Arr(xs) = v else {
+                    return Err("defcontact: :skip-if expects a vector".into());
+                };
+                if xs.len() != 4 {
+                    return Err("defcontact: :skip-if expects four entries".into());
+                }
+                let on_b = match &xs[0] {
+                    Val::Kw(s) if &**s == "a" => false,
+                    Val::Kw(s) if &**s == "b" => true,
+                    _ => return Err("defcontact: :skip-if side must be :a or :b".into()),
+                };
+                let col = match &xs[1] {
+                    Val::Kw(s) => s.clone(),
+                    _ => return Err("defcontact: :skip-if column must be keyword".into()),
+                };
+                let gt = match &xs[2] {
+                    Val::Kw(s) if &**s == "gt" => true,
+                    Val::Kw(s) if &**s == "lt" => false,
+                    _ => return Err("defcontact: :skip-if op must be :gt or :lt".into()),
+                };
+                let rhs = match &xs[3] {
+                    Val::Kw(s) if &**s == "tick" => SkipRhs::Tick,
+                    Val::Num(n) => SkipRhs::Num(*n),
+                    _ => return Err("defcontact: :skip-if rhs must be :tick or number".into()),
+                };
+                skip_if = Some(SkipIf { on_b, col, gt, rhs });
+            }
+            other => return Err(format!("defcontact: unknown option :{}", other)),
+        }
+    }
+    let callback = evaluate(&items[cb_idx], env, ctx, world)?;
+    let rule = ContactRule { a: pair.0.clone(), b: pair.1.clone(), once, skip_if, callback };
+    match world.contacts.iter_mut().find(|r| r.a == pair.0 && r.b == pair.1) {
+        Some(slot) => *slot = rule,
+        None => world.contacts.push(rule),
+    }
+    Ok(Val::Nothing)
 }
 
 /// Bind a param vector to arguments, honoring a `& rest` tail (fns and
@@ -1395,8 +1516,8 @@ fn run_pure_loop(
 pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     match a {
         ActionV::Nothing => Ok(Val::Nothing),
-        ActionV::Event { channel } => {
-            world.push_event(Event { tick: world.tick, name: channel.as_ref().into(), pos: None });
+        ActionV::Event { channel, pos } => {
+            world.push_event(Event { tick: world.tick, name: channel.as_ref().into(), pos: *pos });
             Ok(Val::Nothing)
         }
         ActionV::Export { scope, name } => {
@@ -1479,7 +1600,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     cols: cols.get(ei).cloned().unwrap_or_default(),
                     triggers: triggers.clone(),
                     damage: damage.clone(),
-                    grazed: false,
                     prev_pos: None,
                     trail: Vec::new(),
                 });

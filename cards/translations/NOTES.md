@@ -267,6 +267,12 @@ still knows by name: the interaction-matrix rows and the three
 contact-resolution bodies (`lives`/`iframe-until`/`hp` writes) — the
 next extraction, blocked on a cheap per-contact call story.
 
+That extraction shipped as `defcontact`: contact rules are card code, and
+layer names are opaque tags owned by the templates that create them. The
+engine now provides hot overlap detection plus two data prefilters (`:once`
+and `:skip-if`) and zero genre semantics; Touhou's hit/graze/shot behavior
+lives beside `spawn-bullet`/`spawn-shot`/`spawn-enemy` in lib/touhou.dmk.
+
 **`phases` is genre policy, so the lib defines it — and macros became
 able to.** Mima showed the spawn-boss boundary sitting wrong: the card
 was hand-writing `:expose {:hp $boss-hp}`, the registration wait, and

@@ -1,4 +1,4 @@
-//! World data: bullets, colliders, triggers, events, counters.
+//! World data: bullets, colliders, triggers, events, contact rules.
 
 use super::*;
 use crate::edn::Form;
@@ -65,8 +65,8 @@ pub struct RenderSigs {
 pub struct Bullet {
     pub id: u64,
     /// Gameplay team tag (F20: derived channels like $nearest-enemy are
-    /// queries over tagged entities). None = hostile fire; :player = player
-    /// fire (hits :enemy entities); :enemy = a target with hp.
+    /// queries over tagged entities). Collision ignores this; layer tags and
+    /// contact rules define interactions.
     pub team: Option<Rc<str>>,
     pub kind: Kind,
     pub motion: Rc<DynNode>,
@@ -88,8 +88,6 @@ pub struct Bullet {
     /// :hit is taken, or a PURE FUNCTION (fn [self other] num) evaluated at
     /// contact — contacts are rare, so interpreting there is free.
     pub damage: Val,
-    /// Grazes count once per bullet.
-    pub grazed: bool,
     /// Last tick's position (collision pass) — contact velocity is the
     /// finite difference, uniform across Closed and Scanned motion.
     pub prev_pos: Option<(f64, f64)>,
@@ -138,26 +136,40 @@ impl TriggerRule {
     }
 }
 
-/// Collision layers. The engine's interaction matrix pairs them:
-/// damage × player-hurtbox → hit, graze × player-hurtbox → graze,
-/// shot × hurt → damage resolution. The player hurtbox is implicit
-/// (an engine-side entity at $player).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Layer {
-    Damage,     // hostile fire
-    Graze,      // graze ring, conventionally on the bullet
-    Shot,       // player fire
-    Hurt,       // enemy hurtbox
-    PlayerHurt, // the player entity's hurtbox (host-mounted)
-}
-
 /// One collider: a circle in the owner's frame. Lasers derive capsule
 /// chains from their sampled curve at collision time instead.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Collider {
-    pub layer: Layer,
+    pub layer: Rc<str>,
     pub r: f64,
 }
+
+/// A collision rule: when an entity with an `a`-layer collider overlaps an
+/// entity with a `b`-layer collider, run the callback with both handles.
+/// Prefilters are rule DATA, evaluated engine-side per pair (no interpreter
+/// on the hot path): `once` latches a column on the A entity (fires once per
+/// A-entity ever), `skip_if` compares a column against a threshold.
+#[derive(Clone)]
+pub struct ContactRule {
+    pub a: Rc<str>,
+    pub b: Rc<str>,
+    /// Column name latched to 1.0 on the A entity after the callback fires.
+    pub once: Option<Rc<str>>,
+    /// (side, col, op, rhs): skip the pair when `side.col op rhs` holds.
+    pub skip_if: Option<SkipIf>,
+    pub callback: Val,
+}
+
+#[derive(Clone)]
+pub struct SkipIf {
+    pub on_b: bool,          // :a or :b
+    pub col: Rc<str>,
+    pub gt: bool,            // :gt or :lt (missing col reads 0.0)
+    pub rhs: SkipRhs,
+}
+
+#[derive(Clone)]
+pub enum SkipRhs { Tick, Num(f64) }
 
 #[derive(Clone)]
 pub struct World {
@@ -178,9 +190,9 @@ pub struct World {
     /// channel := that entity's column while alive, else 0. Registered at
     /// spawn, persists past the entity (death reads as 0, so hp gates fire).
     pub exposes: Vec<(Rc<str>, u64, Rc<str>)>,
-    /// Gameplay counters — part of World so they snapshot/scrub with it.
-    pub graze: u64,
-    pub player_hits: u64,
+    /// Card-defined contact rules, registered by defcontact. World data so
+    /// hot-swaps and timeline restore carry the same collision semantics.
+    pub contacts: Vec<ContactRule>,
 }
 
 /// A gameplay event: emitted by collision or by the (event :name) action.
@@ -263,8 +275,7 @@ impl Default for World {
             boss: Pose::IDENTITY,
             boss_anim: None,
             exposes: Vec::new(),
-            graze: 0,
-            player_hits: 0,
+            contacts: Vec::new(),
         }
     }
 }
