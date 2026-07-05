@@ -135,15 +135,19 @@ enum TF {
         idx: usize,
     },
     Frame(FrameSpec),
-    /// A running `phases` machine: the trampoline over ordered states.
+    /// A running `states` machine: the trampoline over ordered states.
     /// stage: 0 = enter cur (arm the goto guard, push the body), 1 = body
     /// exited (completed/cancelled) → run finally, 2 = route (goto target
     /// or state order) and loop to 0.
-    Phases {
-        clauses: Rc<[PhaseClause]>,
+    States {
+        clauses: Rc<[StateClause]>,
         env: Env,
         /// goto-request cell (world-counter id, so it snapshots/replays).
         cell: u64,
+        /// state-generation cell: bumped at every state EXIT, so guards
+        /// (and the movesets forked under them) die when their state ends —
+        /// however it ends — even after the request cell is cleared.
+        gen_cell: u64,
         cur: usize,
         stage: u8,
     },
@@ -1013,6 +1017,17 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
     dyn_pose(node, 0.0, &MotionState::new(), sig).unwrap_or(Pose::IDENTITY)
 }
 
+/// Bump a `states` machine's generation cell (state exit: everything
+/// guarded on the old generation cancels).
+fn bump_gen(gen_cell: u64, ctx: &mut Ctx) {
+    let mut cells = ctx.sig.cells.borrow_mut();
+    let g = match cells.get(&gen_cell) {
+        Some((_, Val::Num(n))) => *n,
+        _ => 0.0,
+    };
+    cells.insert(gen_cell, ("#state-gen".to_string(), Val::Num(g + 1.0)));
+}
+
 /// Step one task until it blocks (wait) or completes. Returns true if done.
 fn active_guards(task: &Task) -> Vec<(Form, Env)> {
     let mut gs = task.guards.clone();
@@ -1137,41 +1152,53 @@ fn step_task(
                 *idx += 1;
                 Some((f, e))
             }
-            TF::Phases { clauses, env, cell, cur, stage } => {
+            TF::States { clauses, env, cell, gen_cell, cur, stage } => {
                 match *stage {
                     // enter the current state: clear any stale goto request,
-                    // arm the goto guard over the body scope (forks under it
-                    // inherit it), push the body
+                    // arm the guard (goto requested OR generation moved on)
+                    // over the body scope — forks under it inherit it —
+                    // and push the body
                     0 => {
                         if *cur >= clauses.len() {
-                            task.stack.pop(); // fell off the end: complete
+                            // fell off the end: complete — bump the
+                            // generation so the last state's forks die too
+                            bump_gen(*gen_cell, ctx);
+                            task.stack.pop();
                             continue;
                         }
                         let c = clauses[*cur].clone();
-                        let cell = *cell;
-                        let benv = env.bind("#phase-cell".into(), Val::Num(cell as f64));
+                        let (cell, gen_cell) = (*cell, *gen_cell);
+                        let benv = env.bind("#state-cell".into(), Val::Num(cell as f64));
                         *stage = 1;
-                        ctx.sig
-                            .cells
-                            .borrow_mut()
-                            .insert(cell, ("#goto".to_string(), Val::Nothing));
+                        let g = {
+                            let mut cells = ctx.sig.cells.borrow_mut();
+                            cells.insert(cell, ("#goto".to_string(), Val::Nothing));
+                            match cells.get(&gen_cell) {
+                                Some((_, Val::Num(n))) => *n,
+                                _ => 0.0,
+                            }
+                        };
                         let pred = Form::list(vec![
-                            Form::sym("phase-goto?"),
+                            Form::sym("state-end?"),
                             Form::Num(cell as f64),
+                            Form::Num(gen_cell as f64),
+                            Form::Num(g),
                         ]);
                         task.stack.push(TF::Guard { pred, env: benv.clone() });
                         task.stack.push(TF::Seq { items: c.body.clone(), idx: 0, env: benv });
                         continue;
                     }
-                    // body exited (completed or goto'd): the finalizer runs
-                    // OUTSIDE the state's guard, on every path
+                    // body exited (completed or goto'd): bump the generation
+                    // — everything forked under the state dies with it —
+                    // then run the finalizer OUTSIDE the state's guard
                     1 => {
                         let c = clauses[*cur].clone();
-                        let cell = *cell;
+                        let (cell, gen_cell) = (*cell, *gen_cell);
                         *stage = 2;
+                        bump_gen(gen_cell, ctx);
                         if !c.finally.is_empty() {
                             let benv =
-                                env.bind("#phase-cell".into(), Val::Num(cell as f64));
+                                env.bind("#state-cell".into(), Val::Num(cell as f64));
                             task.stack.push(TF::Seq {
                                 items: c.finally.clone(),
                                 idx: 0,
@@ -1371,16 +1398,22 @@ fn run_action(
             task.stack.push(TF::Seq { items: body.clone(), idx: 0, env: env.clone() });
             Ok(false)
         }
-        ActionV::Phases { clauses, env } => {
-            // allocate the goto-request cell from the world counter (ids
-            // are deterministic, so requests snapshot and replay)
+        ActionV::States { clauses, env } => {
+            // allocate the goto-request and generation cells from the world
+            // counter (ids are deterministic, so they snapshot and replay)
             let cell = world.next_id;
-            world.next_id += 1;
-            ctx.sig.cells.borrow_mut().insert(cell, ("#goto".to_string(), Val::Nothing));
-            task.stack.push(TF::Phases {
+            let gen_cell = world.next_id + 1;
+            world.next_id += 2;
+            {
+                let mut cells = ctx.sig.cells.borrow_mut();
+                cells.insert(cell, ("#goto".to_string(), Val::Nothing));
+                cells.insert(gen_cell, ("#state-gen".to_string(), Val::Num(0.0)));
+            }
+            task.stack.push(TF::States {
                 clauses: clauses.clone(),
                 env: env.clone(),
                 cell,
+                gen_cell,
                 cur: 0,
                 stage: 0,
             });
@@ -1396,10 +1429,10 @@ fn run_action(
             let owns = task
                 .stack
                 .iter()
-                .any(|tf| matches!(tf, TF::Phases { cell: c, .. } if c == cell));
+                .any(|tf| matches!(tf, TF::States { cell: c, .. } if c == cell));
             if owns {
                 while let Some(tf) = task.stack.last() {
-                    if matches!(tf, TF::Phases { cell: c, .. } if c == cell) {
+                    if matches!(tf, TF::States { cell: c, .. } if c == cell) {
                         break;
                     }
                     task.stack.pop();
@@ -2673,15 +2706,15 @@ mod tests {
         );
     }
 
-    /// The phases FSM: routing goto skips states, a timeout expressed as
+    /// The states FSM: routing goto skips states, a timeout expressed as
     /// body code (fork + wait + bare goto) ends a looping body, finalizers
     /// run on the way out, and fall-through completes the machine.
     #[test]
-    fn phases_trampoline() {
+    fn states_trampoline() {
         const CARD: &str = r#"
 (defpattern m []
   (seq
-    (phases
+    (states
       (:opening (goto :b))
       (:a (spawn (circle 3 (still))))            ; skipped by the goto
       (:b
@@ -2710,13 +2743,13 @@ mod tests {
     /// the whole state scope — including a nested (until …) guard the body
     /// wrapped itself in — and re-enters at the target label.
     #[test]
-    fn phases_goto_from_fork_and_until() {
+    fn states_goto_from_fork_and_until() {
         const CARD: &str = r#"
 (defpattern m []
   (seq
     (defvar hp 10)
     (export hp)
-    (phases
+    (states
       (:spell
         (fork (seq (wait 0.05) (goto :post)))
         (until (<= $hp 0)                        ; the hp gate, as body code
@@ -2739,10 +2772,10 @@ mod tests {
     /// Labels are values: computed goto routing makes the machine a Markov
     /// chain (here over the deterministic world rng).
     #[test]
-    fn phases_markov_routing() {
+    fn states_markov_routing() {
         const CARD: &str = r#"
 (defpattern m []
-  (phases
+  (states
     (:a (event :in-a)
         (wait (ticks 4))
         (goto (nth [:a :b] (rand-int 0 2))))
@@ -2762,19 +2795,110 @@ mod tests {
         assert!(a > 0 && b > 0, "both states visited: a={} b={}", a, b);
     }
 
-    /// goto outside any phases machine is an error, and machines are
-    /// lexically scoped: a pattern invoked from a phase body has no
+    /// The `phases` sugar over `states`: clause opts desugar to body code —
+    /// :timeout to a fork racing the body, :until to an until wrapper
+    /// (a bare wait-for when the clause has no body).
+    #[test]
+    fn phases_sugar_desugars() {
+        const CARD: &str = r#"
+(defpattern m []
+  (phases
+    (:spell {:timeout 0.05}
+      (for [i inf :every 1] (spawn (circle 4 (still))))
+      (finally (event :spell-out)))
+    (:end (event :end))))
+"#;
+        let mut sim = Sim::load(CARD, Some("m")).unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.world.bullets.len(), 4, ":timeout ended the spell loop");
+        let has = |sim: &Sim, n: &str| {
+            sim.world.log.borrow().entries.iter().any(|e| &*e.name == n)
+        };
+        assert!(has(&sim, "spell-out"), "finalizer ran on the timeout path");
+        assert!(has(&sim, "end"), "fell through to the next phase");
+
+        const CARD2: &str = r#"
+(defpattern m []
+  (seq
+    (defvar hp 5)
+    (export hp)
+    (fork (seq (wait 0.2) (set! hp 0)))
+    (phases
+      (:gate {:until (<= $hp 0)})
+      (:end (event :end)))))
+"#;
+        let mut sim2 = Sim::load(CARD2, Some("m")).unwrap();
+        for _ in 0..12 {
+            sim2.step().unwrap();
+        }
+        assert!(!has(&sim2, "end"), ":until (empty body) still gating");
+        for _ in 0..24 {
+            sim2.step().unwrap();
+        }
+        assert!(has(&sim2, "end"), ":until released the gate when the channel dropped");
+    }
+
+    /// The states machine as a player-control FSM: ground/air zones with
+    /// per-state movesets (forked in the body, dying with the state) and
+    /// transitions driven by an input channel.
+    #[test]
+    fn states_player_control() {
+        const CARD: &str = r#"
+(defpattern pc []
+  (states
+    (:ground
+      (fork (for [i inf :every (ticks 2)]
+              (spawn (still) {:style {:family :circle}})))
+      (wait-for (> $jump 0.5))
+      (goto :air))
+    (:air
+      (fork (for [i inf :every (ticks 2)]
+              (spawn (still) {:style {:family :star}})))
+      (wait-for (< $jump 0.5))
+      (goto :ground))))
+"#;
+        let mut sim = Sim::load(CARD, Some("pc")).unwrap();
+        let mut inp = Inputs::classic((0.0, 0.0), (0.0, 0.0));
+        inp.set("jump", Val::Num(0.0));
+        for _ in 0..20 {
+            sim.step_with(&inp).unwrap();
+        }
+        let count = |sim: &Sim, fam: &str| {
+            sim.world.bullets.iter().filter(|b| b.style.family == fam).count()
+        };
+        let g1 = count(&sim, "circle");
+        assert!(g1 >= 8, "ground moveset firing: {}", g1);
+        assert_eq!(count(&sim, "star"), 0, "air moveset dormant on the ground");
+        inp.set("jump", Val::Num(1.0));
+        for _ in 0..20 {
+            sim.step_with(&inp).unwrap();
+        }
+        assert_eq!(count(&sim, "circle"), g1, "ground moveset died on takeoff");
+        let a1 = count(&sim, "star");
+        assert!(a1 >= 8, "air moveset firing: {}", a1);
+        inp.set("jump", Val::Num(0.0));
+        for _ in 0..20 {
+            sim.step_with(&inp).unwrap();
+        }
+        assert_eq!(count(&sim, "star"), a1, "air moveset died on landing");
+        assert!(count(&sim, "circle") > g1, "ground moveset resumed");
+    }
+
+    /// goto outside any state machine is an error, and machines are
+    /// lexically scoped: a pattern invoked from a state body has no
     /// enclosing machine in ITS text, so its goto fails too.
     #[test]
     fn goto_scoping() {
         let mut sim =
             Sim::load_forms("(defpattern p [] (still))", "(goto :anywhere)").unwrap();
-        assert!(sim.step().is_err(), "goto outside phases errors");
+        assert!(sim.step().is_err(), "goto outside a machine errors");
 
         const CARD: &str = r#"
 (defpattern callee [] (goto :a))
 (defpattern m []
-  (phases
+  (states
     (:a (callee))))
 "#;
         let mut sim2 = Sim::load(CARD, Some("m")).unwrap();

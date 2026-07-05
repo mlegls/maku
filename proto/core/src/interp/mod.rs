@@ -99,13 +99,13 @@ pub struct SpawnElem {
     pub path: Vec<(usize, usize)>,
 }
 
-/// One state of a `phases` machine (§8): `(label body… (finally …)?)`.
+/// One state of a `states` machine (§8): `(label body… (finally …)?)`.
 /// The machine is a bare FSM — labeled states, default successor = next in
-/// order, `goto` for everything else. Phase-end conditions are ordinary
-/// body code (`(until pred …)` as the body, `(fork (seq (wait d) (goto)))`
-/// for timeouts); boss templates layer on top as functions/macros, not here.
+/// order, `goto` for everything else. End conditions are ordinary body
+/// code (`(until pred …)` as the body, `(fork (seq (wait d) (goto)))` for
+/// timeouts); `phases` is the shipped boss-shaped sugar over it.
 #[derive(Debug, Clone)]
-pub struct PhaseClause {
+pub struct StateClause {
     pub label: Rc<str>,
     pub body: Rc<[Form]>,
     pub finally: Rc<[Form]>,
@@ -177,13 +177,13 @@ pub enum ActionV {
     /// a state ends by goto or body completion; finalizers run on every
     /// exit path; next = goto target, defaulting to state order; falling
     /// off the end completes the machine.
-    Phases { clauses: Rc<[PhaseClause]>, env: Env },
+    States { clauses: Rc<[StateClause]>, env: Env },
     /// (goto label?): scoped non-local exit — cancel the enclosing state
     /// body (finalizers run), re-enter at the label; bare (goto) takes the
     /// default successor (state order). Labels are VALUES (evaluated), so
     /// routing may be computed — `(goto (nth [:a :b] (rand-int 0 2)))` is a
     /// Markov chain. The cell identifies the innermost lexical machine
-    /// (bound as #phase-cell in state bodies, so outer machines' labels
+    /// (bound as #state-cell in state bodies, so outer machines' labels
     /// are simply not in scope).
     Goto { cell: u64, label: Option<Rc<str>> },
     Wait { ticks: u64 },
@@ -579,38 +579,115 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     env: env.clone(),
                 })));
             }
+            "states" => {
+                // (states (label body… (finally body…)?) …) — the bare FSM
+                // primitive: ordered labeled states, label keyword as head.
+                // End conditions are body code — (until pred …) as the
+                // body, (fork (seq (wait d) (goto))) for timeouts. General
+                // enough for player-control machines too: ground/air zones
+                // with per-state movesets forked in the body (they die with
+                // the state) and computed goto routing.
+                let mut clauses = Vec::new();
+                for cf in &items[1..] {
+                    clauses.push(parse_state_clause(cf)?);
+                }
+                if clauses.is_empty() {
+                    return Err("states: no states".into());
+                }
+                return Ok(Val::Action(Rc::new(ActionV::States {
+                    clauses: clauses.into(),
+                    env: env.clone(),
+                })));
+            }
             "phases" => {
-                // (phases (label body… (finally body…)?) …) — a bare FSM:
-                // ordered labeled states, label keyword as head. End
-                // conditions are body code — (until pred …) as the body,
-                // (fork (seq (wait d) (goto))) for timeouts — and boss
-                // templates (hp bars, roots, names) are userland layers.
+                // The boss-shaped layer over `states` — sugar only, same
+                // machine underneath. Clause opts desugar to body code:
+                //   :root pos  → (move 0.9 :out-sine pos)     [reposition first]
+                //   :timeout d → (fork (seq (wait d) (goto))) [timer arms on arrival]
+                //   :until p   → (until p body…)              [the hp race]
                 let mut clauses = Vec::new();
                 for cf in &items[1..] {
                     let Form::List(parts) = cf else {
-                        return Err("phases: expected (:label body…) states".into());
+                        return Err("phases: expected (:label opts? body…) clauses".into());
                     };
-                    let Some(Form::Kw(label)) = parts.first() else {
-                        return Err("phases: state head must be a :label keyword".into());
+                    let Some(head) = parts.first().filter(|f| matches!(f, Form::Kw(_)))
+                    else {
+                        return Err("phases: clause head must be a :label keyword".into());
                     };
-                    let mut body: Vec<Form> = parts[1..].to_vec();
-                    let mut finally: Vec<Form> = Vec::new();
-                    if let Some(Form::List(last)) = body.last() {
-                        if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
-                            finally = last[1..].to_vec();
-                            body.pop();
+                    let mut at = 1;
+                    let (mut until, mut timeout, mut root) = (None, None, None);
+                    if let Some(Form::Map(kvs)) = parts.get(1) {
+                        at = 2;
+                        for (k, v) in kvs.iter() {
+                            let Form::Kw(k) = k else {
+                                return Err("phases: opts keys are keywords".into());
+                            };
+                            match &**k {
+                                "until" => until = Some(v.clone()),
+                                "timeout" => timeout = Some(v.clone()),
+                                "root" => root = Some(v.clone()),
+                                other => {
+                                    return Err(format!(
+                                        "phases: unsupported opt :{} (only :until \
+                                         :timeout :root — build richer templates as \
+                                         card macros over `states`)",
+                                        other
+                                    ))
+                                }
+                            }
                         }
                     }
-                    clauses.push(PhaseClause {
-                        label: label.clone(),
-                        body: body.into(),
-                        finally: finally.into(),
-                    });
+                    let mut body: Vec<Form> = parts[at..].to_vec();
+                    let mut finally: Option<Form> = None;
+                    if let Some(Form::List(last)) = body.last() {
+                        if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
+                            finally = body.pop();
+                        }
+                    }
+                    if let Some(p) = until {
+                        body = if body.is_empty() {
+                            vec![Form::list(vec![Form::sym("wait-for"), p])]
+                        } else {
+                            let mut u = vec![Form::sym("until"), p];
+                            u.extend(body);
+                            vec![Form::list(u)]
+                        };
+                    }
+                    if let Some(d) = timeout {
+                        body.insert(
+                            0,
+                            Form::list(vec![
+                                Form::sym("fork"),
+                                Form::list(vec![
+                                    Form::sym("seq"),
+                                    Form::list(vec![Form::sym("wait"), d]),
+                                    Form::list(vec![Form::sym("goto")]),
+                                ]),
+                            ]),
+                        );
+                    }
+                    if let Some(pos) = root {
+                        body.insert(
+                            0,
+                            Form::list(vec![
+                                Form::sym("move"),
+                                Form::Num(0.9),
+                                Form::Kw("out-sine".into()),
+                                pos,
+                            ]),
+                        );
+                    }
+                    let mut out: Vec<Form> = vec![head.clone()];
+                    out.extend(body);
+                    if let Some(f) = finally {
+                        out.push(f);
+                    }
+                    clauses.push(parse_state_clause(&Form::list(out))?);
                 }
                 if clauses.is_empty() {
-                    return Err("phases: no states".into());
+                    return Err("phases: no clauses".into());
                 }
-                return Ok(Val::Action(Rc::new(ActionV::Phases {
+                return Ok(Val::Action(Rc::new(ActionV::States {
                     clauses: clauses.into(),
                     env: env.clone(),
                 })));
@@ -627,23 +704,33 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                         v => return Err(format!("goto: expected a :label, got {:?}", v)),
                     },
                 };
-                // scoped strictly to the innermost lexical phases: the
-                // machine binds its request cell as #phase-cell in state
-                // bodies; inner machines shadow, called patterns don't see it
-                let cell = match env.lookup("#phase-cell") {
+                // scoped strictly to the innermost lexical machine: it binds
+                // its request cell as #state-cell in state bodies; inner
+                // machines shadow, called patterns don't see it
+                let cell = match env.lookup("#state-cell") {
                     Some(Val::Num(n)) => n as u64,
-                    _ => return Err("goto: no enclosing phases machine".into()),
+                    _ => return Err("goto: no enclosing state machine".into()),
                 };
                 return Ok(Val::Action(Rc::new(ActionV::Goto { cell, label })));
             }
-            "phase-goto?" => {
-                // internal (the machine's guard over each state body):
-                // has a goto been requested on this machine's cell?
-                let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
-                return Ok(Val::Bool(matches!(
-                    ctx.sig.cells.borrow().get(&cell),
-                    Some((_, Val::Kw(_) | Val::Bool(true)))
-                )));
+            "state-end?" => {
+                // internal (the machine's guard over each state body, and
+                // what forks under it inherit): a goto has been requested,
+                // OR the machine has already left the state this guard was
+                // armed in (the generation bumped at state exit — so
+                // movesets forked in a state die when it ends, however it
+                // ends, even though the request cell is long cleared).
+                let req = evaluate(&items[1], env, ctx, world)?.num()? as u64;
+                let genc = evaluate(&items[2], env, ctx, world)?.num()? as u64;
+                let expect = evaluate(&items[3], env, ctx, world)?.num()?;
+                let cells = ctx.sig.cells.borrow();
+                let req_set =
+                    matches!(cells.get(&req), Some((_, Val::Kw(_) | Val::Bool(true))));
+                let g = match cells.get(&genc) {
+                    Some((_, Val::Num(n))) => *n,
+                    _ => expect,
+                };
+                return Ok(Val::Bool(req_set || g != expect));
             }
             "cull" => {
                 // (cull): clear all hostile fire (bomb semantics);
@@ -1531,6 +1618,26 @@ fn collect_handles(v: &Val, out: &mut Vec<u64>) -> Result<(), String> {
         }
         v => Err(format!("expected handle(s), got {:?}", v)),
     }
+}
+
+/// Parse one (label body… (finally body…)?) state clause of a `states`
+/// machine (`phases` desugars its opts into this same shape).
+fn parse_state_clause(cf: &Form) -> Result<StateClause, String> {
+    let Form::List(parts) = cf else {
+        return Err("states: expected (:label body…) states".into());
+    };
+    let Some(Form::Kw(label)) = parts.first() else {
+        return Err("states: state head must be a :label keyword".into());
+    };
+    let mut body: Vec<Form> = parts[1..].to_vec();
+    let mut finally: Vec<Form> = Vec::new();
+    if let Some(Form::List(last)) = body.last() {
+        if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
+            finally = last[1..].to_vec();
+            body.pop();
+        }
+    }
+    Ok(StateClause { label: label.clone(), body: body.into(), finally: finally.into() })
 }
 
 /// Quasiquote: walk the template, evaluating (unquote e) and splicing

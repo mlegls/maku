@@ -93,13 +93,13 @@ decode notes.
 
 | DMK | here |
 |---|---|
-| `pattern { } { phase … phase … }` | `(phases (:label body… (finally …)?) …)` — a bare FSM of ordered labeled states |
-| `hp(4000)` phase property | body code: `(until (<= $boss-hp n) attack)` *as* the state body |
-| phase timeout `phase X {…}` | body code: `(fork (seq (wait X) (goto)))` — bare goto = exit to successor |
-| `root(0, 2)` phase property | body code: `(move dur ease c[0 2])` at the body head — the card knows its boss |
+| `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — sugar over the `states` FSM primitive |
+| `hp(4000)` phase property | `{:until (<= $boss-hp n)}` — desugars to `(until pred body)` as the state body |
+| phase timeout `phase X {…}` | `{:timeout X}` — desugars to `(fork (seq (wait X) (goto)))`; bare goto = exit to successor |
+| `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to a `(move …)` at the body head; the card knows its boss |
 | `type(spell, "Name")` | card data: an exported cell written at state heads (or a card-level template macro) |
-| `shiftphaseto(N)` (index) | `(goto :label)` — labels survive phase insertion; scoped to the innermost machine; labels are values, so routing may be computed |
-| the zeroeth setup phase convention | a routing state: `(:opening (goto :spell1))` — or nothing; setup is just code before `phases` |
+| `shiftphaseto(N)` (index) | `(goto :label)` — labels survive phase insertion; scoped to the innermost machine; labels are values, so routing may be computed (Markov chains) |
+| the zeroeth setup phase convention | a routing state: `(:opening (goto :spell1))` — or nothing; setup is just code before the machine |
 | phase-end task cancellation (token propagation) | the phase guard cancels the body's whole task subtree (`until` semantics) |
 | end-of-phase item drops / cleanup | the clause's `finally` block — runs on every exit path |
 | `vulnerable(false)` phase property | `(invuln boss dur)` in the previous phase's `finally` — a column both resolve paths honor |

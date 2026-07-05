@@ -6,11 +6,11 @@ language.md.
 
 ## Language features spec'd but unimplemented
 - `race` general form (§8) — only the `until` degenerate case exists (it is
-  also how `phases` arms each state's goto guard).
-- `phases` leftovers (§8): phase-body return value as the next label
-  (routing is goto-or-state-order); a stock spellcard-template macro
-  (DMK's hpi/type/root/timer opts record expanding to body code) once the
-  boss tutorial demands one.
+  also how `states` arms each state's guard).
+- `states` leftovers (§8): state-body return value as the next label
+  (routing is goto-or-state-order); richer spellcard templates than the
+  `phases` sugar (:name/:type/hp bars) as card macros once the boss
+  tutorial demands them.
 - `(with {$chan v} body)` scoped channel overrides (§3/§13.8).
 - Pattern-embedding scope adapters (§10) — callable patterns embed bare:
   defaults only, no argument passing, shared cells.

@@ -223,6 +223,20 @@ cannot do (something must survive the scope's unwind). The DMK spellcard
 record (`hpi`/`type`/`root`/timer) becomes a card-level macro over this,
 not engine surface.
 
+**Named accordingly: `states` is the primitive, `phases` the boss sugar.**
+The FSM is general control flow — a ground/air player rig is two states
+whose per-state movesets are body forks and whose transitions read input
+channels; nothing about it is boss-shaped, so it shouldn't carry a boss
+name. `phases` remains as the shipped desugar (`:until`/`:timeout`/`:root`
+→ the three body forms above; anything richer is a card macro). Building
+the player-control case surfaced the real cancellation contract: state
+scopes guard on a **state generation** (bumped at every exit), not on the
+goto request — a request cell is cleared by the machine the same tick it
+routes, before sibling forks ever step, and a state that ends by plain
+body completion makes no request at all. Generation guards kill the
+state's whole forked subtree *however* the state ends; that IS DMK's
+phase-token semantics, rediscovered at the right grain.
+
 **`move` — entity motion is remat, not frame mutation (clarified).** There IS
 a thing being moved: the boss (or player option) is an expressed entity — it
 renders, collides, has hp — and patterns anchor to its live pose signal (the

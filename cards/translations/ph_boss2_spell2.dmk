@@ -124,9 +124,10 @@
       (wait 1)
       (recur))))
 
-;; In the boss's phases (the machine is a bare FSM; hp gate, timeout, and
-;; repositioning are body code — DMK's hpi/type/root props are a template
-;; a card can macro on top of it):
+;; In the boss's phases -- the boss-shaped sugar over the `states` FSM:
+;;   (:spell2 {:root c[3.6 -0.5] :timeout 48 :until (<= $boss-hp 0)}
+;;     (spell-2 factor))
+;; which desugars to plain state-body code:
 ;;   (:spell2
 ;;     (move 0.9 :out-sine c[3.6 -0.5])         ; root
 ;;     (fork (seq (wait 48) (goto)))            ; timeout -> successor
