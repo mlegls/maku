@@ -30,6 +30,10 @@ pub struct Card {
     pub order: Vec<String>,
     pub defs: HashMap<String, Form>,
     pub macros: HashMap<String, Macro>,
+    /// (defchannel $name expr) — derived channels, evaluated once per tick
+    /// during channel refresh, in definition order. Card code, not engine:
+    /// this is how the stdlib publishes $enemies/$nearest-enemy.
+    pub channels: Vec<(Rc<str>, Form)>,
 }
 
 pub fn load_card(forms: &[Form]) -> Result<Card, String> {
@@ -37,6 +41,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut order = Vec::new();
     let mut defs = HashMap::new();
     let mut macros = HashMap::new();
+    let mut channels: Vec<(Rc<str>, Form)> = Vec::new();
     for f in forms {
         if let Form::List(items) = f {
             match items.first() {
@@ -96,9 +101,26 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         defs.insert(n.to_string(), Form::list(fnform));
                     }
                 }
+                Some(Form::Sym(s)) if &**s == "defchannel" => {
+                    // (defchannel $name expr): a per-tick derived channel.
+                    // Redefinition replaces (imports first, card later —
+                    // ordinary shadowing), order otherwise preserved.
+                    let Some(Form::Sym(n)) = items.get(1) else {
+                        return Err("defchannel: expected a $channel name".into());
+                    };
+                    let Some(name) = n.strip_prefix('$') else {
+                        return Err("defchannel: name must start with $".into());
+                    };
+                    let Some(expr) = items.get(2) else {
+                        return Err(format!("defchannel ${}: expected an expression", name));
+                    };
+                    let name: Rc<str> = name.into();
+                    channels.retain(|(k, _)| *k != name);
+                    channels.push((name, expr.clone()));
+                }
                 _ => {}
             }
         }
     }
-    Ok(Card { patterns, order, defs, macros })
+    Ok(Card { patterns, order, defs, macros, channels })
 }

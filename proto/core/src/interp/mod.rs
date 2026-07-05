@@ -863,6 +863,43 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let world_ang = (y - ctx.ambient.y).atan2(x - ctx.ambient.x).to_degrees();
                 return Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: world_ang - ctx.ambient.th }));
             }
+            // World queries over the manipulate query language (§9): the
+            // same {axes/:team/:where} maps, read-only, cheap enough for
+            // per-tick derived channels. These are what let the stdlib
+            // define $enemies / $nearest-enemy as (defchannel …) card code.
+            "count-entities" => {
+                let q = evaluate(&items[1], env, ctx, world)?;
+                let ids = resolve_query(&q, ctx, world)?;
+                return Ok(Val::Num(ids.len() as f64));
+            }
+            "nearest-entity" => {
+                // (nearest-entity query to): position of the nearest match,
+                // or nothing when none — a defchannel yielding nothing
+                // leaves the channel untouched (mock fallbacks survive)
+                let q = evaluate(&items[1], env, ctx, world)?;
+                let (tx, ty) = match evaluate(&items[2], env, ctx, world)? {
+                    Val::Vec2 { x, y } => (x, y),
+                    Val::Pose(p) => (p.x, p.y),
+                    v => return Err(format!("nearest-entity: expected a point, got {:?}", v)),
+                };
+                let ids = resolve_query(&q, ctx, world)?;
+                let sig = ctx.sig.clone();
+                let mut best: Option<(f64, (f64, f64))> = None;
+                for id in ids {
+                    let Some(i) = world.find(id) else { continue };
+                    let b = &world.bullets[i];
+                    let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                    let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) else { continue };
+                    let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
+                    if best.map(|(bd, _)| d2 < bd).unwrap_or(true) {
+                        best = Some((d2, (p.x, p.y)));
+                    }
+                }
+                return Ok(match best {
+                    Some((_, (x, y))) => Val::Vec2 { x, y },
+                    None => Val::Nothing,
+                });
+            }
             "export" => {
                 let Form::Sym(name) = &items[1] else {
                     return Err("export: expected a cell name".into());

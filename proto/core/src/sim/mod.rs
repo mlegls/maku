@@ -62,6 +62,9 @@ pub struct Sim {
     pub world: World,
     tasks: Vec<Task>,
     ctx: Ctx,
+    /// (defchannel $name expr) rules from the loaded card (stdlib included),
+    /// evaluated once per tick at the end of refresh_channels.
+    card_channels: Vec<(Rc<str>, Form)>,
 }
 
 /// Snapshot = clone: everything is Rc-shared immutable or plain data, except
@@ -75,7 +78,12 @@ impl Clone for Sim {
             Rc::new(std::cell::RefCell::new(self.ctx.sig.cells.borrow().clone()));
         ctx.sig.exports =
             Rc::new(std::cell::RefCell::new(self.ctx.sig.exports.borrow().clone()));
-        Sim { world: self.world.clone(), tasks: self.tasks.clone(), ctx }
+        Sim {
+            world: self.world.clone(),
+            tasks: self.tasks.clone(),
+            ctx,
+            card_channels: self.card_channels.clone(),
+        }
     }
 }
 impl Sim {
@@ -123,7 +131,7 @@ impl Sim {
         let world = World::default();
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
-        Ok(Sim { world, tasks: vec![task], ctx })
+        Ok(Sim { world, tasks: vec![task], ctx, card_channels: card.channels })
     }
 
     /// Build a task for new program forms, updating defs. Shared by swap/add.
@@ -145,6 +153,7 @@ impl Sim {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
+                self.card_channels = card.channels.clone();
                 let pat = &self.ctx.patterns.clone()[&first];
                 let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 let mut w = World::default();
@@ -158,6 +167,7 @@ impl Sim {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
+                self.card_channels = card.channels.clone();
                 let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 (body_forms.into(), env)
             }
@@ -199,7 +209,7 @@ impl Sim {
             env = env.bind(pname.clone(), v);
         }
         let task = new_task(vec![TF::Seq { items: pat.body.clone(), idx: 0, env }]);
-        Ok(Sim { world, tasks: vec![task], ctx })
+        Ok(Sim { world, tasks: vec![task], ctx, card_channels: card.channels.clone() })
     }
 
     pub fn tick(&self) -> u64 {
@@ -211,7 +221,7 @@ impl Sim {
     }
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
-        self.refresh_channels(inputs);
+        self.refresh_channels(inputs)?;
         // control layer
         let mut i = 0;
         while i < self.tasks.len() {

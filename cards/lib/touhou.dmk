@@ -16,6 +16,13 @@
 ;; Bigger/smaller families pass :hitbox — star/gem 0.09, lstar/gglcircle
 ;; 0.20 were the classic values.
 
+;; Derived channels — recomputed once per tick from the world; card
+;; code, not engine. nearest-entity yields nothing when no enemy
+;; exists, which leaves the host's mock $nearest-enemy (mouse) in
+;; place — the same fallback the engine used to hardcode.
+(defchannel $enemies (count-entities {:team :enemy}))
+(defchannel $nearest-enemy (nearest-entity {:team :enemy} $player))
+
 ;; hostile bullet: a damage core inside a graze ring
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn

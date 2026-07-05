@@ -1,7 +1,7 @@
 use super::*;
 
 impl Sim {
-    pub(super) fn refresh_channels(&mut self, inputs: &Inputs) {
+    pub(super) fn refresh_channels(&mut self, inputs: &Inputs) -> Result<(), String> {
         let mut ch = (*self.ctx.sig.channels).clone();
         // host channels verbatim — passed by name (§3)
         for (k, v) in &inputs.vals {
@@ -49,15 +49,9 @@ impl Sim {
                 ch.insert("player".into(), Val::Vec2 { x: *x, y: *y });
             }
         }
-        let player_pos = match ch.get("player") {
-            Some(Val::Vec2 { x, y }) => (*x, *y),
-            _ => (0.0, -4.0),
-        };
-        // $nearest-enemy relative to $player (derived when :enemy entities
-        // exist; the host-provided value is the mock fallback)
-        if let Some((x, y)) = self.nearest("enemy", player_pos) {
-            ch.insert("nearest-enemy".into(), Val::Vec2 { x, y });
-        }
+        // $nearest-enemy is a stdlib derived channel now (lib/touhou.dmk:
+        // (defchannel $nearest-enemy (nearest-entity {:team :enemy} $player)))
+        // — the host-provided mock stays as the fallback when none match.
         // $nearest-pilot: nearest player entity to the boss anchor (for
         // boss aim in multi-pilot cards)
         if let Some((x, y)) = pilots
@@ -71,18 +65,9 @@ impl Sim {
         {
             ch.insert("nearest-pilot".into(), Val::Vec2 { x, y });
         }
-        // gameplay counters as signals
+        // gameplay counters as signals ($enemies is stdlib: a defchannel
+        // over (count-entities {:team :enemy}))
         ch.insert("graze".into(), Val::Num(self.world.graze as f64));
-        ch.insert(
-            "enemies".into(),
-            Val::Num(
-                self.world
-                    .bullets
-                    .iter()
-                    .filter(|b| b.alive && b.team.as_deref() == Some("enemy"))
-                    .count() as f64,
-            ),
-        );
         // lives: per pilot ($lives-k), plus $lives from the first
         // player-body (compat with pilotless mouse rigs)
         for b in &self.world.bullets {
@@ -123,7 +108,22 @@ impl Sim {
                 ch.insert(name.clone(), v.clone());
             }
         }
+        // (defchannel $name expr) — card-defined derived channels, LAST:
+        // evaluated in definition order, each seeing the engine channels
+        // and its predecessors. A nothing result leaves the channel
+        // untouched (so host mocks survive as fallbacks); errors surface
+        // — a broken defchannel should fail the tick, not vanish.
+        let rules = self.card_channels.clone();
+        for (name, form) in rules.iter() {
+            self.ctx.sig.channels = Rc::new(ch.clone());
+            let v = evaluate(form, &Env::empty(), &mut self.ctx, &mut self.world)
+                .map_err(|e| format!("defchannel ${}: {}", name, e))?;
+            if !matches!(v, Val::Nothing) {
+                ch.insert(name.to_string(), v);
+            }
+        }
         self.ctx.sig.channels = Rc::new(ch);
+        Ok(())
     }
 
     /// Nearest alive entity with the given team tag, by position.

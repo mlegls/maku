@@ -1560,3 +1560,33 @@ fn spawn_boss_owns_conventions() {
     assert!(has(&sim, "one-out"), "finally ran at the phase edge");
     assert!(has(&sim, "phase-two"), "hp gate released into the next phase");
 }
+
+/// (defchannel $name expr): card-defined derived channels, recomputed
+/// each tick — the stdlib's $enemies/$nearest-enemy are these; a custom
+/// one composes engine channels and world queries freely.
+#[test]
+fn defchannel_derives_per_tick() {
+    const CARD: &str = r#"
+(import "touhou")
+(defchannel $reds (count-entities {:team :enemy :color :red}))
+(defpattern p []
+  (seq
+    (spawn-enemy (pose c[0 2]) {:style {:family :circle :color :red}})
+    (spawn-enemy (pose c[1 2]) {:style {:family :circle :color :blue}})
+    (wait-for (>= $reds 1))
+    (spawn (pose c[0 -3]) {:cols {:marker 1}})))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..3 {
+        sim.step().unwrap();
+    }
+    // $enemies (stdlib defchannel) counts both; $reds (card) counts one
+    assert!(matches!(sim.ctx.sig.channel("enemies"), Some(Val::Num(n)) if n == 2.0));
+    assert!(matches!(sim.ctx.sig.channel("reds"), Some(Val::Num(n)) if n == 1.0));
+    assert!(
+        sim.world.bullets.iter().any(|b| b.col_get("marker").is_some()),
+        "control layer saw the derived channel"
+    );
+    // $nearest-enemy now derives from the stdlib defchannel
+    assert!(matches!(sim.ctx.sig.channel("nearest-enemy"), Some(Val::Vec2 { .. })));
+}

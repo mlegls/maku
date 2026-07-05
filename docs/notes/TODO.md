@@ -52,9 +52,16 @@ language.md.
   `touhou` (spawn templates, variadic metas; spawn-boss = enemy + phase
   machine owning the boss conventions — $boss-hp exposure, registration
   wait, bound `boss`; `phases` as a macro over `states` with {:hp n}
-  gates; invuln) and `player-rig`. Authored as files, inlined via
-  include_str — every host resolves `(import "touhou")` identically;
-  users import the lib, they don't edit it.
+  gates; invuln; $enemies/$nearest-enemy as defchannels) and
+  `player-rig`. Authored as files, inlined via include_str — every host
+  resolves `(import "touhou")` identically; users import the lib, they
+  don't edit it.
+- Channel conventions still engine (sim/channels.rs): the per-pilot
+  families ($player-k/$lives-k/$nearest-enemy-k — need computed channel
+  names to move), the host-contract default/mock list (move-x…boss-hp),
+  $graze/$lives counters, and $boss = world.boss (the move anchor as
+  engine state; wants generic named anchors, which would also de-genre
+  `move`).
 - A general `match` special (destructuring over forms AND values) would
   subsume the inspection half of the macro vocabulary (form-type/
   form-name/get-on-forms/fixed-shape nth) and make clause transforms
