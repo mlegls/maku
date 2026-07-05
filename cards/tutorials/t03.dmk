@@ -108,3 +108,52 @@
                             (iota 13))
                        {:style {:family :gcircle :color :blue :variant :w}})
                 (cull b)))))))))
+
+;; ---------------------------------------------------------------------------
+;; Naming the parts
+
+;; 6. abstraction: the burst as a FUNCTION of position and palette index
+;; (defn), and the spell as a PATTERN with tunable parameters (defpattern
+;; args with defaults). (ex6-fruit 12 0.5) from another pattern plays a
+;; 12-seed fast-ripening variant.
+(defn fruit-burst [at ci]
+  ((pose at)
+    (for [ring 6 :every (ticks 12)]
+      (spawn (circle 20
+               ((pose c[(* 0.4 ring) 0])
+                 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
+             {:style {:family :ellipse
+                      :color (nth palette ci)
+                      :variant :w}}))))
+
+(defpattern ex6-fruit [seeds 8 ripen 0.7]
+  (par
+    (for [vol inf :every 3]
+      (spawn (circle seeds (linear p[3 0]))
+             {:style {:family :lellipse :color palette :variant :w}
+              :cols {:ci (iota seeds)}}))
+    (fork
+      (for [i inf :every (ticks 5)]
+        (manip {:family :lellipse :where (fn [b] (> b.t ripen))}
+          (fn [b]
+            (seq (fork (fruit-burst (pos b) b.ci))
+                 (cull b))))))))
+
+;; 7. macros: for the abstractions functions can't reach — packaging
+;; syntax. `control` names the watch-loop idiom; `where` turns a bare
+;; expression into a predicate. Backtick quotes a template; ~ splices.
+(defmacro control [period query effect]
+  `(fork (for [i inf :every ~period] (manip ~query ~effect))))
+
+(defmacro where [expr]
+  `(fn [b] ~expr))
+
+(defpattern ex7-macros [seeds 8]
+  (par
+    (for [vol inf :every 3]
+      (spawn (circle seeds (linear p[3 0]))
+             {:style {:family :lellipse :color palette :variant :w}
+              :cols {:ci (iota seeds)}}))
+    (control (ticks 5)
+             {:family :lellipse :where (where (> b.t 0.7))}
+             (fn [b] (seq (fork (fruit-burst (pos b) b.ci)) (cull b))))))

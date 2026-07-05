@@ -55,6 +55,9 @@ decode notes.
 | `colorf(list, &i)` | `(nth palette i)` |
 | `move(inf, nroffset(px(sine(8p, 2, t))))` | `(in-frame (cart m"2*sine(8, 1, t)" 0) …)` — a moving frame |
 | `sm` control running an async | `fork` inside the callback (adopted as a child task) |
+| C#-defined reusable functions | `defn` (card-level, first-class values) |
+| `pattern`-level reuse / script includes | parameterized `defpattern` + `(import …)` |
+| — (no user macros in BDSL) | `defmacro` with backtick templates |
 
 ## Pathers, lasers, subfiring (Tutorial 4)
 

@@ -223,6 +223,7 @@ impl Sim {
         let mut ctx = Ctx::default();
         ctx.sig.defs = Rc::new(card.defs.clone());
         ctx.patterns = Rc::new(card.patterns.clone());
+        ctx.macros = Rc::new(card.macros.clone());
         let world = World::default();
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
@@ -244,6 +245,7 @@ impl Sim {
                 card.defs.extend(sent.defs);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
+                self.ctx.macros = Rc::new(card.macros.clone());
                 let pat = &self.ctx.patterns.clone()[&first];
                 let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 let mut w = World::default();
@@ -256,6 +258,7 @@ impl Sim {
             _ => {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
+                self.ctx.macros = Rc::new(card.macros.clone());
                 let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 (body_forms.into(), env)
             }
@@ -289,6 +292,7 @@ impl Sim {
         let mut ctx = Ctx::default();
         ctx.sig.defs = Rc::new(card.defs.clone());
         ctx.patterns = Rc::new(card.patterns.clone());
+        ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
         let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         for (pname, default) in &pat.params {
@@ -822,6 +826,7 @@ impl Sim {
             ambient: Pose::IDENTITY,
             scan: None,
             patterns: self.ctx.patterns.clone(),
+            macros: self.ctx.macros.clone(),
             deferred: Vec::new(),
         };
         let mut w = World::default();
@@ -1774,6 +1779,29 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
+    }
+
+    /// Macros: unevaluated arguments, backtick templates, splicing; the
+    /// expansion evaluates in the caller's scope.
+    #[test]
+    fn macros_expand() {
+        const CARD: &str = r#"
+(defmacro where [expr] `(fn [b] ~expr))
+(defmacro ring-every [n dt body]
+  `(for [vol inf :every ~dt] (spawn (circle ~n ~body))))
+(defpattern p []
+  (par
+    (ring-every 6 0.5 (linear p[2 0]))
+    (fork (for [i inf :every (ticks 5)]
+      (manip {:where (where (> b.t 0.8))} (fn [b] (cull b)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..200 {
+            sim.step().unwrap();
+        }
+        // rings keep spawning; the where-sugar control ages them out
+        let n = sim.world.bullets.len();
+        assert!(n >= 6 && n <= 18, "steady state through macro sugar: {}", n);
     }
 
     /// Per-element columns (:cols arrays bind like style axes) and

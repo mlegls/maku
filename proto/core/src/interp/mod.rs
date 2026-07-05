@@ -47,6 +47,8 @@ pub enum Val {
     Dyn(Rc<DynNode>),
     Ext(Rc<ExtLaser>),
     PatherV(Rc<ExtPather>),
+    /// A form as a value — what macros manipulate and quasiquote builds.
+    FormV(Rc<Form>),
     Action(Rc<ActionV>),
     Fn { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     Builtin(Rc<str>),
@@ -269,6 +271,8 @@ pub struct Ctx {
     /// Card patterns, callable by name: (bowap 6.0) resolves here when the
     /// head isn't lexically bound.
     pub patterns: Rc<HashMap<String, Pattern>>,
+    /// Card macros: expanded at application, before pattern resolution.
+    pub macros: Rc<HashMap<String, Macro>>,
     /// Forks issued inside instantaneous contexts (manipulate callbacks —
     /// DMK's temporal-control-at-a-bullet case): collected here, adopted as
     /// child tasks by the executing task's scope after the instant returns.
@@ -282,6 +286,7 @@ impl Default for Ctx {
             ambient: Pose::IDENTITY,
             scan: None,
             patterns: Rc::new(HashMap::new()),
+            macros: Rc::new(HashMap::new()),
             deferred: Vec::new(),
         }
     }
@@ -613,6 +618,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "vel" => return sf_vel(items, env, ctx, world),
             "laser" => return sf_laser(items, env, ctx, world),
+            "quasiquote" => {
+                return qq(&items[1], env, ctx, world).map(|f| Val::FormV(Rc::new(f)));
+            }
             "pather" => {
                 // (pather window dyn): a trailing time-window of the
                 // trajectory, materialized as geometry (§6)
@@ -781,15 +789,29 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
     }
 
-    // Ordinary application. Unbound symbol heads resolve pattern-first
-    // (§10 embedding: args evaluated in the CALLER's scope as ir values,
-    // defaults filling the rest; default adapter = isolated cells, (inline
-    // …) shares the caller's), then fall back to builtins.
+    // Ordinary application. Unbound symbol heads resolve macro-first
+    // (arguments arrive unevaluated; the expansion evaluates in the
+    // caller's scope), then pattern (§10 embedding: args evaluated in the
+    // CALLER's scope as ir values, defaults filling the rest; default
+    // adapter = isolated cells, (inline …) shares the caller's), then
+    // fall back to builtins.
     if let Form::Sym(name) = head {
         if env.lookup(name).is_none()
             && !ctx.sig.defs.contains_key(&**name)
             && !name.starts_with('$')
         {
+            if let Some(mac) = ctx.macros.clone().get(&**name) {
+                let mut menv = Env::empty();
+                for (p, arg) in mac.params.iter().zip(items[1..].iter()) {
+                    menv = menv.bind(p.clone(), Val::FormV(Rc::new(arg.clone())));
+                }
+                let mut expansion = Val::Nothing;
+                for f in mac.body.iter() {
+                    expansion = evaluate(f, &menv, ctx, world)?;
+                }
+                let form = val_to_form(&expansion)?;
+                return evaluate(&form, env, ctx, world);
+            }
             let args = items[1..]
                 .iter()
                 .map(|f| evaluate(f, env, ctx, world))
@@ -1327,6 +1349,68 @@ fn collect_handles(v: &Val, out: &mut Vec<u64>) -> Result<(), String> {
         }
         v => Err(format!("expected handle(s), got {:?}", v)),
     }
+}
+
+/// Quasiquote: walk the template, evaluating (unquote e) and splicing
+/// (unquote-splicing e) inside lists/vectors.
+fn qq(f: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Form, String> {
+    match f {
+        Form::List(items) => {
+            if let Some(Form::Sym(s)) = items.first() {
+                if &**s == "unquote" {
+                    let v = evaluate(&items[1], env, ctx, world)?;
+                    return val_to_form(&v);
+                }
+            }
+            Ok(Form::list(qq_seq(items, env, ctx, world)?))
+        }
+        Form::Vector(items) => Ok(Form::Vector(qq_seq(items, env, ctx, world)?.into())),
+        other => Ok(other.clone()),
+    }
+}
+
+fn qq_seq(
+    items: &[Form],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Vec<Form>, String> {
+    let mut out = Vec::new();
+    for it in items {
+        if let Form::List(inner) = it {
+            if matches!(inner.first(), Some(Form::Sym(s)) if &**s == "unquote-splicing") {
+                match evaluate(&inner[1], env, ctx, world)? {
+                    Val::Arr(xs) => {
+                        for x in xs.iter() {
+                            out.push(val_to_form(x)?);
+                        }
+                    }
+                    v => out.push(val_to_form(&v)?),
+                }
+                continue;
+            }
+        }
+        out.push(qq(it, env, ctx, world)?);
+    }
+    Ok(out)
+}
+
+/// Convert a value back into a form (what unquote splices into templates).
+fn val_to_form(v: &Val) -> Result<Form, String> {
+    Ok(match v {
+        Val::FormV(f) => (**f).clone(),
+        Val::Num(n) => Form::Num(*n),
+        Val::Bool(b) => Form::Bool(*b),
+        Val::Str(s) => Form::Str(s.clone()),
+        Val::Kw(k) => Form::Kw(k.clone()),
+        Val::Arr(xs) => Form::Vector(
+            xs.iter().map(val_to_form).collect::<Result<Vec<_>, _>>()?.into(),
+        ),
+        Val::Vec2 { x, y } => {
+            Form::list(vec![Form::sym("cart"), Form::Num(*x), Form::Num(*y)])
+        }
+        other => return Err(format!("cannot embed {:?} in a form template", other)),
+    })
 }
 
 pub(crate) fn truthy(v: &Val) -> bool {

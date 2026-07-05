@@ -181,6 +181,23 @@ impl<'a> Reader<'a> {
                 v.extend(items.iter().cloned());
                 Ok(Form::list(v))
             }
+            b'`' => {
+                // quasiquote: a form template for macros (§11)
+                self.bump();
+                let f = self.read_form()?;
+                Ok(Form::list(vec![Form::sym("quasiquote"), f]))
+            }
+            b'~' => {
+                self.bump();
+                if self.peek() == b'@' {
+                    self.bump();
+                    let f = self.read_form()?;
+                    Ok(Form::list(vec![Form::sym("unquote-splicing"), f]))
+                } else {
+                    let f = self.read_form()?;
+                    Ok(Form::list(vec![Form::sym("unquote"), f]))
+                }
+            }
             b'm' if self.peek2() == b'"' => {
                 self.bump();
                 let s = self.read_string()?;

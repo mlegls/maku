@@ -137,9 +137,71 @@ along the segment from tail to head (`ex5-chimera`):
 poses makes 13 stationary bullets. `lerp` here interpolates positions —
 `(lerp 0 12 k tx hx)` walks from tail-x to head-x as `k` runs 0 to 12.
 
+## Naming the parts
+
+Both spells above are single blocks. Real cards factor into named,
+reusable pieces — three tools, in order of reach:
+
+**`defn`** defines a function. The burst logic becomes a function of
+where and which color (`ex6-fruit`):
+
+```clojure
+(defn fruit-burst [at ci]
+  ((pose at)
+    (for [ring 6 :every (ticks 12)]
+      (spawn (circle 20
+               ((pose c[(* 0.4 ring) 0])
+                 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
+             {:style {:family :ellipse
+                      :color (nth palette ci)
+                      :variant :w}}))))
+```
+
+Functions can return anything — here an action, so `(fruit-burst (pos b)
+b.ci)` slots straight into the callback.
+
+**`defpattern` takes parameters** — a vector of name/default pairs. The
+whole spell becomes tunable, and patterns invoke each other like
+functions with the defaults filling in:
+
+```clojure
+(defpattern ex6-fruit [seeds 8 ripen 0.7]
+  …)
+
+;; elsewhere: a 12-seed, fast-ripening variant
+(ex6-fruit 12 0.5)
+```
+
+Each pattern invocation gets its own private `defvar` state, so a pattern
+used twice never trips over itself.
+
+**`defmacro`** is for the abstractions functions can't reach — packaging
+*syntax*. A macro's arguments arrive unevaluated as code, and its body
+(usually a backtick template with `~` splices) returns code (`ex7-macros`):
+
+```clojure
+;; the watch-loop idiom, named
+(defmacro control [period query effect]
+  `(fork (for [i inf :every ~period] (manip ~query ~effect))))
+
+;; a bare expression as a predicate — `where` writes the (fn [b] …)
+(defmacro where [expr]
+  `(fn [b] ~expr))
+
+(control (ticks 5)
+         {:family :lellipse :where (where (> b.t 0.7))}
+         (fn [b] (seq (fork (fruit-burst (pos b) b.ci)) (cull b))))
+```
+
+Rule of thumb: reach for `defn` first (values cover almost everything —
+frames, dyns, and actions are all first-class), `defpattern` parameters
+for host-facing or reusable spells, and `defmacro` only when you're
+genuinely inventing notation.
+
 **Try it:** make the beads start moving outward after they appear (hint:
 a second control watching `:family :gcircle`); make the burst-fruit seeds
-themselves home slowly toward the bottom of the screen.
+themselves home slowly toward the bottom of the screen; write a
+`(ripe age)` macro combining `where` with the age check.
 
 ---
 
