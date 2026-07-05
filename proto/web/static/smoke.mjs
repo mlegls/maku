@@ -28,7 +28,7 @@ for (let k = 0; k < 600; k++) {
 }
 console.log('status:', dk.status(), '| entities', dk.entity_count(), '| tick', dk.tick());
 const dots = dk.dots(), pp = dk.player_pos();
-console.log('tick', dk.tick(), 'dots', dots.length / 6, 'beams', dk.beams().length,
+console.log('tick', dk.tick(), 'dots', dots.length / 7, 'beams', dk.beams().length,
             'player', pp[0].toFixed(2), pp[1].toFixed(2),
             'lives', dk.lives(), 'graze', dk.graze());
 if (dots.length === 0) throw new Error('nothing rendered');

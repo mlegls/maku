@@ -46,6 +46,21 @@ pub struct MetaSig {
     pub idx: usize, // element index for array-valued tag signals
 }
 
+/// The render-affecting signal tags (§7): each is an optional signal over
+/// bullet-local t, sampled at render time (scale also at collision time —
+/// a scaled sprite scales its colliders). DMK's simple-bullet modifiers
+/// (scale/dir/opacity), dissolved into meta tags like :hue.
+#[derive(Debug, Clone, Default)]
+pub struct RenderSigs {
+    pub hue: Option<MetaSig>,
+    /// Sprite + collider size multiplier (default 1).
+    pub scale: Option<MetaSig>,
+    /// Sprite rotation in degrees, overriding the motion direction.
+    pub facing: Option<MetaSig>,
+    /// Alpha multiplier (default 1).
+    pub opacity: Option<MetaSig>,
+}
+
 #[derive(Clone)]
 pub struct Bullet {
     pub id: u64,
@@ -60,7 +75,7 @@ pub struct Bullet {
     pub alive: bool,
     pub state: MotionState,
     pub scanned: bool,
-    pub hue: Option<MetaSig>,
+    pub sigs: RenderSigs,
     /// Collider set — archetype data, Rc-shared across a spawn's elements.
     pub colliders: Rc<[Collider]>,
     /// User-defined numeric columns (§9's sidecar, inline for the

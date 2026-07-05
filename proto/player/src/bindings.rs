@@ -146,7 +146,7 @@ impl Bindings {
         };
         // sum contributions per channel
         let mut acc: Vec<(String, f64)> = Vec::new();
-        let mut push = |ch: &str, v: f64, acc: &mut Vec<(String, f64)>| {
+        let push = |ch: &str, v: f64, acc: &mut Vec<(String, f64)>| {
             match acc.iter_mut().find(|(n, _)| n == ch) {
                 Some((_, slot)) => *slot += v,
                 None => acc.push((ch.into(), v)),

@@ -108,29 +108,29 @@ function draw() {
   ctx.lineWidth = 1;
   ctx.strokeRect(sx(-3.8), sy(4.4), 7.6 * PPU, 8.8 * PPU);
 
-  // beams: [active, r, g, b, n, pts…]
+  // beams: [active, r, g, b, a, n, pts…]
   const bm = dk.beams();
   for (let i = 0; i < bm.length;) {
-    const active = bm[i] > 0.5, r = bm[i+1], g = bm[i+2], b = bm[i+3], n = bm[i+4];
-    i += 5;
+    const active = bm[i] > 0.5, r = bm[i+1], g = bm[i+2], b = bm[i+3], a = bm[i+4], n = bm[i+5];
+    i += 6;
     ctx.beginPath();
     for (let k = 0; k < n; k++, i += 2) {
       const X = sx(bm[i]), Y = sy(bm[i+1]);
       k ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
     }
-    ctx.strokeStyle = `rgba(${r*255|0},${g*255|0},${b*255|0},${active ? 1 : 0.45})`;
+    ctx.strokeStyle = `rgba(${r*255|0},${g*255|0},${b*255|0},${(active ? 1 : 0.45) * a})`;
     ctx.lineWidth = active ? 5 : 1.5;
     ctx.stroke();
   }
 
-  // dots: [x, y, radius, r, g, b]
+  // dots: [x, y, radius, r, g, b, a]
   const d = dk.dots();
-  for (let i = 0; i < d.length; i += 6) {
+  for (let i = 0; i < d.length; i += 7) {
     ctx.beginPath();
     ctx.arc(sx(d[i]), sy(d[i+1]), d[i+2] * PPU, 0, 7);
-    ctx.fillStyle = `rgb(${d[i+3]*255|0},${d[i+4]*255|0},${d[i+5]*255|0})`;
+    ctx.fillStyle = `rgba(${d[i+3]*255|0},${d[i+4]*255|0},${d[i+5]*255|0},${d[i+6]})`;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.strokeStyle = `rgba(255,255,255,${0.3 * d[i+6]})`;
     ctx.lineWidth = 1;
     ctx.stroke();
   }

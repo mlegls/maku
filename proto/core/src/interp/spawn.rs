@@ -10,7 +10,7 @@ use std::rc::Rc;
 /// Meta tags whose values are NOT evaluated at spawn: signal-valued tags
 /// (contain t), and :expose (whose $names are channel DESIGNATORS, not
 /// reads — evaluated, $boss-hp would resolve as a channel read).
-const SIGNAL_TAGS: &[&str] = &["hue", "facing", "expose"];
+const SIGNAL_TAGS: &[&str] = &["hue", "scale", "facing", "opacity", "expose"];
 
 pub(crate) fn parse_expose(meta: Option<&Form>) -> Rc<[(Rc<str>, Rc<str>)]> {
     let mut out = Vec::new();
@@ -62,7 +62,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         }
     }
     let styles = resolve_styles(&meta, &elems)?;
-    let hues = resolve_hue(items.get(2), &meta, env, elems.len());
+    let sigs = resolve_sigs(items.get(2), env, elems.len());
     let team: Option<Rc<str>> = match map_get(&meta, "team") {
         Some(Val::Kw(k)) => Some(Rc::from(&*k)),
         _ => None,
@@ -206,7 +206,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     Ok(Val::Action(Rc::new(ActionV::Spawn {
         dyns,
         styles,
-        hues,
+        sigs,
         team,
         cols,
         triggers,
@@ -451,17 +451,14 @@ pub(crate) fn resolve_styles(meta: &Val, elems: &[SpawnElem]) -> Result<Vec<Styl
         .collect())
 }
 
-/// :hue is signal-valued meta (§7): keep the FORM and sample at render time.
-pub(crate) fn resolve_hue(meta_form: Option<&Form>, meta: &Val, env: &Env, n: usize) -> Vec<Option<MetaSig>> {
-    let has_hue = map_get(meta, "hue").is_some();
-    if !has_hue {
-        return vec![None; n];
-    }
-    // find the hue form in the meta map form
+/// Signal-valued meta (§7): keep the FORM and sample at render time.
+/// One tag's per-element signals — every element shares the form; array
+/// values resolve per element via the carried idx.
+fn resolve_tag(meta_form: Option<&Form>, env: &Env, n: usize, tag: &str) -> Vec<Option<MetaSig>> {
     if let Some(Form::Map(kvs)) = meta_form {
         for (k, v) in kvs.iter() {
             if let Form::Kw(kw) = k {
-                if &**kw == "hue" {
+                if &**kw == tag {
                     return (0..n)
                         .map(|idx| Some(MetaSig { form: v.clone(), env: env.clone(), idx }))
                         .collect();
@@ -470,6 +467,21 @@ pub(crate) fn resolve_hue(meta_form: Option<&Form>, meta: &Val, env: &Env, n: us
         }
     }
     vec![None; n]
+}
+
+/// All render-affecting signal tags (:hue :scale :facing :opacity), zipped
+/// into one RenderSigs per element.
+pub(crate) fn resolve_sigs(meta_form: Option<&Form>, env: &Env, n: usize) -> Vec<RenderSigs> {
+    let hue = resolve_tag(meta_form, env, n, "hue");
+    let scale = resolve_tag(meta_form, env, n, "scale");
+    let facing = resolve_tag(meta_form, env, n, "facing");
+    let opacity = resolve_tag(meta_form, env, n, "opacity");
+    hue.into_iter()
+        .zip(scale)
+        .zip(facing)
+        .zip(opacity)
+        .map(|(((hue, scale), facing), opacity)| RenderSigs { hue, scale, facing, opacity })
+        .collect()
 }
 
 pub(crate) fn formation(

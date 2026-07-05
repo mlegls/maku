@@ -120,7 +120,7 @@ pub enum ActionV {
     Spawn {
         dyns: Vec<SpawnMade>,
         styles: Vec<Style>,
-        hues: Vec<Option<MetaSig>>,
+        sigs: Vec<RenderSigs>,
         team: Option<Rc<str>>,
         /// Per-element resolved columns (axis-bound at construction).
         cols: Vec<Vec<(Rc<str>, f64)>>,
@@ -1226,9 +1226,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, hues, team, cols, triggers, damage, colliders, expose } => {
+        ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, expose } => {
             let mut handles = Vec::new();
-            for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(hues.iter()).enumerate() {
+            for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(sigs.iter()).enumerate() {
                 let motion = if ctx.ambient == Pose::IDENTITY {
                     d.motion.clone()
                 } else {
@@ -1250,7 +1250,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     alive: true,
                     state: MotionState::new(),
                     scanned,
-                    hue: h.clone(),
+                    sigs: h.clone(),
                     colliders: colliders.clone(),
                     cols: cols.get(ei).cloned().unwrap_or_default(),
                     triggers: triggers.clone(),

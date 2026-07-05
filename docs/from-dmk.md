@@ -74,6 +74,7 @@ decode notes.
 | `varLength` | signal-valued `:u-max` (grows the beam AND hitbox together) |
 | slow/filling lasers | `:fill d` — full path telegraphs, the hitbox sweeps from the source |
 | `hueshift(x*t)` option | signal-valued `:hue` tag |
+| `scale(fn)` / `dir(fn)` / `opacity(fn)` SB options | signal-valued `:scale` / `:facing` / `:opacity` tags (`:scale` scales colliders too) |
 | `sm` option (SM at the tip) | `let`-bound guide + `(in-frame guide (fork …))` |
 | `onlaser(fn)` modifier | `(on-laser h u)` — pose with tangent heading at u |
 

@@ -325,19 +325,25 @@ async fn main() {
                 |x: f64, y: f64| (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT);
             for item in app.inst.render() {
                 match item {
-                    RenderItem::Dot { x, y, style, hue, .. } => {
+                    RenderItem::Dot { x, y, style, hue, scale, alpha, .. } => {
                         let (sx, sy) = to_screen(x, y);
-                        let r = danmaku_core::host::dot_radius(&style.family) * PIXELS_PER_UNIT;
-                        let col = styled(&style, hue);
+                        let r = danmaku_core::host::dot_radius(&style.family)
+                            * PIXELS_PER_UNIT
+                            * scale as f32;
+                        let a = alpha.clamp(0.0, 1.0) as f32;
+                        let mut col = styled(&style, hue);
+                        col.a *= a;
                         draw_circle(sx, sy, r, col);
-                        draw_circle_lines(sx, sy, r, 1.5, Color::new(1.0, 1.0, 1.0, 0.35));
+                        draw_circle_lines(sx, sy, r, 1.5, Color::new(1.0, 1.0, 1.0, 0.35 * a));
                     }
-                    RenderItem::Polyline { pts, style, active, hue } => {
-                        let col = styled(&style, hue);
+                    RenderItem::Polyline { pts, style, active, hue, alpha } => {
+                        let a = alpha.clamp(0.0, 1.0) as f32;
+                        let mut col = styled(&style, hue);
+                        col.a *= a;
                         let (w, col) = if active {
                             (6.0, col)
                         } else {
-                            (1.5, Color::new(col.r, col.g, col.b, 0.45))
+                            (1.5, Color::new(col.r, col.g, col.b, 0.45 * a))
                         };
                         for seg in pts.windows(2) {
                             let (ax, ay) = to_screen(seg[0].0, seg[0].1);

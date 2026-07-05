@@ -170,37 +170,40 @@ impl Danmaku {
         self.channel_vec("player")
     }
 
-    /// Point bullets: [x, y, radius_world, r, g, b]* (colors 0–1, hue
-    /// pre-applied — every host renders identical colors).
+    /// Point bullets: [x, y, radius_world, r, g, b, a]* (colors 0–1, hue
+    /// pre-applied — every host renders identical colors; :scale is
+    /// pre-applied to the radius, :opacity arrives as a).
     pub fn dots(&self) -> Vec<f32> {
         let mut out = Vec::new();
         for item in self.inst.render() {
-            if let RenderItem::Dot { x, y, style, hue, .. } = item {
+            if let RenderItem::Dot { x, y, style, hue, scale, alpha, .. } = item {
                 let (r, g, b) = style_rgb_hued(&style, hue);
                 out.extend_from_slice(&[
                     x as f32,
                     y as f32,
-                    dot_radius(&style.family),
+                    dot_radius(&style.family) * scale as f32,
                     r,
                     g,
                     b,
+                    alpha.clamp(0.0, 1.0) as f32,
                 ]);
             }
         }
         out
     }
 
-    /// Lasers/pathers: [active, r, g, b, n, x1, y1, … xn, yn]* repeated.
+    /// Lasers/pathers: [active, r, g, b, a, n, x1, y1, … xn, yn]* repeated.
     pub fn beams(&self) -> Vec<f32> {
         let mut out = Vec::new();
         for item in self.inst.render() {
-            if let RenderItem::Polyline { pts, style, active, hue } = item {
+            if let RenderItem::Polyline { pts, style, active, hue, alpha } = item {
                 let (r, g, b) = style_rgb_hued(&style, hue);
                 out.extend_from_slice(&[
                     if active { 1.0 } else { 0.0 },
                     r,
                     g,
                     b,
+                    alpha.clamp(0.0, 1.0) as f32,
                     pts.len() as f32,
                 ]);
                 for (x, y) in pts {

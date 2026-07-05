@@ -106,8 +106,8 @@ fn contact_map(b: &Bullet, pos: Option<(f64, f64)>, vel: (f64, f64)) -> Val {
 }
 
 pub enum RenderItem {
-    Dot { x: f64, y: f64, th: f64, style: Style, hue: f64 },
-    Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64 },
+    Dot { x: f64, y: f64, th: f64, style: Style, hue: f64, scale: f64, alpha: f64 },
+    Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64, alpha: f64 },
 }
 
 /// One running task = a stack of resumable cursors over Action trees.
@@ -584,10 +584,14 @@ impl Sim {
         let n = self.world.bullets.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
         let mut vel: Vec<(f64, f64)> = Vec::with_capacity(n);
+        // :scale multiplies collider radii (a scaled sprite scales its
+        // hitbox); sampled once per bullet per tick, 1.0 when absent
+        let mut scl: Vec<f64> = Vec::with_capacity(n);
         for b in &self.world.bullets {
             if !b.alive {
                 pos.push(None);
                 vel.push((0.0, 0.0));
+                scl.push(1.0);
                 continue;
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
@@ -597,6 +601,7 @@ impl Sim {
                 Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
                 None => (0.0, 0.0),
             });
+            scl.push(self.sample_sig(&b.sigs.scale, tau, 1.0));
         }
         for (b, p) in self.world.bullets.iter_mut().zip(pos.iter()) {
             b.prev_pos = *p;
@@ -660,13 +665,13 @@ impl Sim {
                 for c in b.colliders.iter() {
                     match c.layer {
                         Layer::Damage => {
-                            let r = c.r + pr;
+                            let r = c.r * scl[i] + pr;
                             if d2 < r * r {
                                 hit_contacts.push((i, pj));
                             }
                         }
                         Layer::Graze if !b.grazed => {
-                            let r = c.r + pr;
+                            let r = c.r * scl[i] + pr;
                             if d2 < r * r {
                                 graze_contacts.push(i);
                             }
@@ -695,7 +700,7 @@ impl Sim {
                     if ec.layer != Layer::Hurt {
                         continue;
                     }
-                    let r = sc.r + ec.r;
+                    let r = sc.r * scl[i] + ec.r * scl[j];
                     if (sx - ex).powi(2) + (sy - ey).powi(2) < r * r {
                         shot_contacts.push((i, j));
                         break 'enemies; // one shot, one enemy
@@ -864,8 +869,9 @@ impl Sim {
         self.world.log.borrow_mut().truncate_to(self.world.cursor);
     }
 
-    fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
-        let Some(h) = &b.hue else { return 0.0 };
+    /// Sample one render-signal tag at bullet-local t (default when absent).
+    fn sample_sig(&self, s: &Option<MetaSig>, tau: f64, default: f64) -> f64 {
+        let Some(h) = s else { return default };
         let env = h.env.bind("t".into(), Val::Num(tau));
         let mut ctx = Ctx {
             sig: self.ctx.sig.clone(),
@@ -879,10 +885,14 @@ impl Sim {
         match evaluate(&h.form, &env, &mut ctx, &mut w) {
             Ok(Val::Num(x)) => x,
             Ok(Val::Arr(items)) if !items.is_empty() => {
-                items[h.idx % items.len()].num().unwrap_or(0.0)
+                items[h.idx % items.len()].num().unwrap_or(default)
             }
-            _ => 0.0,
+            _ => default,
         }
+    }
+
+    fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
+        self.sample_sig(&b.sigs.hue, tau, 0.0)
     }
 
     pub fn render(&self) -> Vec<RenderItem> {
@@ -899,9 +909,12 @@ impl Sim {
                         out.push(RenderItem::Dot {
                             x: p.x,
                             y: p.y,
-                            th: p.th,
+                            // :facing overrides the motion direction
+                            th: self.sample_sig(&b.sigs.facing, tau, p.th),
                             style: b.style.clone(),
                             hue: self.sample_hue(b, tau),
+                            scale: self.sample_sig(&b.sigs.scale, tau, 1.0),
+                            alpha: self.sample_sig(&b.sigs.opacity, tau, 1.0),
                         });
                     }
                 }
@@ -912,12 +925,14 @@ impl Sim {
                             style: b.style.clone(),
                             active: true,
                             hue: self.sample_hue(b, tau),
+                            alpha: self.sample_sig(&b.sigs.opacity, tau, 1.0),
                         });
                     }
                 }
                 Kind::Laser { warn, .. } => {
                     let hot = hot_frac(&b.kind, tau, sig);
                     let partly = tau >= *warn && hot < 1.0;
+                    let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
                     if let Some(pts) = sample_laser(b, tau, sig) {
                         out.push(RenderItem::Polyline {
                             pts,
@@ -925,6 +940,7 @@ impl Sim {
                             // a filling laser's full path stays a telegraph
                             active: tau >= *warn && !partly,
                             hue: self.sample_hue(b, tau),
+                            alpha,
                         });
                     }
                     // slow laser: the hot prefix renders bright on top
@@ -935,6 +951,7 @@ impl Sim {
                                 style: b.style.clone(),
                                 active: true,
                                 hue: self.sample_hue(b, tau),
+                                alpha,
                             });
                         }
                     }
@@ -2445,5 +2462,50 @@ mod tests {
         assert_eq!(b(0).color, "blue");
         assert_eq!(b(3).color, "blue"); // cycles within the ring axis
         assert_eq!(b(7).color, "green");
+    }
+
+    /// Render-affecting signal tags (§7): :scale/:facing/:opacity sampled at
+    /// bullet-local t like :hue; :scale also multiplies collider radii.
+    #[test]
+    fn render_signal_tags() {
+        const CARD: &str = r#"
+(defpattern tags []
+  (spawn (still)
+         {:scale (+ 1 t) :opacity (- 1 (* 0.5 t)) :facing (* 90 t)}))
+"#;
+        let mut sim = Sim::load(CARD, Some("tags")).unwrap();
+        for _ in 0..120 {
+            sim.step().unwrap(); // t = 1s
+        }
+        let RenderItem::Dot { th, scale, alpha, .. } = &sim.render()[0] else {
+            panic!("expected a dot");
+        };
+        assert!((scale - 2.0).abs() < 0.02, "scale(1s) = 2: {}", scale);
+        assert!((alpha - 0.5).abs() < 0.02, "opacity(1s) = 0.5: {}", alpha);
+        assert!((th - 90.0).abs() < 1.0, "facing(1s) = 90°: {}", th);
+
+        // collision: a bullet whose base radius misses the player connects
+        // once :scale grows the collider (constant-valued tags work too —
+        // a constant is just a constant signal)
+        const HIT: &str = r#"
+(defpattern rig []
+  (spawn (live $player)
+         {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
+(defpattern scaled [s 1]
+  (par (rig)
+       (spawn ((pose c[0.5 0]) (still))
+              {:colliders [{:layer :damage :r 0.1}] :scale s})))
+"#;
+        let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
+        let mut near = Sim::load_forms(HIT, "(scaled 1)").unwrap();
+        for _ in 0..10 {
+            near.step_with(&inputs).unwrap();
+        }
+        assert_eq!(near.world.player_hits, 0, "base radius misses at 0.5");
+        let mut big = Sim::load_forms(HIT, "(scaled 6)").unwrap();
+        for _ in 0..10 {
+            big.step_with(&inputs).unwrap();
+        }
+        assert_eq!(big.world.player_hits, 1, "scaled collider connects");
     }
 }
