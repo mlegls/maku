@@ -1740,7 +1740,7 @@ mod tests {
     (manipulate {:family :circle :where (fn [b] (> b.pos.y 1))}
       (fn [b] (set! probe b.pos.y)))))
 (defpattern gather []
-  (spawn ((rot m"(30 * iota(12))[iota(3)]") (linear c[1 0]))))
+  (spawn ((rot m"(30 * iota(12)).[iota(3)]") (linear c[1 0]))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..3 {

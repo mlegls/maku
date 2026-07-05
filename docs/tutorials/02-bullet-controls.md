@@ -36,8 +36,8 @@ written honestly (`ex1-flip`):
   the bullet's view: `:pos`, `:vel`, `:t` (age), plus any columns it
   carries. **Dotted symbols are accessor chains**: `b.pos.y` is reader
   sugar for `(:y (:pos b))`, and it works on handles, views, and vectors
-  alike; in `m"…"` strings you also get indexing — `xs[0]`, `xs[0 1]`
-  (gather), `xs[iota(3)]`.
+  alike; in `m"…"` strings you also get indexing — `xs.[0]`, `xs.[0 1]`
+  (gather), `xs.[iota(3)]` (dot-bracket: bare `[` stays a literal).
 - One footgun: spawns without `:style` have an empty family — a
   `{:family :circle}` query will not match them; selection matches what
   the record actually says.

@@ -481,23 +481,21 @@ pub mod math {
             Ok(lhs)
         }
 
-        /// atom followed by any chain of `.field` accesses and `[index]`
-        /// gathers: `nth(bs, 0).pos.y`, `xs[0 1]`, `xs[iota(3)]`. Desugars
-        /// to keyword application / (nth …) — cyclic nth broadcasts, so an
-        /// array index selects many.
+        /// atom followed by any chain of postfix accessors, all introduced
+        /// by `.`: `.field` reads, `.[index]` gathers -- `nth(bs, 0).pos.y`,
+        /// `xs.[0 1]`, `xs.[iota(3)]`. Bare `[` stays a literal (arrays,
+        /// c[...]/p[...] coords), so there is no ident-bracket ambiguity.
+        /// Desugars to keyword application / (nth ...) -- cyclic nth
+        /// broadcasts, so an array index selects many.
         fn postfix(&mut self) -> Result<Form, String> {
             let mut e = self.atom()?;
-            loop {
-                match self.peek() {
-                    Some(Tok::Dot) => {
-                        self.bump();
-                        let Some(Tok::Ident(field)) = self.bump() else {
-                            return Err("expected field name after '.'".into());
-                        };
+            while let Some(Tok::Dot) = self.peek() {
+                self.bump();
+                match self.bump() {
+                    Some(Tok::Ident(field)) => {
                         e = Form::list(vec![Form::Kw(field.into()), e]);
                     }
                     Some(Tok::LBracket) => {
-                        self.bump();
                         let items = self.seq_until(Tok::RBracket)?;
                         let idx = match items.len() {
                             1 => items.into_iter().next().unwrap(),
@@ -505,7 +503,7 @@ pub mod math {
                         };
                         e = Form::call("nth", vec![e, idx]);
                     }
-                    _ => break,
+                    t => return Err(format!("expected field or [index] after '.', got {:?}", t)),
                 }
             }
             Ok(e)
