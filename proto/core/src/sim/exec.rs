@@ -330,7 +330,6 @@ fn run_action(
         | ActionV::Export { .. }
         | ActionV::Remat { .. }
         | ActionV::SetCol { .. }
-        | ActionV::Invuln { .. }
         | ActionV::SetStyle { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {

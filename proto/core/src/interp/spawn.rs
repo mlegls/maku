@@ -83,29 +83,36 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         Some(Val::Kw(k)) => Some(Rc::from(&*k)),
         _ => None,
     };
-    // columns: :hp n is sugar for a col; :cols {:armor 2 ...} adds more.
+    // columns: :hp n is sugar for a col (the contact layer reads the hp
+    // column by name; what zero hp MEANS is a trigger's business, and the
+    // default death trigger is library code, not engine). :cols {:armor 2
+    // ...} adds more; with several meta maps every :cols map contributes,
+    // later maps' columns shadowing earlier ones (columns are independent
+    // facts — they deep-merge where scalar keys replace).
     // Column values may be ARRAYS, binding per spawn element exactly like
     // style axes (leading-axis / by-length / nested-structural) — per-bullet
     // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
-    // :team :enemy defaults hp to 1 so untyped enemies still die to a shot.
     let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
-    match map_get(&meta, "hp") {
-        Some(v @ (Val::Num(_) | Val::Arr(_))) => cols.push(("hp".into(), v)),
-        _ => {
-            if team.as_deref() == Some("enemy") {
-                cols.push(("hp".into(), Val::Num(1.0)));
-            }
-        }
+    if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(&meta, "hp") {
+        cols.push(("hp".into(), v));
     }
-    if let Some(Val::Map(kvs)) = map_get(&meta, "cols") {
+    if let Val::Map(kvs) = &meta {
         for (k, v) in kvs.iter() {
-            if let Val::Kw(k) = k {
-                cols.push((k.as_ref().into(), v.clone()));
+            let is_cols = matches!(k, Val::Kw(kw) if &**kw == "cols");
+            if !is_cols {
+                continue;
+            }
+            if let Val::Map(cs) = v {
+                for (k, v) in cs.iter() {
+                    if let Val::Kw(k) = k {
+                        cols.push((k.as_ref().into(), v.clone()));
+                    }
+                }
             }
         }
     }
-    // triggers: explicit :triggers replaces the synthesized default
-    // (hp col present → death rule: hp ≤ 0 → cull + event :died)
+    // triggers: data only — no synthesized rules (spawn-enemy in the lib
+    // is where "hp ≤ 0 means death" lives)
     let triggers: Rc<[TriggerRule]> = match map_get(&meta, "triggers") {
         Some(Val::Arr(items)) => {
             let mut rules = Vec::new();
@@ -136,13 +143,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
             rules.into()
         }
-        _ => {
-            if cols.iter().any(|(k, _): &(Rc<str>, _)| &**k == "hp") {
-                vec![TriggerRule::new("died", "hp", 0.0, true)].into()
-            } else {
-                Vec::new().into()
-            }
-        }
+        _ => Vec::new().into(),
     };
     // :damage n | {:hit n ...} (DMK player() map) | (fn [self other] n)
     let damage = match map_get(&meta, "damage") {
@@ -168,8 +169,11 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // the keys of (with {$rank 0.5} …) — not reads); :keywords accepted too.
     let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(metas);
     // collider set: archetype data, one Rc shared by every spawned element.
-    // :colliders [{:layer :damage :r 0.1} ...] replaces the team default;
-    // :hitbox r resizes the default primary collider.
+    // No genre defaults — an entity with no :colliders is inert to the
+    // contact pass (scenery); what a "bullet" or "enemy" carries is the
+    // library's business (spawn-bullet/spawn-enemy in lib/touhou.dmk).
+    // :hitbox r resizes the PRIMARY (first) collider — the generic knob
+    // that lets a template's default collider set fit a bigger sprite.
     let colliders: Rc<[Collider]> = match map_get(&meta, "colliders") {
         Some(Val::Arr(items)) => {
             let mut cs = Vec::new();
@@ -200,12 +204,12 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 };
                 cs.push(Collider { layer, r });
             }
+            if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
+                first.r = r;
+            }
             cs.into()
         }
-        _ => {
-            let fam = styles.first().map(|s| s.family.as_str()).unwrap_or("");
-            default_colliders(team.as_deref(), fam, hitbox).into()
-        }
+        _ => Vec::new().into(),
     };
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(Rc<str>, f64)>> = elems

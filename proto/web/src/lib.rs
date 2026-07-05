@@ -8,6 +8,11 @@ use danmaku_core::interp::Val;
 use danmaku_core::sim::{Inputs, RenderItem};
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen(js_name = stdlibSource)]
+pub fn stdlib_source(name: &str) -> Option<String> {
+    danmaku_core::edn::stdlib(name).map(str::to_owned)
+}
+
 #[wasm_bindgen]
 pub struct Danmaku {
     inst: Instance,

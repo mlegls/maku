@@ -1,0 +1,55 @@
+;; The touhou genre layer — ordinary card code over the bare engine.
+;;
+;; `spawn` itself knows only (dyn, meta): colliders, columns, triggers,
+;; damage are explicit data, and an entity with no colliders is inert to
+;; the contact pass. What a "bullet", "enemy", or "boss" carries is THIS
+;; file's business. Authored here, inlined into the engine at compile
+;; time: (import "touhou") resolves to this text on every host.
+;;
+;; The templates are macros, not functions, so the caller's literal meta
+;; map passes through unevaluated — signal-valued tags (:scale :facing
+;; :opacity :hue, §7) keep their forms. spawn merges meta maps per-key,
+;; later wins, so every default below is overridable at the call site;
+;; :hitbox resizes the primary collider without replacing the set.
+;;
+;; Default radii assume the common sprite families (r 0.12 primary).
+;; Bigger/smaller families pass :hitbox — star/gem 0.09, lstar/gglcircle
+;; 0.20 were the classic values.
+
+;; hostile bullet: a damage core inside a graze ring
+(defmacro spawn-bullet [dyn meta]
+  `(spawn ~dyn
+          {:colliders [{:layer :damage :r 0.12}
+                       {:layer :graze :r 0.35}]}
+          ~meta))
+
+;; player fire: engine default damage 1 applies at contact
+(defmacro spawn-shot [dyn meta]
+  `(spawn ~dyn
+          {:team :player
+           :colliders [{:layer :shot :r 0.12}]}
+          ~meta))
+
+;; enemy: shootable, one hp unless told otherwise, dies at zero
+(defmacro spawn-enemy [dyn meta]
+  `(spawn ~dyn
+          {:team :enemy :hp 1
+           :colliders [{:layer :hurt :r 0.3}]
+           :triggers [{:col :hp :leq 0 :event :died :cull true}]}
+          ~meta))
+
+;; boss: an enemy WITH A PHASE MACHINE — that is the whole difference.
+;; Spawns the entity as an enemy (meta supplies :hp/:hitbox/:expose/
+;; :triggers as usual), binds `boss` — the spawn's handle array — for the
+;; machine body, and runs the machine. Cards gate states on whatever
+;; they exposed: {:expose {:hp $boss-hp}} then {:until (<= $boss-hp n)}.
+(defmacro spawn-boss [dyn meta machine]
+  `(let [boss (spawn-enemy ~dyn ~meta)]
+     ~machine))
+
+;; (invuln b dur): mercy window for dur seconds — a DEADLINE COLUMN both
+;; contact paths honor (player hits skip the lives write; enemy damage is
+;; absorbed). Pure library code: $tick + set-col. 120 = the engine tick
+;; rate (fixed, see TODO).
+(defn invuln [b dur]
+  (set-col b :iframe-until (+ $tick (* dur 120))))

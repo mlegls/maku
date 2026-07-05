@@ -127,8 +127,11 @@ impl Sim {
     }
 
     /// Build a task for new program forms, updating defs. Shared by swap/add.
+    /// Wire sources stay self-contained for FILE imports; library imports
+    /// resolve from the engine-embedded stdlib on any host.
     fn program_task(&mut self, card_src: &str, form_src: &str) -> Result<Task, String> {
-        let card_forms = read_all(card_src).map_err(|e| e.to_string())?;
+        let card_src = crate::edn::expand_src(card_src)?;
+        let card_forms = read_all(&card_src).map_err(|e| e.to_string())?;
         let mut card = load_card(&card_forms)?;
         let body_forms = read_all(form_src).map_err(|e| e.to_string())?;
         let (body, env): (Rc<[Form]>, Env) = match body_forms.first() {

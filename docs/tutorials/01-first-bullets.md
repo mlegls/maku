@@ -10,14 +10,17 @@ cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/
 
 ## One bullet
 
+The examples import `"touhou"` for its bullet templates: `spawn-bullet`
+wraps the bare `spawn` primitive with the hostile-bullet defaults.
+
 ```clojure
-(spawn ((pose c[2 0]) (linear p[2 -90]))
-       {:style {:family :fireball :color :red :variant :w}})
+(import "touhou")
+(spawn-bullet ((pose c[2 0]) (linear p[2 -90])) {:style {:family :fireball :color :red :variant :w}})
 ```
 
 Reading outside-in:
 
-- `(spawn dyn meta)` creates bullets. The first argument describes motion;
+- `(spawn-bullet dyn meta)` creates bullets. The first argument describes motion;
   the second describes appearance.
 - `(pose c[2 0])` is a *frame* — a position (and orientation) that things
   happen inside of; here, 2 units right of wherever the pattern is
@@ -63,8 +66,7 @@ A ring is not a loop — it's arithmetic. `(iota 30)` is the index array
 applied to an array of angles gives an array of frames:
 
 ```clojure
-(spawn ((rot m"10 * iota(30)")
-         ((pose c[1 0]) (linear p[2 0]))))
+(spawn-bullet ((rot m"10 * iota(30)") ((pose c[1 0]) (linear p[2 0]))) {:style {:family :arrow :color :red :variant :w}})
 ```
 
 Thirty rotation frames × one child = thirty bullets (`ex4`). The `m"…"`
@@ -84,9 +86,9 @@ worn as frames.
 Repeat-within-repeat is frame-within-frame. Ten groups of three (`ex7`):
 
 ```clojure
-(spawn ((rot m"30 * iota(10)")        ; 10 group headings, 30° apart
+(spawn-bullet ((rot m"30 * iota(10)")        ; 10 group headings, 30° apart
          ((rot m"4 * iota(3)")        ; 3 bullets per group, 4° apart
-           ((pose c[1 0]) (linear p[2 0])))))
+           ((pose c[1 0]) (linear p[2 0])))) {:style {:family :arrow :color :red :variant :w}})
 ```
 
 The bullet count is the product of the array sizes along the path —

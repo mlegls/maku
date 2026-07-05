@@ -23,15 +23,13 @@ Seeds ripen on a fixed schedule, so this is timeline territory
 
 ```clojure
 (for [vol inf :every 3]
-  (let [seeds (spawn (circle 8 (linear p[3 0]))
-                     {:style {:family :lellipse :color :red :variant :w}})]
+  (let [seeds (spawn-bullet (circle 8 (linear p[3 0])) {:style {:family :lellipse :color :red :variant :w}})]
     (for [b seeds]
       (fork
         (seq
           (wait 0.7)                          ; ripen
           ((pose (pos b))
-            (spawn (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))
-                   {:style {:family :ellipse :color :red :variant :w}}))
+            (spawn-bullet (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])) {:style {:family :ellipse :color :red :variant :w}}))
           (cull b))))))
 ```
 
@@ -55,10 +53,9 @@ timeline:
 (defn burst [at ci]
   ((pose at)
     (for [ring 6 :every (ticks 12)]
-      (spawn (circle 20
+      (spawn-bullet (circle 20
                ((pose c[(* 0.4 ring) 0])
-                 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])))
-             {:style {:family :ellipse
+                 (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))) {:style {:family :ellipse
                       :color (nth palette ci)
                       :variant :w}}))))
 ```
@@ -69,8 +66,7 @@ spell becomes tunable (`ex2-fruit-staged`):
 ```clojure
 (defpattern ex2-fruit-staged [n 8 ripen 0.7]
   (for [vol inf :every 3]
-    (let [seeds (spawn (circle n (linear p[3 0]))
-                       {:style {:family :lellipse :color palette :variant :w}})]
+    (let [seeds (spawn-bullet (circle n (linear p[3 0])) {:style {:family :lellipse :color palette :variant :w}})]
       (for [b seeds, ci (iota n)]
         (fork
           (seq (wait ripen)
@@ -112,9 +108,8 @@ time (`ex4-weave`):
 (defpattern ex4-weave []
   (in-frame (cart m"sine(12.94, 2, t)" 0)
     (for [vol inf :every 2]
-      (spawn ((rot m"13.6 * vol")
-               (circle 16 ((pose c[1 0]) (linear p[2 0]))))
-             {:style {:family :keine :color :purple :variant :w}}))))
+      (spawn-bullet ((rot m"13.6 * vol")
+               (circle 16 ((pose c[1 0]) (linear p[2 0])))) {:style {:family :keine :color :purple :variant :w}}))))
 ```
 
 `(cart x y)` with a time expression makes a moving frame; everything
@@ -163,14 +158,13 @@ at the volley origin and each one's motion is a `rot` frame whose angle
                  tx (- b.pos.x (* r (cos th)))  ; the volley origin
                  ty (- b.pos.y (* r (sin th)))]
              (seq
-               (spawn ((pose c[tx ty])
+               (spawn-bullet ((pose c[tx ty])
                         (map (fn [k]
                                ((rot (lerpsmooth eiosine 0 3 t
                                        th
                                        (+ th (* (- 1 (* 2 (mod k 2))) 33.75))))
                                  (pose c[(- r (* 0.2 k)) 0])))
-                             (iota 13)))
-                      {:style {:family :gcircle
+                             (iota 13))) {:style {:family :gcircle
                                :color [:blue :purple]
                                :variant :w}
                        :cols {:k (iota 13) :ang (+ th 33.75)}})
@@ -200,8 +194,7 @@ cull:
          (fn [b]
            ((pose (pos b))
              ((rot b.ang)
-               (spawn (linear p[2 0])
-                      {:style {:family :keine :color :purple :variant :w}})))))
+               (spawn-bullet (linear p[2 0]) {:style {:family :keine :color :purple :variant :w}})))))
 (control (ticks 5)
          {:family :gcircle :where (where (> b.t 3.2))}
          (fn [b] (cull b)))

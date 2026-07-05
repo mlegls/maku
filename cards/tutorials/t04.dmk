@@ -6,10 +6,10 @@
 ;; 1. pathers: a trailing window of the trajectory drawn as geometry.
 ;; (pather window dyn) — the trail is the hitbox. Three wavy ribbons
 ;; with drifting hue.
+(import "touhou")
 (defpattern ex1-pathers []
-  (spawn ((rot m"120 * iota(3)")
-           (pather 1.2 (cart m"1.2 * t" m"sine(1, 0.35, t)")))
-         {:style {:family :pather :color [:red :teal :purple] :variant :w}
+  (spawn-bullet ((rot m"120 * iota(3)")
+           (pather 1.2 (cart m"1.2 * t" m"sine(1, 0.35, t)"))) {:style {:family :pather :color [:red :teal :purple] :variant :w}
           :hue m"60 * t"}))
 
 ;; 2. laser lifecycle: :warn is the harmless telegraph, :active the hot
@@ -17,13 +17,10 @@
 ;; angle sweeps over time.
 (defpattern ex2-lasers []
   (par
-    (spawn ((pose c[-2 3]) ((rot -90) (laser {:warn 1 :active 2 :u-max 7})))
-           {:style {:family :laser :color :red}})
-    (spawn ((pose c[0 3]) ((rot -60) (laser {:warn 1 :active 2 :u-max 7})))
-           {:style {:family :glaser :color :green}})
-    (spawn ((pose c[2 3]) ((rot m"-120 + 30 * t")
-                            (laser {:warn 1 :active 3 :u-max 7})))
-           {:style {:family :gdlaser :color :blue}})))
+    (spawn-bullet ((pose c[-2 3]) ((rot -90) (laser {:warn 1 :active 2 :u-max 7}))) {:style {:family :laser :color :red}})
+    (spawn-bullet ((pose c[0 3]) ((rot -60) (laser {:warn 1 :active 2 :u-max 7}))) {:style {:family :glaser :color :green}})
+    (spawn-bullet ((pose c[2 3]) ((rot m"-120 + 30 * t")
+                            (laser {:warn 1 :active 3 :u-max 7}))) {:style {:family :gdlaser :color :blue}})))
 
 ;; 3. shaped lasers: the shape is a signal over (t, u), where u is the
 ;; distance along the beam. A shape using only u is drawn once and holds
@@ -31,15 +28,13 @@
 (defpattern ex3-shaped []
   (par
     ;; static: a frozen spiral (u only)
-    (spawn ((pose c[-2 0])
+    (spawn-bullet ((pose c[-2 0])
              (laser (polar m"1.5 * u" m"sine(1.4, 60, u)")
-                    {:warn 1 :active 4 :u-max 2.5 :width 0.5}))
-           {:style {:family :gdlaser :color :yellow}})
+                    {:warn 1 :active 4 :u-max 2.5 :width 0.5})) {:style {:family :gdlaser :color :yellow}})
     ;; dynamic: the same spiral, alive (t enters the phase)
-    (spawn ((pose c[2 0])
+    (spawn-bullet ((pose c[2 0])
              (laser (polar m"1.5 * u" m"-30 * t + sine(1.4, 60, u + t)")
-                    {:warn 1 :active 4 :u-max 2.5 :width 0.5}))
-           {:style {:family :gdlaser :color :pink}})))
+                    {:warn 1 :active 4 :u-max 2.5 :width 0.5})) {:style {:family :gdlaser :color :pink}})))
 
 ;; 4. subfiring from a pather tip: let-bind the guide dyn so the ribbon
 ;; and the firing loop share ONE instance, then fork the loop inside the
@@ -48,43 +43,37 @@
 (defpattern ex4-tip-fire []
   (let [guide (cart m"1.4 * t" m"sine(1.1, 0.3, t)")]
     (par
-      (spawn (pather 1.5 guide)
-             {:style {:family :lightning :color :blue :variant :w}})
+      (spawn-bullet (pather 1.5 guide) {:style {:family :lightning :color :blue :variant :w}})
       (in-frame guide
         (fork
           (for [i 40 :every (ticks 10)]
-            (spawn ((rot 180) (linear p[2 0]))
-                   {:style {:family :amulet :color :pink :variant :b}})))))))
+            (spawn-bullet ((rot 180) (linear p[2 0])) {:style {:family :amulet :color :pink :variant :b}})))))))
 
 ;; 5. subfiring along a laser: (on-laser h u) gives the pose (position +
 ;; tangent) at distance u along a live laser; (rot 90) fires normal to it.
 (defpattern ex5-on-laser []
-  (let [h (spawn ((pose c[-2.5 -2])
+  (let [h (spawn-bullet ((pose c[-2.5 -2])
                    (laser (polar m"1.8 * u" m"-15 * t + sine(2.8, 40, u + t)")
-                          {:warn 0.5 :active 5 :u-max 3 :width 0.6}))
-                 {:style {:family :gdlaser :color :red}})]
+                          {:warn 0.5 :active 5 :u-max 3 :width 0.6})) {:style {:family :gdlaser :color :red}})]
     (for [i 44 :every (ticks 8)]
       ((pose (on-laser (nth h 0) m"0.07 * i"))
         ((rot 90)
-          (spawn (linear p[1.5 0])
-                 {:style {:family :gem :color :green :variant :w}}))))))
+          (spawn-bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))))
 
 ;; 6. slow lasers: :fill makes the hot front sweep source→tip over d
 ;; seconds after the warn — the full path stays telegraphed (dim) while
 ;; only the swept prefix is bright and deadly. Three staggered sweeps.
 (defpattern ex6-slow []
-  (spawn ((pose c[-3 3])
+  (spawn-bullet ((pose c[-3 3])
            ((rot m"-90 + 15 * iota(3)")
-             (laser {:warn [0.8 1.2 1.6] :active 4 :u-max 7 :fill 1.5})))
-         {:style {:family :laser :color [:red :yellow :pink]}}))
+             (laser {:warn [0.8 1.2 1.6] :active 4 :u-max 7 :fill 1.5}))) {:style {:family :laser :color [:red :yellow :pink]}}))
 
 ;; 7. lifecycle trees: multi-stage bullet lives with NO queries — spawn
 ;; returns handles (the pointers), and each bullet forks its own timeline.
 ;; Ring → each becomes a laser → each laser fires perpendicular shots →
 ;; each shot explodes by parity of its index.
 (defpattern ex7-lifecycle []
-  (let [ring (spawn (circle 12 (linear p[1.5 0]))
-                    {:style {:family :circle :color :red :variant :w}})]
+  (let [ring (spawn-bullet (circle 12 (linear p[1.5 0])) {:style {:family :circle :color :red :variant :w}})]
     (for [b ring]
       (fork
         (seq
@@ -93,16 +82,14 @@
                 th (angle-of b.vel)]
             (seq
               (cull b)
-              (let [l (spawn ((pose at) ((rot th)
-                               (laser {:warn 0.3 :active 2 :u-max 2.5 :width 0.5})))
-                             {:style {:family :gdlaser :color :purple}})]
+              (let [l (spawn-bullet ((pose at) ((rot th)
+                               (laser {:warn 0.3 :active 2 :u-max 2.5 :width 0.5}))) {:style {:family :gdlaser :color :purple}})]
                 (seq
                   (wait 0.8)
-                  (let [shots (spawn (map (fn [k]
+                  (let [shots (spawn-bullet (map (fn [k]
                                             ((pose (on-laser (nth l 0) (* 0.5 k)))
                                               ((rot 90) (linear p[1 0]))))
-                                          (iota 5))
-                                     {:style {:family :star :color :yellow :variant :w}})]
+                                          (iota 5)) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})]
                     (seq
                       (wait 0.9)
                       ;; actions are values: the two explosion patterns sit
@@ -110,10 +97,9 @@
                       (for [s shots, k (iota 5)]
                         (seq
                           ((pose (pos s))
-                            (spawn (nth [(circle 8 (linear p[2 0]))
+                            (spawn-bullet (nth [(circle 8 (linear p[2 0]))
                                          (fan 6 20 (linear p[2.5 0]))]
-                                        k)
-                                   {:style {:family :gem
+                                        k) {:style {:family :gem
                                             :color (nth [:teal :pink] k)
-                                            :variant :w}}))
+                                            :variant :w} :hitbox 0.09}))
                           (cull s))))))))))))))

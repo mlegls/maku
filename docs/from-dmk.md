@@ -14,8 +14,9 @@ decode notes.
 
 | DMK | here |
 |---|---|
-| `CreateShot2(x, y, speed, angle, style)` | `(spawn ((pose c[x y]) (linear p[speed angle])) {:style …})` |
-| `sync(style, rv2, s(...))` | `(spawn dyn {:style …})` |
+| `CreateShot2(x, y, speed, angle, style)` | `(spawn-bullet ((pose c[x y]) (linear p[speed angle])) {:style …})` |
+| `sync(style, rv2, s(...))` | `(spawn-bullet dyn {:style …})` |
+| engine-owned pools / player / BEH prefabs | `(import "touhou")` — the genre layer is a library card (spawn templates, `invuln`, the stock rig) over a bare `spawn` of dyn + explicit meta |
 | V2RV2 `<nx;ny:rx;ry:θ>` | position of `pose`/`+` written inside vs outside `rot` frames; the θ slot is the `rot` itself |
 | `rvelocity(v)` / `nrvelocity(v)` | `(linear v)` inside the rotation / outside it |
 | `cr(r, θ)` / `cxy(x, y)` / `px(x)` | `p[r θ]` / `c[x y]` literals |
@@ -94,6 +95,7 @@ decode notes.
 | DMK | here |
 |---|---|
 | `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — sugar over the `states` FSM primitive |
+| the boss BEH entity | `(spawn-boss dyn meta machine)` — library macro: an *enemy with a phase machine* (binds `boss` for the machine body); hp/hurtbox/exposure are ordinary meta |
 | `hp(4000)` phase property | `{:until (<= $boss-hp n)}` — desugars to `(until pred body)` as the state body |
 | phase timeout `phase X {…}` | `{:timeout X}` — desugars to `(fork (seq (wait X) (goto)))`; bare goto = exit to successor |
 | `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to a `(move …)` at the body head; the card knows its boss |

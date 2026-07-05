@@ -159,24 +159,6 @@ pub struct Collider {
     pub r: f64,
 }
 
-/// Default collider sets by team — archetype data (built once per spawn).
-pub fn default_colliders(team: Option<&str>, family: &str, hitbox: Option<f64>) -> Vec<Collider> {
-    let style_r = match family {
-        "lstar" | "gglcircle" => 0.20,
-        "gem" | "star" => 0.09,
-        _ => 0.12,
-    };
-    match team {
-        None => vec![
-            Collider { layer: Layer::Damage, r: hitbox.unwrap_or(style_r) },
-            Collider { layer: Layer::Graze, r: 0.35 },
-        ],
-        Some("player") => vec![Collider { layer: Layer::Shot, r: hitbox.unwrap_or(style_r) }],
-        Some("enemy") => vec![Collider { layer: Layer::Hurt, r: hitbox.unwrap_or(0.3) }],
-        Some(_) => vec![],
-    }
-}
-
 #[derive(Clone)]
 pub struct World {
     pub tick: u64,

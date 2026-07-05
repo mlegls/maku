@@ -515,7 +515,7 @@ mod tests {
     fn facade_drives_a_frontend() {
         let rig = format!(
             "{}\n(player-rig)",
-            std::fs::read_to_string("../../cards/player-rig.dmk").unwrap()
+            crate::edn::stdlib("player-rig").unwrap()
         );
         let mut inst = Instance::new(Some(rig));
         inst.boot("../../cards/translations/130_bowap.dmk".into(), None);

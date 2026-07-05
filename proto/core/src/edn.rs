@@ -704,25 +704,29 @@ use std::path::Path;
 
 /// Library imports: a BARE name — no '/' and no ".dmk" — is a stdlib
 /// import, `(import "touhou")`. It canonicalizes to `@lib/<name>.dmk`
-/// (the include-once key on every platform); the filesystem reader maps
-/// that prefix to the repo's cards/lib/, a wasm host serves the key from
-/// its vfs. Path imports stay relative to the importing file.
+/// (the include-once key) and resolves from STDLIB below — never from a
+/// reader — so every host, native or wasm, sees the same library.
+/// Path imports stay relative to the importing file.
 const LIB_PREFIX: &str = "@lib/";
 
-/// cards/lib/ located relative to this crate — the prototype's library
-/// path (an installed engine would carry a search path instead).
-fn lib_fs_path(canon: &str) -> String {
-    format!(
-        "{}/../../cards/lib/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        &canon[LIB_PREFIX.len()..]
-    )
+/// The standard library, inlined at COMPILE time: authored as separate
+/// files under cards/lib/, shipped inside the engine artifact (users
+/// import it; they don't edit it). One entry per library card.
+const STDLIB: &[(&str, &str)] = &[
+    ("@lib/touhou.dmk", include_str!("../../../cards/lib/touhou.dmk")),
+    ("@lib/player-rig.dmk", include_str!("../../../cards/lib/player-rig.dmk")),
+];
+
+/// A stdlib card's source by bare name ("touhou") — hosts use this to
+/// build rig strings without carrying card files around.
+pub fn stdlib(name: &str) -> Option<&'static str> {
+    let key = format!("{}{}.dmk", LIB_PREFIX, name);
+    STDLIB.iter().find(|(k, _)| *k == key).map(|(_, s)| *s)
 }
 
-/// The native reader: filesystem, with `@lib/` mapped to cards/lib/.
+/// The native reader: plain filesystem (the stdlib never reaches it).
 fn fs_reader(p: &str) -> Result<String, String> {
-    let path = if p.starts_with(LIB_PREFIX) { lib_fs_path(p) } else { p.to_string() };
-    std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path, e))
+    std::fs::read_to_string(p).map_err(|e| format!("{}: {}", p, e))
 }
 
 /// Read a card file from the filesystem, splicing (import "...") lines.
@@ -757,7 +761,17 @@ fn expand_inner(
     if !visited.insert(path.to_string()) {
         return Ok(String::new()); // include-once
     }
-    let src = read(path).map_err(|e| format!("import {}", e))?;
+    // @lib/ resolves from the embedded stdlib, bypassing the reader —
+    // identical on every host, present in every distribution
+    let src = if path.starts_with(LIB_PREFIX) {
+        STDLIB
+            .iter()
+            .find(|(k, _)| *k == path)
+            .map(|(_, s)| s.to_string())
+            .ok_or_else(|| format!("import {}: no such library", path))?
+    } else {
+        read(path).map_err(|e| format!("import {}", e))?
+    };
     let base = match path.rfind('/') {
         Some(i) => &path[..i],
         None => "",

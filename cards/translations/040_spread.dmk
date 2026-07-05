@@ -39,6 +39,7 @@
 ;; without (fork ...) the outer :every would wait 70 ticks AFTER the 70-tick
 ;; body, doubling the period to 140. Fork keeps the cadence (finding F8).
 
+(import "touhou")
 (defpattern spread-demo [volley-gap (ticks 70)
                          shot-gap   (ticks 10)]
   ((pose c[0 1])
@@ -46,12 +47,11 @@
       (dotimes [vol inf, col [:red :green :blue] :every volley-gap]
         (fork
           (dotimes [shot 8 :every shot-gap]
-            (spawn ((rot m"120*vol + shot*40/7")
-                     (linear c[m"2 + 0.3*shot" 0]))
-                   {:style {:family :arrow :color col :variant :w}})))))))
+            (spawn-bullet ((rot m"120*vol + shot*40/7")
+                     (linear c[m"2 + 0.3*shot" 0])) {:style {:family :arrow :color col :variant :w}})))))))
 
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn argument, volley `vol`, shot `shot`)
+;; Canonical desugared tree (spawn-bullet argument, {})
 ;;
 ;;   (in-frame (pose (cart 0 1))
 ;;     (in-frame (rot 90)

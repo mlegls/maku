@@ -35,17 +35,36 @@ language.md.
 - Trigger predicates: single-column `≤` crossings only (§13.13).
 - Interaction matrix rows engine-fixed; hit effect knows the `lives` and
   `iframe-until` columns by name (§13.10). Iframes and inputs are no longer
-  global/fixed (per-entity column; named-channel Inputs) — the matrix rows
-  are the last hardcoding.
+  global/fixed (per-entity column; named-channel Inputs) — and after the
+  stdlib extraction (spawn defaults, death trigger, invuln, rig are all
+  library code now) the matrix rows + the three contact-resolution bodies
+  are THE remaining genre hardcoding. Extraction path: contacts emit,
+  resolution handlers become library functions over contact maps — needs
+  a cheap per-contact call story first (same fuel concern as manipulate).
 - RNG is sequential splitmix, not counter-keyed by spawn path (§5) — replay
   determinism holds, order-independence does not.
 - Scrub-back across a swap/add boundary restores the pre-change program
   (correct); seeks are exploration — branch commits only on resume.
 
+## Standard library (cards/lib/, compile-time embedded)
+- Shipped: `touhou` (spawn-bullet/spawn-shot/spawn-enemy; spawn-boss =
+  enemy + phase machine; invuln) and `player-rig`. Authored as files,
+  inlined via include_str — every host resolves `(import "touhou")`
+  identically; users import the lib, they don't edit it.
+- Candidates to move next, in expressibility order: `when` (macro over
+  `if`); `for`/`dotimes` (desugar to loop/recur + wait once macro
+  templates can build binding vectors); the `{:hit n}` damage-map unwrap
+  (DMK player() compat, still in sf_spawn); family→hitbox-radius data
+  (currently `:hitbox` by hand at star/gem/lstar/gglcircle call sites);
+  richer spellcard templates (:name/:type/hp bars) over `states`.
+- A lib change is an engine rebuild (deliberate — not user-patchable);
+  version the lib with the wire protocol when hosts start pinning.
+
 ## Engineering debt
-- `core/src/interp.rs` is a 2.9k-line monolith — split into modules
-  (reader glue / dyn+motion / eval / actions / spawn / card) before the
-  builtin vocabulary grows further.
+- ~~`core/src/interp.rs` / `sim.rs` monoliths~~ both module-split
+  (interp/{motion,spawn,world,builtins,card}, sim/{channels,collision,
+  render,exec,tests}). Remaining: `interp/mod.rs` still holds eval + the
+  specials table (~2.2k lines) — split before the vocabulary grows.
 - ~~Host API extraction~~ done: `core::host::Instance` (card management,
   wire dispatch, render/event/channel/timeline reads); the macroquad player
   is now input+draw+net only. Write `docs/host-api.md` from it as the first

@@ -178,7 +178,10 @@ async fn main() {
 
     // this host's player contract: layer the stock rig card
     // (swap in your own live: <localleader>es a rig defpattern)
-    let rig = format!("{}\n(player-rig)", include_str!("../../../cards/player-rig.dmk"));
+    let rig = format!(
+        "{}\n(player-rig)",
+        danmaku_core::edn::stdlib("player-rig").unwrap()
+    );
     let mut app = App {
         inst: Instance::new(Some(rig)),
         accum: 0.0,

@@ -44,22 +44,21 @@
 ;; tick, so the trigger schedule is STATIC. spawn returns bullet handles
 ;; (adopted, F13); the control layer schedules the explosions directly.
 
+(import "touhou")
 (defpattern exploding-stars [n 8
                              palette [:red :orange :yellow :green
                                       :teal :blue :purple :pink]]
   ((pose c[0 1.5])
-    (let [stars (spawn (circle n (vel c[(lerp 0.2 1 t 3 0) 0]))
-                       {:style {:family :lstar :color :blue :variant :w}
-                        :facing m"200*t"})]
+    (let [stars (spawn-bullet (circle n (vel c[(lerp 0.2 1 t 3 0) 0])) {:style {:family :lstar :color :blue :variant :w}
+                        :facing m"200*t" :hitbox 0.20})]
       (seq
         (wait 0.6)
         (dotimes [j n, col palette :every 0.3]
           (manipulate (nth stars j)
             (fn [b]
               (event :sfx "x-fire-burst-1")
-              (spawn (+ (pos b) (circle 22 (vel c[(lerp 0.2 1 t 0 4) 0])))
-                     {:style {:family :star :color col :variant :w}
-                      :facing m"300*t"})
+              (spawn-bullet (+ (pos b) (circle 22 (vel c[(lerp 0.2 1 t 0 4) 0]))) {:style {:family :star :color col :variant :w}
+                      :facing m"300*t" :hitbox 0.09})
               (cull b :soft))))))))
 
 ;; ---------------------------------------------------------------------------

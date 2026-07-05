@@ -29,15 +29,14 @@
 ;;
 ;; Velocity domain, self-referential (`pos`), live target, constant turn rate.
 
+(import "touhou")
 (defpattern reimu-free-fire [opt 0            ; option index; host mounts one
                              power 4.0]       ;   instance per option frame
   (dotimes [i inf :every (ticks 12)]
     (when (>= power opt)                      ; DMK clip <= powerf p
       (event :sfx "x-pc-fire-1")
-      (spawn (vel p[10 (slew 60 90
-                             (angle-of (- (live $nearest-enemy) pos)))])
-             {:style {:family :amulet :color (nth [:red :black] opt)}
-              :team :player :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
+      (spawn-shot (vel p[10 (slew 60 90
+                             (angle-of (- (live $nearest-enemy) pos)))]) {:style {:family :amulet :color (nth [:red :black] opt)} :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
 
 ;; (slew rate init sig): rate-limited angle follower; `init` optional
 ;; (defaults to the target's first sample); RATE MAY BE A SIGNAL (see B).
@@ -61,25 +60,21 @@
     ;; A time-varying slew rate hitting zero freezes the heading: class (d)
     ;; reactivity that discretizes ITSELF into class (c); no stages needed.
     (dotimes [i inf :every (ticks 120)]
-      (spawn (pather 0.5
+      (spawn-shot (pather 0.5
                (vel p[(lerp3 0 0.3 1.1 1.3 t 9 2 10)
                       (slew (lerp 0.8 1.5 t 120 0) 90
-                            (angle-of (- (live $nearest-enemy) pos)))]))
-             {:style {:family :gpather :color :black :variant :b}
-              :width 2
-              :team :player :damage {:hit 120 :graze 400 :on-hit :oh1-red}}))
+                            (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :gpather :color :black :variant :b}
+              :width 2 :damage {:hit 120 :graze 400 :on-hit :oh1-red}}))
     ;; the tracking laser: aim = slew toward a SMOOTHED target. Two scans
     ;; compose (smooth |> slew); `target` is let-bound = one shared instance
     ;; feeding the laser's frame.
     (let [target (smooth 0.02 (live $nearest-enemy))]
-      (spawn ((rot (slew (lerp 3 8 t 0.7 0) 90
+      (spawn-shot ((rot (slew (lerp 3 8 t 0.7 0) 90
                          (angle-of (- target pos))))
                (laser {:active inf
                        :u-max (min 15 m"30*t")     ; varLength: grows, capped
-                       :while (live $focus-firing)})) ; deactivate w/ fire key
-             {:style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
-                      :variant :b}
-              :team :player :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
+                       :while (live $focus-firing)})) {:style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
+                      :variant :b} :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
 
 ;; ============================================================================
 ;; C. Fantasy Seal, motion core: orbit the player, then chase, inheriting
@@ -117,10 +112,8 @@
 
 (defpattern fantasy-seal []
   (dotimes [k 6, col [:red :green :yellow :blue] :every (ticks 24)]
-    (spawn (seal-orb k 4.0)
-           {:style {:family :gglcircle :color col :variant :w}
-            :scale 2
-            :team :player :damage {:hit 900 :graze 700}})))
+    (spawn-shot (seal-orb k 4.0) {:style {:family :gglcircle :color col :variant :w}
+            :scale 2 :damage {:hit 900 :graze 700} :hitbox 0.20})))
 
 ;; ============================================================================
 ;; Rate / constructor audit

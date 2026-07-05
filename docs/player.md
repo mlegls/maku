@@ -57,9 +57,10 @@ shared append-only structure; snapshots hold only a cursor.
 | c | clear |
 | drag slider | scrub; orange marks = command-tape entries; faint notches = snapshots |
 
-The host layers the stock player rig (`cards/player-rig.dmk`) into every
-fresh timeline via the command tape — swap in your own rig live with the
-editor. The status line shows tick, entity count, graze, hits, lives.
+The host layers the stock player rig (the `player-rig` standard-library
+card, embedded in the engine — authored at `cards/lib/player-rig.dmk`)
+into every fresh timeline via the command tape — swap in your own rig
+live with the editor. The status line shows tick, entity count, graze, hits, lives.
 
 ## The web host
 

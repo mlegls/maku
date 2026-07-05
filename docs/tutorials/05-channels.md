@@ -30,8 +30,7 @@ Difficulty is nothing special — it's a number you multiply by
 
 ```clojure
 (for [vol inf :every (/ 2.5 $rank)]
-  (spawn (circle (* 24 $rank) (linear p[1.8 0]))
-         {:style {:family :circle :color :red :variant :w}}))
+  (spawn-bullet (circle (* 24 $rank) (linear p[1.8 0])) {:style {:family :circle :color :red :variant :w}}))
 ```
 
 Higher rank: denser rings, faster volleys. Press T/Y/U/I and rerun. Two
@@ -56,10 +55,10 @@ The boundary runs both ways. A card publishes state two ways:
 the live entity, and reads 0 once it dies (`ex4-expose`):
 
 ```clojure
-(spawn ((pose c[0 2.5]) (still))
-       {:team :enemy :hp 20
+(spawn-enemy ((pose c[0 2.5]) (still)) { :hp 20
         :expose {:hp $dummy-hp}
-        :style {:family :lstar :color :green}})
+        :style {:family :lstar :color :green}
+        :scale 1.5})
 ```
 
 Anything can read `$dummy-hp` now: the host draws its boss bar from it,
@@ -69,7 +68,7 @@ and other patterns react to it —
 (seq
   (wait-for (> $dummy-hp 0))          ; registered
   (wait-for (<= $dummy-hp 0))         ; destroyed
-  (spawn (circle 24 (linear p[2 0])) {…}))
+  (spawn-bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))
 ```
 
 **`(export cell)`** publishes card-level state that isn't any entity's
@@ -124,8 +123,8 @@ fans track you — through the same `$player` channel your rig now
 drives.
 
 **Try it:** make `ex1`'s color depend on `$rank` (palette by
-difficulty); give `ex6`'s rig a shot pattern (spawn `:team :player`
-bullets with `:damage` from an `(in-frame :world …)` loop); expose the
+difficulty); give `ex6`'s rig a `spawn-shot` pattern with `:damage` from
+an `(in-frame :world …)` loop); expose the
 rig's `:lives` and fire a taunt ring when it drops.
 
 ---

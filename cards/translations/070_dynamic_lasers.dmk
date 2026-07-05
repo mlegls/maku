@@ -47,14 +47,14 @@
 ;; pose for 1.5s then active forever; hue offset 60 deg per laser, cycling
 ;; 120 deg/s.
 
+(import "touhou")
 (defpattern lasers-demo []
   ;; roott(1,0,0) is the identity: no anchor (callers apply frames).
-  (spawn (circle 6 (laser p[m"2*t" m"-14*u + sine(2.1, 18, t + 1.1*u)"]
+  (spawn-bullet (circle 6 (laser p[m"2*t" m"-14*u + sine(2.1, 18, t + 1.1*u)"]
                           {:warn 1.5
                            :active inf
                            :u-max 3.5
-                           :resolution 0.4}))
-         {:style {:family :arrowlaser :color :blueteal}
+                           :resolution 0.4})) {:style {:family :arrowlaser :color :blueteal}
           :hue m"60*iota(6) + 120*t"
           :cues {:spawn "x-laser-fire" :active "x-laser-on"}}))
 
@@ -80,7 +80,7 @@
 ;;     for control flow (finding F11, corrected).
 ;;
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn argument)
+;; Canonical desugared tree (spawn-bullet argument {})
 ;;
 ;;   (map (fn [p] (in-frame p
 ;;          (laser (polar (* 2 t)

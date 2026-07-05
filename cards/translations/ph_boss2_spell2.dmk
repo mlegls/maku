@@ -24,6 +24,7 @@
 
 ;; --- helpers (from ph_ref.bdsl) ---------------------------------------------
 
+(import "touhou")
 (defn grid-cell [side xy]                 ; 3x3 grid, cells in {-1,0,1}^2
   (let [{:keys [x y]} xy
         base (if (= side :enemy) 3.6 -3.6)]
@@ -34,11 +35,10 @@
   (loop [c (rand-cell)] (if (= c prev) (recur (rand-cell)) c)))
 
 (defn v2-lasers [style skip]              ; ph_ref V2Laser: slam 2 of 3 columns
-  (spawn (map (fn [a] ((pose c[m"2.1*a - 3.6" 8])
+  (spawn-bullet (map (fn [a] ((pose c[m"2.1*a - 3.6" 8])
                         ((rot -90)
                           (laser {:warn 1.5 :active 2 :u-max 20 :width 3}))))
-              (without skip [-1 0 1]))
-         {:style style}))
+              (without skip [-1 0 1])) {:style style}))
 
 (defn power-up []                         ; power1(): charge aura, host-drawn
   (event :aura {:style :powerup1 :palette [:blue :green]}))
@@ -63,16 +63,14 @@
           (fork (seq (wait 1)                       ; DMK delay 1s
                   (loop []
                     (wait-for (= mode 1))           ; whiletrue == pause
-                    (spawn ((aim $player)
-                             (laser {:warn 1 :active 0.2 :u-max 20}))
-                           {:style {:family :gdlaser :color :blue}})
+                    (spawn-bullet ((aim $player)
+                             (laser {:warn 1 :active 0.2 :u-max 20})) {:style {:family :gdlaser :color :blue}})
                     (wait (ticks (/ 280 factor)))
                     (recur))))
           (fork (loop []
                   (wait-for (= mode 2))
-                  (spawn ((aim $player)
-                           (laser {:warn 1 :active 0.2 :u-max 20 :width 2}))
-                         {:style {:family :gdlaser :color :blue :variant :w}})
+                  (spawn-bullet ((aim $player)
+                           (laser {:warn 1 :active 0.2 :u-max 20 :width 2})) {:style {:family :gdlaser :color :blue :variant :w}})
                   (wait (ticks (/ 180 factor)))
                   (recur))))))))
 
@@ -92,13 +90,12 @@
       ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
       (loop [k 0, cell (rand-cell)]
         (move (if (= k 0) 1.6 0.7) :out-sine (grid-cell :enemy cell))
-        (spawn ((aim $player)
+        (spawn-bullet ((aim $player)
                  (map (fn [v]
                         ((fan 5 18)                       ; centered 5-fan, 18deg
                           (linear p[(* factor (lerp 0 2 v 4 2.4))
                                     (rand -8 8)])))       ; per-bullet ir jitter
-                      (iota 3)))
-               {:style {:family :gdcircle :color :green
+                      (iota 3))) {:style {:family :gdcircle :color :green
                         :variant [:w :c :b]}              ; axis 0: speed tier
                 :cues {:spawn "x-fire-burst-1"}})
         (wait (ticks 300))
@@ -111,14 +108,13 @@
       ;; star burst: 4 volleys 80 ticks apart, rings of 28; radius soft-
       ;; switches from a fast to a slow curve; per-bullet random swirl
       (dotimes [v 4 :every (ticks 80)]
-        (spawn ((rot m"4*phi*v")
+        (spawn-bullet ((rot m"4*phi*v")
                  (circle 28
                    (polar m"factor * lssht(-3, 0.6, 6*t, 2*t)"
-                          m"rand(4, 8) * randpm1() * t")))
-               {:style {:family :star :variant :c
+                          m"rand(4, 8) * randpm1() * t"))) {:style {:family :star :variant :c
                         :color (nth [:blue :teal :green :pink] (iota 28))}
                 :scale 1.5
-                :cues {:spawn "x-fire-star-3"}}))
+                :cues {:spawn "x-fire-star-3"} :hitbox 0.09}))
       (wait 1)
       (set! mode 0)                        ; turrets pause; reflector stops
       (wait 1)

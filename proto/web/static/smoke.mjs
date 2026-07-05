@@ -3,13 +3,13 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import init, { Danmaku } from './pkg/danmaku_web.js';
+import init, { Danmaku, stdlibSource } from './pkg/danmaku_web.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
 await init({ module_or_path: readFileSync(join(here, 'pkg/danmaku_web_bg.wasm')) });
 
-const rig = readFileSync(join(root, 'cards/player-rig.dmk'), 'utf8');
+const rig = stdlibSource('player-rig');
 const dk = new Danmaku(rig + '\n(player-rig)');
 for (const f of ['cards/reimu_vs_mima.dmk',
                  'cards/translations/ph_boss2_spell2.dmk',

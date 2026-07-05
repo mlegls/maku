@@ -1,10 +1,9 @@
 // The browser host: fetch cards into the vfs, drive the wasm Instance with
 // a fixed-timestep loop, render flat buffers to canvas 2d, forward the wire
 // protocol from the eval box. Everything host-generic lives in Rust.
-import init, { Danmaku } from './pkg/danmaku_web.js';
+import init, { Danmaku, stdlibSource } from './pkg/danmaku_web.js';
 
 const FILES = [
-  'cards/player-rig.dmk',
   'cards/coop.dmk',
   'cards/reimu_vs_mima.dmk',
   'cards/duel.dmk',
@@ -63,7 +62,7 @@ document.getElementById('restart').onclick = () => dk.restart();
 let dk;
 async function boot() {
   await init();
-  const rigSrc = await (await fetch('/cards/player-rig.dmk')).text();
+  const rigSrc = stdlibSource('player-rig');
   dk = new Danmaku(rigSrc + '\n(player-rig)');
   for (const f of FILES) dk.add_file(f, await (await fetch('/' + f)).text());
   dk.boot(BOOT, undefined);

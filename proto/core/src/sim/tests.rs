@@ -182,6 +182,7 @@
     fn player_hit_and_iframes() {
         // two bullets aimed straight down the player's column, 10 ticks apart
         const CARD: &str = r#"
+(import "touhou")
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
@@ -190,7 +191,7 @@
 (defpattern atk []
   (par (rig)
     (dotimes [i 2 :every (ticks 10)]
-      (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
+      (spawn-bullet (in-frame (pose c[0 3]) (vel c[0 -6])) {}))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -212,11 +213,12 @@
     #[test]
     fn graze_counts_once() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
 (defpattern g []
-  (par (rig) (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6])))))
+  (par (rig) (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
 "#;
         let mut sim = Sim::load(CARD, Some("g")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -234,12 +236,13 @@
     #[test]
     fn enemy_hp_and_death() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern duel []
   (seq
-    (spawn (pose c[0 2]) {:team :enemy :hp 2 :hitbox 0.3})
+    (spawn-enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})
     (dotimes [i 3 :every (ticks 30)]
-      (spawn (in-frame (pose c[0 0]) (vel c[0 4]))
-             {:team :player :damage 1}))))
+      (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
+                  {:damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -263,7 +266,8 @@
     fn gameplay_scrubs() {
         use crate::session::Session;
         const CARD: &str = r#"
-(defpattern g [] (spawn (in-frame (pose c[0.25 3]) (vel c[0 -6]))))
+(import "touhou")
+(defpattern g [] (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {}))
 "#;
         let mut sess = Session::default();
         sess.rig = Some(
@@ -294,6 +298,7 @@
     #[test]
     fn lives_and_game_over() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
@@ -302,7 +307,7 @@
 (defpattern atk []
   (par (rig)
     (dotimes [i 5 :every (ticks 70)]
-      (spawn (in-frame (pose c[0 3]) (vel c[0 -6]))))))
+      (spawn-bullet (in-frame (pose c[0 3]) (vel c[0 -6])) {}))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -325,15 +330,16 @@
     #[test]
     fn trigger_thresholds() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern gates []
   (seq
-    (spawn (pose c[0 2])
-           {:team :enemy :hp 3 :hitbox 0.3
+    (spawn-enemy (pose c[0 2])
+           {:hp 3 :hitbox 0.3
             :triggers [{:col :hp :leq 1 :event :low-hp}
                        {:col :hp :leq 0 :event :died :cull true}]})
     (dotimes [i 3 :every (ticks 30)]
-      (spawn (in-frame (pose c[0 0]) (vel c[0 4]))
-             {:team :player :damage 1}))))
+      (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
+                  {:damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("gates")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -352,11 +358,12 @@
     #[test]
     fn damage_fn_at_contact() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern duel []
   (seq
-    (spawn (pose c[0 2]) {:team :enemy :hp 3 :hitbox 0.3})
-    (spawn (in-frame (pose c[0 0]) (vel c[0 4]))
-           {:team :player :damage (fn [self other] (mag (:vel self)))})))
+    (spawn-enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
+    (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
+                {:damage (fn [self other] (mag (:vel self)))})))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -375,11 +382,12 @@
     #[test]
     fn laser_hitbox() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
 (defpattern beam []
-  (par (rig) (spawn ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})))))
+  (par (rig) (spawn-bullet ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})) {})))
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
         // player parked ON the beam line, 2 units along it
@@ -442,14 +450,15 @@
     #[test]
     fn invuln_window_absorbs_damage() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern p []
-  (let [boss (spawn (pose c[0 3]) {:team :enemy :hp 10})]
+  (let [boss (spawn-enemy (pose c[0 3]) {:hp 10})]
     (seq
       (invuln (nth boss 0) 1)
       (fork
         (for [i inf :every (ticks 30)]
           ((pose c[0 0])
-            (spawn (vel c[0 6]) {:team :player :damage 1})))))))
+            (spawn-shot (vel c[0 6]) {:damage 1})))))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         // boss at y=3, shots at 6/s reach it in ~60 ticks; invuln covers
@@ -497,12 +506,13 @@
     #[test]
     fn slow_laser_fills() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern rig []
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]}))
 (defpattern beam []
   (par (rig)
-       (spawn ((pose c[-2 0])
+       (spawn-bullet ((pose c[-2 0])
                 (laser {:warn 0.5 :active 6 :u-max 6 :fill 2}))
               {:style {:family :laser :color :red}})))
 "#;
@@ -891,16 +901,17 @@
     #[test]
     fn expose_and_export() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern e []
   (seq
     (defvar phase 1)
     (export phase)
-    (spawn (pose c[0 2])
-           {:team :enemy :hp 2 :hitbox 0.3 :expose {:hp $target-hp}})
-    (spawn (in-frame (pose c[0 0]) (vel c[0 4])) {:team :player :damage 1})
+    (spawn-enemy (pose c[0 2])
+           {:hp 2 :hitbox 0.3 :expose {:hp $target-hp}})
+    (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
     (wait-for (<= $target-hp 1))
     (set! phase 2)
-    (spawn (in-frame (pose c[0 0]) (vel c[0 4])) {:team :player :damage 1})))
+    (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})))
 "#;
         let mut sim = Sim::load(CARD, Some("e")).unwrap();
         for _ in 0..40 {
@@ -1019,7 +1030,7 @@
     #[test]
     fn duel_card_plays() {
         let src = std::fs::read_to_string("../../cards/duel.dmk").unwrap();
-        let rig = std::fs::read_to_string("../../cards/player-rig.dmk").unwrap();
+        let rig = crate::edn::stdlib("player-rig").unwrap();
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
         // the host layers the stock rig; boss/stage cards stay player-free
         sim.add_forms(&src, &format!("{}\n(player-rig)", rig)).unwrap();
@@ -1039,11 +1050,12 @@
     #[test]
     fn derived_nearest_enemy() {
         const CARD: &str = r#"
+(import "touhou")
 (defpattern hunt []
   (seq
-    (spawn (pose c[2 3]) {:style {:family :dummy} :team :enemy})
-    (spawn (vel p[3 (slew 720 90 (angle-of (- (live $nearest-enemy) pos)))])
-           {:style {:family :amulet}})))
+    (spawn-enemy (pose c[2 3]) {:style {:family :dummy}})
+    (spawn-bullet (vel p[3 (slew 720 90 (angle-of (- (live $nearest-enemy) pos)))])
+                  {:style {:family :amulet}})))
 "#;
         let mut sim = Sim::load(CARD, Some("hunt")).unwrap();
         for _ in 0..120 {

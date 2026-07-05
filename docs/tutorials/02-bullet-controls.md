@@ -17,13 +17,12 @@ two tools, and the order matters:
 
 ## Lifecycle trees
 
-The structural fact everything builds on: **`spawn` returns handles**,
+The structural fact everything builds on: **`spawn-bullet` returns handles**,
 one per bullet. `for` iterates them, and `fork` gives each its own
 clock (`ex1-restyle`):
 
 ```clojure
-(let [ring (spawn (circle 12 (linear p[1.2 0]))
-                  {:style {:family :circle :color :blue :variant :w}})]
+(let [ring (spawn-bullet (circle 12 (linear p[1.2 0])) {:style {:family :circle :color :blue :variant :w}})]
   (for [b ring]
     (fork
       (seq
@@ -45,8 +44,7 @@ A timeline can also end the bullet's life and start others
     (seq
       (wait 1.2)
       ((pose (pos s))
-        (spawn (circle 8 (linear p[3 0]))
-               {:style {:family :gem :color :pink :variant :w}}))
+        (spawn-bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w} :hitbox 0.09}))
       (cull s))))
 ```
 

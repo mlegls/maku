@@ -145,9 +145,6 @@ pub enum ActionV {
     Remat { target: u64, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
     SetCol { target: u64, col: Rc<str>, val: f64 },
-    /// Invulnerability window: iframe-until = now + ticks, honored by
-    /// BOTH resolve paths (player hits and enemy damage).
-    Invuln { target: u64, ticks: u64 },
     SetStyle { target: u64, style: Val },
     Cull { target: u64 },
     /// (export cell): publish a pattern cell as a read-only channel of the
@@ -528,18 +525,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     target: id,
                     col: col.as_ref().into(),
                     val,
-                })));
-            }
-            "invuln" => {
-                // (invuln b dur): invulnerable for dur seconds from now —
-                // boss phase transitions, custom player mercy windows
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("invuln: expected bullet handle".into());
-                };
-                let dur = evaluate(&items[2], env, ctx, world)?.num()?;
-                return Ok(Val::Action(Rc::new(ActionV::Invuln {
-                    target: id,
-                    ticks: (dur * TICK_RATE) as u64,
                 })));
             }
             "set-style" => {
@@ -1503,13 +1488,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::SetCol { target, col, val } => {
             if let Some(i) = world.find(*target) {
                 world.bullets[i].col_set(col, *val);
-            }
-            Ok(Val::Nothing)
-        }
-        ActionV::Invuln { target, ticks } => {
-            if let Some(i) = world.find(*target) {
-                let until = (world.tick + ticks) as f64;
-                world.bullets[i].col_set(&"iframe-until".into(), until);
             }
             Ok(Val::Nothing)
         }

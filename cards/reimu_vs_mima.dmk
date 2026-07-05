@@ -18,6 +18,7 @@
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
 ;;   anchor); the player kit opts out with (in-frame :world ...).
 
+(import "touhou")
 (defpattern reimu-vs-mima []
   (par (in-frame :world (reimu))
        (mima)))
@@ -51,16 +52,12 @@
   (for [i inf :every (ticks 8)]
     (when (> $boss-hp 0)
       (when (< $focus-firing 0.5)
-        (spawn (in-frame $player
+        (spawn-shot (in-frame $player
                  (vel p[10 (slew 60 90
-                                (angle-of (- (live $nearest-enemy) pos)))]))
-               {:style {:family :amulet :color :red}
-                :team :player :damage 1}))
+                                (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :amulet :color :red} :damage 1}))
       (when (> $focus-firing 0.5)
-        (spawn (in-frame $player
-                 ([c[-0.25 0] c[0.25 0]] ((rot 90) (linear c[13 0]))))
-               {:style {:family :gem :color :blue}
-                :team :player :damage 1})))))
+        (spawn-shot (in-frame $player
+                 ([c[-0.25 0] c[0.25 0]] ((rot 90) (linear c[13 0])))) {:style {:family :gem :color :blue} :damage 1 :hitbox 0.09})))))
 
 ;; bombs: raw $bomb button, stock as fold state, cooldown as debounce.
 ;; effect = clear hostile fire + Fantasy Seal (imported seal-orb, on a
@@ -77,11 +74,10 @@
 
 (defpattern seal []
   (for [k 6 :every (ticks 6)]
-    (spawn (seal-orb k 1.2)
-           {:style {:family :gglcircle
+    (spawn-shot (seal-orb k 1.2) {:style {:family :gglcircle
                     :color (nth [:red :green :yellow :blue] k)
                     :variant :w}
-            :scale 2 :team :player :damage 8})))
+            :scale 2 :damage 8 :hitbox 0.20})))
 
 ;; ============================================================================
 ;; Mima
@@ -89,14 +85,14 @@
 (defpattern mima []
   (seq
     (move 0.9 :out-sine c[0 2.6])
-    (let [boss (spawn (live $boss)
-                 {:team :enemy :hp 100 :hitbox 0.45
+    (spawn-boss (live $boss)
+                {:hp 100 :hitbox 0.45
                   :expose {:hp $boss-hp}   ; publish MY hp as $boss-hp
                   :cols {:boss 1}
                   :triggers [{:col :hp :leq 60 :event :spell-break}
                              {:col :hp :leq 0 :event :died :cull true}]
                   :style {:family :lstar :color :purple}
-                  :scale 2})]
+                  :scale 2}
       (seq
         (wait-for (> $boss-hp 0))          ; boss registered
         (phases                            ; the boss sugar over `states`:
@@ -113,10 +109,8 @@
 (defpattern nonspell []
   (for [vol inf :every (ticks 46)]
     (seq
-      (spawn ((aim $player)
-               (fan 5 16 (linear p[(* factor 2.6) 0])))
-             {:style {:family :circle :color :purple}})
+      (spawn-bullet ((aim $player)
+               (fan 5 16 (linear p[(* factor 2.6) 0]))) {:style {:family :circle :color :purple}})
       (when (= (mod vol 3) 0)
-        (spawn ((rot m"13*vol")
-                 (circle 20 (linear p[(* factor 1.3) 0])))
-               {:style {:family :circle :color :pink}})))))
+        (spawn-bullet ((rot m"13*vol")
+                 (circle 20 (linear p[(* factor 1.3) 0]))) {:style {:family :circle :color :pink}})))))

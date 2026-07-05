@@ -44,17 +44,17 @@
 ;; 7 units behind the aim line, decelerating 12 -> 2 over t in [0.4, 0.8]s.
 ;; Arm color by distance from center; volley style variant cycles /, /w, /b.
 
+(import "touhou")
 (defpattern aimed-demo []
   ;; no anchor: DMK roott(1,0,0) is the identity; patterns don't self-anchor --
   ;; the caller applies a frame ((boss-frame (aimed-demo))) if one is wanted.
   (dotimes [vol inf, vrt [:c :w :b] :every 2.5]
     (event :sfx "x-fire-burst-1")
-    (spawn ((aim $player)                          ; injected signal in spawn args
+    (spawn-bullet ((aim $player)                          ; injected signal in spawn args
              (+ c[-7 0]                           ;   => implicit snap (SS3, class a)
                 (arrow 7 1.0 0.5                  ; + inside the aim frame =
                   (arrow 9 0.15 0.08              ;   rotational offset (rx of <-7;:>)
-                    (vel c[(lerp 0.4 0.8 t 12 2) 0])))))
-           {:style {:family :amulet :variant vrt
+                    (vel c[(lerp 0.4 0.8 t 12 2) 0]))))) {:style {:family :amulet :variant vrt
                     :color [:red :yellow :blue :purple :blue :yellow :red]}})))
 
 ;; (arrow n back side) is stock formation vocabulary: Array Pose of n offsets
@@ -64,7 +64,7 @@
 ;; only observable through indexed meta, hence the mirrored :color literal.
 ;;
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn argument)
+;; Canonical desugared tree (spawn-bullet argument {})
 ;;
 ;;   (in-frame (rot (snap (angle-to player)))            ; (aim $player)
 ;;     (+ (cart -7 0)                                    ; translate, theta untouched;

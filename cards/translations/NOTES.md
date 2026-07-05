@@ -237,6 +237,30 @@ body completion makes no request at all. Generation guards kill the
 state's whole forked subtree *however* the state ends; that IS DMK's
 phase-token semantics, rediscovered at the right grain.
 
+**The genre layer is a standard library, not engine defaults.** Asking
+"is hp/damage/invuln special?" gave the answer that finished §9's
+dissolution: hp was already a column and invuln a deadline column — what
+remained *engine* was the defaulting (team→collider sets, hp 1, the
+died-trigger synthesis) and one verb (`invuln`). All of it is now card
+code in cards/lib/touhou.dmk: `spawn` knows only dyn + explicit meta,
+and `spawn-bullet`/`spawn-shot`/`spawn-enemy` are macros prepending a
+defaults map (macros, not defns, so the caller's literal meta keeps its
+unevaluated signal tags; `spawn` itself grew per-key multi-map merge as
+the composition hook). `spawn-boss` is *an enemy with a phase machine* —
+that is the whole difference — binding `boss` for its machine body.
+`invuln` is `(set-col b :iframe-until (+ $tick (* dur 120)))` once
+`$tick` exists as a derived channel. The lib is authored as .dmk files
+but embedded in the engine at compile time (bare-name imports:
+`(import "touhou")`), so distribution is single-artifact and every host
+— native, wasm, tests, REPL strings — resolves it identically; the
+stock `player-rig` ships the same way and hosts build their rig string
+from it. Everything held: the whole corpus migrated with zero behavioral
+drift (the old family-based hitbox radii became explicit `:hitbox` at
+star/gem/lstar call sites; smoke stays tick-identical). What the engine
+still knows by name: the interaction-matrix rows and the three
+contact-resolution bodies (`lives`/`iframe-until`/`hp` writes) — the
+next extraction, blocked on a cheap per-contact call story.
+
 **`move` — entity motion is remat, not frame mutation (clarified).** There IS
 a thing being moved: the boss (or player option) is an expressed entity — it
 renders, collides, has hp — and patterns anchor to its live pose signal (the

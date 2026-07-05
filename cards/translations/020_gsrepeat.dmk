@@ -28,21 +28,20 @@
 ;; DMK semantics: emitter settles at (0, 1); at t=0 a synchronous ring of 14 blue
 ;; circles fires outward at speed 2; at t=1s a ring of 10 red circles at speed 3.
 
+(import "touhou")
 (defpattern gsrepeat-demo []
   ((pose c[0 1])                       ; lexical anchor; no global emitter.
     (par                                    ; DMK roott animates the boss entity;
       (seq                                  ; the pattern only anchors.
         (event :sfx "x-fire-burst-1")
-        (spawn (circle 14 (linear c[2 0]))
-               {:style {:family :scircle :color :blue :variant :b}}))
+        (spawn-bullet (circle 14 (linear c[2 0])) {:style {:family :scircle :color :blue :variant :b}}))
       (seq
         (wait 1.0)
         (event :sfx "x-fire-burst-2")
-        (spawn (circle 10 (linear c[3 0]))
-               {:style {:family :scircle :color :red :variant :w}})))))
+        (spawn-bullet (circle 10 (linear c[3 0])) {:style {:family :scircle :color :red :variant :w}})))))
 
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn argument, first volley)
+;; Canonical desugared tree (spawn-bullet argument, {})
 ;;
 ;; (circle 14 <child>) is trailing-child sugar; ((pose ...) <actions>) is an
 ;; applicable frame. Both desugar to in-frame. Each pose in (circle 14)
