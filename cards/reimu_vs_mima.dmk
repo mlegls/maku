@@ -88,22 +88,23 @@
 (defpattern mima []
   (seq
     (move 0.9 :out-sine c[0 2.6])
-    (spawn (live $boss)
-           {:team :enemy :hp 100 :hitbox 0.45
-            :expose {:hp $boss-hp}          ; publish MY hp as $boss-hp
-            :cols {:boss 1}
-            :triggers [{:col :hp :leq 60 :event :spell-break}
-                       {:col :hp :leq 0 :event :died :cull true}]
-            :style {:family :lstar :color :purple}
-            :scale 2})
-    (par
-      (seq (wait-for (> $boss-hp 60))
-           (until (<= $boss-hp 60) (nonspell)))
-      (seq (wait-for (> $boss-hp 0))       ; boss registered
-           (wait-for (<= $boss-hp 60))     ; ...broken into the spell
-           (event :spell)
-           (cull)                          ; field clear at the phase edge
-           (until (<= $boss-hp 0) (spell-2))))))
+    (let [boss (spawn (live $boss)
+                 {:team :enemy :hp 100 :hitbox 0.45
+                  :expose {:hp $boss-hp}   ; publish MY hp as $boss-hp
+                  :cols {:boss 1}
+                  :triggers [{:col :hp :leq 60 :event :spell-break}
+                             {:col :hp :leq 0 :event :died :cull true}]
+                  :style {:family :lstar :color :purple}
+                  :scale 2})]
+      (par
+        (seq (wait-for (> $boss-hp 60))
+             (until (<= $boss-hp 60) (nonspell)))
+        (seq (wait-for (> $boss-hp 0))     ; boss registered
+             (wait-for (<= $boss-hp 60))   ; ...broken into the spell
+             (event :spell)
+             (cull)                        ; field clear at the phase edge
+             (invuln (nth boss 0) 1.5)     ; transition mercy window
+             (until (<= $boss-hp 0) (spell-2)))))))
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks
 (defpattern nonspell []

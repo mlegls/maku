@@ -722,7 +722,13 @@ impl Sim {
             // the hit effect is column writes; game-over is the player
             // entity's trigger, not the contact's business
             let player = &mut self.world.bullets[pj];
-            player.col_set(&"iframe-until".into(), (tick + IFRAMES) as f64);
+            // the mercy window is per-entity DATA: an :iframes column
+            // (seconds) overrides the engine default
+            let window = player
+                .col_get("iframes")
+                .map(|s| (s * TICK_RATE) as u64)
+                .unwrap_or(IFRAMES);
+            player.col_set(&"iframe-until".into(), (tick + window) as f64);
             let lives = player.col_get("lives").unwrap_or(0.0);
             player.col_set(&"lives".into(), lives - 1.0);
             self.world.push_event(Event { tick, name: "player-hit".into(), pos: pos[i] });
@@ -754,6 +760,13 @@ impl Sim {
                 }
             };
             self.world.bullets[i].alive = false;
+            // invulnerability window: the shot still dies (absorbed), the
+            // column write is skipped — same iframe-until both sides honor
+            let until = self.world.bullets[j].col_get("iframe-until").unwrap_or(0.0);
+            if (tick as f64) < until {
+                self.world.push_event(Event { tick, name: "absorbed".into(), pos: pos[j] });
+                continue;
+            }
             // the effect is a COLUMN WRITE, nothing more — what zero hp
             // means is the enemy's trigger's business, not the contact's
             let enemy = &mut self.world.bullets[j];
@@ -1102,6 +1115,8 @@ fn run_action(
         | ActionV::CullHostile
         | ActionV::Export { .. }
         | ActionV::Remat { .. }
+        | ActionV::SetCol { .. }
+        | ActionV::Invuln { .. }
         | ActionV::SetStyle { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
@@ -1669,6 +1684,46 @@ mod tests {
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → bullets
     /// head down at the player, not up.
+    /// Invulnerability windows: (invuln b dur) writes iframe-until, which
+    /// BOTH resolve paths honor — shots are absorbed (die, no hp write)
+    /// while a boss is invulnerable, and hp flows again after expiry.
+    #[test]
+    fn invuln_window_absorbs_damage() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [boss (spawn (pose c[0 3]) {:team :enemy :hp 10})]
+    (seq
+      (invuln (nth boss 0) 1)
+      (fork
+        (for [i inf :every (ticks 30)]
+          ((pose c[0 0])
+            (spawn (vel c[0 6]) {:team :player :damage 1})))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        // boss at y=3, shots at 6/s reach it in ~60 ticks; invuln covers
+        // the first second (120 ticks) — early shots are absorbed
+        for _ in 0..115 {
+            sim.step().unwrap();
+        }
+        let hp = |sim: &Sim| {
+            sim.world
+                .bullets
+                .iter()
+                .find(|b| b.team.as_deref() == Some("enemy"))
+                .and_then(|b| b.col_get("hp"))
+                .unwrap()
+        };
+        assert_eq!(hp(&sim), 10.0, "shots absorbed during the window");
+        assert!(
+            sim.world.log.borrow().entries.iter().any(|e| &*e.name == "absorbed"),
+            "absorption is observable"
+        );
+        for _ in 0..240 {
+            sim.step().unwrap();
+        }
+        assert!(hp(&sim) < 10.0, "damage flows after the window expires");
+    }
+
     /// Curves are values: (sample curve t u) evaluates a u-parameterized
     /// dyn without expressing an entity — pose plus tangent heading.
     #[test]

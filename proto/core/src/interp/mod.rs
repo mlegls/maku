@@ -131,6 +131,11 @@ pub enum ActionV {
     },
     Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
     Remat { target: u64, f: Val },
+    /// Write a column on a live entity (dead handles are no-ops).
+    SetCol { target: u64, col: Rc<str>, val: f64 },
+    /// Invulnerability window: iframe-until = now + ticks, honored by
+    /// BOTH resolve paths (player hits and enemy damage).
+    Invuln { target: u64, ticks: u64 },
     SetStyle { target: u64, style: Val },
     Cull { target: u64 },
     /// (export cell): publish a pattern cell as a read-only channel of the
@@ -484,6 +489,33 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 };
                 let f = evaluate(&items[2], env, ctx, world)?;
                 return Ok(Val::Action(Rc::new(ActionV::Remat { target: id, f })));
+            }
+            "set-col" => {
+                // (set-col b :name v) — columns are writable per-bullet data
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("set-col: expected bullet handle".into());
+                };
+                let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
+                    return Err("set-col: expected keyword column name".into());
+                };
+                let val = evaluate(&items[3], env, ctx, world)?.num()?;
+                return Ok(Val::Action(Rc::new(ActionV::SetCol {
+                    target: id,
+                    col: col.as_ref().into(),
+                    val,
+                })));
+            }
+            "invuln" => {
+                // (invuln b dur): invulnerable for dur seconds from now —
+                // boss phase transitions, custom player mercy windows
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("invuln: expected bullet handle".into());
+                };
+                let dur = evaluate(&items[2], env, ctx, world)?.num()?;
+                return Ok(Val::Action(Rc::new(ActionV::Invuln {
+                    target: id,
+                    ticks: (dur * TICK_RATE) as u64,
+                })));
             }
             "set-style" => {
                 // restyle = pool migration (§7): style is ir, changing it
@@ -1289,6 +1321,19 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             b.state = MotionState::new();
             b.birth = world.tick;
             b.prev_pos = Some((anchor.x, anchor.y));
+            Ok(Val::Nothing)
+        }
+        ActionV::SetCol { target, col, val } => {
+            if let Some(i) = world.find(*target) {
+                world.bullets[i].col_set(col, *val);
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::Invuln { target, ticks } => {
+            if let Some(i) = world.find(*target) {
+                let until = (world.tick + ticks) as f64;
+                world.bullets[i].col_set(&"iframe-until".into(), until);
+            }
             Ok(Val::Nothing)
         }
         ActionV::SetStyle { target, style } => {

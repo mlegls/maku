@@ -77,6 +77,14 @@ decode notes.
 | `sm` option (SM at the tip) | `let`-bound guide + `(in-frame guide (fork …))` |
 | `onlaser(fn)` modifier | `(on-laser h u)` — pose with tangent heading at u |
 
+## Bosses and lifecycle
+
+| DMK | here |
+|---|---|
+| `vulnerable(false)` phase property | `(invuln boss dur)` at the phase edge — a column both resolve paths honor |
+| player invulnerability after death | automatic `iframe-until`; window duration = the `:iframes` column |
+| `shiftphaseto` + phase cleanup | trigger events + `(cull)` + `(invuln …)` at the boundary |
+
 ## Model-level notes
 
 - **Repeaters vs arrays.** DMK expresses multiplicity through repeater
