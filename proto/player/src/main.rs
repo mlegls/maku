@@ -153,6 +153,7 @@ struct App {
     inst: Instance,
     accum: f64,
     dragging: bool, // scrubbing via the timeline slider
+    rank: f64,      // difficulty channel ($rank): T/Y/U/I select
 }
 
 fn window_conf() -> Conf {
@@ -175,7 +176,8 @@ async fn main() {
     // this host's player contract: layer the stock rig card
     // (swap in your own live: <localleader>es a rig defpattern)
     let rig = format!("{}\n(player-rig)", include_str!("../../../cards/player-rig.dmk"));
-    let mut app = App { inst: Instance::new(Some(rig)), accum: 0.0, dragging: false };
+    let mut app =
+        App { inst: Instance::new(Some(rig)), accum: 0.0, dragging: false, rank: 1.0 };
     if card_path.is_empty() {
         app.inst.set_status(format!("no card — listening on 127.0.0.1:{}", PORT));
     } else {
@@ -232,6 +234,17 @@ async fn main() {
         {
             if is_key_pressed(*key) {
                 app.inst.select(i);
+            }
+        }
+        // difficulty: T/Y/U/I set the $rank channel (easy..lunatic)
+        for (key, r) in [
+            (KeyCode::T, 0.7),
+            (KeyCode::Y, 1.0),
+            (KeyCode::U, 1.4),
+            (KeyCode::I, 2.0),
+        ] {
+            if is_key_pressed(key) {
+                app.rank = r;
             }
         }
         // Tab / Shift-Tab step through ALL patterns (hotkeys stop at 9)
@@ -294,6 +307,7 @@ async fn main() {
         inputs.set_num("p2-move-y", p2y);
         inputs.set_flag("focus-firing", key(KeyCode::LeftShift) || key(KeyCode::RightShift));
         inputs.set_flag("bomb", key(KeyCode::X));
+        inputs.set_num("rank", app.rank);
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !app.inst.paused() {
@@ -442,6 +456,13 @@ async fn main() {
         if let Some(i) = clicked {
             app.inst.select(i);
         }
+        draw_text(
+            &format!("rank {:.1} (T/Y/U/I)", app.rank),
+            screen_width() - 150.0,
+            24.0,
+            18.0,
+            GRAY,
+        );
         timeline_ui(&mut app, mx, my);
         next_frame().await;
     }

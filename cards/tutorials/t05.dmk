@@ -1,0 +1,86 @@
+;; Tutorial 5: channels and the host boundary — the runnable companion to
+;; docs/tutorials/05-channels.md. Press 1-9 to run each example.
+;; In the native player, T/Y/U/I set $rank (0.7 / 1.0 / 1.4 / 2.0).
+;;
+;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t05.dmk
+
+;; 1. difficulty is a channel: $rank scales density multiplicatively.
+;; Press T/Y/U/I and rerun — more bullets, faster volleys.
+(defpattern ex1-rank-density []
+  (for [vol inf :every (/ 2.5 $rank)]
+    (spawn (circle (* 24 $rank) (linear p[1.8 0]))
+           {:style {:family :circle :color :red :variant :w}})))
+
+;; 2. additive scaling for discrete layers: 3 beams, +2 per rank step
+;; above easy. Multiplicative for continuous quantities, additive for
+;; counts you want exact.
+(defpattern ex2-rank-additive []
+  (for [vol inf :every 3]
+    (spawn ((rot m"10 * vol")
+             (circle (+ 3 (* 2 (- $rank 0.7)))
+               (laser {:warn 0.8 :active 1.5 :u-max 6 :width 0.6})))
+           {:style {:family :gdlaser :color :blue}})))
+
+;; 3. $player is a channel too: (aim $player) rotates a frame toward it
+;; at spawn time. In the sandbox the mouse is the mock player.
+(defpattern ex3-aimed []
+  (for [vol inf :every 1]
+    (spawn ((aim $player) (fan 5 8 (linear p[2.5 0])))
+           {:style {:family :arrow :color :purple :variant :w}})))
+
+;; 4. cards PUBLISH channels: :expose maps a column to a channel name.
+;; The dummy's hp drives both the host HUD and other patterns — here a
+;; victory ring fires when $dummy-hp runs out. Shoot the dummy (the rig
+;; fires with the mouse in the sandbox; hold near it).
+(defpattern ex4-expose []
+  (par
+    (spawn ((pose c[0 2.5]) (still))
+           {:team :enemy :hp 20
+            :expose {:hp $dummy-hp}
+            :style {:family :lstar :color :green}
+            :scale 1.5})
+    (seq
+      (wait-for (> $dummy-hp 0))          ; registered
+      (wait-for (<= $dummy-hp 0))         ; destroyed
+      (spawn (circle 24 (linear p[2 0]))
+             {:style {:family :gem :color :yellow :variant :w}}))))
+
+;; 5. cells export too: a card-level counter published as $volleys.
+;; Channels from :expose read a column; (export cell) publishes any
+;; card state — the host (and other patterns) read both the same way.
+(defpattern ex5-export []
+  (seq
+    (defvar volleys 0)
+    (export volleys)
+    (fork
+      (for [i inf :every 1.5]
+        (seq
+          (set! volleys (+ volleys 1))
+          (spawn (circle 10 (linear p[1.5 0]))
+                 {:style {:family :circle :color :teal :variant :w}}))))
+    ;; a reaction to the exported value: every 4th volley, a bonus fan
+    (for [i inf :every 1.5]
+      (seq
+        (wait (ticks 2))
+        ((rot 90)
+          (spawn (fan (* 4 (mod $volleys 4)) 10 (linear p[2 0]))
+                 {:style {:family :star :color :orange :variant :w}}))))))
+
+;; 6. the player is card content: an entity riding the $move axes in the
+;; vel domain, clamped to the field, with a hurtbox collider, lives as a
+;; column, and game-over as its trigger. WASD to dodge the aimed fire.
+(defpattern ex6-rig []
+  (par
+    (spawn (clamp c[-3.8 -4.4] c[3.8 4.4]
+             ((pose c[0 -3])
+               (vel c[(* (live $move-x) (- 4.5 (* 2.7 (live $focus-firing))))
+                      (* (live $move-y) (- 4.5 (* 2.7 (live $focus-firing))))])))
+           {:team :player-body
+            :colliders [{:layer :player-hurt :r 0.05}]
+            :cols {:lives 3 :pilot 1 :iframes 1.0}
+            :triggers [{:col :lives :leq 0 :event :game-over}]
+            :style {:family :circle :color :white :variant :w}})
+    (in-frame (pose c[0 3])
+      (for [vol inf :every (/ 1.2 $rank)]
+        (spawn ((aim $player) (fan 3 12 (linear p[2.2 0])))
+               {:style {:family :arrow :color :red :variant :w}})))))

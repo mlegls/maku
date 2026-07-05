@@ -56,7 +56,8 @@ language.md.
 ## Doc roadmap
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
   tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
-  tutorial_cards_run): 01–04 done; 05 next. Tutorials are standalone;
-  DMK mappings live in docs/from-dmk.md.
+  tutorial_cards_run): 01–05 done (05 = channels/host boundary/rig;
+  native player binds T/Y/U/I → $rank). 06 next. Tutorials are
+  standalone; DMK mappings live in docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

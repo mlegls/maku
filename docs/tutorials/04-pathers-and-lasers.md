@@ -170,6 +170,9 @@ parity-alternating explosions — with no queries at all.
 `ex4`'s tip-fire a spread by replacing the single spawn with a `fan`;
 give `ex7` a fifth stage.
 
+Next: [Tutorial 5](05-channels.md) — channels, the host boundary, and
+the player rig.
+
 ---
 
 *The topic sequence of this tutorial series follows the

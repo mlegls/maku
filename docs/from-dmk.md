@@ -77,6 +77,17 @@ decode notes.
 | `sm` option (SM at the tip) | `let`-bound guide + `(in-frame guide (fork …))` |
 | `onlaser(fn)` modifier | `(on-laser h u)` — pose with tangent heading at u |
 
+## Difficulty and the host boundary (Tutorial 5)
+
+| DMK | here |
+|---|---|
+| `dl` / `dn` / `dh` (ratio to a reference difficulty) | `$rank` — one channel, scale with `*` or soften with `pow` |
+| `dc` (difficulty counter) | additive expressions over `$rank` |
+| difficulty enum + reload keys (T/Y/U/I) | the host injects `$rank`; the sandbox binds T/Y/U/I |
+| `target(ang, Lplayer)` | `((aim $player) …)` — a frame operation |
+| `Lplayer` / engine-privileged player | the player is card content: an entity with `:pilot`, deriving `$player` |
+| exposing boss state to UI | `:expose {:col $chan}` on the entity; `(export cell)` for card state |
+
 ## Bosses and lifecycle
 
 | DMK | here |
