@@ -14,6 +14,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/language.md` | **the language spec** (authoritative) |
 | `docs/design.md` | architecture/runtime design notes |
 | `docs/player.md` | the debug player: wire protocol, session/scrubbing, controls |
+| `docs/tutorials/` | learn the language — runnable companions in `cards/tutorials/` |
 | `docs/notes/` | implementation notes, prototype-vs-spec gaps |
 | `proto/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
 | `cards/` | playable cards — start with `reimu_vs_mima.dmk` |

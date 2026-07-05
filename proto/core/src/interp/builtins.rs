@@ -148,7 +148,16 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             Ok(Val::Vec2 { x: r * c, y: r * s })
         }
         "pose" => as_pose(args[0].clone()).map(Val::Pose),
-        "rot" => Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: n(0)? })),
+        "rot" => match &args[0] {
+            // broadcasts: (rot (* 10 (iota 30))) is 30 rotation frames —
+            // spawn combinators are arithmetic on pose arrays (§5)
+            Val::Arr(xs) => Ok(Val::Arr(Rc::new(
+                xs.iter()
+                    .map(|v| v.num().map(|th| Val::Pose(Pose { x: 0.0, y: 0.0, th })))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))),
+            v => Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: v.num()? })),
+        },
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
         "linear" => match &args[0] {
             Val::Vec2 { x, y } => Ok(Val::Dyn(Rc::new(DynNode::Linear { vx: *x, vy: *y }))),

@@ -45,5 +45,9 @@ language.md.
   stratification undecided.
 
 ## Doc roadmap
+- Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
+  tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
+  tutorial_cards_run): 01 done; 02 next (firing over time — waits,
+  repeaters with periods, sync vs async).
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

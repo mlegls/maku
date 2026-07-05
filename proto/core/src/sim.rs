@@ -1724,6 +1724,39 @@ mod tests {
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
     }
 
+    /// Tutorial cards are doctests: every example pattern in every
+    /// cards/tutorials/*.dmk must load and run (the docs can't rot).
+    #[test]
+    fn tutorial_cards_run() {
+        let dir = std::path::Path::new("../../cards/tutorials");
+        let mut swept = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("dmk") {
+                continue;
+            }
+            let src = crate::edn::expand_card(&path).unwrap();
+            let card = load_card(&read_all(&src).unwrap()).unwrap();
+            for name in &card.order {
+                let mut sim = Sim::load(&src, Some(name))
+                    .unwrap_or_else(|e| panic!("{:?} [{}]: {}", path, name, e));
+                for k in 0..240 {
+                    sim.step().unwrap_or_else(|e| {
+                        panic!("{:?} [{}] tick {}: {}", path, name, k, e)
+                    });
+                }
+                assert!(
+                    !sim.world.bullets.is_empty() || sim.world.cursor > 0,
+                    "{:?} [{}]: example did nothing visible",
+                    path,
+                    name
+                );
+                swept += 1;
+            }
+        }
+        assert!(swept >= 9, "tutorial patterns swept: {}", swept);
+    }
+
     /// The §10 embedding adapters: pattern instances get ISOLATED cells by
     /// default (two embeddings of the same pattern don't share defvar
     /// state); (inline …) shares the caller's scope; defns called from a
