@@ -94,19 +94,41 @@
 (defpattern ex5-chimera []
   (par
     (ex4-weave)
+    ;; act 1 — freeze: each keine becomes 13 beads laid along its flight
+    ;; path, anchored at the volley ORIGIN so they can pivot around it.
+    ;; Alternating beads counter-rotate ±33.75° (1.5 × 360/16, so rays
+    ;; re-align when the ease finishes) over 3 seconds.
     (control (ticks 5)
              {:family :keine :where (where (> b.t 1))}
              (fn [b]
-               (let [tx (- b.pos.x (* b.vel.x b.t))
+               (let [th (angle-of b.vel)
+                     r  (* (mag b.vel) b.t)
+                     tx (- b.pos.x (* b.vel.x b.t))
                      ty (- b.pos.y (* b.vel.y b.t))]
                  (seq
-                   ;; each bead keeps a quarter of the keine's velocity, so
-                   ;; the frozen line bursts outward and clears the field
-                   (spawn (map (fn [k]
-                                 ((pose c[(lerp 0 12 k tx b.pos.x)
-                                          (lerp 0 12 k ty b.pos.y)])
-                                   (linear c[(* 0.25 b.vel.x)
-                                             (* 0.25 b.vel.y)])))
-                               (iota 13))
-                          {:style {:family :gcircle :color :blue :variant :w}})
-                   (cull b)))))))
+                   (spawn ((pose c[tx ty])
+                            (map (fn [k]
+                                   ((rot (lerpsmooth eiosine 0 3 t
+                                           th
+                                           (+ th (* (- 1 (* 2 (mod k 2))) 33.75))))
+                                     (pose c[(- r (* 0.16 k)) 0])))
+                                 (iota 13)))
+                          {:style {:family :gcircle
+                                   :color [:blue :purple]
+                                   :variant :w}
+                           :cols {:k (iota 13) :ang (+ th 33.75)}})
+                   (cull b)))))
+    ;; act 2 — regenerate: when the rotation settles, the HEAD bead of
+    ;; each ray re-fires a keine along its settled angle (the freeze
+    ;; control will catch it again: the pattern rebuilds itself), and
+    ;; all beads cull. Control order in the par decides the ordering.
+    (control (ticks 5)
+             {:family :gcircle :where (where (and (> b.t 3.2) (< b.k 0.5)))}
+             (fn [b]
+               ((pose (pos b))
+                 ((rot b.ang)
+                   (spawn (linear p[2 0])
+                          {:style {:family :keine :color :purple :variant :w}})))))
+    (control (ticks 5)
+             {:family :gcircle :where (where (> b.t 3.2))}
+             (fn [b] (cull b)))))

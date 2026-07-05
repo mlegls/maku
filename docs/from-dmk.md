@@ -53,6 +53,9 @@ decode notes.
 | `&colorIndex` in a control | `b.ci` on the bullet view |
 | `start b{ hvar rootloc = loc }` | recover from the view (`tail = pos − vel·t`) or save a column |
 | `colorf(list, &i)` | `(nth palette i)` |
+| `bindLR` (lr/rl = ±1 by loop parity) | `(- 1 (* 2 (mod k 2)))` |
+| `lerpsmooth($(eiosine), a, b, t, v1, v2)` | `(lerpsmooth eiosine a b t v1 v2)` — easings are values, no lambda-conversion syntax |
+| one-shot `sm` control with predicate re-summoning | a control whose spawn re-enters an earlier control's query — self-rebuilding patterns |
 | `move(inf, nroffset(px(sine(8p, 2, t))))` | `(in-frame (cart m"2*sine(8, 1, t)" 0) …)` — a moving frame |
 | `sm` control running an async | `fork` inside the callback (adopted as a child task) |
 | C#-defined reusable functions | `defn` (card-level, first-class values) |

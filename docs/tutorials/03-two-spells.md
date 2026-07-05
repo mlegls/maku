@@ -148,31 +148,72 @@ Backtick quotes a code template; `~` splices arguments in. Macros
 receive their arguments as unevaluated code — that's why `where` can
 turn a bare expression into a predicate function.
 
+The spell itself runs in two acts.
+
+**Act 1 — freeze.** Each long bullet becomes 13 beads laid along its
+flight path. The launch point needs no saved state: for straight motion
+*tail = pos − vel·t*, recoverable from the view alone. The beads anchor
+at the volley origin and each one's motion is a `rot` frame whose angle
+*eases over time* — alternating beads counter-rotate:
+
 ```clojure
-(defpattern ex5-chimera []
-  (par
-    (ex4-weave)
-    (control (ticks 5)
-             {:family :keine :where (where (> b.t 1))}
-             (fn [b]
-               (let [tx (- b.pos.x (* b.vel.x b.t))
-                     ty (- b.pos.y (* b.vel.y b.t))]
-                 (seq
-                   (spawn (map (fn [k]
-                                 ((pose c[(lerp 0 12 k tx b.pos.x)
-                                          (lerp 0 12 k ty b.pos.y)])
-                                   (linear c[(* 0.25 b.vel.x)
-                                             (* 0.25 b.vel.y)])))
-                               (iota 13))
-                          {:style {:family :gcircle :color :blue :variant :w}})
-                   (cull b)))))))
+(control (ticks 5)
+         {:family :keine :where (where (> b.t 1))}
+         (fn [b]
+           (let [th (angle-of b.vel)
+                 r  (* (mag b.vel) b.t)
+                 tx (- b.pos.x (* b.vel.x b.t))
+                 ty (- b.pos.y (* b.vel.y b.t))]
+             (seq
+               (spawn ((pose c[tx ty])
+                        (map (fn [k]
+                               ((rot (lerpsmooth eiosine 0 3 t
+                                       th
+                                       (+ th (* (- 1 (* 2 (mod k 2))) 33.75))))
+                                 (pose c[(- r (* 0.16 k)) 0])))
+                             (iota 13)))
+                      {:style {:family :gcircle
+                               :color [:blue :purple]
+                               :variant :w}
+                       :cols {:k (iota 13) :ang (+ th 33.75)}})
+               (cull b)))))
 ```
 
-The bead line needs no saved state: for straight motion the launch point
-is recoverable from the view alone — *tail = pos − vel·t* — and
-`(map f (iota 13))` lays 13 poses along the segment. Each bead keeps a
-quarter of its parent's velocity, so the frozen line bursts slowly
-outward and clears the field instead of accumulating at the center.
+Three things to notice:
+
+- The bead's motion is pure tutorial-1 vocabulary: a position inside a
+  rotation rotates, and here the rotation's angle is a *signal* —
+  `(lerpsmooth eiosine 0 3 t from to)` eases from `from` to `to` as the
+  bead's age runs 0→3s.
+- `(mod k 2)` partitions the beads: even beads swing +33.75°, odd beads
+  −33.75°, and the two-color palette binds to the same axis, so the
+  partition is visible. 33.75 = 1.5 × 360/16 — chosen so the sixteen
+  rays interleave and *re-align* exactly when the ease settles.
+- Each bead carries two columns: its index `k` and its settled angle
+  `ang` — act 2 reads both.
+
+**Act 2 — regenerate.** When the rotation settles, the *head* bead of
+each ray re-fires a long bullet along its settled angle, and all beads
+cull:
+
+```clojure
+(control (ticks 5)
+         {:family :gcircle :where (where (and (> b.t 3.2) (< b.k 0.5)))}
+         (fn [b]
+           ((pose (pos b))
+             ((rot b.ang)
+               (spawn (linear p[2 0])
+                      {:style {:family :keine :color :purple :variant :w}})))))
+(control (ticks 5)
+         {:family :gcircle :where (where (> b.t 3.2))}
+         (fn [b] (cull b)))
+```
+
+The re-fired bullet is `:family :keine`, so **act 1's control catches it
+again**: the pattern rebuilds itself outward, generation by generation —
+that's the chimera. Each generation starts ~2 units further out, so
+chains walk off the field and die naturally; the weave keeps seeding new
+ones.
 
 ## The abstraction ladder
 
