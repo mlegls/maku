@@ -86,8 +86,11 @@ impl Sim {
     }
 
     /// Load a card source and instantiate `pattern` (or the first defpattern).
+    /// Imports are expanded (bare names hit the library, paths the cwd);
+    /// already-expanded sources pass through untouched.
     pub fn load(src: &str, pattern: Option<&str>) -> Result<Sim, String> {
-        let forms = read_all(src).map_err(|e| e.to_string())?;
+        let src = crate::edn::expand_src(src)?;
+        let forms = read_all(&src).map_err(|e| e.to_string())?;
         let card = load_card(&forms)?;
         let name = match pattern {
             Some(n) => n.to_string(),
@@ -100,7 +103,8 @@ impl Sim {
     /// given card's defs (and defpatterns) in scope — the REPL entry point.
     /// A leading (defpattern ...) form registers and runs itself.
     pub fn load_forms(card_src: &str, form_src: &str) -> Result<Sim, String> {
-        let card_forms = read_all(card_src).map_err(|e| e.to_string())?;
+        let card_src = crate::edn::expand_src(card_src)?;
+        let card_forms = read_all(&card_src).map_err(|e| e.to_string())?;
         let mut card = load_card(&card_forms)?;
         let body = read_all(form_src).map_err(|e| e.to_string())?;
         if let Some(Form::List(items)) = body.first() {

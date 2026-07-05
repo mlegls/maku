@@ -12,9 +12,12 @@ use std::rc::Rc;
 /// reads — evaluated, $boss-hp would resolve as a channel read).
 const SIGNAL_TAGS: &[&str] = &["hue", "scale", "facing", "opacity", "expose"];
 
-pub(crate) fn parse_expose(meta: Option<&Form>) -> Rc<[(Rc<str>, Rc<str>)]> {
+pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
     let mut out = Vec::new();
-    if let Some(Form::Map(kvs)) = meta {
+    // several meta maps merge per-key, later wins: the LAST map carrying
+    // :expose supplies the whole rule set
+    for meta in metas.iter().rev() {
+        let Form::Map(kvs) = meta else { continue };
         for (k, v) in kvs.iter() {
             if matches!(k, Form::Kw(kw) if &**kw == "expose") {
                 if let Form::Map(pairs) = v {
@@ -30,6 +33,7 @@ pub(crate) fn parse_expose(meta: Option<&Form>) -> Rc<[(Rc<str>, Rc<str>)]> {
                         }
                     }
                 }
+                return out.into();
             }
         }
     }
@@ -38,20 +42,32 @@ pub(crate) fn parse_expose(meta: Option<&Form>) -> Rc<[(Rc<str>, Rc<str>)]> {
 
 pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let dv = evaluate(&items[1], env, ctx, world)?;
-    let meta = match items.get(2) {
-        Some(Form::Map(kvs)) => {
-            let mut pairs = Vec::new();
-            for (k, v) in kvs.iter() {
-                let kv = evaluate(k, env, ctx, world)?;
-                let skip = matches!(&kv, Val::Kw(kw) if SIGNAL_TAGS.contains(&kw.as_ref()));
-                let vv = if skip { Val::Nothing } else { evaluate(v, env, ctx, world)? };
-                pairs.push((kv, vv));
+    // meta: any number of maps, merged per-key with LATER maps winning —
+    // what lets a library template prepend its defaults and pass the
+    // caller's map through: (spawn d {defaults…} user-meta). map_get is
+    // first-match, so pairs collect in reverse map order.
+    let metas = &items[2..];
+    let mut pairs: Vec<(Val, Val)> = Vec::new();
+    for mf in metas.iter().rev() {
+        match mf {
+            Form::Map(kvs) => {
+                for (k, v) in kvs.iter() {
+                    let kv = evaluate(k, env, ctx, world)?;
+                    let skip = matches!(&kv, Val::Kw(kw) if SIGNAL_TAGS.contains(&kw.as_ref()));
+                    let vv = if skip { Val::Nothing } else { evaluate(v, env, ctx, world)? };
+                    pairs.push((kv, vv));
+                }
             }
-            Val::Map(Rc::new(pairs))
+            m => {
+                // a computed meta (variable, call): evaluated pairs only —
+                // signal tags need a literal map to stay unevaluated
+                if let Val::Map(kvs) = evaluate(m, env, ctx, world)? {
+                    pairs.extend(kvs.iter().cloned());
+                }
+            }
         }
-        Some(m) => evaluate(m, env, ctx, world)?,
-        None => Val::Map(Rc::new(vec![])),
-    };
+    }
+    let meta = Val::Map(Rc::new(pairs));
     let mut elems = Vec::new();
     flatten_elems(dv, &mut Vec::new(), &mut elems)?;
     // rand in signal expressions is an ir constant per element (§5): clone the
@@ -62,7 +78,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         }
     }
     let styles = resolve_styles(&meta, &elems)?;
-    let sigs = resolve_sigs(items.get(2), env, elems.len());
+    let sigs = resolve_sigs(metas, env, elems.len());
     let team: Option<Rc<str>> = match map_get(&meta, "team") {
         Some(Val::Kw(k)) => Some(Rc::from(&*k)),
         _ => None,
@@ -150,7 +166,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
     // the keys of (with {$rank 0.5} …) — not reads); :keywords accepted too.
-    let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(items.get(2));
+    let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(metas);
     // collider set: archetype data, one Rc shared by every spawned element.
     // :colliders [{:layer :damage :r 0.1} ...] replaces the team default;
     // :hitbox r resizes the default primary collider.
@@ -453,9 +469,11 @@ pub(crate) fn resolve_styles(meta: &Val, elems: &[SpawnElem]) -> Result<Vec<Styl
 
 /// Signal-valued meta (§7): keep the FORM and sample at render time.
 /// One tag's per-element signals — every element shares the form; array
-/// values resolve per element via the carried idx.
-fn resolve_tag(meta_form: Option<&Form>, env: &Env, n: usize, tag: &str) -> Vec<Option<MetaSig>> {
-    if let Some(Form::Map(kvs)) = meta_form {
+/// values resolve per element via the carried idx. With several meta
+/// maps, the last one carrying the tag wins (per-key merge).
+fn resolve_tag(metas: &[Form], env: &Env, n: usize, tag: &str) -> Vec<Option<MetaSig>> {
+    for meta_form in metas.iter().rev() {
+        let Form::Map(kvs) = meta_form else { continue };
         for (k, v) in kvs.iter() {
             if let Form::Kw(kw) = k {
                 if &**kw == tag {
@@ -471,11 +489,11 @@ fn resolve_tag(meta_form: Option<&Form>, env: &Env, n: usize, tag: &str) -> Vec<
 
 /// All render-affecting signal tags (:hue :scale :facing :opacity), zipped
 /// into one RenderSigs per element.
-pub(crate) fn resolve_sigs(meta_form: Option<&Form>, env: &Env, n: usize) -> Vec<RenderSigs> {
-    let hue = resolve_tag(meta_form, env, n, "hue");
-    let scale = resolve_tag(meta_form, env, n, "scale");
-    let facing = resolve_tag(meta_form, env, n, "facing");
-    let opacity = resolve_tag(meta_form, env, n, "opacity");
+pub(crate) fn resolve_sigs(metas: &[Form], env: &Env, n: usize) -> Vec<RenderSigs> {
+    let hue = resolve_tag(metas, env, n, "hue");
+    let scale = resolve_tag(metas, env, n, "scale");
+    let facing = resolve_tag(metas, env, n, "facing");
+    let opacity = resolve_tag(metas, env, n, "opacity");
     hue.into_iter()
         .zip(scale)
         .zip(facing)

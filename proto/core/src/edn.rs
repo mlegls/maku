@@ -702,12 +702,41 @@ fn desugar_dotted(s: String) -> Form {
 use std::collections::HashSet;
 use std::path::Path;
 
+/// Library imports: a BARE name — no '/' and no ".dmk" — is a stdlib
+/// import, `(import "touhou")`. It canonicalizes to `@lib/<name>.dmk`
+/// (the include-once key on every platform); the filesystem reader maps
+/// that prefix to the repo's cards/lib/, a wasm host serves the key from
+/// its vfs. Path imports stay relative to the importing file.
+const LIB_PREFIX: &str = "@lib/";
+
+/// cards/lib/ located relative to this crate — the prototype's library
+/// path (an installed engine would carry a search path instead).
+fn lib_fs_path(canon: &str) -> String {
+    format!(
+        "{}/../../cards/lib/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        &canon[LIB_PREFIX.len()..]
+    )
+}
+
+/// The native reader: filesystem, with `@lib/` mapped to cards/lib/.
+fn fs_reader(p: &str) -> Result<String, String> {
+    let path = if p.starts_with(LIB_PREFIX) { lib_fs_path(p) } else { p.to_string() };
+    std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path, e))
+}
+
 /// Read a card file from the filesystem, splicing (import "...") lines.
 pub fn expand_card(path: &Path) -> Result<String, String> {
     let key = path.to_string_lossy().to_string();
-    expand_card_with(&key, &|p| {
-        std::fs::read_to_string(p).map_err(|e| format!("{}: {}", p, e))
-    })
+    expand_card_with(&key, &fs_reader)
+}
+
+/// Expand imports in an in-memory source (tests, REPL, rig strings):
+/// bare imports hit the library; relative paths resolve against the
+/// process cwd. Sources without import lines pass through untouched.
+pub fn expand_src(src: &str) -> Result<String, String> {
+    let mut visited = HashSet::new();
+    expand_lines(src, "", &fs_reader, &mut visited)
 }
 
 /// Import expansion over an abstract reader (filesystem natively; a fetched
@@ -733,16 +762,27 @@ fn expand_inner(
         Some(i) => &path[..i],
         None => "",
     };
+    expand_lines(&src, base, read, visited)
+}
+
+fn expand_lines(
+    src: &str,
+    base: &str,
+    read: &dyn Fn(&str) -> Result<String, String>,
+    visited: &mut HashSet<String>,
+) -> Result<String, String> {
     let mut out = String::with_capacity(src.len());
     for line in src.lines() {
         match import_target(line) {
             Some(rel) => {
-                let joined = if base.is_empty() {
+                let target = if !rel.contains('/') && !rel.ends_with(".dmk") {
+                    format!("{}{}.dmk", LIB_PREFIX, rel) // library import
+                } else if base.is_empty() {
                     rel.to_string()
                 } else {
                     format!("{}/{}", base, rel)
                 };
-                out.push_str(&expand_inner(&normalize(&joined), read, visited)?);
+                out.push_str(&expand_inner(&normalize(&target), read, visited)?);
                 out.push('\n');
             }
             None => {

@@ -1441,3 +1441,41 @@
             "called patterns don't inherit the machine scope (goto is lexical)"
         );
     }
+
+    /// spawn takes several meta maps merged per-key, later wins — the hook
+    /// library templates use: (spawn d {defaults…} user-meta).
+    #[test]
+    fn spawn_meta_merges() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (pose c[0 0])
+         {:team :enemy :hp 5 :cols {:a 1} :style {:family :gem}}
+         {:hp 2 :style {:family :star :color :red}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let b = &sim.world.bullets[0];
+        assert_eq!(b.col_get("hp"), Some(2.0), "later map wins per-key");
+        assert_eq!(b.col_get("a"), Some(1.0), "earlier keys survive");
+        assert_eq!(b.team.as_deref(), Some("enemy"));
+        assert_eq!(b.style.family, "star", ":style replaces wholesale");
+    }
+
+    /// $tick: the world clock as a channel — what lets deadline columns
+    /// (iframe-until) be written by library code instead of engine verbs.
+    #[test]
+    fn tick_channel() {
+        const CARD: &str = r#"
+(defpattern p []
+  (seq (wait-for (>= $tick 5)) (spawn (pose c[0 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.world.bullets.len(), 0, "gate still closed");
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.world.bullets.len(), 1, "gate opened at tick 5");
+    }

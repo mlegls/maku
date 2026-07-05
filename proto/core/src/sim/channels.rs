@@ -20,6 +20,11 @@ impl Sim {
         ] {
             ch.entry(name.to_string()).or_insert(v);
         }
+        // $tick: the world clock as a channel (refreshed at step start, so
+        // control-layer reads see the current tick). Absolute time is what
+        // lets deadline columns be plain data — (invuln …) in the stdlib is
+        // a set-col of :iframe-until = $tick + window, not an engine verb.
+        ch.insert("tick".into(), Val::Num(self.world.tick as f64));
         // $player-k DERIVES from piloted rig entities keyed by the :pilot
         // column's VALUE; $player aliases pilot 1 (card-integrated movement
         // overrides the host mock). Per-pilot homing targets too.
