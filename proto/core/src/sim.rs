@@ -1726,6 +1726,31 @@ mod tests {
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
     }
 
+    /// Nested meta arrays resolve structurally: depth = axis along the
+    /// element's path, cycling per level, scalars broadcasting down.
+    #[test]
+    fn nested_meta_structural() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn ((rot m"30 * iota(10)")
+           ((rot m"4 * iota(3)")
+             ((pose c[1 0]) (linear p[2 0]))))
+         {:style {:family :arrow
+                  :color [[:red :blue] :green :purple]}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let col = |g: usize, i: usize| sim.world.bullets[g * 3 + i].style.color.clone();
+        assert_eq!(
+            (col(0, 0), col(0, 1), col(0, 2)),
+            ("red".into(), "blue".into(), "red".into()),
+            "nested element cycles the inner axis"
+        );
+        assert_eq!(col(1, 0), "green", "scalar element broadcasts its group");
+        assert_eq!(col(2, 2), "purple");
+        assert_eq!(col(3, 1), "blue", "outer level cycles over the groups");
+    }
+
     /// Tutorial cards are doctests: every example pattern in every
     /// cards/tutorials/*.dmk must load and run (the docs can't rot).
     #[test]

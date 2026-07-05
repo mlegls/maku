@@ -123,6 +123,23 @@ To target a *deeper* axis, write that axis's length explicitly — a
 (`nth` is cyclic, so `(nth xs (iota n))` is "an n-vector cycling through
 xs" — the idiom for both palettes and axis targeting.)
 
+Finally, meta values can be **matrices**: a *nested* array resolves
+structurally — depth in the value corresponds to axis in the spawn, cycling
+at every level, and a scalar reached early broadcasts to everything deeper
+(`ex10`):
+
+```clojure
+{:style {:family :arrow
+         :color [[:red :blue] :green :purple]}}
+;; group 0: red, blue, red   (inner array cycles the inner axis)
+;; group 1: all green        (scalar broadcasts its group)
+;; group 2: all purple
+;; group 3: wraps to [red blue] …
+```
+
+Shape disambiguates what length alone cannot: flat arrays use by-length
+axis targeting, nested arrays follow the axis tree.
+
 **Try it:** swap which property binds to which axis; make a 6-color
 palette cycle over the 10 groups and predict which groups repeat colors.
 
@@ -137,8 +154,7 @@ palette cycle over the 10 groups and predict which groups repeat colors.
 | `gsrepeat { times(30) rv2incr(<10>) }` | `((rot m"10 * iota(30)") child)` — broadcasting |
 | `circle` / `spread` modifiers | `(circle n child)` / `(fan n step child)` |
 | nested `gsrepeat` | nested frames; multiplicity = product of axis lengths |
-| `color({…})` + `*` wildcards in style strings | arrays in the structured style record; leading-axis binding + cyclic `nth` for deeper axes |
+| `color({…})` + `*` wildcards in style strings | arrays in the structured style record; leading-axis binding, cyclic `nth`, or nested matrices for deeper axes |
 
-Next: [Tutorial 2](02-firing-over-time.md) — firing over time (waits,
-repeaters with periods, and the difference between simultaneous and
-sequential fan-out).
+Next: [Tutorial 2](02-bullet-controls.md) — bullet controls (queries,
+rematerialization, restyling, and spawning from bullets).

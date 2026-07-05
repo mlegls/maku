@@ -73,3 +73,14 @@
          {:style {:family :arrow
                   :color [:red :blue :green]
                   :variant (nth [:w :x :b] (iota 3))}}))
+
+;; 10. meta as a matrix: nested arrays resolve STRUCTURALLY — depth in the
+;; value = axis in the spawn. Group 0 cycles red/blue inside, group 1 is
+;; all green, group 2 all purple, group 3 wraps around.
+(defpattern ex10-nested-meta []
+  (spawn ((rot m"30 * iota(10)")
+           ((rot m"4 * iota(3)")
+             ((pose c[1 0]) (linear p[2 0]))))
+         {:style {:family :arrow
+                  :color [[:red :blue] :green :purple]
+                  :variant :w}}))

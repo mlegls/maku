@@ -351,6 +351,27 @@ pub(crate) fn kw_str(v: &Val) -> String {
 /// whose length matches; otherwise it cycles on the flat index.
 pub(crate) fn axis_value(v: &Val, elem: &SpawnElem, flat: usize) -> String {
     match v {
+        // NESTED arrays resolve STRUCTURALLY: depth in the meta value =
+        // axis along the element's root-to-leaf path, cycling at every
+        // level; a scalar reached early broadcasts to all deeper axes.
+        // [[:red :blue] :green :purple] over 10×3 → group 0 cycles
+        // red/blue inside, group 1 all green, group 2 all purple, group 3
+        // wraps to [red blue]… Shape disambiguates where length cannot.
+        Val::Arr(items) if items.iter().any(|x| matches!(x, Val::Arr(_))) => {
+            let mut cur = v.clone();
+            let mut depth = 0;
+            loop {
+                match cur {
+                    Val::Arr(xs) if !xs.is_empty() => {
+                        let idx = elem.path.get(depth).map(|(_, i)| *i).unwrap_or(flat);
+                        cur = xs[idx % xs.len()].clone();
+                        depth += 1;
+                    }
+                    other => return kw_str(&other),
+                }
+            }
+        }
+        // flat arrays: F15 by-length targeting, leading-first
         Val::Arr(items) if !items.is_empty() => {
             let len = items.len();
             for (axis_len, idx) in &elem.path {
