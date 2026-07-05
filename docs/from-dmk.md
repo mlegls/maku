@@ -89,13 +89,20 @@ decode notes.
 | `Lplayer` / engine-privileged player | the player is card content: an entity with `:pilot`, deriving `$player` |
 | exposing boss state to UI | `:expose {:col $chan}` on the entity; `(export cell)` for card state |
 
-## Bosses and lifecycle
+## Bosses, phases, script structure (Tutorial 7)
 
 | DMK | here |
 |---|---|
-| `vulnerable(false)` phase property | `(invuln boss dur)` at the phase edge — a column both resolve paths honor |
+| `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — ordered labeled clauses |
+| `phase X { type(spell, "Name") hp(4000) root(0,2) }` | clause opts: `{:name "Name" :type :spell :timeout X :until (<= $boss-hp n) :root c[0 2]}` |
+| phase timeout / hp race | the clause's implicit race: `:timeout` + `:until` + goto, guarding the body |
+| `shiftphaseto(N)` (index) | `(goto :label)` — labels survive phase insertion; scoped to the innermost machine |
+| the zeroeth setup phase convention | a routing clause: `(:opening (goto :spell1))` — or nothing; setup is just code before `phases` |
+| phase-end task cancellation (token propagation) | the phase guard cancels the body's whole task subtree (`until` semantics) |
+| end-of-phase item drops / cleanup | the clause's `finally` block — runs on every exit path |
+| `vulnerable(false)` phase property | `(invuln boss dur)` in the previous phase's `finally` — a column both resolve paths honor |
 | player invulnerability after death | automatic `iframe-until`; window duration = the `:iframes` column |
-| `shiftphaseto` + phase cleanup | trigger events + `(cull)` + `(invuln …)` at the boundary |
+| boss HP bar / phase name on the HUD | `:expose {:hp $boss-hp}` on the boss entity; the machine exports `$phase` |
 
 ## Model-level notes
 

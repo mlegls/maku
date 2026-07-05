@@ -99,6 +99,26 @@ pub struct SpawnElem {
     pub path: Vec<(usize, usize)>,
 }
 
+/// One clause of a `phases` machine (§8): `(label opts? body… (finally …)?)`.
+/// The opts drive the implicit race(goto, timeout, until) AND ride along as
+/// host-facing card data (:name/:type/:hp — DMK's hpi/type props do both
+/// jobs too).
+#[derive(Debug, Clone)]
+pub struct PhaseClause {
+    pub label: Rc<str>,
+    /// :timeout secs — implicit phase end.
+    pub timeout: Option<f64>,
+    /// :until pred — implicit phase end (unevaluated form; hp gates over
+    /// exposed channels live here: `:until (<= $boss-hp 60)`).
+    pub until: Option<Form>,
+    /// :root — the boss repositions here before the phase body starts.
+    pub root: Option<(f64, f64)>,
+    /// Remaining opts (:name :type :hp …) — card data, evaluated once.
+    pub data: Vec<(Rc<str>, Val)>,
+    pub body: Rc<[Form]>,
+    pub finally: Rc<[Form]>,
+}
+
 /// Inert action descriptions. Bodies are unevaluated forms + env (lazy seq).
 #[derive(Debug)]
 pub enum ActionV {
@@ -161,6 +181,16 @@ pub enum ActionV {
     /// phase-end scope-cancellation primitive ((race (wait-for p) body)
     /// degenerate case).
     Until { pred: Form, body: Rc<[Form]>, env: Env },
+    /// The §8 phase machine: ordered labeled clauses run as a trampoline —
+    /// each phase ends by goto, timeout, :until, or body completion;
+    /// finalizers run on every exit path; next = goto target, defaulting
+    /// to clause order; falling off the end completes the machine.
+    Phases { clauses: Rc<[PhaseClause]>, env: Env },
+    /// (goto :label): scoped non-local exit — cancel the enclosing phase
+    /// body (finalizers run), re-enter at the label. The cell identifies
+    /// the innermost lexical machine (bound as #phase-cell in phase bodies,
+    /// so outer machines' labels are simply not in scope).
+    Goto { cell: u64, label: Rc<str> },
     Wait { ticks: u64 },
     WaitFor { pred: Form, env: Env },
     DefVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, init: Val },
@@ -554,6 +584,104 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     env: env.clone(),
                 })));
             }
+            "phases" => {
+                // (phases (label opts? body… (finally body…)?) …) — ordered
+                // clauses, label keyword as head. Opts evaluate once, here
+                // (card data); :until stays a form (a per-tick predicate).
+                let mut clauses = Vec::new();
+                for cf in &items[1..] {
+                    let Form::List(parts) = cf else {
+                        return Err("phases: expected (:label opts? body…) clauses".into());
+                    };
+                    let Some(Form::Kw(label)) = parts.first() else {
+                        return Err("phases: clause head must be a :label keyword".into());
+                    };
+                    let mut at = 1;
+                    let (mut timeout, mut until, mut root) = (None, None, None);
+                    let mut data = Vec::new();
+                    if let Some(Form::Map(kvs)) = parts.get(1) {
+                        at = 2;
+                        for (k, v) in kvs.iter() {
+                            let Form::Kw(k) = k else {
+                                return Err("phases: opts keys are keywords".into());
+                            };
+                            match &**k {
+                                "timeout" => {
+                                    timeout = Some(evaluate(v, env, ctx, world)?.num()?)
+                                }
+                                "until" => until = Some(v.clone()),
+                                "root" => match evaluate(v, env, ctx, world)? {
+                                    Val::Vec2 { x, y } => root = Some((x, y)),
+                                    v => {
+                                        return Err(format!(
+                                            "phases: :root expects a point, got {:?}",
+                                            v
+                                        ))
+                                    }
+                                },
+                                other => {
+                                    data.push((
+                                        Rc::from(other),
+                                        evaluate(v, env, ctx, world)?,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    let mut body: Vec<Form> = parts[at..].to_vec();
+                    let mut finally: Vec<Form> = Vec::new();
+                    if let Some(Form::List(last)) = body.last() {
+                        if matches!(last.first(), Some(Form::Sym(s)) if &**s == "finally") {
+                            finally = last[1..].to_vec();
+                            body.pop();
+                        }
+                    }
+                    clauses.push(PhaseClause {
+                        label: label.clone(),
+                        timeout,
+                        until,
+                        root,
+                        data,
+                        body: body.into(),
+                        finally: finally.into(),
+                    });
+                }
+                if clauses.is_empty() {
+                    return Err("phases: no clauses".into());
+                }
+                return Ok(Val::Action(Rc::new(ActionV::Phases {
+                    clauses: clauses.into(),
+                    env: env.clone(),
+                })));
+            }
+            "goto" => {
+                let Some(Form::Kw(label)) = items.get(1) else {
+                    return Err("goto: expected (goto :label)".into());
+                };
+                // scoped strictly to the innermost lexical phases: the
+                // machine binds its request cell as #phase-cell in phase
+                // bodies; inner machines shadow, called patterns don't see it
+                let cell = match env.lookup("#phase-cell") {
+                    Some(Val::Num(n)) => n as u64,
+                    _ => return Err("goto: no enclosing phases machine".into()),
+                };
+                return Ok(Val::Action(Rc::new(ActionV::Goto {
+                    cell,
+                    label: label.clone(),
+                })));
+            }
+            "phase-end?" => {
+                // internal (synthesized by the machine's implicit race):
+                // (phase-end? cell deadline) — goto requested, or the
+                // deadline tick passed (deadline < 0 = no timeout)
+                let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
+                let deadline = evaluate(&items[2], env, ctx, world)?.num()?;
+                let goto_set =
+                    matches!(ctx.sig.cells.borrow().get(&cell), Some((_, Val::Kw(_))));
+                return Ok(Val::Bool(
+                    goto_set || (deadline >= 0.0 && world.tick as f64 >= deadline),
+                ));
+            }
             "cull" => {
                 // (cull): clear all hostile fire (bomb semantics);
                 // (cull handle): cull one bullet
@@ -839,7 +967,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "randpm1" => {
                 return Ok(Val::Num(if world.next_rand() < 0.5 { -1.0 } else { 1.0 }));
             }
-            "phases" | "stages-action" | "scan" => {
+            "stages-action" | "scan" => {
                 return Err(format!("'{}' not implemented in this milestone", s));
             }
             _ => {}
@@ -1404,6 +1532,16 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let r = exec_instant(inner, ctx, world);
             ctx.ambient = saved;
             r?;
+            Ok(Val::Nothing)
+        }
+        // a goto from an instant context (manip callback) just files the
+        // request; the machine's implicit race picks it up on its next step
+        ActionV::Goto { cell, label } => {
+            let mut cells = ctx.sig.cells.borrow_mut();
+            // first request wins until the machine clears it (tree order)
+            if !matches!(cells.get(cell), Some((_, Val::Kw(_)))) {
+                cells.insert(*cell, ("#goto".to_string(), Val::Kw(label.clone())));
+            }
             Ok(Val::Nothing)
         }
         ActionV::Wait { .. } => Err("cannot wait in instantaneous context (fn body)".into()),

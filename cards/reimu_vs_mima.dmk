@@ -8,11 +8,12 @@
 ;;   control-layer loop over the raw button with stock as fold state,
 ;;   lives/game-over and boss hp/phases are columns + triggers.
 ;;
-;;   boss phases: non-spell while hp > 60; at 60 the :spell-break trigger
-;;   fires, the field clears, and Spell 2 (imported ph_boss2_mima
-;;   translation) takes over until hp 0. Phase scopes use (until pred
-;;   body): structured cancellation kills the phase's whole task subtree
-;;   (turret forks, guide loops) the tick its predicate holds.
+;;   boss phases: a (phases ...) machine — non-spell while hp > 60, then
+;;   Spell 2 (imported ph_boss2_mima translation) until hp 0. Each
+;;   clause's :until arms the implicit race that cancels the phase's
+;;   whole task subtree (turret forks, guide loops) the tick it holds;
+;;   the finally block is the phase-edge bookkeeping (field clear,
+;;   transition mercy window). The machine exports $phase.
 ;;
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
 ;;   anchor); the player kit opts out with (in-frame :world ...).
@@ -96,15 +97,17 @@
                              {:col :hp :leq 0 :event :died :cull true}]
                   :style {:family :lstar :color :purple}
                   :scale 2})]
-      (par
-        (seq (wait-for (> $boss-hp 60))
-             (until (<= $boss-hp 60) (nonspell)))
-        (seq (wait-for (> $boss-hp 0))     ; boss registered
-             (wait-for (<= $boss-hp 60))   ; ...broken into the spell
-             (event :spell)
-             (cull)                        ; field clear at the phase edge
-             (invuln (nth boss 0) 1.5)     ; transition mercy window
-             (until (<= $boss-hp 0) (spell-2)))))))
+      (seq
+        (wait-for (> $boss-hp 0))          ; boss registered
+        (phases
+          (:nonspell {:until (<= $boss-hp 60)}
+            (nonspell)
+            (finally
+              (event :spell)
+              (cull)                       ; field clear at the phase edge
+              (invuln (nth boss 0) 1.5)))  ; transition mercy window
+          (:spell2 {:until (<= $boss-hp 0)}
+            (spell-2)))))))
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks
 (defpattern nonspell []
