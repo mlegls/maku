@@ -22,11 +22,9 @@ written honestly (`ex1-flip`):
 (fork
   (dotimes [i 480 :every (ticks 1)]              ; four seconds of control
     (manipulate {:family :circle
-                 :where (fn [b] (and (> (:y (:pos b)) 3)
-                                     (> (:y (:vel b)) 0)))}
+                 :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
       (fn [b] (remat b (fn [exit]
-        (linear c[(:x (:vel exit))
-                  (- 0 (:y (:vel exit)))])))))))
+        (linear c[exit.vel.x (- 0 exit.vel.y)])))))))
 ```
 
 - `(manipulate query callback)` runs the callback on every live bullet the
@@ -52,7 +50,7 @@ written honestly (`ex1-flip`):
   flags inside the motion function; remat is that idea made a single
   explicit operation.
 
-Note the predicate includes `(> (:y (:vel b)) 0)` — flip only while moving
+Note the predicate includes `(> b.vel.y 0)` — flip only while moving
 up. A stateful "already flipped" flag is what DMK's control keeps
 internally; here the condition is simply written out.
 
@@ -65,7 +63,7 @@ means *any of* (`ex2-select-cull`):
 ```clojure
 (manipulate {:family [:circle :star]
              :color [:red :blue]
-             :where (fn [b] (< (:y (:pos b)) -2))}
+             :where (fn [b] (< b.pos.y -2))}
   (fn [b] (cull b)))
 ```
 
@@ -80,7 +78,7 @@ Several effects under one predicate need no dedicated `batch` construct;
 the callback body is a `seq` (`ex3-restyle-at-age`):
 
 ```clojure
-(manipulate {:family :circle :where (fn [b] (> (:t b) 1))}
+(manipulate {:family :circle :where (fn [b] (> b.t 1))}
   (fn [b]
     (seq
       (event :sfx "x-transform-1")
@@ -102,7 +100,7 @@ Here a callback is control-layer code, so it can simply spawn — anchored
 wherever you like (`ex4-burst`):
 
 ```clojure
-(manipulate {:family :star :where (fn [b] (> (:t b) 1.1))}
+(manipulate {:family :star :where (fn [b] (> b.t 1.1))}
   (fn [b]
     (seq
       ((pose (pos b))
@@ -134,7 +132,7 @@ inferred.
 | `poolcontrol(sel, reset)` | stop the loop (cancel its scope) |
 | style selector `{{ "circle-*" }, { "red/w" }}` | query map: `{:family :circle :color :red}` — arrays = any-of |
 | `flipygt(4, _)` | `(remat b (fn [exit] …))` with the flip written out |
-| `cull(y < -2)` | `:where (fn [b] (< (:y (:pos b)) -2))` + `(cull b)` |
+| `cull(y < -2)` | `:where (fn [b] (< b.pos.y -2))` + `(cull b)` |
 | `batch(pred, {…})` | a `seq` in the callback |
 | `restyleeffect(style, fx, _)` | `(set-style b {...})`, plus your own effect spawn |
 | `sm(_, sync …)` | spawn directly in the callback, anchored by `((pose (pos b)) …)` |
