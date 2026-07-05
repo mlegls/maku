@@ -115,6 +115,14 @@ pub struct ExtLaser {
     pub u_max: f64,
     pub u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
     pub resolution: f64,
+    pub width: f64,
+}
+
+/// A pather value pre-spawn: the guide dyn plus its remembrance window.
+#[derive(Debug)]
+pub struct ExtPather {
+    pub anchor: Rc<DynNode>,
+    pub window: f64,
 }
 
 pub fn eval_sig(

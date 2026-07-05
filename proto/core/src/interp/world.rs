@@ -23,7 +23,12 @@ pub enum Kind {
         u_max: f64,
         u_max_sig: Option<(Form, Env)>,
         resolution: f64,
+        /// Width multiplier: render thickness AND collision half-width.
+        width: f64,
     },
+    /// A trailing time-window of the trajectory, materialized as geometry
+    /// (§6): positions are recorded per tick into Bullet.trail.
+    Pather { window: f64 },
 }
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
@@ -66,6 +71,9 @@ pub struct Bullet {
     /// Last tick's position (collision pass) — contact velocity is the
     /// finite difference, uniform across Closed and Scanned motion.
     pub prev_pos: Option<(f64, f64)>,
+    /// Pather trail: recorded positions, capped at window·rate ticks.
+    /// Bounded, so snapshots stay O(world).
+    pub trail: Vec<(f64, f64)>,
 }
 
 impl Bullet {

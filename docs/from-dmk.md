@@ -56,6 +56,20 @@ decode notes.
 | `move(inf, nroffset(px(sine(8p, 2, t))))` | `(in-frame (cart m"2*sine(8, 1, t)" 0) …)` — a moving frame |
 | `sm` control running an async | `fork` inside the callback (adopted as a child task) |
 
+## Pathers, lasers, subfiring (Tutorial 4)
+
+| DMK | here |
+|---|---|
+| `pather(maxRemember, rememberFn, path, opts)` | `(pather window dyn)` — the trail is the hitbox |
+| `laser(path, cold, hot, opts)` | `(laser shape? {:warn cold :active hot :u-max len …})` |
+| `straight(angle)` / `rotate(base, fn)` options | frame rotation: `((rot angle) laser)` / `((rot m"…t…") laser)` |
+| `static(path)` / `dynamic(path)` with `lt` | one shape slot over `(t, u)`: u-only = static, t entering = dynamic |
+| `s(width)` / `stagger(x)` options | `:width` (also scales the hitbox) / `:resolution` |
+| `varLength` | signal-valued `:u-max` |
+| `hueshift(x*t)` option | signal-valued `:hue` tag |
+| `sm` option (SM at the tip) | `let`-bound guide + `(in-frame guide (fork …))` |
+| `onlaser(fn)` modifier | `(on-laser h u)` — pose with tangent heading at u |
+
 ## Model-level notes
 
 - **Repeaters vs arrays.** DMK expresses multiplicity through repeater

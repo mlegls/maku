@@ -241,7 +241,16 @@ pub(crate) fn flatten_elems(
                     u_max: l.u_max,
                     u_max_sig: l.u_max_sig.clone(),
                     resolution: l.resolution,
+                    width: l.width,
                 },
+                path: path.clone(),
+            });
+            Ok(())
+        }
+        Val::PatherV(pv) => {
+            out.push(SpawnElem {
+                motion: pv.anchor.clone(),
+                kind: Kind::Pather { window: pv.window },
                 path: path.clone(),
             });
             Ok(())

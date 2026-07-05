@@ -46,6 +46,7 @@ pub enum Val {
     Map(Rc<Vec<(Val, Val)>>),
     Dyn(Rc<DynNode>),
     Ext(Rc<ExtLaser>),
+    PatherV(Rc<ExtPather>),
     Action(Rc<ActionV>),
     Fn { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     Builtin(Rc<str>),
@@ -613,9 +614,39 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "vel" => return sf_vel(items, env, ctx, world),
             "laser" => return sf_laser(items, env, ctx, world),
             "pather" => {
-                // prototype: pathers render as points (trail later); the dyn
-                // is the second argument
-                return evaluate(&items[2], env, ctx, world);
+                // (pather window dyn): a trailing time-window of the
+                // trajectory, materialized as geometry (§6)
+                let window = evaluate(&items[1], env, ctx, world)?.num()?;
+                let dv = as_dyn(evaluate(&items[2], env, ctx, world)?)?;
+                return Ok(Val::PatherV(Rc::new(ExtPather { anchor: dv, window })));
+            }
+            "on-laser" => {
+                // (on-laser b u): pose (position + tangent heading) of the
+                // point at parameter u along a live laser — subfiring
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("on-laser: expected laser handle".into());
+                };
+                let u = evaluate(&items[2], env, ctx, world)?.num()?;
+                let Some(i) = world.find(id) else {
+                    return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
+                };
+                let b = &world.bullets[i];
+                let Kind::Laser { shape, .. } = &b.kind else {
+                    return Err("on-laser: not a laser".into());
+                };
+                let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                let anchor = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
+                let at = |uu: f64| -> Result<Pose, String> {
+                    let local = match shape {
+                        Some(sh) => dyn_pose_u(sh, tau, uu, &b.state, &ctx.sig)?,
+                        None => Pose { x: uu, y: 0.0, th: 0.0 },
+                    };
+                    Ok(anchor.compose(&local))
+                };
+                let p0 = at(u)?;
+                let p1 = at(u + 0.01)?;
+                let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
+                return Ok(Val::Pose(Pose { x: p0.x, y: p0.y, th }));
             }
             "live" => {
                 // in a scan context: the channel's current value (class b/d);
@@ -875,6 +906,11 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             u_max: l.u_max,
             u_max_sig: l.u_max_sig.clone(),
             resolution: l.resolution,
+            width: l.width,
+        }))),
+        Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
+            anchor: Rc::new(DynNode::Frame(frame, pv.anchor.clone())),
+            window: pv.window,
         }))),
         other => Ok(Val::Dyn(Rc::new(DynNode::Frame(frame, as_dyn(other)?)))),
     }
@@ -1141,6 +1177,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     damage: damage.clone(),
                     grazed: false,
                     prev_pos: None,
+                    trail: Vec::new(),
                 });
                 for (col, chan) in expose.iter() {
                     world.exposes.push((chan.clone(), id, col.clone()));
@@ -1341,6 +1378,11 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             u_max: l.u_max,
             u_max_sig: l.u_max_sig.clone(),
             resolution: l.resolution,
+            width: l.width,
+        }))),
+        Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
+            anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), pv.anchor.clone())),
+            window: pv.window,
         }))),
         other => {
             let d = as_dyn(other)?;
@@ -1578,6 +1620,7 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         u_max: getf("u-max", 10.0),
         u_max_sig,
         resolution: getf("resolution", 0.1),
+        width: getf("width", 1.0),
     })))
 }
 

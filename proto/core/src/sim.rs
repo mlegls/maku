@@ -462,6 +462,24 @@ impl Sim {
                 step_motion(&b.motion, tau, dt, &mut b.state, &sig)?;
             }
         }
+        // record pather trails (the remembrance window, in ticks)
+        {
+            let tick = self.world.tick;
+            let sig = self.ctx.sig.clone();
+            for b in &mut self.world.bullets {
+                if let Kind::Pather { window } = &b.kind {
+                    let tau = (tick - b.birth) as f64 / TICK_RATE;
+                    if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) {
+                        b.trail.push((p.x, p.y));
+                        let cap = (window * TICK_RATE).ceil() as usize + 1;
+                        if b.trail.len() > cap {
+                            let drop = b.trail.len() - cap;
+                            b.trail.drain(..drop);
+                        }
+                    }
+                }
+            }
+        }
         self.collide(inputs)?;
         self.fire_triggers();
         // bound the retained event window. The log is SHARED across
@@ -494,6 +512,13 @@ impl Sim {
                     }
                 },
                 Kind::Laser { warn, active, .. } => tau <= warn + active,
+                Kind::Pather { .. } => match dyn_pose(&b.motion, tau, &b.state, &sig) {
+                    Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
+                    Err(e) => {
+                        err = Some(e);
+                        false
+                    }
+                },
             }
         });
         match err {
@@ -567,13 +592,19 @@ impl Sim {
             let (bx, by) = pos[i]?;
             match &b.kind {
                 Kind::Point => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
-                Kind::Laser { warn, .. } => {
+                Kind::Laser { warn, width, .. } => {
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if tau < *warn {
                         return None; // warn phase: no hitbox yet
                     }
                     let pts = sample_laser(b, tau, &sig)?;
                     let d = dist_to_chain(to, &pts)?;
+                    Some((d - LASER_R * width).max(0.0).powi(2))
+                }
+                // the trail IS the hitbox: a capsule chain over the
+                // recorded window
+                Kind::Pather { .. } => {
+                    let d = dist_to_chain(to, &b.trail)?;
                     Some((d - LASER_R).max(0.0).powi(2))
                 }
             }
@@ -819,6 +850,16 @@ impl Sim {
                             y: p.y,
                             th: p.th,
                             style: b.style.clone(),
+                            hue: self.sample_hue(b, tau),
+                        });
+                    }
+                }
+                Kind::Pather { .. } => {
+                    if b.trail.len() >= 2 {
+                        out.push(RenderItem::Polyline {
+                            pts: b.trail.clone(),
+                            style: b.style.clone(),
+                            active: true,
                             hue: self.sample_hue(b, tau),
                         });
                     }

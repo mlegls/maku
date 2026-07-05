@@ -1,0 +1,69 @@
+;; Tutorial 4: pathers, lasers, and subfiring — the runnable companion to
+;; docs/tutorials/04-pathers-and-lasers.md. Press 1-9 to run each example.
+;;
+;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t04.dmk
+
+;; 1. pathers: a trailing window of the trajectory drawn as geometry.
+;; (pather window dyn) — the trail is the hitbox. Three wavy ribbons
+;; with drifting hue.
+(defpattern ex1-pathers []
+  (spawn ((rot m"120 * iota(3)")
+           (pather 1.2 (cart m"1.2 * t" m"sine(1, 0.35, t)")))
+         {:style {:family :pather :color [:red :teal :purple] :variant :w}
+          :hue m"60 * t"}))
+
+;; 2. laser lifecycle: :warn is the harmless telegraph, :active the hot
+;; window. One straight beam downward; one at a fixed angle; one whose
+;; angle sweeps over time.
+(defpattern ex2-lasers []
+  (par
+    (spawn ((pose c[-2 3]) ((rot -90) (laser {:warn 1 :active 2 :u-max 7})))
+           {:style {:family :laser :color :red}})
+    (spawn ((pose c[0 3]) ((rot -60) (laser {:warn 1 :active 2 :u-max 7})))
+           {:style {:family :glaser :color :green}})
+    (spawn ((pose c[2 3]) ((rot m"-120 + 30 * t")
+                            (laser {:warn 1 :active 3 :u-max 7})))
+           {:style {:family :gdlaser :color :blue}})))
+
+;; 3. shaped lasers: the shape is a signal over (t, u), where u is the
+;; distance along the beam. A shape using only u is drawn once and holds
+;; still; adding t makes the whole curve writhe.
+(defpattern ex3-shaped []
+  (par
+    ;; static: a frozen spiral (u only)
+    (spawn ((pose c[-2 0])
+             (laser (polar m"1.5 * u" m"sine(1.4, 60, u)")
+                    {:warn 1 :active 4 :u-max 2.5 :width 0.5}))
+           {:style {:family :gdlaser :color :yellow}})
+    ;; dynamic: the same spiral, alive (t enters the phase)
+    (spawn ((pose c[2 0])
+             (laser (polar m"1.5 * u" m"-30 * t + sine(1.4, 60, u + t)")
+                    {:warn 1 :active 4 :u-max 2.5 :width 0.5}))
+           {:style {:family :gdlaser :color :pink}})))
+
+;; 4. subfiring from a pather tip: let-bind the guide dyn so the ribbon
+;; and the firing loop share ONE instance, then fork the loop inside the
+;; guide's frame — it rides the tip.
+(defpattern ex4-tip-fire []
+  (let [guide (cart m"1.4 * t" m"sine(1.1, 0.3, t)")]
+    (par
+      (spawn (pather 1.5 guide)
+             {:style {:family :lightning :color :blue :variant :w}})
+      (in-frame guide
+        (fork
+          (for [i 40 :every (ticks 10)]
+            (spawn ((rot 180) (linear p[2 0]))
+                   {:style {:family :amulet :color :pink :variant :b}})))))))
+
+;; 5. subfiring along a laser: (on-laser h u) gives the pose (position +
+;; tangent) at distance u along a live laser; (rot 90) fires normal to it.
+(defpattern ex5-on-laser []
+  (let [h (spawn ((pose c[-2.5 -2])
+                   (laser (polar m"1.8 * u" m"-15 * t + sine(2.8, 40, u + t)")
+                          {:warn 0.5 :active 5 :u-max 3 :width 0.6}))
+                 {:style {:family :gdlaser :color :red}})]
+    (for [i 44 :every (ticks 8)]
+      ((pose (on-laser (nth h 0) m"0.07 * i"))
+        ((rot 90)
+          (spawn (linear p[1.5 0])
+                 {:style {:family :gem :color :green :variant :w}}))))))

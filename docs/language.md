@@ -332,7 +332,7 @@ Arithmetic `+ - * /` is variadic (n-ary fold; unary `-`/`/` negate/reciprocate) 
 4. Angle representation for θ columns (wrapped float vs unit vector) — storage-level; canonical-degrees is surface semantics either way.
 5. Facing override semantics: frame-relative vs absolute (§4 orientation policy; the cradle translation reads as frame-relative).
 6. `(on-axis k xs)` meta-targeting sugar vs the explicit-length convention (§5).
-7. Blocking-laser feedback contract (world geometry → extent; necessarily `Scanned`); also collision width for lasers (the prototype uses a constant beam half-width; `:width` should feed it).
+7. Blocking-laser feedback contract (world geometry → extent; necessarily `Scanned`). (Laser `:width` now feeds collision; pathers materialize as recorded trails with capsule-chain hitboxes.)
 8. `(with {channel value} body)` residual details (the core semantics are settled in §3 — the in-frame-for-channels distribution law): which *derived* channels are overridable, nesting/shadowing rules, override values that are themselves signals of taped inputs. Unimplemented in the prototype.
 9. Derived-channel vocabulary and cost model (§3). The prototype's de facto set — `$nearest-enemy`, `$graze`, `$enemies`, `$lives`, `$boss`, `$boss-hp` — works but is ad hoc; the `:boss`/`:pilot` column conventions especially want a principled "expose column of tagged entity as channel" rule.
 10. **The interaction matrix as data** (§9): rows are engine-fixed; new pair-classes (bullet-cancel `shot × damage`, item pickup) and the hit effect's by-name knowledge of the `lives` column both want rows declared as card/host data `{layers, effect, params}`.

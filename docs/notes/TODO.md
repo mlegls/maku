@@ -21,8 +21,10 @@ language.md.
 - Extraction (§10), ancestor clocks (§13.1), 3D embedding (§12).
 
 ## Known approximations (documented in code)
-- Pathers render as points; laser collision uses a constant beam half-width
-  (`:width` should feed it, §13.7).
+- ~~Pathers render as points; laser `:width` ignored by collision~~ done
+  with tutorial 04: pathers record trails (rendered + capsule-chain
+  hitbox, bounded by the window); `:width` scales laser collision.
+  Remaining §13.7: blocking lasers (world geometry → extent).
 - Trigger predicates: single-column `≤` crossings only (§13.13).
 - Interaction matrix rows engine-fixed; hit effect knows the `lives` and
   `iframe-until` columns by name (§13.10). Iframes and inputs are no longer
@@ -50,8 +52,7 @@ language.md.
 ## Doc roadmap
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
   tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
-  tutorial_cards_run): 01–03 done (03 = Miracle Fruit + Danmaku Chimera);
-  04 next (lasers). Tutorials are standalone; DMK mappings live in
-  docs/from-dmk.md.
+  tutorial_cards_run): 01–04 done; 05 next. Tutorials are standalone;
+  DMK mappings live in docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.
