@@ -75,7 +75,7 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
 /// themselves; a FORM list/vector views as its subforms (each wrapped back
 /// up as a form value) — which is what lets macro code take unevaluated
 /// clauses apart with the ordinary vocabulary (count/first/rest/nth/…).
-fn seq_view(v: &Val) -> Option<Vec<Val>> {
+pub(crate) fn seq_view(v: &Val) -> Option<Vec<Val>> {
     match v {
         Val::Arr(xs) => Some((**xs).clone()),
         Val::FormV(f) => match &**f {
@@ -91,12 +91,12 @@ fn seq_view(v: &Val) -> Option<Vec<Val>> {
 /// Look a key up in a map VALUE or a map FORM. Form lookups return the
 /// value subform unevaluated (macro time); missing/non-map yields None —
 /// `get` is total so macro code can probe without pre-checking shapes.
-fn get_in(subject: &Val, key: &Val) -> Option<Val> {
+pub(crate) fn get_in(subject: &Val, key: &Val) -> Option<Val> {
     match subject {
-        Val::Map(_) => match key {
-            Val::Kw(k) | Val::Str(k) => super::spawn::map_get(subject, k),
-            _ => None,
-        },
+        Val::Map(kvs) => kvs
+            .iter()
+            .find(|(k, _)| map_key_matches(key, k))
+            .map(|(_, v)| v.clone()),
         Val::FormV(f) => match &**f {
             Form::Map(kvs) => kvs
                 .iter()
@@ -110,6 +110,14 @@ fn get_in(subject: &Val, key: &Val) -> Option<Val> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn map_key_matches(key: &Val, candidate: &Val) -> bool {
+    match (key, candidate) {
+        (Val::Kw(a), Val::Kw(b)) | (Val::Str(a), Val::Str(b)) => a == b,
+        (Val::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
+        _ => false,
     }
 }
 
@@ -415,4 +423,3 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         _ => Err(format!("unknown function '{}'", name)),
     }
 }
-

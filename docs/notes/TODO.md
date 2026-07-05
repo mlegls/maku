@@ -84,12 +84,11 @@ language.md.
   $graze/$lives counters, and $boss = world.boss (the move anchor as
   engine state; wants generic named anchors, which would also de-genre
   `move`).
-- A general `match` special (destructuring over forms AND values) would
-  subsume the inspection half of the macro vocabulary (form-type/
-  form-name/get-on-forms/fixed-shape nth) and make clause transforms
-  read as one pattern per shape; wants literal-vs-binder + rest-pattern
-  design (mid-rest tails for the finally split). Front-end over the
-  same builtins — add once phases-style macros show the pattern set.
+- `match` special SHIPPED: destructuring over forms AND values with `_`,
+  binders, literals, quote-form patterns, `(as n p)`, vector rest/mid-rest
+  patterns, and map key-presence discrimination. It now covers the phase
+  clause/finally split directly; the older inspection vocabulary remains
+  for generic macro walking.
 - Macro-time power that carries the stdlib: `& rest` params, form-aware
   seq vocabulary (count/first/rest/nth/drop/take/concat), total `get`
   over map forms, form-type/form-name, map/filter specials.
@@ -127,7 +126,10 @@ language.md.
   over t.
 - Fixed 120 Hz tick assumption in several places (`TICK_RATE`).
 - AOT/wasm: hot-layer compilation unstarted; core-vs-lib builtin
-  stratification undecided.
+  stratification undecided. Specials are the IR, builtins are intrinsics;
+  `match` replaced no builtins but makes `map`/`filter` demotable to lib
+  code later, blocked on a tail-sharing seq rep because naive match
+  recursion over `Rc<Vec>` rest-copies is O(n²).
 
 ## Doc roadmap
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our

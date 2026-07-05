@@ -77,25 +77,9 @@
   (let [hp (get opts :hp)]
     (if (nothing? hp) (get opts :until) `(<= $boss-hp ~hp))))
 
-;; is this body form the (finally …) tail?
-(defn phase-finally?* [f]
-  (if (= (form-type f) :list)
-    (if (> (count f) 0) (= (form-name (first f)) "finally") false)
-    false))
-
-;; one (:label opts? body… (finally …)?) clause → a `states` clause
-(defn phase-clause* [clause]
-  (let [label (first clause)
-        has-opts (if (> (count clause) 1)
-                   (= (form-type (nth clause 1)) :map)
-                   false)
-        opts (if has-opts (nth clause 1) clause)   ; total get: non-map → nothing
-        whole (drop (if has-opts 2 1) clause)
-        n (count whole)
-        has-fin (if (> n 0) (phase-finally?* (nth whole (- n 1))) false)
-        body (if has-fin (take (- n 1) whole) whole)
-        fin (if has-fin (drop (- n 1) whole) [])
-        gate (phase-gate* opts)
+;; one clause's already-split pieces → a `states` clause
+(defn phase-emit* [label opts body fin]
+  (let [gate (phase-gate* opts)
         gated (if (nothing? gate)
                 body
                 (if (= (count body) 0)
@@ -110,6 +94,18 @@
                  timed
                  (concat [`(move 0.9 :out-sine ~root)] timed))]
     `(~label ~@rooted ~@fin)))
+
+;; split the optional (finally …) tail; `states` owns the finalizer.
+(defn phase-split* [label opts rest]
+  (match rest
+    [& body (as f ['finally & _])] (phase-emit* label opts body [f])
+    _                              (phase-emit* label opts rest [])))
+
+;; one (:label opts? body… (finally …)?) clause → a `states` clause
+(defn phase-clause* [clause]
+  (match clause
+    [label (as opts {}) & rest] (phase-split* label opts rest)
+    [label & rest]              (phase-split* label {} rest)))
 
 (defmacro phases [& clauses]
   `(states ~@(map phase-clause* clauses)))

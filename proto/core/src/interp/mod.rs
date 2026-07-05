@@ -722,8 +722,18 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "vel" => return sf_vel(items, env, ctx, world),
             "laser" => return sf_laser(items, env, ctx, world),
             "quasiquote" => {
+                if items.len() != 2 {
+                    return Err("quasiquote: expected one argument".into());
+                }
                 return qq(&items[1], env, ctx, world).map(|f| Val::FormV(Rc::new(f)));
             }
+            "quote" => {
+                if items.len() != 2 {
+                    return Err("quote: expected one argument".into());
+                }
+                return Ok(Val::FormV(Rc::new(items[1].clone())));
+            }
+            "match" => return sf_match(items, env, ctx, world),
             // (map f xs) / (filter f xs): eager, value-level. Sequences are
             // arrays or form lists/vectors (macro code maps clause
             // transformers over its rest-args). These need the evaluator —
@@ -1741,6 +1751,178 @@ fn apply_frame_arr(frames: &Val, child: Val) -> Result<Val, String> {
 // ---------------------------------------------------------------------------
 // Special forms.
 
+fn sf_match(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    if items.len() < 2 {
+        return Err("match: expected subject".into());
+    }
+    if (items.len() - 2) % 2 != 0 {
+        return Err("match: pattern without a result".into());
+    }
+    let subject = evaluate(&items[1], env, ctx, world)?;
+    for pair in items[2..].chunks(2) {
+        let mut binds = Vec::new();
+        if match_pattern(&pair[0], &subject, &mut binds)? {
+            let mut e = env.clone();
+            for (name, val) in binds {
+                e = e.bind(name, val);
+            }
+            return evaluate(&pair[1], &e, ctx, world);
+        }
+    }
+    Err("match: no clause matched".into())
+}
+
+fn match_pattern(
+    pat: &Form,
+    subject: &Val,
+    binds: &mut Vec<(Rc<str>, Val)>,
+) -> Result<bool, String> {
+    match pat {
+        Form::Sym(s) if &**s == "_" => Ok(true),
+        Form::Sym(s) => {
+            binds.push((s.clone(), subject.clone()));
+            Ok(true)
+        }
+        Form::Num(_) | Form::Kw(_) | Form::Str(_) | Form::Bool(_) => {
+            Ok(literal_pattern_matches(pat, subject))
+        }
+        Form::List(items) => match items.first() {
+            Some(Form::Sym(s)) if &**s == "quote" => {
+                if items.len() != 2 {
+                    return Err("match: malformed quote pattern".into());
+                }
+                Ok(matches!(subject, Val::FormV(f) if **f == items[1]))
+            }
+            Some(Form::Sym(s)) if &**s == "as" => {
+                if items.len() != 3 {
+                    return Err("match: malformed as pattern".into());
+                }
+                let Form::Sym(name) = &items[1] else {
+                    return Err("match: as name must be a symbol".into());
+                };
+                if match_pattern(&items[2], subject, binds)? {
+                    binds.push((name.clone(), subject.clone()));
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            _ => Err(format!("match: unsupported pattern {}", pat)),
+        },
+        Form::Vector(parts) => match_seq_pattern(parts, subject, binds),
+        Form::Map(kvs) => match_map_pattern(kvs, subject, binds),
+    }
+}
+
+fn literal_pattern_matches(pat: &Form, subject: &Val) -> bool {
+    match (pat, subject) {
+        (Form::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
+        (Form::Kw(a), Val::Kw(b)) | (Form::Str(a), Val::Str(b)) => a == b,
+        (Form::Bool(a), Val::Bool(b)) => a == b,
+        (_, Val::FormV(f)) => form_literal_matches(pat, f),
+        _ => false,
+    }
+}
+
+fn form_literal_matches(pat: &Form, subject: &Form) -> bool {
+    match (pat, subject) {
+        (Form::Num(a), Form::Num(b)) => (a - b).abs() < 1e-9,
+        (Form::Kw(a), Form::Kw(b)) | (Form::Str(a), Form::Str(b)) => a == b,
+        (Form::Bool(a), Form::Bool(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn match_seq_pattern(
+    parts: &[Form],
+    subject: &Val,
+    binds: &mut Vec<(Rc<str>, Val)>,
+) -> Result<bool, String> {
+    let xs = match seq_view(subject) {
+        Some(xs) => xs,
+        None => return Ok(false),
+    };
+    let rest_i = parts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| matches!(p, Form::Sym(s) if &**s == "&").then_some(i))
+        .collect::<Vec<_>>();
+    if rest_i.len() > 1 {
+        return Err("match: multiple & in vector pattern".into());
+    }
+    let Some(rest_i) = rest_i.first().copied() else {
+        if xs.len() != parts.len() {
+            return Ok(false);
+        }
+        return match_pairs(parts, &xs, binds);
+    };
+    let Some(Form::Sym(rest_name)) = parts.get(rest_i + 1) else {
+        return Err("match: & must be followed by a rest symbol".into());
+    };
+    let before = &parts[..rest_i];
+    let after = &parts[rest_i + 2..];
+    if xs.len() < before.len() + after.len() {
+        return Ok(false);
+    }
+    if !match_pairs(before, &xs[..before.len()], binds)? {
+        return Ok(false);
+    }
+    if !match_pairs(after, &xs[xs.len() - after.len()..], binds)? {
+        return Ok(false);
+    }
+    if &**rest_name != "_" {
+        let mid = xs[before.len()..xs.len() - after.len()].to_vec();
+        binds.push((rest_name.clone(), Val::Arr(Rc::new(mid))));
+    }
+    Ok(true)
+}
+
+fn match_pairs(
+    pats: &[Form],
+    vals: &[Val],
+    binds: &mut Vec<(Rc<str>, Val)>,
+) -> Result<bool, String> {
+    for (p, v) in pats.iter().zip(vals.iter()) {
+        if !match_pattern(p, v, binds)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn match_map_pattern(
+    kvs: &[(Form, Form)],
+    subject: &Val,
+    binds: &mut Vec<(Rc<str>, Val)>,
+) -> Result<bool, String> {
+    if !matches!(subject, Val::Map(_) | Val::FormV(_)) {
+        return Ok(false);
+    }
+    for (k, p) in kvs {
+        let key = map_pattern_key(k)?;
+        let Some(v) = get_in(subject, &key) else {
+            return Ok(false);
+        };
+        if !match_pattern(p, &v, binds)? {
+            return Ok(false);
+        }
+    }
+    match subject {
+        Val::Map(_) => Ok(true),
+        Val::FormV(f) => Ok(matches!(&**f, Form::Map(_))),
+        _ => Ok(false),
+    }
+}
+
+fn map_pattern_key(k: &Form) -> Result<Val, String> {
+    match k {
+        Form::Kw(k) => Ok(Val::Kw(k.clone())),
+        Form::Str(s) => Ok(Val::Str(s.clone())),
+        Form::Num(n) => Ok(Val::Num(*n)),
+        _ => Err(format!("match: unsupported map pattern key {}", k)),
+    }
+}
+
 fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let Some(Form::Vector(binds)) = items.get(1) else {
         return Err("let: expected binding vector".into());
@@ -2092,6 +2274,11 @@ mod tests {
         evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap()
     }
 
+    fn ev_err(src: &str) -> String {
+        let f = read_one(src).unwrap();
+        evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap_err()
+    }
+
     #[test]
     fn arithmetic_and_math_macro() {
         let f = read_one("m\"0.2*(i+1)*(i+2)\"").unwrap();
@@ -2155,6 +2342,26 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn match_special() {
+        assert_eq!(ev("(match 2 1 :one n (+ n 3) _ 0)").num().unwrap(), 5.0);
+        assert_eq!(ev("(match :miss :hit 1 _ 2)").num().unwrap(), 2.0);
+        assert_eq!(ev("(match [1 2] [1 x] x)").num().unwrap(), 2.0);
+        assert_eq!(ev("(match [1 2 3] [a & r] (count r))").num().unwrap(), 2.0);
+        assert_eq!(ev("(match [1 2 3 4] [a & mid 4] (count mid))").num().unwrap(), 2.0);
+        assert_eq!(ev("(match {:x 1} {:hp n} n {} 7)").num().unwrap(), 7.0);
+        assert_eq!(ev("(match {:hp 9} {:hp n} n {} 7)").num().unwrap(), 9.0);
+        assert_eq!(ev("(match [1 2] (as whole [a b]) (count whole))").num().unwrap(), 2.0);
+        assert_eq!(ev("(match 'finally 'finally 1 _ 0)").num().unwrap(), 1.0);
+        let Val::FormV(f) = ev("(quote abc)") else { panic!() };
+        assert!(matches!(&*f, Form::Sym(s) if &**s == "abc"));
+        assert_eq!(ev("(match 2 _ 1 n 2)").num().unwrap(), 1.0);
+        assert_eq!(ev_err("(match :x :y 1)"), "match: no clause matched");
+
+        let Val::FormV(f) = ev("(match `(:a {:hp 10} (fire)) [label (as opts {}) & rest] (get opts :hp))") else { panic!() };
+        assert!(matches!(&*f, Form::Num(n) if (*n - 10.0).abs() < 1e-9));
     }
 
     #[test]

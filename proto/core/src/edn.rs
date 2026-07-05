@@ -187,6 +187,11 @@ impl<'a> Reader<'a> {
                 let f = self.read_form()?;
                 Ok(Form::list(vec![Form::sym("quasiquote"), f]))
             }
+            b'\'' => {
+                self.bump();
+                let f = self.read_form()?;
+                Ok(Form::list(vec![Form::sym("quote"), f]))
+            }
             b'~' => {
                 self.bump();
                 if self.peek() == b'@' {
