@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 const BUILTINS: &[&str] = &[
     "+", "-", "*", "/", "mod", "pow", "inc", "dec", "=", "<", ">", "<=", ">=", "min", "max",
-    "abs", "quot", "ticks", "sin", "cos", "sine", "lssht", "cart", "polar", "pose", "rot", "still",
+    "abs", "quot", "ticks", "and", "or", "not", "sin", "cos", "sine", "lssht", "cart", "polar", "pose", "rot", "still",
     "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerp3", "lerpsmooth",
     "angle-of", "mag", "einsine", "eoutsine", "eiosine",
 ];
@@ -159,6 +159,9 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             v => Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: v.num()? })),
         },
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
+        "and" => Ok(Val::Bool(args.iter().all(truthy))),
+        "or" => Ok(Val::Bool(args.iter().any(truthy))),
+        "not" => Ok(Val::Bool(!truthy(&args[0]))),
         "linear" => match &args[0] {
             Val::Vec2 { x, y } => Ok(Val::Dyn(Rc::new(DynNode::Linear { vx: *x, vy: *y }))),
             v => Err(format!("linear: expected point, got {:?}", v)),

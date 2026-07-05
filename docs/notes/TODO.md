@@ -13,8 +13,11 @@ language.md.
   defaults only, no argument passing, shared cells.
 - Channel manifest / load-time contract check (§3) — `$wind` on a host that
   doesn't provide it should fail at load, not at tick 400.
-- `remat` / `manipulate` surface is partial (handle-cull and `(cull)` exist;
-  queries, per-slot remat, F1 lint do not).
+- `remat` / `manipulate`: queries (style axes + :where over the bullet
+  view), single-slot remat (motion; epoch rebases whole-bullet), and
+  set-style landed with tutorial 02. Still missing: per-slot epochs
+  (a half-finished fade surviving a motion remat), soft-cull fades,
+  the F1 lint, and the masked-SoA fast path (all callbacks bill fuel).
 - Extraction (§10), ancestor clocks (§13.1), 3D embedding (§12).
 
 ## Known approximations (documented in code)
@@ -47,7 +50,7 @@ language.md.
 ## Doc roadmap
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
   tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
-  tutorial_cards_run): 01 done; 02 next (firing over time — waits,
-  repeaters with periods, sync vs async).
+  tutorial_cards_run): 01, 02 done; 03 next (movement functions — time in
+  expressions, easing, the closed/integrated split).
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

@@ -1,0 +1,79 @@
+;; Tutorial 2: bullet controls — the runnable companion to
+;; docs/tutorials/02-bullet-controls.md. Press 1-9 to run each example.
+;;
+;;   cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t02.dmk
+;;
+;; The concept sequence follows DMK's Tutorial 2 (MIT, (c) Bagoum,
+;; https://dmk.bagoum.com/docs/articles/t02.html), re-taught for this
+;; language: a "bullet control" here is nothing but an ordinary control-
+;; layer loop running (manipulate query effect) — no dedicated machinery.
+
+;; 1. flipping: rings rise; a 4-second control bounces circles off an
+;; invisible ceiling at y=3. The flip is a REMAT: snap {:pos :vel}, swap
+;; the motion for a new closed signal — the bullet stays scrub-safe.
+(defpattern ex1-flip []
+  (par
+    (fork
+      (dotimes [i 480 :every (ticks 1)]      ; the control, for 4 seconds
+        (manipulate {:family :circle
+                     :where (fn [b] (and (> (:y (:pos b)) 3)
+                                         (> (:y (:vel b)) 0)))}
+          (fn [b] (remat b (fn [exit]
+            (linear c[(:x (:vel exit))
+                      (- 0 (:y (:vel exit)))])))))))
+    (dotimes [vol inf :every (ticks 50)]
+      (spawn (circle 24 (linear p[2.5 0]))
+             {:style {:family :circle :color :red :variant :w}}))))
+
+;; 2. selection: two families × two colors spray in all directions; one
+;; control culls only {circle, star} × {red, blue} that fall below y=-2.
+;; Style selection is a typed query over record axes — arrays mean any-of.
+(defpattern ex2-select-cull []
+  (par
+    (fork
+      (dotimes [i inf :every (ticks 1)]
+        (manipulate {:family [:circle :star]
+                     :color [:red :blue]
+                     :where (fn [b] (< (:y (:pos b)) -2))}
+          (fn [b] (cull b)))))
+    (dotimes [vol inf :every (ticks 40)]
+      (spawn (circle 16 (linear p[2 0]))
+             {:style {:family (nth [:circle :star] vol)
+                      :color [:red :blue :green]
+                      :variant :w}}))))
+
+;; 3. batch effects at an age threshold: circles older than 1s restyle
+;; into arrows and announce it. A "batch" is just a seq in the callback;
+;; ordering matters the honest way — a culled bullet makes later verbs
+;; dead-handle no-ops.
+(defpattern ex3-restyle-at-age []
+  (par
+    (fork
+      (dotimes [i inf :every (ticks 10)]
+        (manipulate {:family :circle
+                     :where (fn [b] (> (:t b) 1))}
+          (fn [b]
+            (seq
+              (event :sfx "x-transform-1")
+              (set-style b {:family :arrow :color :red :variant :b}))))))
+    (dotimes [vol inf :every (ticks 45)]
+      (spawn (circle 12 (linear p[1.2 0]))
+             {:style {:family :circle :color :blue :variant :w}}))))
+
+;; 4. spawning from bullets: stars burst into a ring where they are once
+;; they cross an age threshold — the callback spawns at (pos b), then
+;; culls. (Callbacks spawn in world coordinates: ambient frames stop at
+;; lambdas.)
+(defpattern ex4-burst []
+  (dotimes [vol inf :every (ticks 70)]
+    (seq
+      (spawn (circle 6 (linear p[1.5 0]))
+             {:style {:family :star :color :teal :variant :w}})
+      (wait 1.2)
+      (manipulate {:family :star :where (fn [b] (> (:t b) 1.1))}
+        (fn [b]
+          (seq
+            ((pose (pos b))
+              (spawn (circle 8 (linear p[3 0]))
+                     {:style {:family :gem :color :pink :variant :w}}))
+            (cull b)))))))

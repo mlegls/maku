@@ -125,7 +125,9 @@ pub enum ActionV {
         colliders: Rc<[Collider]>,
         expose: Rc<[(Rc<str>, Rc<str>)]>,
     },
-    Manipulate { targets: Vec<u64>, callback: Val },
+    Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
+    Remat { target: u64, f: Val },
+    SetStyle { target: u64, style: Val },
     Cull { target: u64 },
     /// (export cell): publish a pattern cell as a read-only channel of the
     /// same name — the pattern-level export surface (host renders it; the
@@ -436,9 +438,44 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "manipulate" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
                 let callback = evaluate(&items[2], env, ctx, world)?;
+                // a query map selects by style axes (Kw exact / Arr any-of)
+                // and :where (pure fn over the bullet view) — queries cut
+                // across birth structures (§9); handles are the degenerate
+                // case
+                if matches!(target, Val::Map(_)) {
+                    return Ok(Val::Action(Rc::new(ActionV::Manipulate {
+                        targets: Vec::new(),
+                        query: Some(target),
+                        callback,
+                    })));
+                }
                 let mut targets = Vec::new();
                 collect_handles(&target, &mut targets)?;
-                return Ok(Val::Action(Rc::new(ActionV::Manipulate { targets, callback })));
+                return Ok(Val::Action(Rc::new(ActionV::Manipulate {
+                    targets,
+                    query: None,
+                    callback,
+                })));
+            }
+            "remat" => {
+                // (remat b (fn [exit] dyn)): snap {:pos :vel :t}, swap the
+                // motion signal, rebase the epoch — the §9 event mechanism.
+                // C⁰ holds by construction (the new dyn anchors at the
+                // snapped pose).
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("remat: expected bullet handle".into());
+                };
+                let f = evaluate(&items[2], env, ctx, world)?;
+                return Ok(Val::Action(Rc::new(ActionV::Remat { target: id, f })));
+            }
+            "set-style" => {
+                // restyle = pool migration (§7): style is ir, changing it
+                // is an event-level operation, never a signal
+                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
+                    return Err("set-style: expected bullet handle".into());
+                };
+                let style = evaluate(&items[2], env, ctx, world)?;
+                return Ok(Val::Action(Rc::new(ActionV::SetStyle { target: id, style })));
             }
             "inline" => {
                 // adapter: run the embedded pattern IN the caller's cell
@@ -765,8 +802,17 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             apply_frame_arr(&hv, child)
         }
         Val::Kw(k) => {
-            // keyword application: map access, e.g. (:vel exit)
+            // keyword application: map access, e.g. (:vel exit); on
+            // Vec2/Pose, :x/:y/:th read components
             let arg = evaluate(&items[1], env, ctx, world)?;
+            match (&*k, &arg) {
+                ("x", Val::Vec2 { x, .. }) => return Ok(Val::Num(*x)),
+                ("y", Val::Vec2 { y, .. }) => return Ok(Val::Num(*y)),
+                ("x", Val::Pose(p)) => return Ok(Val::Num(p.x)),
+                ("y", Val::Pose(p)) => return Ok(Val::Num(p.y)),
+                ("th", Val::Pose(p)) => return Ok(Val::Num(p.th)),
+                _ => {}
+            }
             Ok(map_get(&arg, &k).unwrap_or(Val::Nothing))
         }
         f @ (Val::Fn { .. } | Val::Builtin(_)) => {
@@ -820,6 +866,73 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 /// Apply a user fn or builtin. Ambient frames do not cross fn boundaries
 /// (F18). `exec_actions` is set only for manipulate callbacks, whose bodies
 /// run instantaneously; ordinary fns RETURN action values for composition.
+/// Evaluate a manipulate query map against the world in canonical order:
+/// style axes / team match exactly (Kw) or any-of (Arr); :where is a pure
+/// fn over the bullet view {:pos :vel :t :family :color :variant + cols}.
+fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, String> {
+    let Val::Map(kvs) = q else { return Err("query: expected a map".into()) };
+    let get = |name: &str| {
+        kvs.iter().find_map(|(k, v)| match k {
+            Val::Kw(kw) if &**kw == name => Some(v.clone()),
+            _ => None,
+        })
+    };
+    let axis_ok = |sel: &Option<Val>, actual: &str| match sel {
+        None => true,
+        Some(Val::Kw(k)) => &**k == actual,
+        Some(Val::Arr(xs)) => xs.iter().any(|v| matches!(v, Val::Kw(k) if &**k == actual)),
+        _ => false,
+    };
+    let (family, color, variant, team) =
+        (get("family"), get("color"), get("variant"), get("team"));
+    let where_f = get("where");
+    let tick = world.tick;
+    let sig = ctx.sig.clone();
+    let mut candidates: Vec<(u64, Val)> = Vec::new();
+    for b in &world.bullets {
+        if !b.alive
+            || !axis_ok(&family, &b.style.family)
+            || !axis_ok(&color, &b.style.color)
+            || !axis_ok(&variant, &b.style.variant)
+            || !axis_ok(&team, b.team.as_deref().unwrap_or(""))
+        {
+            continue;
+        }
+        let view = if where_f.is_some() {
+            let tau = (tick - b.birth) as f64 / TICK_RATE;
+            let p = dyn_pose(&b.motion, tau, &b.state, &sig)?;
+            let vel = match b.prev_pos {
+                Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
+                None => (0.0, 0.0),
+            };
+            let mut view = vec![
+                (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
+                (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
+                (Val::Kw("t".into()), Val::Num(tau)),
+                (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
+            ];
+            for (k, v) in &b.cols {
+                view.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
+            }
+            Val::Map(Rc::new(view))
+        } else {
+            Val::Nothing
+        };
+        candidates.push((b.id, view));
+    }
+    let mut out = Vec::new();
+    for (id, view) in candidates {
+        let keep = match &where_f {
+            Some(f) => truthy(&apply_fn(f.clone(), &[view], ctx, world, false)?),
+            None => true,
+        };
+        if keep {
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
 pub fn apply_fn(
     f: Val,
     args: &[Val],
@@ -1017,11 +1130,68 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Arr(Rc::new(handles)))
         }
-        ActionV::Manipulate { targets, callback } => {
-            for id in targets {
-                if world.find(*id).is_some() {
-                    apply_fn(callback.clone(), &[Val::Handle(*id)], ctx, world, true)?;
+        ActionV::Manipulate { targets, query, callback } => {
+            let ids: Vec<u64> = match query {
+                Some(q) => resolve_query(q, ctx, world)?,
+                None => targets.clone(),
+            };
+            for id in ids {
+                if world.find(id).is_some() {
+                    apply_fn(callback.clone(), &[Val::Handle(id)], ctx, world, true)?;
                 }
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::Remat { target, f } => {
+            let Some(i) = world.find(*target) else { return Ok(Val::Nothing) };
+            let (exit, anchor) = {
+                let b = &world.bullets[i];
+                let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                let p = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
+                let vel = match b.prev_pos {
+                    Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
+                    None => (0.0, 0.0),
+                };
+                let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
+                    p.th
+                } else {
+                    vel.1.atan2(vel.0).to_degrees()
+                };
+                let exit = Val::Map(Rc::new(vec![
+                    (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
+                    (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
+                    (Val::Kw("t".into()), Val::Num(tau)),
+                ]));
+                (exit, Pose { x: p.x, y: p.y, th: heading })
+            };
+            let new_dyn = as_dyn(apply_fn(f.clone(), &[exit], ctx, world, false)?)?;
+            let b = &mut world.bullets[i];
+            // the new signal anchors at the snapped world pose (position +
+            // exit heading) and runs on a fresh epoch: τ restarts at 0
+            b.motion = Rc::new(DynNode::Frame(Rc::new(DynNode::Const(anchor)), new_dyn));
+            b.scanned = is_scanned(&b.motion);
+            b.state = MotionState::new();
+            b.birth = world.tick;
+            b.prev_pos = Some((anchor.x, anchor.y));
+            Ok(Val::Nothing)
+        }
+        ActionV::SetStyle { target, style } => {
+            if let Some(i) = world.find(*target) {
+                let mut st = world.bullets[i].style.clone();
+                if let Val::Map(kvs) = style {
+                    for (k, v) in kvs.iter() {
+                        if let Val::Kw(k) = k {
+                            let val = kw_str(v);
+                            match &**k {
+                                "family" => st.family = val,
+                                "color" => st.color = val,
+                                "variant" => st.variant = val,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                world.bullets[i].style = st;
             }
             Ok(Val::Nothing)
         }
@@ -1039,6 +1209,16 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     exec_instant(a, &mut e, world)?;
                 }
             }
+            Ok(Val::Nothing)
+        }
+        // a const frame is instantaneous: compose the ambient, run inner
+        // (callback spawns anchored with ((pose (pos b)) (spawn ...)))
+        ActionV::InFrame { frame: FrameSpec::Const(p), inner } => {
+            let saved = ctx.ambient;
+            ctx.ambient = ctx.ambient.compose(p);
+            let r = exec_instant(inner, ctx, world);
+            ctx.ambient = saved;
+            r?;
             Ok(Val::Nothing)
         }
         ActionV::Wait { .. } => Err("cannot wait in instantaneous context (fn body)".into()),
@@ -1062,7 +1242,7 @@ fn collect_handles(v: &Val, out: &mut Vec<u64>) -> Result<(), String> {
     }
 }
 
-fn truthy(v: &Val) -> bool {
+pub(crate) fn truthy(v: &Val) -> bool {
     !matches!(v, Val::Bool(false) | Val::Nothing)
 }
 

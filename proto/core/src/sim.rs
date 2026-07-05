@@ -1007,6 +1007,8 @@ fn run_action(
         | ActionV::Cull { .. }
         | ActionV::CullHostile
         | ActionV::Export { .. }
+        | ActionV::Remat { .. }
+        | ActionV::SetStyle { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
