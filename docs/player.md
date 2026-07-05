@@ -70,3 +70,26 @@ fetched into a virtual filesystem (import expansion runs in core), and an
 eval box speaking the wire protocol (`run`/`swap`/`add`). Same controls,
 same scrubbing (the range slider is the timeline), same colors — the
 palette lives in `core::host`.
+
+## Bindings panel (native player)
+
+Press **B** to open the bindings panel: the host contract as editable
+data. Three kinds of rows:
+
+- **Buttons** — one key, one channel, a mode: *hold* (1 while down),
+  *tap* (1 for exactly one tick on press), *toggle* (flip on press).
+- **Axes** — a negative/positive key pair yielding −1/0/+1. Movement is
+  nothing special: `$move-x`/`$move-y` are just axis rows the rig
+  integrates. Multiple rows may feed one channel (contributions sum,
+  clamped); axis pairs sharing a stem (`foo-x`/`foo-y`) are
+  vector-normalized so diagonals aren't faster.
+- **Constants** — channels set directly to a number. `$rank` lives here
+  (T/Y/U/I remain quick-sets).
+
+Click a cell to edit: key cells capture the next key press, the mode
+cell cycles, name/value cells take typed input (Enter commits). Rows
+add/remove with the `+ button` / `+ axis` / `+ const` / `[x]` controls.
+Bindings are host-side configuration: the input tape records the
+resulting channel *values*, so replays and scrubbing are unaffected by
+how a value was produced. (Bindings are per-session; a card can't see
+them, only the channels.)

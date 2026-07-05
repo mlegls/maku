@@ -21,6 +21,10 @@ Because every input arrives on the tape, a card plus its tape replays
 deterministically — scrubbing works through gameplay, not just around
 it.
 
+(The native player's **B** panel shows this contract as editable data —
+rebind keys, change button modes to tap/hold/toggle, or set any channel
+to a constant. `$rank` is just a constant channel there.)
+
 Difficulty is nothing special — it's a number you multiply by
 (`ex1-rank-density`):
 

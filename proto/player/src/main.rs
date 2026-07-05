@@ -149,11 +149,14 @@ fn timeline_ui(app: &mut App, mx: f32, my: f32) {
 }
 
 /// Host-local per-frame state around the core Instance.
+mod bindings;
+use bindings::Bindings;
+
 struct App {
     inst: Instance,
     accum: f64,
-    dragging: bool, // scrubbing via the timeline slider
-    rank: f64,      // difficulty channel ($rank): T/Y/U/I select
+    dragging: bool,   // scrubbing via the timeline slider
+    binds: Bindings,  // key→channel bindings + constant channels (B panel)
 }
 
 fn window_conf() -> Conf {
@@ -176,8 +179,12 @@ async fn main() {
     // this host's player contract: layer the stock rig card
     // (swap in your own live: <localleader>es a rig defpattern)
     let rig = format!("{}\n(player-rig)", include_str!("../../../cards/player-rig.dmk"));
-    let mut app =
-        App { inst: Instance::new(Some(rig)), accum: 0.0, dragging: false, rank: 1.0 };
+    let mut app = App {
+        inst: Instance::new(Some(rig)),
+        accum: 0.0,
+        dragging: false,
+        binds: Bindings::defaults(),
+    };
     if card_path.is_empty() {
         app.inst.set_status(format!("no card — listening on 127.0.0.1:{}", PORT));
     } else {
@@ -191,13 +198,14 @@ async fn main() {
             app.inst.command_line(&line);
         }
         // hotkeys: r = restart from disk, c = clear, space = pause, esc = quit
-        if is_key_pressed(KeyCode::R) {
+        let panel_open = app.binds.wants_keys();
+        if !panel_open && is_key_pressed(KeyCode::R) {
             app.inst.reload_restart();
         }
-        if is_key_pressed(KeyCode::C) {
+        if !panel_open && is_key_pressed(KeyCode::C) {
             app.inst.clear();
         }
-        if is_key_pressed(KeyCode::Space) {
+        if !panel_open && is_key_pressed(KeyCode::Space) {
             app.inst.toggle_pause();
         }
         // scrub hotkeys — only while paused (live arrows belong to movement)
@@ -232,23 +240,25 @@ async fn main() {
         .iter()
         .enumerate()
         {
-            if is_key_pressed(*key) {
+            if !panel_open && is_key_pressed(*key) {
                 app.inst.select(i);
             }
         }
-        // difficulty: T/Y/U/I set the $rank channel (easy..lunatic)
-        for (key, r) in [
-            (KeyCode::T, 0.7),
-            (KeyCode::Y, 1.0),
-            (KeyCode::U, 1.4),
-            (KeyCode::I, 2.0),
-        ] {
-            if is_key_pressed(key) {
-                app.rank = r;
+        // difficulty: T/Y/U/I quick-set the $rank constant (easy..lunatic)
+        if !panel_open {
+            for (key, r) in [
+                (KeyCode::T, 0.7),
+                (KeyCode::Y, 1.0),
+                (KeyCode::U, 1.4),
+                (KeyCode::I, 2.0),
+            ] {
+                if is_key_pressed(key) {
+                    app.binds.set_const("rank", r);
+                }
             }
         }
         // Tab / Shift-Tab step through ALL patterns (hotkeys stop at 9)
-        if is_key_pressed(KeyCode::Tab) {
+        if !panel_open && is_key_pressed(KeyCode::Tab) {
             let names = app.inst.patterns().to_vec();
             if !names.is_empty() {
                 let cur = app.inst.current_pattern().unwrap_or_default();
@@ -261,7 +271,7 @@ async fn main() {
                 app.inst.select(next);
             }
         }
-        if is_key_pressed(KeyCode::Escape) {
+        if !panel_open && is_key_pressed(KeyCode::Escape) {
             break;
         }
 
@@ -272,42 +282,16 @@ async fn main() {
             ((mx - cx) / PIXELS_PER_UNIT) as f64,
             ((cy - my) / PIXELS_PER_UNIT) as f64,
         );
-        // raw input side of the host contract, passed by name: WASD and
-        // arrows merge into $move-x/-y for single-pilot cards, and are ALSO
-        // injected separately as $p1-move-* (WASD) / $p2-move-* (arrows)
-        // for co-op rigs. Shift -> $focus-firing, X -> $bomb. The mouse
-        // remains the mock $player / $nearest-enemy fallback.
-        let key = |k: KeyCode| is_key_down(k);
-        let arrows_live = !app.inst.paused(); // paused arrows belong to scrubbing
-        let wx = (key(KeyCode::D) as i8 - key(KeyCode::A) as i8) as f64;
-        let wy = (key(KeyCode::W) as i8 - key(KeyCode::S) as i8) as f64;
-        let arx = if arrows_live {
-            (key(KeyCode::Right) as i8 - key(KeyCode::Left) as i8) as f64
-        } else {
-            0.0
-        };
-        let ary = if arrows_live {
-            (key(KeyCode::Up) as i8 - key(KeyCode::Down) as i8) as f64
-        } else {
-            0.0
-        };
-        let norm = |x: f64, y: f64| {
-            let m = (x * x + y * y).sqrt();
-            if m > 1.0 { (x / m, y / m) } else { (x, y) }
-        };
-        let (mx_, my_) = norm(wx + arx, wy + ary);
-        let (p1x, p1y) = norm(wx, wy);
-        let (p2x, p2y) = norm(arx, ary);
+        // raw input side of the host contract: the BINDING TABLE (B panel)
+        // maps keys to channels — axes for movement, buttons with
+        // tap/hold/toggle modes, plus constant channels ($rank lives
+        // there). The mouse remains the mock $player / $nearest-enemy.
+        // Replays are unaffected: the tape records channel VALUES.
         let mut inputs = Inputs::classic(mouse_world, mouse_world);
-        inputs.set_num("move-x", mx_);
-        inputs.set_num("move-y", my_);
-        inputs.set_num("p1-move-x", p1x);
-        inputs.set_num("p1-move-y", p1y);
-        inputs.set_num("p2-move-x", p2x);
-        inputs.set_num("p2-move-y", p2y);
-        inputs.set_flag("focus-firing", key(KeyCode::LeftShift) || key(KeyCode::RightShift));
-        inputs.set_flag("bomb", key(KeyCode::X));
-        inputs.set_num("rank", app.rank);
+        if !panel_open {
+            app.binds.poll_edges();
+        }
+        app.binds.inject(&mut inputs, app.inst.paused());
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !app.inst.paused() {
@@ -316,6 +300,8 @@ async fn main() {
             while app.accum >= dt {
                 app.accum -= dt;
                 app.inst.advance(inputs.clone());
+                // taps are high for exactly one stepped tick
+                app.binds.consume_taps(&mut inputs);
                 if app.inst.paused() {
                     break; // sim error pauses
                 }
@@ -457,13 +443,14 @@ async fn main() {
             app.inst.select(i);
         }
         draw_text(
-            &format!("rank {:.1} (T/Y/U/I)", app.rank),
-            screen_width() - 150.0,
+            &format!("rank {:.1} (T/Y/U/I)  [B]indings", app.binds.get_const("rank").unwrap_or(1.0)),
+            screen_width() - 230.0,
             24.0,
             18.0,
             GRAY,
         );
         timeline_ui(&mut app, mx, my);
+        app.binds.ui();
         next_frame().await;
     }
 }

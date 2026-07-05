@@ -1042,7 +1042,6 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
     let (family, color, variant, team) =
         (get("family"), get("color"), get("variant"), get("team"));
     let where_f = get("where");
-    let tick = world.tick;
     let sig = ctx.sig.clone();
     let mut candidates: Vec<u64> = Vec::new();
     for b in &world.bullets {
