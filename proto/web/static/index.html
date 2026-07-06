@@ -218,6 +218,14 @@
   .tok-channel { color: #83d7ff; }
   .tok-number { color: #b99cff; }
   .tok-delim { color: #aeb6c8; }
+  .tok-match {
+    background: rgba(120, 214, 198, 0.22);
+    color: #f2fffb;
+  }
+  .tok-unmatched {
+    background: rgba(255, 94, 114, 0.28);
+    color: #ffd7dc;
+  }
   .tok-form { color: #78d6c6; }
   .tok-symbol { color: #e7e9f1; }
   .eval {
@@ -457,6 +465,7 @@
         <div id="source-name" class="subtle"></div>
       </div>
       <div class="editor-actions">
+        <button id="format-source">Format</button>
         <button id="apply-source" class="primary">Apply</button>
         <button id="reset-source">Reset</button>
       </div>
@@ -478,6 +487,7 @@
         <button id="swap">swap</button>
         <button id="add">add</button>
         <button id="restart">restart</button>
+        <button id="format-eval">format</button>
       </div>
       <div class="subtle">Default bindings: WASD/arrows move, Shift focus, X bomb. T/Y/U/I set $rank.</div>
     </div>
