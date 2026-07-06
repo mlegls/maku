@@ -33,6 +33,37 @@ impl Sim {
         self.sample_sig(&b.sigs.hue, tau, 0.0)
     }
 
+    fn materialize_render_slot(
+        &self,
+        b: &Entity,
+        slot: &DynRender,
+        tau: f64,
+        sig: &SigEnv,
+    ) -> Vec<RenderData> {
+        match slot {
+            DynRender::CurveCompat(projection) => {
+                let hot = hot_frac(&projection.activity, tau, sig);
+                let partly = tau >= projection.activity.warn && hot < 1.0;
+                let mut out = Vec::new();
+                match sample_curve(b, tau, sig) {
+                    Some(points) => out.push(RenderData::Polyline {
+                        points,
+                        // a filling curve's full path stays a telegraph
+                        active: tau >= projection.activity.warn && !partly,
+                    }),
+                    None => out.push(RenderData::None),
+                }
+                if partly {
+                    match sample_curve_frac(b, tau, sig, hot) {
+                        Some(points) => out.push(RenderData::Polyline { points, active: true }),
+                        None => out.push(RenderData::None),
+                    }
+                }
+                out
+            }
+        }
+    }
+
     pub fn render(&self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
@@ -67,30 +98,21 @@ impl Sim {
                     }
                 }
                 FigureDynRepr::Curve { .. } => {
-                    let Some(projection) = b.renderers.iter().find_map(DynRender::curve_compat) else { continue };
-                    let hot = hot_frac(&projection.activity, tau, sig);
-                    let partly = tau >= projection.activity.warn && hot < 1.0;
                     let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
-                    if let Some(pts) = sample_curve(b, tau, sig) {
-                        out.push(RenderItem::Polyline {
-                            pts,
-                            style: b.style.clone(),
-                            // a filling curve's full path stays a telegraph
-                            active: tau >= projection.activity.warn && !partly,
-                            hue: self.sample_hue(b, tau),
-                            alpha,
-                        });
-                    }
-                    // filling curve: the hot prefix renders bright on top
-                    if partly {
-                        if let Some(pts) = sample_curve_frac(b, tau, sig, hot) {
-                            out.push(RenderItem::Polyline {
-                                pts,
+                    for data in b
+                        .renderers
+                        .iter()
+                        .flat_map(|slot| self.materialize_render_slot(b, slot, tau, sig))
+                    {
+                        match data {
+                            RenderData::None => {}
+                            RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
+                                pts: points,
                                 style: b.style.clone(),
-                                active: true,
+                                active,
                                 hue: self.sample_hue(b, tau),
                                 alpha,
-                            });
+                            }),
                         }
                     }
                 }

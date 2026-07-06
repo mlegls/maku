@@ -216,6 +216,10 @@ language.md.
       `T::Repr`, with separate `NumDynRepr`, `PoseDynRepr`, and
       `FigureDynRepr`. This removes the shared repr's runtime type guards
       and lets figure curves keep `DynPose` frames and curve expressions.
+  2m. ~~Introduce materialized collider/render data.~~ Done; the hot
+      collision and render paths now consume `ColliderData`/`RenderData`
+      values, with `None` as an explicit data variant rather than maybe
+      semantics. Compatibility slots still produce these data values.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

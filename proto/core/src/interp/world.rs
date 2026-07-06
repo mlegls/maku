@@ -74,6 +74,30 @@ pub enum DynRender {
     CurveCompat(CurveRenderSlotCompat),
 }
 
+#[derive(Clone, Debug)]
+pub enum ColliderData {
+    None,
+    Circle { layer: Rc<str>, center: (f64, f64), radius: f64 },
+    CapsuleChain { layer: Rc<str>, points: Vec<(f64, f64)>, radius: f64 },
+}
+
+impl ColliderData {
+    pub fn layer(&self) -> Option<&str> {
+        match self {
+            ColliderData::None => None,
+            ColliderData::Circle { layer, .. } | ColliderData::CapsuleChain { layer, .. } => {
+                Some(layer.as_ref())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum RenderData {
+    None,
+    Polyline { points: Vec<(f64, f64)>, active: bool },
+}
+
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
 #[derive(Debug, Clone)]
 pub struct MetaSig {

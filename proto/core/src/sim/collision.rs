@@ -1,5 +1,7 @@
 use super::*;
 
+const CURVE_R: f64 = 0.08; // compatibility curve half-width for collision
+
 /// Sample a world-space curve at `tau` (shared by render and the collision
 /// pass — the curve you see is the curve that hits).
 pub fn sample_curve(b: &Entity, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)>> {
@@ -109,63 +111,161 @@ fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
     best
 }
 
+fn dist2_points(a: (f64, f64), b: (f64, f64)) -> f64 {
+    (a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)
+}
+
+fn segment_distance(a0: (f64, f64), a1: (f64, f64), b0: (f64, f64), b1: (f64, f64)) -> f64 {
+    let samples = [a0, a1, b0, b1];
+    let mut best = f64::INFINITY;
+    if let Some(d) = dist_to_chain(a0, &[b0, b1]) {
+        best = best.min(d);
+    }
+    if let Some(d) = dist_to_chain(a1, &[b0, b1]) {
+        best = best.min(d);
+    }
+    if let Some(d) = dist_to_chain(b0, &[a0, a1]) {
+        best = best.min(d);
+    }
+    if let Some(d) = dist_to_chain(b1, &[a0, a1]) {
+        best = best.min(d);
+    }
+    if best.is_finite() {
+        best
+    } else {
+        samples
+            .windows(2)
+            .map(|w| dist2_points(w[0], w[1]).sqrt())
+            .fold(f64::INFINITY, f64::min)
+    }
+}
+
+fn chain_distance(a: &[(f64, f64)], b: &[(f64, f64)]) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for aseg in a.windows(2) {
+        for bseg in b.windows(2) {
+            let d = segment_distance(aseg[0], aseg[1], bseg[0], bseg[1]);
+            best = Some(best.map_or(d, |cur| cur.min(d)));
+        }
+    }
+    best
+}
+
+fn collider_overlap(a: &ColliderData, b: &ColliderData) -> bool {
+    match (a, b) {
+        (ColliderData::None, _) | (_, ColliderData::None) => false,
+        (
+            ColliderData::Circle { center: ac, radius: ar, .. },
+            ColliderData::Circle { center: bc, radius: br, .. },
+        ) => dist2_points(*ac, *bc) < (ar + br).powi(2),
+        (
+            ColliderData::CapsuleChain { points, radius: ar, .. },
+            ColliderData::Circle { center, radius: br, .. },
+        )
+        | (
+            ColliderData::Circle { center, radius: br, .. },
+            ColliderData::CapsuleChain { points, radius: ar, .. },
+        ) => dist_to_chain(*center, points).is_some_and(|d| d < ar + br),
+        (
+            ColliderData::CapsuleChain { points: ap, radius: ar, .. },
+            ColliderData::CapsuleChain { points: bp, radius: br, .. },
+        ) => chain_distance(ap, bp).is_some_and(|d| d < ar + br),
+    }
+}
+
+fn materialize_collider_slot(
+    b: &Entity,
+    slot: &DynCollider,
+    tau: f64,
+    sig: &SigEnv,
+    scale: f64,
+) -> ColliderData {
+    let DynCollider::Const(projection) = slot else {
+        return ColliderData::None;
+    };
+    let ColliderShape::Circle { radius } = projection.shape;
+    match b.dyn_figure.repr() {
+        FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
+            let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
+            if points.len() < 2 {
+                ColliderData::None
+            } else {
+                ColliderData::CapsuleChain {
+                    layer: projection.layer.clone(),
+                    points,
+                    radius: CURVE_R + radius * scale,
+                }
+            }
+        }
+        FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
+            Ok(p) => ColliderData::Circle {
+                layer: projection.layer.clone(),
+                center: (p.x, p.y),
+                radius: radius * scale,
+            },
+            Err(_) => ColliderData::None,
+        },
+        FigureDynRepr::Curve { .. } => {
+            let Some(curve_slot) = b.colliders.iter().find_map(DynCollider::curve_compat) else {
+                return ColliderData::None;
+            };
+            if tau < curve_slot.activity.warn {
+                return ColliderData::None;
+            }
+            let Some(points) = sample_curve_collider_frac(
+                b,
+                tau,
+                sig,
+                hot_frac(&curve_slot.activity, tau, sig),
+            ) else {
+                return ColliderData::None;
+            };
+            ColliderData::CapsuleChain {
+                layer: projection.layer.clone(),
+                points,
+                radius: CURVE_R * curve_slot.width + radius * scale,
+            }
+        }
+    }
+}
+
+fn materialize_colliders(
+    b: &Entity,
+    tau: f64,
+    sig: &SigEnv,
+    scale: f64,
+) -> Vec<ColliderData> {
+    b.colliders
+        .iter()
+        .map(|slot| materialize_collider_slot(b, slot, tau, sig, scale))
+        .collect()
+}
+
 impl Sim {
     /// Collision pass, detect-then-resolve over card-defined contact rules.
     /// Checks are hot, geometry-only data; contacts are rare callback code.
     pub(super) fn collide(&mut self, _inputs: &Inputs) -> Result<(), String> {
-        const CURVE_R: f64 = 0.08; // curve half-width for collision
-
         let sig = self.ctx.sig.clone();
         let tick = self.world.tick;
 
-        // phase 0: world-space collider anchors + contact velocities
+        // phase 0: materialized collider data + contact velocities
         let n = self.world.entities.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
+        let mut colliders: Vec<Vec<ColliderData>> = Vec::with_capacity(n);
         // :scale multiplies collider radii (a scaled sprite scales its
         // hitbox); sampled once per bullet per tick, 1.0 when absent
-        let mut scl: Vec<f64> = Vec::with_capacity(n);
         for b in &self.world.entities {
             if !b.alive {
                 pos.push(None);
-                scl.push(1.0);
+                colliders.push(Vec::new());
                 continue;
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
-            scl.push(self.sample_sig(&b.sigs.scale, tau, 1.0));
+            let scale = self.sample_sig(&b.sigs.scale, tau, 1.0);
+            colliders.push(materialize_colliders(b, tau, &sig, scale));
         }
-
-        // squared distance from a target point to entity i's collision
-        // anchor: points measure center distance; active curves measure
-        // distance to the sampled polyline (capsule chain)
-        let target_d2 = |b: &Entity, i: usize, to: (f64, f64)| -> Option<f64> {
-            let (bx, by) = pos[i]?;
-            match b.dyn_figure.repr() {
-                FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
-                    let pts: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
-                    let d = dist_to_chain(to, &pts)?;
-                    Some((d - CURVE_R).max(0.0).powi(2))
-                }
-                FigureDynRepr::Pose(_) => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
-                FigureDynRepr::Curve { .. } => {
-                    let Some(projection) = b.colliders.iter().find_map(DynCollider::curve_compat) else { return None };
-                    let tau = (tick - b.birth) as f64 / TICK_RATE;
-                    if tau < projection.activity.warn {
-                        return None; // warn phase: no hitbox yet
-                    }
-                    // filled curves: only the swept-out prefix is hot
-                    let pts = sample_curve_collider_frac(
-                        b,
-                        tau,
-                        &sig,
-                        hot_frac(&projection.activity, tau, &sig),
-                    )?;
-                    let d = dist_to_chain(to, &pts)?;
-                    Some((d - CURVE_R * projection.width).max(0.0).powi(2))
-                }
-            }
-        };
 
         let rules = self.world.contacts.clone();
         let mut contacts: Vec<Vec<(usize, usize)>> = Vec::with_capacity(rules.len());
@@ -179,14 +279,12 @@ impl Sim {
                     if i == j || !b.alive {
                         continue;
                     }
-                    let Some(at) = pos[j] else { continue };
-                    let Some(d2) = target_d2(a, i, at) else { continue };
-                    for ac in a.colliders.iter().filter(|c| c.layer() == Some(rule.a.as_ref())) {
-                        let Some(ar) = ac.circle_radius() else { continue };
-                        for bc in b.colliders.iter().filter(|c| c.layer() == Some(rule.b.as_ref())) {
-                            let Some(br) = bc.circle_radius() else { continue };
-                            let r = ar * scl[i] + br * scl[j];
-                            if d2 < r * r {
+                    if pos[j].is_none() {
+                        continue;
+                    }
+                    for ac in colliders[i].iter().filter(|c| c.layer() == Some(rule.a.as_ref())) {
+                        for bc in colliders[j].iter().filter(|c| c.layer() == Some(rule.b.as_ref())) {
+                            if collider_overlap(ac, bc) {
                                 pairs.push((i, j));
                             }
                         }
