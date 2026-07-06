@@ -260,7 +260,7 @@ function M.setup(opts)
 
   -- .maku cards: own filetype (no clojure plugins attach), clojure/edn
   -- highlighting via regex syntax + treesitter alias when available
-  vim.filetype.add({ extension = { dmk = "danmaku" } })
+  vim.filetype.add({ extension = { maku = "danmaku" } })
   pcall(vim.treesitter.language.register, "clojure", "danmaku")
   vim.api.nvim_create_autocmd("FileType", {
     pattern = "danmaku",
