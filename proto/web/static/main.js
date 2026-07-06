@@ -3,6 +3,7 @@
 import initMaku, { createMaku } from '../../js/maku/dist/index.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
+import { highlightCodeBlocks, highlightMaku } from './maku-highlight.js';
 
 const BOOT = 'cards/tutorials/t01.maku';
 const TICK_RATE = 120;
@@ -23,6 +24,7 @@ const els = {
   sourceName: document.getElementById('source-name'),
   source: document.getElementById('source'),
   sourceHighlight: document.querySelector('#source-highlight code'),
+  evalHighlight: document.querySelector('#eval-highlight code'),
   apply: document.getElementById('apply-source'),
   reset: document.getElementById('reset-source'),
   docsToggle: document.getElementById('docs-toggle'),
@@ -62,15 +64,6 @@ let mouse = [0, -3];
 let bindings = defaultBindings();
 let capturing = null;
 
-const FORM_WORDS = new Set([
-  'def', 'defn', 'defmacro', 'defpattern', 'defvar', 'defcell', 'defchannel',
-  'bind-channel!', 'export', 'import', 'fn', 'let', 'if', 'when', 'unless',
-  'seq', 'par', 'fork', 'finally', 'wait', 'wait-for', 'until', 'race',
-  'states', 'goto', 'phases', 'spawn', 'spawn-bullet', 'spawn-shot',
-  'spawn-enemy', 'spawn-boss', 'dotimes', 'for', 'move', 'pose', 'linear',
-  'circle', 'polar', 'rot', 'aim', 'style', 'collider', 'contact',
-]);
-
 function defaultBindings() {
   return {
     rows: [
@@ -105,74 +98,26 @@ function keyLabel(code) {
   return code;
 }
 
-function escapeHtml(s) {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
-
-function span(cls, text) {
-  return `<span class="${cls}">${escapeHtml(text)}</span>`;
-}
-
-function tokenClass(tok) {
-  if (/^-?(?:\d+\.\d+|\d+|\.\d+)(?:[eE][+-]?\d+)?$/.test(tok)) return 'tok-number';
-  if (tok.startsWith(':')) return 'tok-keyword';
-  if (tok.startsWith('$')) return 'tok-channel';
-  if (FORM_WORDS.has(tok)) return 'tok-form';
-  return 'tok-symbol';
-}
-
-function highlightMaku(src) {
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === ';') {
-      const j = src.indexOf('\n', i);
-      const end = j === -1 ? src.length : j;
-      out += span('tok-comment', src.slice(i, end));
-      i = end;
-    } else if (ch === '"') {
-      let j = i + 1;
-      while (j < src.length) {
-        if (src[j] === '\\') {
-          j += 2;
-        } else if (src[j] === '"') {
-          j += 1;
-          break;
-        } else {
-          j += 1;
-        }
-      }
-      out += span('tok-string', src.slice(i, j));
-      i = j;
-    } else if ('()[]{}'.includes(ch)) {
-      out += span('tok-delim', ch);
-      i += 1;
-    } else if (/\s/.test(ch)) {
-      out += ch;
-      i += 1;
-    } else {
-      let j = i + 1;
-      while (j < src.length && !/[\s()[\]{}";]/.test(src[j])) j += 1;
-      const tok = src.slice(i, j);
-      out += span(tokenClass(tok), tok);
-      i = j;
-    }
-  }
-  return out.endsWith('\n') ? `${out} ` : out;
-}
-
 function updateSourceHighlight() {
   els.sourceHighlight.innerHTML = highlightMaku(els.source.value);
 }
 
+function updateEvalHighlight() {
+  els.evalHighlight.innerHTML = highlightMaku(els.evalCode.value);
+}
+
+function syncHighlightScroll(textarea, code) {
+  const pre = code.parentElement;
+  pre.scrollTop = textarea.scrollTop;
+  pre.scrollLeft = textarea.scrollLeft;
+}
+
 function syncSourceHighlightScroll() {
-  const pre = els.sourceHighlight.parentElement;
-  pre.scrollTop = els.source.scrollTop;
-  pre.scrollLeft = els.source.scrollLeft;
+  syncHighlightScroll(els.source, els.sourceHighlight);
+}
+
+function syncEvalHighlightScroll() {
+  syncHighlightScroll(els.evalCode, els.evalHighlight);
 }
 
 function cleanChannel(s) {
@@ -354,12 +299,14 @@ async function loadDoc(card = selected) {
     const res = await fetch(new URL(`${slug}.html`, htmlBase).toString());
     if (!res.ok) throw new Error(`${slug}.html: ${res.status}`);
     els.docBody.innerHTML = await res.text();
+    highlightCodeBlocks(els.docBody);
     return;
   }
   if (!docs.has(card.doc)) {
     docs.set(card.doc, await fetchText(card.doc));
   }
   els.docBody.innerHTML = markdownToHtml(docs.get(card.doc));
+  highlightCodeBlocks(els.docBody);
 }
 
 async function openDocs() {
@@ -537,6 +484,9 @@ function installEvents() {
     setDirty(els.source.value !== sourceFor(selected));
   });
   els.source.addEventListener('scroll', syncSourceHighlightScroll);
+  els.evalCode.addEventListener('input', updateEvalHighlight);
+  els.evalCode.addEventListener('scroll', syncEvalHighlightScroll);
+  updateEvalHighlight();
   els.docsToggle.onclick = openDocs;
   els.docsClose.onclick = closeDocs;
   els.resetBindings.onclick = () => {

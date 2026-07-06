@@ -1,3 +1,5 @@
+import { highlightMaku } from './maku-highlight.js';
+
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, ch => ({
     '&': '&amp;',
@@ -43,7 +45,7 @@ export function markdownToHtml(md) {
   for (const line of lines) {
     if (line.startsWith('```')) {
       if (inCode) {
-        out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+        out.push(`<pre><code>${highlightMaku(code.join('\n'))}</code></pre>`);
         code = [];
         inCode = false;
       } else {

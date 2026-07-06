@@ -288,11 +288,42 @@
     width: 100%;
     height: 120px;
     resize: vertical;
-    background: #11131b;
-    color: #dfe4ef;
+    background: transparent;
+    color: transparent;
+    caret-color: #dfe4ef;
     border: 1px solid var(--line);
     border-radius: 6px;
     padding: 8px;
+    position: relative;
+    z-index: 1;
+    outline: none;
+  }
+  .eval-editor {
+    position: relative;
+    min-height: 120px;
+    background: #11131b;
+    border-radius: 6px;
+  }
+  .eval-editor #eval-code {
+    display: block;
+  }
+  .eval-editor #eval-code::selection {
+    background: rgba(120, 214, 198, 0.22);
+  }
+  .eval-highlight {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 8px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    color: #dfe4ef;
+    tab-size: 2;
+  }
+  .eval-highlight code {
+    font: inherit;
   }
   .eval-row { display: flex; gap: 6px; flex-wrap: wrap; }
   .docs-drawer {
@@ -436,9 +467,12 @@
     </div>
     <div class="eval">
       <div class="panel-title">Eval</div>
-      <textarea id="eval-code" spellcheck="false">(spawn ((rot m"20*t")
+      <div class="eval-editor">
+        <pre id="eval-highlight" class="eval-highlight" aria-hidden="true"><code></code></pre>
+        <textarea id="eval-code" spellcheck="false">(spawn ((rot m"20*t")
   (circle 12 (linear p[2 0])))
   {:style {:family :star :color :teal}})</textarea>
+      </div>
       <div class="eval-row">
         <button id="run">run</button>
         <button id="swap">swap</button>

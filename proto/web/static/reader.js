@@ -1,5 +1,6 @@
 import { TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
+import { highlightCodeBlocks } from './maku-highlight.js';
 
 const list = document.getElementById('tutorial-list');
 const body = document.getElementById('doc-body');
@@ -29,6 +30,7 @@ async function select(item) {
     const md = await (await fetch(assetUrl(item.doc))).text();
     body.innerHTML = markdownToHtml(md);
   }
+  highlightCodeBlocks(body);
   history.replaceState(null, '', `#${item.doc.split('/').pop().replace(/\.md$/, '')}`);
 }
 
