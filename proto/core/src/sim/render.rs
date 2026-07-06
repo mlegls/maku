@@ -1,5 +1,5 @@
 use super::*;
-use super::collision::hot_frac;
+use super::slots::eval_render_slot;
 
 pub enum RenderItem {
     Dot { x: f64, y: f64, th: f64, style: Style, hue: f64, scale: f64, alpha: f64 },
@@ -31,37 +31,6 @@ impl Sim {
 
     fn sample_hue(&self, b: &Entity, tau: f64) -> f64 {
         self.sample_sig(&b.sigs.hue, tau, 0.0)
-    }
-
-    fn materialize_render_slot(
-        &self,
-        b: &Entity,
-        slot: &DynRender,
-        tau: f64,
-        sig: &SigEnv,
-    ) -> Vec<RenderData> {
-        match slot.repr() {
-            RenderDynRepr::CurveCompat(projection) => {
-                let hot = hot_frac(&projection.activity, tau, sig);
-                let partly = tau >= projection.activity.warn && hot < 1.0;
-                let mut out = Vec::new();
-                match sample_curve(b, tau, sig) {
-                    Some(points) => out.push(RenderData::Polyline {
-                        points,
-                        // a filling curve's full path stays a telegraph
-                        active: tau >= projection.activity.warn && !partly,
-                    }),
-                    None => out.push(RenderData::None),
-                }
-                if partly {
-                    match sample_curve_frac(b, tau, sig, hot) {
-                        Some(points) => out.push(RenderData::Polyline { points, active: true }),
-                        None => out.push(RenderData::None),
-                    }
-                }
-                out
-            }
-        }
     }
 
     pub fn render(&self) -> Vec<RenderItem> {
@@ -102,7 +71,7 @@ impl Sim {
                     for data in b
                         .renderers
                         .iter()
-                        .flat_map(|slot| self.materialize_render_slot(b, slot, tau, sig))
+                        .flat_map(|slot| eval_render_slot(b, slot, tau, sig))
                     {
                         match data {
                             RenderData::None => {}

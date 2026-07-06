@@ -225,6 +225,10 @@ language.md.
       `Dyn<ColliderData>` and `Dyn<RenderData>`, with typed compatibility
       reprs. The next step is to move slot materialization/evaluation out of
       sim hot paths and into slot evaluators that take entity context.
+  2o. ~~Move slot materialization behind evaluator functions.~~ Done;
+      collision and render now consume `eval_collider_slot` /
+      `eval_render_slot`, while compatibility curve sampling lives in the
+      neutral sim slot module rather than in either hot path.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

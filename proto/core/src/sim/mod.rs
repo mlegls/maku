@@ -9,12 +9,13 @@ mod channels;
 mod collision;
 mod exec;
 mod render;
+mod slots;
 
 #[cfg(test)]
 mod tests;
 
-pub use collision::{sample_curve, sample_curve_frac};
 pub use render::RenderItem;
+pub use slots::{sample_curve, sample_curve_frac};
 
 use exec::{new_task, step_task, Task, TF};
 
