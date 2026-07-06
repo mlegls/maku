@@ -267,7 +267,11 @@ language.md.
       collider structures now survive until `spawn` validates the expected
       collider/render schema. Current implementation covers static structure
       shape plus dyn numeric leaves; whole-list/whole-shape dynamic
-      expressions still need typed conditional/function lowering.
+      expressions still need typed conditional/function lowering. The
+      prototype carrier is named `SourceExpr` rather than `DynStruct`:
+      `as_*` schema checks at typed boundaries turn source structures into
+      `Dyn<T>`-backed slots, while the structure itself remains ordinary
+      source data.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

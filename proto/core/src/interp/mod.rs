@@ -79,7 +79,7 @@ pub enum Val {
     Pose(Pose),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
-    DynStruct(Rc<DynStruct>),
+    SourceExpr(Rc<SourceExpr>),
     Dyn(DynPose),
     CurveV(Rc<ExtCurve>),
     /// A form as a value — what macros manipulate and quasiquote builds.
@@ -100,38 +100,38 @@ pub enum Val {
     Nothing,
 }
 
-/// A time-indexed ordinary structure. This is the prototype form of the
-/// generic `Dyn<T>` structural coercion rule: vectors/maps are still normal
-/// source structures, but dynamic leaves are preserved until a typed
-/// boundary such as spawn checks the expected schema.
+/// A source structure with temporal leaves. This is not a typed `Dyn<T>` by
+/// itself; typed boundaries such as spawn interpret it with `as_*` schema
+/// checks, while ordinary static structures still evaluate to ordinary
+/// arrays/maps.
 #[derive(Clone, Debug)]
-pub enum DynStruct {
+pub enum SourceExpr {
     Const(Val),
     Num(DynNum),
-    Arr(Rc<[DynStruct]>),
-    Map(Rc<Vec<(Val, DynStruct)>>),
+    Arr(Rc<[SourceExpr]>),
+    Map(Rc<Vec<(Val, SourceExpr)>>),
 }
 
-impl DynStruct {
+impl SourceExpr {
     pub fn is_dynamic(&self) -> bool {
         match self {
-            DynStruct::Const(_) => false,
-            DynStruct::Num(d) => !matches!(d.repr(), NumDynRepr::Const(_)),
-            DynStruct::Arr(items) => items.iter().any(DynStruct::is_dynamic),
-            DynStruct::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
+            SourceExpr::Const(_) => false,
+            SourceExpr::Num(d) => !matches!(d.repr(), NumDynRepr::Const(_)),
+            SourceExpr::Arr(items) => items.iter().any(SourceExpr::is_dynamic),
+            SourceExpr::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
         }
     }
 
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
         match self {
-            DynStruct::Const(v) => Ok(v.clone()),
-            DynStruct::Num(d) => eval_dyn(d, tau, state, sig).map(Val::Num),
-            DynStruct::Arr(items) => items
+            SourceExpr::Const(v) => Ok(v.clone()),
+            SourceExpr::Num(d) => eval_dyn(d, tau, state, sig).map(Val::Num),
+            SourceExpr::Arr(items) => items
                 .iter()
                 .map(|v| v.eval(tau, state, sig))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Val::arr),
-            DynStruct::Map(kvs) => kvs
+            SourceExpr::Map(kvs) => kvs
                 .iter()
                 .map(|(k, v)| Ok((k.clone(), v.eval(tau, state, sig)?)))
                 .collect::<Result<Vec<_>, String>>()
@@ -139,18 +139,18 @@ impl DynStruct {
         }
     }
 
-    pub fn from_val(v: Val) -> DynStruct {
+    pub fn from_val(v: Val) -> SourceExpr {
         match v {
-            Val::DynStruct(d) => (*d).clone(),
-            Val::Arr(items) => DynStruct::Arr(
-                items.iter().cloned().map(DynStruct::from_val).collect::<Vec<_>>().into(),
+            Val::SourceExpr(d) => (*d).clone(),
+            Val::Arr(items) => SourceExpr::Arr(
+                items.iter().cloned().map(SourceExpr::from_val).collect::<Vec<_>>().into(),
             ),
-            Val::Map(kvs) => DynStruct::Map(Rc::new(
+            Val::Map(kvs) => SourceExpr::Map(Rc::new(
                 kvs.iter()
-                    .map(|(k, v)| (k.clone(), DynStruct::from_val(v.clone())))
+                    .map(|(k, v)| (k.clone(), SourceExpr::from_val(v.clone())))
                     .collect(),
             )),
-            other => DynStruct::Const(other),
+            other => SourceExpr::Const(other),
         }
     }
 }
@@ -476,10 +476,10 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Vector(items) => {
             let lifted = items
                 .iter()
-                .map(|i| eval_dyn_struct_form(i, env, ctx, world))
+                .map(|i| eval_source_expr_form(i, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
-            if lifted.iter().any(DynStruct::is_dynamic) {
-                Ok(Val::DynStruct(Rc::new(DynStruct::Arr(lifted.into()))))
+            if lifted.iter().any(SourceExpr::is_dynamic) {
+                Ok(Val::SourceExpr(Rc::new(SourceExpr::Arr(lifted.into()))))
             } else {
                 lifted
                     .iter()
@@ -491,10 +491,10 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Map(kvs) => {
             let pairs = kvs
                 .iter()
-                .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_dyn_struct_form(v, env, ctx, world)?)))
+                .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_source_expr_form(v, env, ctx, world)?)))
                 .collect::<Result<Vec<_>, String>>()?;
             if pairs.iter().any(|(_, v)| v.is_dynamic()) {
-                Ok(Val::DynStruct(Rc::new(DynStruct::Map(Rc::new(pairs)))))
+                Ok(Val::SourceExpr(Rc::new(SourceExpr::Map(Rc::new(pairs)))))
             } else {
                 pairs
                     .iter()
@@ -507,25 +507,25 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     }
 }
 
-fn eval_dyn_struct_form(
+fn eval_source_expr_form(
     form: &Form,
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<DynStruct, String> {
+) -> Result<SourceExpr, String> {
     match form {
         Form::Vector(items) => items
             .iter()
-            .map(|i| eval_dyn_struct_form(i, env, ctx, world))
+            .map(|i| eval_source_expr_form(i, env, ctx, world))
             .collect::<Result<Vec<_>, _>>()
-            .map(|items| DynStruct::Arr(items.into())),
+            .map(|items| SourceExpr::Arr(items.into())),
         Form::Map(kvs) => kvs
             .iter()
-            .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_dyn_struct_form(v, env, ctx, world)?)))
+            .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_source_expr_form(v, env, ctx, world)?)))
             .collect::<Result<Vec<_>, String>>()
-            .map(|pairs| DynStruct::Map(Rc::new(pairs))),
-        form if contains_t(form) => Ok(DynStruct::Num(DynNum::num_expr(form.clone(), env.clone()))),
-        form => evaluate(form, env, ctx, world).map(DynStruct::from_val),
+            .map(|pairs| SourceExpr::Map(Rc::new(pairs))),
+        form if contains_t(form) => Ok(SourceExpr::Num(DynNum::num_expr(form.clone(), env.clone()))),
+        form => evaluate(form, env, ctx, world).map(SourceExpr::from_val),
     }
 }
 

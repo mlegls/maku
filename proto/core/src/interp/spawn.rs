@@ -62,7 +62,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 // signal tags need a literal map to stay unevaluated
                 match evaluate(m, env, ctx, world)? {
                     Val::Map(kvs) => pairs.extend(kvs.iter().cloned()),
-                    Val::DynStruct(d) => pairs.extend(dyn_struct_meta_pairs(&d)?),
+                    Val::SourceExpr(d) => pairs.extend(source_expr_meta_pairs(&d)?),
                     _ => {}
                 }
             }
@@ -177,10 +177,10 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // that lets a template's default collider set fit a bigger sprite.
     let colliders: Rc<[DynCollider]> = match map_get(&meta, "colliders") {
         Some(v) => {
-            let items = dyn_arr(&DynStruct::from_val(v)).ok_or("colliders: expected array")?;
+            let items = source_arr(&SourceExpr::from_val(v)).ok_or("colliders: expected array")?;
             let mut cs = Vec::new();
             for it in items.iter() {
-                cs.push(parse_collider_slot(it)?);
+                cs.push(as_collider_slot(it)?);
             }
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
                 let slot = first.slot();
@@ -198,10 +198,10 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     };
     let renderers: Rc<[DynRender]> = match map_get(&meta, "renderers") {
         Some(v) => {
-            let items = dyn_arr(&DynStruct::from_val(v)).ok_or("renderers: expected array")?;
+            let items = source_arr(&SourceExpr::from_val(v)).ok_or("renderers: expected array")?;
             items
                 .iter()
-                .map(parse_render_slot)
+                .map(as_render_slot)
                 .collect::<Result<Vec<_>, _>>()?
                 .into()
         }
@@ -452,36 +452,36 @@ pub(crate) fn map_get(m: &Val, key: &str) -> Option<Val> {
     None
 }
 
-fn dyn_arr(v: &DynStruct) -> Option<Vec<DynStruct>> {
+fn source_arr(v: &SourceExpr) -> Option<Vec<SourceExpr>> {
     match v {
-        DynStruct::Arr(items) => Some(items.iter().cloned().collect()),
-        DynStruct::Const(Val::Arr(items)) => Some(items.iter().cloned().map(DynStruct::from_val).collect()),
+        SourceExpr::Arr(items) => Some(items.iter().cloned().collect()),
+        SourceExpr::Const(Val::Arr(items)) => Some(items.iter().cloned().map(SourceExpr::from_val).collect()),
         _ => None,
     }
 }
 
-fn dyn_struct_to_val(v: &DynStruct) -> Result<Val, String> {
+fn source_expr_to_val(v: &SourceExpr) -> Result<Val, String> {
     if v.is_dynamic() {
-        Ok(Val::DynStruct(Rc::new(v.clone())))
+        Ok(Val::SourceExpr(Rc::new(v.clone())))
     } else {
         v.eval(0.0, &MotionState::new(), &SigEnv::default())
     }
 }
 
-fn dyn_struct_meta_pairs(v: &DynStruct) -> Result<Vec<(Val, Val)>, String> {
+fn source_expr_meta_pairs(v: &SourceExpr) -> Result<Vec<(Val, Val)>, String> {
     match v {
-        DynStruct::Map(kvs) => kvs
+        SourceExpr::Map(kvs) => kvs
             .iter()
-            .map(|(k, v)| Ok((k.clone(), dyn_struct_to_val(v)?)))
+            .map(|(k, v)| Ok((k.clone(), source_expr_to_val(v)?)))
             .collect(),
-        DynStruct::Const(Val::Map(kvs)) => Ok(kvs.iter().cloned().collect()),
+        SourceExpr::Const(Val::Map(kvs)) => Ok(kvs.iter().cloned().collect()),
         _ => Err("spawn meta: expected map".into()),
     }
 }
 
-fn dyn_map_get(m: &DynStruct, key: &str) -> Option<DynStruct> {
+fn source_map_get(m: &SourceExpr, key: &str) -> Option<SourceExpr> {
     match m {
-        DynStruct::Map(kvs) => {
+        SourceExpr::Map(kvs) => {
             for (k, v) in kvs.iter() {
                 if matches!(k, Val::Kw(kw) if &**kw == key) {
                     return Some(v.clone());
@@ -489,30 +489,30 @@ fn dyn_map_get(m: &DynStruct, key: &str) -> Option<DynStruct> {
             }
             None
         }
-        DynStruct::Const(v) => map_get(v, key).map(DynStruct::from_val),
+        SourceExpr::Const(v) => map_get(v, key).map(SourceExpr::from_val),
         _ => None,
     }
 }
 
-fn dyn_kw(v: &DynStruct) -> Option<Rc<str>> {
+fn source_kw(v: &SourceExpr) -> Option<Rc<str>> {
     match v {
-        DynStruct::Const(Val::Kw(k)) => Some(k.clone()),
+        SourceExpr::Const(Val::Kw(k)) => Some(k.clone()),
         _ => None,
     }
 }
 
-fn dyn_num(v: &DynStruct) -> Result<DynNum, String> {
+fn as_dyn_num(v: &SourceExpr) -> Result<DynNum, String> {
     match v {
-        DynStruct::Num(d) => Ok(d.clone()),
-        DynStruct::Const(Val::Num(n)) => Ok(DynNum::num(*n)),
+        SourceExpr::Num(d) => Ok(d.clone()),
+        SourceExpr::Const(Val::Num(n)) => Ok(DynNum::num(*n)),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }
 
-fn dyn_num_static(v: &DynStruct) -> Result<f64, String> {
+fn as_static_num(v: &SourceExpr) -> Result<f64, String> {
     match v {
-        DynStruct::Const(Val::Num(n)) => Ok(*n),
-        DynStruct::Num(d) => match d.repr() {
+        SourceExpr::Const(Val::Num(n)) => Ok(*n),
+        SourceExpr::Num(d) => match d.repr() {
             NumDynRepr::Const(n) => Ok(*n),
             NumDynRepr::Expr { .. } => Err("expected static number".into()),
         },
@@ -520,111 +520,111 @@ fn dyn_num_static(v: &DynStruct) -> Result<f64, String> {
     }
 }
 
-fn dyn_map_num(m: &DynStruct, key: &str, default: f64) -> Result<f64, String> {
-    match dyn_map_get(m, key) {
-        Some(v) => dyn_num_static(&v),
+fn source_map_as_static_num(m: &SourceExpr, key: &str, default: f64) -> Result<f64, String> {
+    match source_map_get(m, key) {
+        Some(v) => as_static_num(&v),
         None => Ok(default),
     }
 }
 
-fn dyn_map_num_any(m: &DynStruct, keys: &[&str], default: f64) -> Result<DynNum, String> {
+fn source_map_as_dyn_num_any(m: &SourceExpr, keys: &[&str], default: f64) -> Result<DynNum, String> {
     for key in keys {
-        if let Some(v) = dyn_map_get(m, key) {
-            return dyn_num(&v);
+        if let Some(v) = source_map_get(m, key) {
+            return as_dyn_num(&v);
         }
     }
     Ok(DynNum::num(default))
 }
 
-fn parse_sample_set(opts: &DynStruct) -> Result<SampleSet, String> {
-    if let Some(vals) = dyn_map_get(opts, "samples").and_then(|v| dyn_arr(&v)) {
+fn as_sample_set(opts: &SourceExpr) -> Result<SampleSet, String> {
+    if let Some(vals) = source_map_get(opts, "samples").and_then(|v| source_arr(&v)) {
         let mut out = Vec::with_capacity(vals.len());
         for v in vals.iter() {
-            out.push(dyn_num_static(v)?);
+            out.push(as_static_num(v)?);
         }
         return Ok(SampleSet::Values(out.into()));
     }
     Ok(SampleSet::Step {
-        resolution: dyn_map_num(opts, "resolution", 0.1)?,
+        resolution: source_map_as_static_num(opts, "resolution", 0.1)?,
     })
 }
 
-fn parse_slot_activity(opts: &DynStruct) -> Result<SlotActivity, String> {
+fn as_slot_activity(opts: &SourceExpr) -> Result<SlotActivity, String> {
     Ok(SlotActivity {
-        warn: dyn_map_num(opts, "warn", 0.0)?,
-        active: dyn_map_num(opts, "active", f64::INFINITY)?,
+        warn: source_map_as_static_num(opts, "warn", 0.0)?,
+        active: source_map_as_static_num(opts, "active", f64::INFINITY)?,
         // Full structural Dyn<T> coercion should replace this parser-level
         // shortcut; for now explicit low-level spawn specs are static data.
         hot_frac_sig: None,
     })
 }
 
-fn parse_capsule_chain_slot(opts: &DynStruct) -> Result<CapsuleChainSlot, String> {
+fn as_capsule_chain_slot(opts: &SourceExpr) -> Result<CapsuleChainSlot, String> {
     Ok(CapsuleChainSlot {
-        sample_set: parse_sample_set(opts)?,
+        sample_set: as_sample_set(opts)?,
         u_max_sig: None,
-        width: dyn_map_num(opts, "width", 1.0)?,
-        activity: parse_slot_activity(opts)?,
+        width: source_map_as_static_num(opts, "width", 1.0)?,
+        activity: as_slot_activity(opts)?,
     })
 }
 
-fn parse_shape_spec(v: &DynStruct) -> Result<(Rc<str>, DynStruct), String> {
+fn as_shape_spec(v: &SourceExpr) -> Result<(Rc<str>, SourceExpr), String> {
     match v {
-        DynStruct::Arr(items) if items.len() == 2 => {
-            let Some(shape) = dyn_kw(&items[0]) else {
+        SourceExpr::Arr(items) if items.len() == 2 => {
+            let Some(shape) = source_kw(&items[0]) else {
                 return Err("shape: expected keyword shape name".into());
             };
             Ok((shape, items[1].clone()))
         }
-        DynStruct::Const(Val::Kw(shape)) => {
-            Ok((shape.clone(), DynStruct::Map(Rc::new(Vec::new()))))
+        SourceExpr::Const(Val::Kw(shape)) => {
+            Ok((shape.clone(), SourceExpr::Map(Rc::new(Vec::new()))))
         }
         _ => Err("shape: expected [:shape opts]".into()),
     }
 }
 
-fn parse_collider_slot(v: &DynStruct) -> Result<DynCollider, String> {
-    if !matches!(v, DynStruct::Map(_) | DynStruct::Const(Val::Map(_))) {
+fn as_collider_slot(v: &SourceExpr) -> Result<DynCollider, String> {
+    if !matches!(v, SourceExpr::Map(_) | SourceExpr::Const(Val::Map(_))) {
         return Err("colliders: expected maps".into());
     }
-    let layer = match dyn_map_get(v, "layer").and_then(|v| dyn_kw(&v)) {
+    let layer = match source_map_get(v, "layer").and_then(|v| source_kw(&v)) {
         Some(k) => k,
         _ => return Err("colliders: missing :layer".into()),
     };
-    if let Some(shape_v) = dyn_map_get(v, "shape") {
-        let (shape, opts) = parse_shape_spec(&shape_v)?;
+    if let Some(shape_v) = source_map_get(v, "shape") {
+        let (shape, opts) = as_shape_spec(&shape_v)?;
         return match shape.as_ref() {
             "circle" => Ok(DynCollider::collider_circle(
                 layer,
-                dyn_map_num_any(&opts, &["radius", "r"], 0.08)?,
+                source_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
             )),
             "capsule-chain" => Ok(DynCollider::collider_capsule_chain(
                 layer,
-                dyn_map_num_any(&opts, &["radius", "r"], 0.08)?,
-                parse_capsule_chain_slot(&opts)?,
+                source_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
+                as_capsule_chain_slot(&opts)?,
             )),
             _ => Err(format!("colliders: unknown shape :{}", shape)),
         };
     }
-    match dyn_map_get(v, "r") {
-        Some(r) => Ok(DynCollider::collider_circle(layer, dyn_num(&r)?)),
+    match source_map_get(v, "r") {
+        Some(r) => Ok(DynCollider::collider_circle(layer, as_dyn_num(&r)?)),
         _ => Err("colliders: missing :r or :shape".into()),
     }
 }
 
-fn parse_render_slot(v: &DynStruct) -> Result<DynRender, String> {
-    if !matches!(v, DynStruct::Map(_) | DynStruct::Const(Val::Map(_))) {
+fn as_render_slot(v: &SourceExpr) -> Result<DynRender, String> {
+    if !matches!(v, SourceExpr::Map(_) | SourceExpr::Const(Val::Map(_))) {
         return Err("renderers: expected maps".into());
     }
-    let shape_v = dyn_map_get(v, "shape")
-        .unwrap_or_else(|| DynStruct::Const(Val::Kw("polyline".into())));
-    let (shape, opts) = parse_shape_spec(&shape_v)?;
+    let shape_v = source_map_get(v, "shape")
+        .unwrap_or_else(|| SourceExpr::Const(Val::Kw("polyline".into())));
+    let (shape, opts) = as_shape_spec(&shape_v)?;
     match shape.as_ref() {
         "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {
-            sample_set: parse_sample_set(&opts)?,
+            sample_set: as_sample_set(&opts)?,
             u_max_sig: None,
-            width: dyn_map_num(&opts, "width", 1.0)?,
-            activity: parse_slot_activity(&opts)?,
+            width: source_map_as_static_num(&opts, "width", 1.0)?,
+            activity: as_slot_activity(&opts)?,
         })),
         _ => Err(format!("renderers: unknown shape :{}", shape)),
     }
