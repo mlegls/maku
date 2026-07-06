@@ -158,11 +158,46 @@ pub struct Dyn<T> {
 
 #[derive(Debug, Clone)]
 pub enum DynRepr {
+    NumConst(f64),
+    NumExpr { form: Form, env: Env },
     Pose(Rc<DynNode>),
     FigureCurve { frame: Rc<DynNode>, curve: ParametricCurve },
 }
 
+pub trait DynEval: Sized {
+    fn eval_dyn(
+        d: &Dyn<Self>,
+        tau: f64,
+        state: &MotionState,
+        sig: &SigEnv,
+    ) -> Result<Self, String>;
+}
+
+pub fn eval_dyn<T: DynEval>(
+    d: &Dyn<T>,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<T, String> {
+    T::eval_dyn(d, tau, state, sig)
+}
+
+pub type DynNum = Dyn<f64>;
 pub type DynFigure = Dyn<Figure>;
+
+impl Dyn<f64> {
+    pub fn num(n: f64) -> DynNum {
+        Dyn { repr: DynRepr::NumConst(n), _marker: PhantomData }
+    }
+
+    pub fn num_expr(form: Form, env: Env) -> DynNum {
+        Dyn { repr: DynRepr::NumExpr { form, env }, _marker: PhantomData }
+    }
+
+    pub fn repr(&self) -> &DynRepr {
+        &self.repr
+    }
+}
 
 impl Dyn<Figure> {
     pub fn pose(d: Rc<DynNode>) -> DynFigure {
@@ -181,6 +216,7 @@ impl Dyn<Figure> {
         match &self.repr {
             DynRepr::Pose(d) => d,
             DynRepr::FigureCurve { frame, .. } => frame,
+            _ => unreachable!("internal type error: expected Dyn<Figure>"),
         }
     }
 
@@ -188,6 +224,7 @@ impl Dyn<Figure> {
         match &self.repr {
             DynRepr::FigureCurve { curve, .. } => Some(curve),
             DynRepr::Pose(_) => None,
+            _ => unreachable!("internal type error: expected Dyn<Figure>"),
         }
     }
 
@@ -201,6 +238,40 @@ impl Dyn<Figure> {
             DynRepr::FigureCurve { frame: child, curve } => {
                 DynFigure::figure_curve(Rc::new(DynNode::Frame(parent, child.clone())), curve.clone())
             }
+            _ => unreachable!("internal type error: expected Dyn<Figure>"),
+        }
+    }
+}
+
+impl DynEval for f64 {
+    fn eval_dyn(
+        d: &Dyn<f64>,
+        tau: f64,
+        _state: &MotionState,
+        sig: &SigEnv,
+    ) -> Result<f64, String> {
+        match d.repr() {
+            DynRepr::NumConst(n) => Ok(*n),
+            DynRepr::NumExpr { form, env } => eval_sig(form, env, sig, tau, 0.0, None, None)?.num(),
+            _ => Err("internal type error: expected Dyn<f64>".into()),
+        }
+    }
+}
+
+impl DynEval for Figure {
+    fn eval_dyn(
+        d: &Dyn<Figure>,
+        tau: f64,
+        state: &MotionState,
+        sig: &SigEnv,
+    ) -> Result<Figure, String> {
+        match d.repr() {
+            DynRepr::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
+            DynRepr::FigureCurve { frame, curve } => Ok(Figure::Curve(Curve {
+                frame: dyn_pose(frame, tau, state, sig)?,
+                spec: curve.clone(),
+            })),
+            _ => Err("internal type error: expected Dyn<Figure>".into()),
         }
     }
 }
@@ -225,12 +296,12 @@ pub enum CurveBacking {
     Parametric {
         curve: ParametricCurve,
         sample_set: SampleSet,
-        u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
+        u_max_sig: Option<DynNum>, // signal-valued :u-max (varLength)
         warn: f64,
         active: f64,
         width: f64,
         /// Swept hot fraction as a function of curve age t.
-        fill_sig: Option<(Form, Env)>,
+        fill_sig: Option<DynNum>,
     },
     /// Surface `pather` syntax currently lowers to a pose entity with a
     /// legacy trace cache enabled.
@@ -320,13 +391,7 @@ pub fn eval_dyn_figure(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Figure, String> {
-    match d.repr() {
-        DynRepr::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
-        DynRepr::FigureCurve { frame, curve } => Ok(Figure::Curve(Curve {
-            frame: dyn_pose(frame, tau, state, sig)?,
-            spec: curve.clone(),
-        })),
-    }
+    eval_dyn(d, tau, state, sig)
 }
 
 pub fn dyn_pose_u(

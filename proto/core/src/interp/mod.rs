@@ -1265,6 +1265,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
             DynRepr::Pose(_) if b.cache_policy.trace.is_some() => "pather",
             DynRepr::Pose(_) => "point",
             DynRepr::FigureCurve { .. } => "laser",
+            _ => unreachable!("internal type error: expected Dyn<Figure>"),
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -2341,11 +2342,11 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
                     if matches!(v, Form::Num(_)) {
                         return Err("laser :fill expects a fraction signal; use (fill-linear warn dur) for a linear sweep".into());
                     }
-                    fill_sig = Some((v.clone(), env.clone()));
+                    fill_sig = Some(DynNum::num_expr(v.clone(), env.clone()));
                     pairs.push((kv, Val::Nothing));
                 } else if contains_t(v) {
                     if matches!(&kv, Val::Kw(kw) if &**kw == "u-max") {
-                        u_max_sig = Some((v.clone(), env.clone()));
+                        u_max_sig = Some(DynNum::num_expr(v.clone(), env.clone()));
                     }
                     pairs.push((kv, Val::Nothing));
                 } else {

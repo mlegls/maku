@@ -353,6 +353,7 @@ pub(crate) fn dyn_figure_has_rand(d: &DynFigure) -> bool {
             dyn_has_rand(frame)
                 || matches!(&curve.eval, CurveEval::Expr(shape) if dyn_has_rand(shape))
         }
+        _ => unreachable!("internal type error: expected Dyn<Figure>"),
     }
 }
 
@@ -433,6 +434,7 @@ pub(crate) fn instantiate_rand_geometry(d: &DynFigure, world: &mut World) -> Dyn
                 },
             )
         }
+        _ => unreachable!("internal type error: expected Dyn<Figure>"),
     }
 }
 

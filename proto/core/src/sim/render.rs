@@ -94,6 +94,7 @@ impl Sim {
                         }
                     }
                 }
+                _ => unreachable!("internal type error: expected Dyn<Figure>"),
             }
         }
         out

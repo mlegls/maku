@@ -19,7 +19,7 @@ pub struct CurveSlotActivityCompat {
     pub warn: f64,
     pub active: f64,
     /// Signal-valued active-domain fraction, clamped to 0..1.
-    pub hot_frac_sig: Option<(Form, Env)>,
+    pub hot_frac_sig: Option<DynNum>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ pub struct CurveColliderSlotCompat {
     pub sample_set: SampleSet,
     /// Signal-valued compatibility override for the upper range bound
     /// (:u-max varLength).
-    pub u_max_sig: Option<(Form, Env)>,
+    pub u_max_sig: Option<DynNum>,
     /// Width multiplier for the current capsule-chain half-width.
     pub width: f64,
     pub activity: CurveSlotActivityCompat,
@@ -42,7 +42,7 @@ pub struct CurveRenderSlotCompat {
     pub sample_set: SampleSet,
     /// Signal-valued compatibility override for the upper range bound
     /// (:u-max varLength).
-    pub u_max_sig: Option<(Form, Env)>,
+    pub u_max_sig: Option<DynNum>,
     /// Width multiplier for the current rendered stroke. The host still
     /// controls final appearance; this exists to preserve laser behavior
     /// while slots are being split.

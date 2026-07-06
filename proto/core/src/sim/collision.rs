@@ -33,7 +33,7 @@ fn sample_curve_projection(
     sig: &SigEnv,
     frac: f64,
     sample_set: &SampleSet,
-    u_max_sig: &Option<(Form, Env)>,
+    u_max_sig: &Option<DynNum>,
 ) -> Option<Vec<(f64, f64)>> {
     let Figure::Curve(curve) = eval_dyn_figure(&b.dyn_figure, tau, &b.state, sig).ok()? else {
         return None;
@@ -59,9 +59,7 @@ fn sample_curve_projection(
         (CurveDomain::Range { min, max }, SampleSet::Step { resolution }) => {
             let min = *min;
             let max = match u_max_sig {
-                Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
-                    .and_then(|v| v.num())
-                    .unwrap_or(*max),
+                Some(d) => eval_dyn(d, tau, &b.state, sig).unwrap_or(*max),
                 None => *max,
             };
             let end = min + (max - min) * frac.min(1.0);
@@ -83,9 +81,8 @@ fn sample_curve_projection(
 /// the moment the warn ends. :fill itself is a fraction signal; helpers like
 /// fill-linear live in card/library code.
 pub(super) fn hot_frac(activity: &CurveSlotActivityCompat, tau: f64, sig: &SigEnv) -> f64 {
-    if let Some((f, e)) = &activity.hot_frac_sig {
-        return eval_sig(f, e, sig, tau, 0.0, None, None)
-            .and_then(|v| v.num())
+    if let Some(d) = &activity.hot_frac_sig {
+        return eval_dyn(d, tau, &MotionState::new(), sig)
             .map(|x| x.clamp(0.0, 1.0))
             .unwrap_or(1.0);
     }
@@ -167,6 +164,7 @@ impl Sim {
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R * projection.width).max(0.0).powi(2))
                 }
+                _ => unreachable!("internal type error: expected Dyn<Figure>"),
             }
         };
 

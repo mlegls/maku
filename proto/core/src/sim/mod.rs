@@ -333,6 +333,7 @@ impl Sim {
                             .map(|projection| tau <= projection.activity.warn + projection.activity.active)
                     })
                     .unwrap_or(true),
+                _ => unreachable!("internal type error: expected Dyn<Figure>"),
             }
         });
         match err {

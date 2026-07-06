@@ -203,6 +203,10 @@ language.md.
   2i. ~~Make figure dyns use the shared `Dyn<T>` shell.~~ Done;
       `DynFigure` is now `Dyn<Figure>`, backed by `DynRepr`. The remaining
       work is to generalize `DynRepr`/evaluation beyond pose and figure.
+  2j. ~~Add scalar dyn slots to the shared dyn evaluator.~~ Done;
+      compatibility curve `:u-max` and hot fill fractions now store
+      `Dyn<f64>` rather than raw `(Form, Env)` pairs, and evaluate through
+      the generic `eval_dyn` path.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with
