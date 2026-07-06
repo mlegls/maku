@@ -212,13 +212,17 @@
   .source-editor #source, .source-highlight,
   .eval-editor #eval-code, .eval-highlight {
     font: inherit;
-    line-height: 1.4;
+    line-height: 18px;
     letter-spacing: 0;
     white-space: pre-wrap;
-    overflow-wrap: normal;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
     word-break: normal;
+    font-variant-ligatures: none;
+    scrollbar-gutter: stable;
   }
   .source-highlight code {
+    display: block;
     font: inherit;
   }
   .tok-comment { color: #6f778a; }
@@ -341,6 +345,7 @@
     tab-size: 2;
   }
   .eval-highlight code {
+    display: block;
     font: inherit;
   }
   .eval-row { display: flex; gap: 6px; flex-wrap: wrap; }
