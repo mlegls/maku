@@ -4,7 +4,7 @@ import init, { Maku, stdlibSource } from './pkg/maku.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
 
-const BOOT = 'cards/tutorials/t01.dmk';
+const BOOT = 'cards/tutorials/t01.maku';
 const TICK_RATE = 120;
 const PPU = 40;
 

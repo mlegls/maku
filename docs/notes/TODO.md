@@ -38,7 +38,7 @@ language.md.
 - Trigger predicates: single-column `≤` crossings only (§13.13).
 - Shipped: `defcontact` moved contact resolution out of the engine. Layers
   are opaque tags, teams are query metadata only, Touhou hit/graze/shot
-  rules live in `cards/lib/touhou.dmk`, and `$graze`/`$hits` are stdlib
+  rules live in `cards/lib/touhou.maku`, and `$graze`/`$hits` are stdlib
   derived channels — `(sum-entities {:team :player-body} :col)` over
   per-entity counter columns, NOT per-entity :expose registrations: a host
   may layer its stock rig over a card that ships its own (the smoke does),
@@ -154,7 +154,7 @@ language.md.
   and the flat draw-list contract (kind + pose + style + tag values);
   it should NOT privilege family/color/variant (currently hardcoded
   fields on the Rust Style struct — generalize to a small interned
-  map). The family/color/variant vocabulary belongs to touhou.dmk; the
+  map). The family/color/variant vocabulary belongs to touhou.maku; the
   family→sprite and color→palette tables (now core::host) become host
   config shipped alongside the lib. DMK-style pools = interning as an
   optimization, never semantics.
@@ -187,7 +187,7 @@ language.md.
   non-intrinsic out of Rust into lib, then start on compilation
   (specials are the IR, intrinsics are the builtins).
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
-  tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
+  tutorials, each with a runnable cards/tutorials/*.maku companion swept by
   tutorial_cards_run): 01–06 done (06 = bosses/phases/script structure,
   mapping DMK t07: bare `states`, the `phases` sugar table, spawn-boss,
   phase-edge policy as finally code; DMK's own t06 is a philosophy

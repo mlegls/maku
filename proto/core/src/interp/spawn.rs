@@ -170,7 +170,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // collider set: archetype data, one Rc shared by every spawned element.
     // No genre defaults — an entity with no :colliders is inert to the
     // contact pass (scenery); what a "bullet" or "enemy" carries is the
-    // library's business (spawn-bullet/spawn-enemy in lib/touhou.dmk).
+    // library's business (spawn-bullet/spawn-enemy in lib/touhou.maku).
     // :hitbox r resizes the PRIMARY (first) collider — the generic knob
     // that lets a template's default collider set fit a bigger sprite.
     let colliders: Rc<[Collider]> = match map_get(&meta, "colliders") {

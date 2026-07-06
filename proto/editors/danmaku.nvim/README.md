@@ -1,13 +1,13 @@
 # danmaku.nvim
 
-Thin editor client for the maku-player server (sclang/scsynth split):
+Thin editor client for the maku server (sclang/scsynth split):
 newline-delimited EDN over 127.0.0.1:7777.
 
 Start the player once:
 
-    cargo run --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/translations/130_bowap.dmk
+    cargo run --manifest-path proto/Cargo.toml --features player --bin maku -- cards/translations/130_bowap.maku
 
-Then from any `.dmk` card buffer:
+Then from any `.maku` card buffer:
 
 | mapping / command | effect |
 |---|---|

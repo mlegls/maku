@@ -1,11 +1,11 @@
 # Tutorial 1: First Bullets
 
-Runnable companion: **`cards/tutorials/t01.dmk`** — every example below is a
+Runnable companion: **`cards/tutorials/t01.maku`** — every example below is a
 pattern in that card. Start the player and press the number keys (or click
 the menu in the web host) to run each one:
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t01.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t01.maku
 ```
 
 ## One bullet

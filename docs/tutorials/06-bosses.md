@@ -1,9 +1,9 @@
 # Tutorial 6: Bosses, Phases, and Script Structure
 
-Runnable companion: **`cards/tutorials/t06.dmk`**.
+Runnable companion: **`cards/tutorials/t06.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t06.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t06.maku
 ```
 
 Every card so far was one pattern firing forever. Real fights have
@@ -19,9 +19,9 @@ top-level forms: `defpattern`s, `defn`s/`defmacro`s, imports, contact
 rules. There is no privileged "script object" — the *first* `defpattern`
 is the default pattern a host boots, and the number keys select others
 (that's how these tutorial cards work). `(import "touhou")` splices the
-genre library; `(import "path.dmk")` splices another card's text, so a
+genre library; `(import "path.maku")` splices another card's text, so a
 full fight assembles from translation files and helpers by import
-(see `cards/reimu_vs_mima.dmk` for the worked example).
+(see `cards/reimu_vs_mima.maku` for the worked example).
 
 ## The primitive: `states`
 
@@ -91,7 +91,7 @@ options over `states` (`ex4-phases`):
 | `(finally …)` tail | core `(finally body cleanup…)` — cleanup on *every* exit path: gate, timeout, goto |
 
 That table is the whole feature. `phases` is a macro in
-`cards/lib/touhou.dmk` — about thirty lines of clause-walking you can
+`cards/lib/touhou.maku` — about thirty lines of clause-walking you can
 read, and the desugared output is exactly the `ex1` shapes. If your
 game means something different by "phase", you write a different macro;
 the engine has no opinion.

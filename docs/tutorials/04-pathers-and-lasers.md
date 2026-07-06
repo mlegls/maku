@@ -1,9 +1,9 @@
 # Tutorial 4: Pathers, Lasers, and Subfiring
 
-Runnable companion: **`cards/tutorials/t04.dmk`**.
+Runnable companion: **`cards/tutorials/t04.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t04.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t04.maku
 ```
 
 Bullets so far have been points. This tutorial covers the two extended

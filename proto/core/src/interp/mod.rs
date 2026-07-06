@@ -143,7 +143,7 @@ pub struct SpawnElem {
 /// order, `goto` for everything else. End conditions are ordinary body
 /// code (`(until pred …)` as the body, `(fork (seq (wait d) (goto)))` for
 /// timeouts); `phases` — the boss-shaped sugar over it — is a stdlib
-/// macro (lib/touhou.dmk), not engine code.
+/// macro (lib/touhou.maku), not engine code.
 #[derive(Debug, Clone)]
 pub struct StateClause {
     pub label: Rc<str>,
@@ -655,7 +655,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 })));
             }
             // `phases` — the boss-shaped layer over `states` — is a stdlib
-            // macro now (lib/touhou.dmk): what a "phase" means is genre
+            // macro now (lib/touhou.maku): what a "phase" means is genre
             // policy, and the macro-time form vocabulary expresses the
             // whole desugar as card code.
             "goto" => {

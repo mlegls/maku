@@ -21,7 +21,7 @@ const mime = {
   ".css": "text/css; charset=utf-8",
   ".wasm": "application/wasm",
   ".md": "text/markdown; charset=utf-8",
-  ".dmk": "text/plain; charset=utf-8",
+  ".maku": "text/plain; charset=utf-8",
 };
 Bun.serve({
   port,

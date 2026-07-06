@@ -1,9 +1,9 @@
 # Tutorial 7: Indices, Formations, and Guided Fires
 
-Runnable companion: **`cards/tutorials/t07.dmk`**.
+Runnable companion: **`cards/tutorials/t07.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t07.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t07.maku
 ```
 
 This tutorial builds up to one skill: making a *complex shape* of
@@ -102,7 +102,7 @@ you'd tune an easing — by eye.
 
 The pattern generalizes to any rigid ensemble: put the shared motion in
 one frame level, the shape below it, and nest further for shapes within
-shapes. `cards/translations/200_cradle.dmk` runs it at production scale
+shapes. `cards/translations/200_cradle.maku` runs it at production scale
 — three volleys × six guides × seven petals, every level a frame.
 
 ## Sharing a guide
@@ -125,7 +125,7 @@ The launcher decelerates along its 45° line; the star rides it visibly
 (`:team :scenery`, no colliders — field clears pass over it); the aimed
 fans fire from wherever it currently is. Spawning the guide as an
 entity is a choice you make *when you want it seen* — the mechanism
-never requires it. `cards/translations/ph_boss2_spell2.dmk` uses this
+never requires it. `cards/translations/ph_boss2_spell2.maku` uses this
 rig at production scale.
 
 **Try it:** give `ex4`'s guide a `polar` path instead of the lerp and

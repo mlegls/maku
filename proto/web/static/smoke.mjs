@@ -15,12 +15,12 @@ const maku = new Maku(rig + '\n(player-rig)');
 for (const f of CARD_FILES) {
   maku.add_file(f, readFileSync(join(root, f), 'utf8'));
 }
-maku.boot('cards/tutorials/t01.dmk', undefined);
+maku.boot('cards/tutorials/t01.maku', undefined);
 if (!maku.running()) throw new Error('tutorial boot failed: ' + maku.status());
 maku.step(2);
 if (maku.dots().length === 0) throw new Error('tutorial rendered nothing: ' + maku.status());
 
-maku.boot('cards/reimu_vs_mima.dmk', undefined);
+maku.boot('cards/reimu_vs_mima.maku', undefined);
 if (!maku.running()) throw new Error('boot failed: ' + maku.status());
 
 // play 5 seconds with slight movement

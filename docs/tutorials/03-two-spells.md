@@ -1,9 +1,9 @@
 # Tutorial 3: Two Spells
 
-Runnable companion: **`cards/tutorials/t03.dmk`**.
+Runnable companion: **`cards/tutorials/t03.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t03.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t03.maku
 ```
 
 This tutorial builds two recognizable spell cards from the tools of the

@@ -699,7 +699,7 @@ fn desugar_dotted(s: String) -> Form {
 }
 
 // ---------------------------------------------------------------------------
-// imports: (import "relative/path.dmk") on its own line splices that card's
+// imports: (import "relative/path.maku") on its own line splices that card's
 // text at this position (recursively, include-once). Textual include with
 // dedup: the importing file's own later defs shadow imported ones, matching
 // ordinary def ordering. Expansion happens at file-load time, so the wire
@@ -708,8 +708,8 @@ fn desugar_dotted(s: String) -> Form {
 use std::collections::HashSet;
 use std::path::Path;
 
-/// Library imports: a BARE name — no '/' and no ".dmk" — is a stdlib
-/// import, `(import "touhou")`. It canonicalizes to `@lib/<name>.dmk`
+/// Library imports: a BARE name — no '/' and no ".maku" — is a stdlib
+/// import, `(import "touhou")`. It canonicalizes to `@lib/<name>.maku`
 /// (the include-once key) and resolves from STDLIB below — never from a
 /// reader — so every host, native or wasm, sees the same library.
 /// Path imports stay relative to the importing file.
@@ -719,9 +719,9 @@ const LIB_PREFIX: &str = "@lib/";
 /// files under cards/lib/, shipped inside the engine artifact (users
 /// import it; they don't edit it). One entry per library card.
 const STDLIB: &[(&str, &str)] = &[
-    ("@lib/prelude.dmk", include_str!("../../../cards/lib/prelude.dmk")),
-    ("@lib/touhou.dmk", include_str!("../../../cards/lib/touhou.dmk")),
-    ("@lib/player-rig.dmk", include_str!("../../../cards/lib/player-rig.dmk")),
+    ("@lib/prelude.maku", include_str!("../../../cards/lib/prelude.maku")),
+    ("@lib/touhou.maku", include_str!("../../../cards/lib/touhou.maku")),
+    ("@lib/player-rig.maku", include_str!("../../../cards/lib/player-rig.maku")),
 ];
 
 /// The prelude is AUTOIMPORTED: every top-level expansion prepends it
@@ -730,7 +730,7 @@ const STDLIB: &[(&str, &str)] = &[
 /// an explicit (import "prelude") — idempotent. Definition order doesn't
 /// matter (macros/defs resolve at evaluation), so prepending after the
 /// fact is sound.
-const PRELUDE_KEY: &str = "@lib/prelude.dmk";
+const PRELUDE_KEY: &str = "@lib/prelude.maku";
 const PRELUDE_SENTINEL: &str = ";;@prelude";
 
 fn with_prelude(
@@ -749,7 +749,7 @@ fn with_prelude(
 /// A stdlib card's source by bare name ("touhou") — hosts use this to
 /// build rig strings without carrying card files around.
 pub fn stdlib(name: &str) -> Option<&'static str> {
-    let key = format!("{}{}.dmk", LIB_PREFIX, name);
+    let key = format!("{}{}.maku", LIB_PREFIX, name);
     STDLIB.iter().find(|(k, _)| *k == key).map(|(_, s)| *s)
 }
 
@@ -820,8 +820,8 @@ fn expand_lines(
     for line in src.lines() {
         match import_target(line) {
             Some(rel) => {
-                let target = if !rel.contains('/') && !rel.ends_with(".dmk") {
-                    format!("{}{}.dmk", LIB_PREFIX, rel) // library import
+                let target = if !rel.contains('/') && !rel.ends_with(".maku") {
+                    format!("{}{}.maku", LIB_PREFIX, rel) // library import
                 } else if base.is_empty() {
                     rel.to_string()
                 } else {

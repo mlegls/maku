@@ -23,7 +23,7 @@
       (spawn-bullet (in-frame (pose c[0 3.2])
                ((aim $player) (fan 5 24 (linear p[2.8 0])))) {:style {:family :circle :color :red}}))))
 
-;; auto-fire homing shots from the player's frame (player_homing.dmk idiom)
+;; auto-fire homing shots from the player's frame (player_homing.maku idiom)
 (defpattern autofire []
   (for [i inf :every (ticks 10)]
     (spawn-shot (in-frame (live $player)

@@ -1,4 +1,4 @@
--- danmaku.nvim — thin client for the maku-player server.
+-- danmaku.nvim — thin client for the maku server.
 --
 -- The player (proto/player) listens on 127.0.0.1:7777 for newline-delimited
 -- EDN commands; the wire format is the card format, so this plugin is just
@@ -258,7 +258,7 @@ end
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 
-  -- .dmk cards: own filetype (no clojure plugins attach), clojure/edn
+  -- .maku cards: own filetype (no clojure plugins attach), clojure/edn
   -- highlighting via regex syntax + treesitter alias when available
   vim.filetype.add({ extension = { dmk = "danmaku" } })
   pcall(vim.treesitter.language.register, "clojure", "danmaku")
@@ -289,7 +289,7 @@ function M.setup(opts)
 
   -- buffer-local mappings on card files
   vim.api.nvim_create_autocmd({ "BufEnter", "BufNewFile" }, {
-    pattern = "*.dmk",
+    pattern = "*.maku",
     group = vim.api.nvim_create_augroup("danmaku-nvim", { clear = true }),
     callback = function(ev)
       local map = function(mode, lhs, fn, desc, opts)

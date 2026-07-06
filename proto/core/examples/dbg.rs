@@ -3,19 +3,19 @@ use maku::sim::Sim;
 
 fn main() {
     let cases: &[(&str, &str, usize)] = &[
-        ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.dmk", "bowap", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.dmk", "bowap-fold", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/020_gsrepeat.dmk", "gsrepeat-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/040_spread.dmk", "spread-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/060_polar.dmk", "polar-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/080_aimed.dmk", "aimed-demo", 400),
-        ("/Users/mlegls/dev/Maku/cards/translations/070_dynamic_lasers.dmk", "lasers-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/110_exploding_stars.dmk", "exploding-stars", 400),
-        ("/Users/mlegls/dev/Maku/cards/translations/200_cradle.dmk", "cradle", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.dmk", "reimu-free-fire", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.dmk", "reimu-focus", 400),
-        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.dmk", "fantasy-seal", 700),
-        ("/Users/mlegls/dev/Maku/cards/translations/ph_boss2_spell2.dmk", "spell-2", 900),
+        ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.maku", "bowap", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.maku", "bowap-fold", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/020_gsrepeat.maku", "gsrepeat-demo", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/040_spread.maku", "spread-demo", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/060_polar.maku", "polar-demo", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/080_aimed.maku", "aimed-demo", 400),
+        ("/Users/mlegls/dev/Maku/cards/translations/070_dynamic_lasers.maku", "lasers-demo", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/110_exploding_stars.maku", "exploding-stars", 400),
+        ("/Users/mlegls/dev/Maku/cards/translations/200_cradle.maku", "cradle", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.maku", "reimu-free-fire", 300),
+        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.maku", "reimu-focus", 400),
+        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.maku", "fantasy-seal", 700),
+        ("/Users/mlegls/dev/Maku/cards/translations/ph_boss2_spell2.maku", "spell-2", 900),
     ];
     for (path, pattern, ticks) in cases {
         let src = match std::fs::read_to_string(path) {

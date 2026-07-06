@@ -518,7 +518,7 @@ mod tests {
             crate::edn::stdlib("player-rig").unwrap()
         );
         let mut inst = Instance::new(Some(rig));
-        inst.boot("../../cards/translations/130_bowap.dmk".into(), None);
+        inst.boot("../../cards/translations/130_bowap.maku".into(), None);
         assert!(inst.running());
         assert!(inst.patterns().len() >= 2, "menu populated");
 

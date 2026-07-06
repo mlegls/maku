@@ -99,7 +99,7 @@ lands somewhere specific here:
 | DMK's pitch | here |
 |---|---|
 | movement is function-based: drop `3 + sine(4, 0.6, t)` into any velocity slot instead of falling back to manual update loops | the signal model *is* the language: every dyn/meta slot takes an expression over `t`/`u`, and closed-vs-integrated is typed (which DMK doesn't do — that's what buys scrubbing) |
-| the showcase: 4 spiral bullets, `gsrepeat({ times(4), circle }, s(polar(2*t, 80*t)))` vs pages of LuaSTG/DNH update-loop code | `(spawn-bullet (circle 4 (polar m"2*t" m"80*t")))` — see `cards/translations/060_polar.dmk` for a production-strength version of the same shot |
+| the showcase: 4 spiral bullets, `gsrepeat({ times(4), circle }, s(polar(2*t, 80*t)))` vs pages of LuaSTG/DNH update-loop code | `(spawn-bullet (circle 4 (polar m"2*t" m"80*t")))` — see `cards/translations/060_polar.maku` for a production-strength version of the same shot |
 | modifiers/options (`scale`, `dir`, `opacity` on `simple`) extend entities without breaking signatures | meta maps merged per-key + render-signal tags (`:scale` `:facing` `:opacity` `:hue`); colliders, columns, triggers are the same open-map story |
 | extensible by "writing a C# function and putting it somewhere" — engine-language extension, engine rebuild | extension is *in-language*: `defn`/`defmacro`/lib cards. The whole touhou genre layer (spawn templates, contact rules, phases) is card code over a bare engine — a user card extends the vocabulary with no engine involvement at all |
 
@@ -171,14 +171,14 @@ tutorials already teach.
 | `face(original\|velocity\|derot\|rotator)` | rendered facing follows the composed frame heading; `:facing` overrides (Tutorial 4) |
 | `times(n)` / `maxtimes(n)` | loop bounds and array lengths; `maxtimes` dissolves with `p` packing (Tutorial 8 table) |
 | `fortime(d)` — frame cap racing the count cap | `(race (wait d) (for [i n] …))` |
-| `frv2(fn-of-i)` — offset as a function of iteration | offsets *are* expressions of the index (BoWaP: `cards/translations/130_bowap.dmk`) |
+| `frv2(fn-of-i)` — offset as a function of iteration | offsets *are* expressions of the index (BoWaP: `cards/translations/130_bowap.maku`) |
 | `noop` | — |
 | `onlaser` | Tutorial 4 table |
 | `p` / parametrization | Tutorial 8 table |
 | `saoffset(SAAngle, θ, eq)` — summon along an equation | the offset is an expression; the `SAAngle` enum is where you place `rot`/`pose` in the tree — `banktangent` is a closed path's frame heading, free |
 | `sequential` — children in sequence instead of parallel | `seq` vs `par`, always explicit |
 | `sfx` / `sfxf` / `sfxif` | `(event :sfx …)`; index with `nth`, gate with `when` |
-| `target(mode, Lplayer)` / `sltarget` | `((aim $player) …)` at whichever tree level you mean; the six control modes are arithmetic on explicit offsets (laser grids: the grid helpers in `cards/translations/ph_boss2_spell2.dmk`) |
+| `target(mode, Lplayer)` / `sltarget` | `((aim $player) …)` at whichever tree level you mean; the six control modes are arithmetic on explicit offsets (laser grids: the grid helpers in `cards/translations/ph_boss2_spell2.maku`) |
 | `timer` / `newtimer()` — shared, resettable clocks | capture an epoch and read the world clock live: `(let [t0 $tick] … m"(live($tick) - t0)/120" …)`; resettable = the epoch in a cell, reset by `set!` |
 | `timereset` + `st` (summoning time) | `st` is fixed at spawn — pass the emitting loop's elapsed time in as a binding; resetting is rebinding |
 
@@ -275,7 +275,7 @@ is host metadata and is not a core-language feature.
 | `EndingConfig` predicates | host-side predicates over recorded campaign state and card events |
 | practice unlocks based on campaign completion | host save/unlock policy; core can expose checkpoints/section ids but does not own menus |
 
-The runnable port is `cards/tutorials/t08.dmk` with
+The runnable port is `cards/tutorials/t08.maku` with
 `docs/tutorials/08-stages-and-campaigns.md`. It demonstrates the core
 half of `tstages`: a timed stage section, a fairy wave, a midboss
 handoff, announce/dialogue events, and a compact full-stage timeline.

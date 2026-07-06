@@ -1,6 +1,6 @@
 //! The debug player: a sim+render SERVER (sclang/scsynth split).
 //!
-//! Usage: maku-player [card.dmk [pattern-name]]
+//! Usage: maku [card.maku [pattern-name]]
 //! With no card argument the player starts empty and waits for clients.
 //!
 //! The CLI card argument is the degenerate client. A TCP listener on
@@ -15,7 +15,7 @@
 //!                                     bullets keep their old code
 //!   (add <forms...>)                 layer onto the running sim; the added
 //!                                     pattern's clocks anchor at this tick
-//!   (load "path/to/card.dmk")        reload from disk (does NOT play)
+//!   (load "path/to/card.maku")        reload from disk (does NOT play)
 //!   (load "path" "pattern-name")     reload and play the named pattern
 //!   (pattern "name")                 switch pattern in the current card
 //!   (restart)                        re-run the current pattern
@@ -161,7 +161,7 @@ struct App {
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "maku-player".into(),
+        window_title: "maku".into(),
         window_width: 900,
         window_height: 960,
         ..Default::default()
@@ -170,7 +170,7 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    // usage: maku-player [card.dmk [pattern-name]] — with no card, start
+    // usage: maku [card.maku [pattern-name]] — with no card, start
     // empty and wait for (load ...) / (run ...) from clients
     let mut args = std::env::args().skip(1);
     let card_path = args.next().unwrap_or_default();

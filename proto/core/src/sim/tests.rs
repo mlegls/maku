@@ -4,19 +4,19 @@
     #[test]
     fn translations_run() {
         let cases: &[(&str, &str, usize)] = &[
-            ("../../cards/translations/130_bowap.dmk", "bowap", 300),
-            ("../../cards/translations/130_bowap.dmk", "bowap-fold", 300),
-            ("../../cards/translations/020_gsrepeat.dmk", "gsrepeat-demo", 300),
-            ("../../cards/translations/040_spread.dmk", "spread-demo", 300),
-            ("../../cards/translations/060_polar.dmk", "polar-demo", 300),
-            ("../../cards/translations/080_aimed.dmk", "aimed-demo", 400),
-            ("../../cards/translations/070_dynamic_lasers.dmk", "lasers-demo", 300),
-            ("../../cards/translations/110_exploding_stars.dmk", "exploding-stars", 400),
-            ("../../cards/translations/200_cradle.dmk", "cradle", 300),
-            ("../../cards/translations/player_homing.dmk", "reimu-free-fire", 300),
-            ("../../cards/translations/player_homing.dmk", "reimu-focus", 400),
-            ("../../cards/translations/player_homing.dmk", "fantasy-seal", 700),
-            ("../../cards/translations/ph_boss2_spell2.dmk", "spell-2", 900),
+            ("../../cards/translations/130_bowap.maku", "bowap", 300),
+            ("../../cards/translations/130_bowap.maku", "bowap-fold", 300),
+            ("../../cards/translations/020_gsrepeat.maku", "gsrepeat-demo", 300),
+            ("../../cards/translations/040_spread.maku", "spread-demo", 300),
+            ("../../cards/translations/060_polar.maku", "polar-demo", 300),
+            ("../../cards/translations/080_aimed.maku", "aimed-demo", 400),
+            ("../../cards/translations/070_dynamic_lasers.maku", "lasers-demo", 300),
+            ("../../cards/translations/110_exploding_stars.maku", "exploding-stars", 400),
+            ("../../cards/translations/200_cradle.maku", "cradle", 300),
+            ("../../cards/translations/player_homing.maku", "reimu-free-fire", 300),
+            ("../../cards/translations/player_homing.maku", "reimu-focus", 400),
+            ("../../cards/translations/player_homing.maku", "fantasy-seal", 700),
+            ("../../cards/translations/ph_boss2_spell2.maku", "spell-2", 900),
         ];
         for (path, pattern, ticks) in cases {
             let src = std::fs::read_to_string(path)
@@ -149,7 +149,7 @@
     /// worlds stay identical (the scrubbing contract).
     #[test]
     fn snapshot_determinism() {
-        let src = std::fs::read_to_string("../../cards/translations/ph_boss2_spell2.dmk").unwrap();
+        let src = std::fs::read_to_string("../../cards/translations/ph_boss2_spell2.maku").unwrap();
         let mut a = Sim::load(&src, Some("spell-2")).unwrap();
         for _ in 0..200 {
             a.step().unwrap();
@@ -699,21 +699,21 @@
     /// files that both import a common base yields one copy of the base.
     #[test]
     fn imports_expand_once() {
-        let dir = std::env::temp_dir().join("dmk-import-test");
+        let dir = std::env::temp_dir().join("maku-import-test");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("base.dmk"), "(def shared 7)\n").unwrap();
+        std::fs::write(dir.join("base.maku"), "(def shared 7)\n").unwrap();
         std::fs::write(
-            dir.join("a.dmk"),
-            "(import \"base.dmk\")\n(defpattern a [] (spawn (pose c[shared 0])))\n",
+            dir.join("a.maku"),
+            "(import \"base.maku\")\n(defpattern a [] (spawn (pose c[shared 0])))\n",
         )
         .unwrap();
         std::fs::write(
-            dir.join("main.dmk"),
-            "(import \"a.dmk\")\n(import \"base.dmk\") ; already included\n\
+            dir.join("main.maku"),
+            "(import \"a.maku\")\n(import \"base.maku\") ; already included\n\
              (defpattern m [] (a))\n",
         )
         .unwrap();
-        let src = crate::edn::expand_card(&dir.join("main.dmk")).unwrap();
+        let src = crate::edn::expand_card(&dir.join("main.maku")).unwrap();
         assert_eq!(src.matches("(def shared 7)").count(), 1, "include-once");
         let mut sim = Sim::load(&src, Some("m")).unwrap();
         sim.step().unwrap();
@@ -905,14 +905,14 @@
     }
 
     /// Tutorial cards are doctests: every example pattern in every
-    /// cards/tutorials/*.dmk must load and run (the docs can't rot).
+    /// cards/tutorials/*.maku must load and run (the docs can't rot).
     #[test]
     fn tutorial_cards_run() {
         let dir = std::path::Path::new("../../cards/tutorials");
         let mut swept = 0;
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("dmk") {
+            if path.extension().and_then(|e| e.to_str()) != Some("maku") {
                 continue;
             }
             let src = crate::edn::expand_card(&path).unwrap();
@@ -1024,7 +1024,7 @@
     /// can be hit in the same window.
     #[test]
     fn two_players() {
-        let rig = std::fs::read_to_string("../../cards/coop.dmk").unwrap();
+        let rig = std::fs::read_to_string("../../cards/coop.maku").unwrap();
         let mut sim = Sim::load(&rig, Some("coop")).unwrap();
         let mut inputs = Inputs::default();
         // p1 pushes right, p2 pushes left — they cross
@@ -1071,7 +1071,7 @@
         // load_file resolves the card's imports (spell-2 + seal-orb come
         // from the translations)
         let mut sim = Sim::load_file(
-            std::path::Path::new("../../cards/reimu_vs_mima.dmk"),
+            std::path::Path::new("../../cards/reimu_vs_mima.maku"),
             Some("reimu-vs-mima"),
         )
         .unwrap();
@@ -1112,7 +1112,7 @@
     /// hostile spray hits/grazes, autofire kills drones.
     #[test]
     fn duel_card_plays() {
-        let src = std::fs::read_to_string("../../cards/duel.dmk").unwrap();
+        let src = std::fs::read_to_string("../../cards/duel.maku").unwrap();
         let rig = crate::edn::stdlib("player-rig").unwrap();
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
         // the host layers the stock rig; boss/stage cards stay player-free
@@ -1550,7 +1550,7 @@
         assert!(a > 0 && b > 0, "both states visited: a={} b={}", a, b);
     }
 
-    /// The `phases` sugar over `states` — a touhou.dmk MACRO now: clause
+    /// The `phases` sugar over `states` — a touhou.maku MACRO now: clause
     /// opts desugar to body code at macro time — :timeout to a fork racing
     /// the body, :until to an until wrapper (a bare wait-for when the
     /// clause has no body).

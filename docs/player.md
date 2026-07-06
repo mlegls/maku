@@ -6,7 +6,7 @@ send-a-form-to-a-socket shims; `proto/editors/danmaku.nvim` is the reference
 client (see its README for mappings).
 
 ```
-cargo run --manifest-path proto/Cargo.toml --features player --bin maku-player -- [card.dmk [pattern]]
+cargo run --manifest-path proto/Cargo.toml --features player --bin maku -- [card.maku [pattern]]
 ```
 
 With no card argument the player starts empty and waits for clients.
@@ -47,7 +47,7 @@ shared append-only structure; snapshots hold only a cursor.
 | input | channel / effect |
 |---|---|
 | mouse | mock `$player` (mouse-rig cards) and mock `$nearest-enemy` fallback |
-| WASD / arrows | merged `$move-x`/`$move-y`, plus `$p1-move-*` (WASD only) and `$p2-move-*` (arrows only) for co-op rigs (`cards/coop.dmk`) |
+| WASD / arrows | merged `$move-x`/`$move-y`, plus `$p1-move-*` (WASD only) and `$p2-move-*` (arrows only) for co-op rigs (`cards/coop.maku`) |
 | Shift | `$focus-firing` |
 | X | `$bomb` |
 | 1–9 | pattern menu |
@@ -58,7 +58,7 @@ shared append-only structure; snapshots hold only a cursor.
 | drag slider | scrub; orange marks = command-tape entries; faint notches = snapshots |
 
 The host layers the stock player rig (the `player-rig` standard-library
-card, embedded in the engine — authored at `cards/lib/player-rig.dmk`)
+card, embedded in the engine — authored at `cards/lib/player-rig.maku`)
 into every fresh timeline via the command tape — swap in your own rig
 live with the editor. The status line shows tick, entity count, graze, hits, lives.
 

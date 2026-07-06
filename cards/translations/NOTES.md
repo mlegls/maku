@@ -248,14 +248,14 @@ phase-token semantics, rediscovered at the right grain.
 dissolution: hp was already a column and invuln a deadline column — what
 remained *engine* was the defaulting (team→collider sets, hp 1, the
 died-trigger synthesis) and one verb (`invuln`). All of it is now card
-code in cards/lib/touhou.dmk: `spawn` knows only dyn + explicit meta,
+code in cards/lib/touhou.maku: `spawn` knows only dyn + explicit meta,
 and `spawn-bullet`/`spawn-shot`/`spawn-enemy` are macros prepending a
 defaults map (macros, not defns, so the caller's literal meta keeps its
 unevaluated signal tags; `spawn` itself grew per-key multi-map merge as
 the composition hook). `spawn-boss` is *an enemy with a phase machine* —
 that is the whole difference — binding `boss` for its machine body.
 `invuln` is `(set-col b :iframe-until (+ $tick (* dur 120)))` once
-`$tick` exists as a derived channel. The lib is authored as .dmk files
+`$tick` exists as a derived channel. The lib is authored as .maku files
 but embedded in the engine at compile time (bare-name imports:
 `(import "touhou")`), so distribution is single-artifact and every host
 — native, wasm, tests, REPL strings — resolves it identically; the
@@ -271,7 +271,7 @@ That extraction shipped as `defcontact`: contact rules are card code, and
 layer names are opaque tags owned by the templates that create them. The
 engine now provides hot overlap detection plus two data prefilters (`:once`
 and `:skip-if`) and zero genre semantics; Touhou's hit/graze/shot behavior
-lives beside `spawn-bullet`/`spawn-shot`/`spawn-enemy` in lib/touhou.dmk.
+lives beside `spawn-bullet`/`spawn-shot`/`spawn-enemy` in lib/touhou.maku.
 
 **`phases` is genre policy, so the lib defines it — and macros became
 able to.** Mima showed the spawn-boss boundary sitting wrong: the card
@@ -283,7 +283,7 @@ was missing was only vocabulary — `& rest` params (macros and fns), the
 seq builtins reading form lists as sequences of subforms, total `get`
 over map forms, `form-type`/`form-name`, and evaluator-backed
 `map`/`filter`. With those, `phases` moved out of Rust entirely: a
-touhou.dmk macro walking its clause list with a helper defn and
+touhou.maku macro walking its clause list with a helper defn and
 splicing `states` clauses. Second, `spawn-boss` now owns the boss
 conventions: it binds a structured boss channel with `bind-channel!`,
 holds the machine until the boss registers, and binds `boss`/`boss-main`;
@@ -619,25 +619,25 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
 
 ## Status
 
-- `020_gsrepeat.dmk` — complete. Everything has a clean image.
-- `130_bowap.dmk` — complete. Two versions (closed-form and fold); F3 is the finding.
-- `040_spread.dmk` — complete. Both repeater levels are time-sequential → nested
+- `020_gsrepeat.maku` — complete. Everything has a clean image.
+- `130_bowap.maku` — complete. Two versions (closed-form and fold); F3 is the finding.
+- `040_spread.maku` — complete. Both repeater levels are time-sequential → nested
   control loops; `rv2incr`/`spread`/`hvar` all dissolve to index arithmetic; F8.
-- `080_aimed.dmk` — complete. First script to touch an injected signal (implicit
+- `080_aimed.maku` — complete. First script to touch an injected signal (implicit
   snap, §3 class (a)); chevron idiom → `arrow` combinator (F10); F9; the
   decelerating `vel` is the F1 lint case in the wild.
-- `060_polar.dmk` — complete. Every DMK modifier became a seq binding
+- `060_polar.maku` — complete. Every DMK modifier became a seq binding
   (`colorf`→`stutter`, `bindLR`→`[1 -1]`, parent-index `colorf`→outer binding);
   first nonlinear Closed dyn; slot-bound `t` formalized (F12).
-- `070_dynamic_lasers.dmk` — complete. **Axis materialization survives first
+- `070_dynamic_lasers.maku` — complete. **Axis materialization survives first
   contact**: DMK dynamic laser = f(t, u) with u = lt, length = u-extent,
   stagger = render-resolution hint. Surface for open decision 3 proposed
   (`(laser shape {:warn :active :u-max :resolution})`); hueshift's hoisted
   index became one array-broadcast expression; F11.
-- `110_exploding_stars.dmk` — complete. DMK's per-bullet state + pool control
+- `110_exploding_stars.maku` — complete. DMK's per-bullet state + pool control
   + polling dissolves into spawn handles + control-layer scheduling (F13);
   first facing override; `(cull b :soft)`; callback layer-audit exercised.
-- `200_cradle.dmk` — complete. `guideempty2`/channels/`dtpoffset` dissolve
+- `200_cradle.maku` — complete. `guideempty2`/channels/`dtpoffset` dissolve
   into an unexpressed frame level (F14 — largest structural win yet: 18
   invisible bullets → 0); named signals replace BDSL function+$() idiom;
   Scanned-contagion poster child for the F1 lint; meta axis-targeting rule
@@ -648,13 +648,13 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   `stages` = statically-scheduled remat / `remat` = event-driven stage
   transition; the boss script's `switch(reflected, …)` idiom decoded as
   hand-rolled rematerialization.
-- `ph_boss2_spell2.dmk` — complete (the ceiling test). Exercises everything
+- `ph_boss2_spell2.maku` — complete (the ceiling test). Exercises everything
   at once: `defvar` cells (F16), the first genuinely *shared* scan (the
   guide), summons-as-fork-in-frame, `whiletrue` = pause (verified) →
   `wait-for`, random-walk fold, rand/brand dissolution, macros→functions.
   ~60 lines vs ~100; the whole card except two parked guides is piecewise-
   Closed.
-- `player_homing.dmk` — the Scanned/stages/live exercise (Reimu Home and
+- `player_homing.maku` — the Scanned/stages/live exercise (Reimu Home and
   Laser + Fantasy Seal motion core). `truerotatelerprate` == `slew` verbatim
   (source: "degrees of gap to close per second"); give-up homing = slew with
   a rate signal decaying to zero (class (d) self-discretizes, no stages

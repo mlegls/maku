@@ -28,8 +28,8 @@
 
 ;; imports splice textually; placed after the main defpattern so it stays
 ;; the card's first (= default) pattern. Definitions resolve card-wide.
-(import "translations/ph_boss2_spell2.dmk")   ; spell-2 + grid/laser helpers
-(import "translations/player_homing.dmk")     ; seal-orb (Fantasy Seal core)
+(import "translations/ph_boss2_spell2.maku")   ; spell-2 + grid/laser helpers
+(import "translations/player_homing.maku")     ; seal-orb (Fantasy Seal core)
 
 ;; ============================================================================
 ;; Reimu

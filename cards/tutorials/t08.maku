@@ -2,7 +2,7 @@
 ;; docs/tutorials/08-stages-and-campaigns.md. Press 1-9 to run each
 ;; example.
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t08.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t08.maku
 
 (import "touhou")
 

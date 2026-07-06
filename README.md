@@ -18,7 +18,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `docs/notes/` | implementation notes, prototype-vs-spec gaps |
 | `proto/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
-| `cards/` | playable cards — start with `reimu_vs_mima.dmk` |
+| `cards/` | playable cards — start with `reimu_vs_mima.maku` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
 | `dmk-corpus/` | the upstream DMK scripts translated (MIT) |
 
@@ -26,7 +26,7 @@ replays, rewind, and live code-swap are exact by construction.
 
 ```sh
 # play the demo fight: WASD move, Shift focus, X bomb
-cargo run --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/reimu_vs_mima.dmk
+cargo run --manifest-path proto/Cargo.toml --features player --bin maku -- cards/reimu_vs_mima.maku
 
 # tests (52: conformance corpus + gameplay + session/scrubbing)
 cargo test --manifest-path proto/Cargo.toml -p maku

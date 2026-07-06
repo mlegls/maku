@@ -12,7 +12,7 @@ player = ["dep:macroquad"]
 web = ["dep:wasm-bindgen"]
 
 [[bin]]
-name = "maku-player"
+name = "maku"
 path = "../player/src/main.rs"
 required-features = ["player"]
 

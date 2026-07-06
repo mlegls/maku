@@ -1,9 +1,9 @@
 # Tutorial 8: Stages and Campaigns
 
-Runnable companion: **`cards/tutorials/t08.dmk`**.
+Runnable companion: **`cards/tutorials/t08.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t08.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t08.maku
 ```
 
 DMK distinguishes boss scripts, stage scripts, and campaign assets. This

@@ -49,7 +49,7 @@ impl Sim {
                 ch.insert("player".into(), Val::Vec2 { x: *x, y: *y });
             }
         }
-        // $nearest-enemy is a stdlib derived channel now (lib/touhou.dmk:
+        // $nearest-enemy is a stdlib derived channel now (lib/touhou.maku:
         // (defchannel $nearest-enemy (nearest-entity {:team :enemy} $player)))
         // — the host-provided mock stays as the fallback when none match.
         // $nearest-pilot: nearest player entity to the boss anchor (for
