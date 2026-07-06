@@ -7,10 +7,13 @@ cd "$(dirname "$0")"
 wasm-pack build --target web --out-dir static/pkg
 echo "built -> proto/web/static/pkg"
 if [ "$1" = "serve" ]; then
-  echo "open http://localhost:8000/proto/web/static/"
+  PORT="${PORT:-8000}"
+  export PORT
+  echo "open http://localhost:${PORT}/proto/web/static/"
   cd ../..
   exec bun -e '
 const root = process.cwd();
+const port = Number(process.env.PORT || 8000);
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -21,10 +24,11 @@ const mime = {
   ".dmk": "text/plain; charset=utf-8",
 };
 Bun.serve({
-  port: 8000,
+  port,
   async fetch(req) {
     const url = new URL(req.url);
-    const path = decodeURIComponent(url.pathname === "/" ? "/proto/web/static/" : url.pathname);
+    const rawPath = decodeURIComponent(url.pathname === "/" ? "/proto/web/static/" : url.pathname);
+    const path = rawPath.endsWith("/") ? rawPath + "index.html" : rawPath;
     const file = Bun.file(root + path);
     if (!(await file.exists())) return new Response("not found", { status: 404 });
     const ext = path.slice(path.lastIndexOf("."));

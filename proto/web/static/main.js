@@ -37,11 +37,19 @@ const els = {
   hud: document.getElementById('hud'),
   status: document.getElementById('status'),
   evalCode: document.getElementById('eval-code'),
+  bindingRows: document.getElementById('binding-rows'),
+  constRows: document.getElementById('const-rows'),
+  resetBindings: document.getElementById('reset-bindings'),
+  addButtonBinding: document.getElementById('add-button-binding'),
+  addAxisBinding: document.getElementById('add-axis-binding'),
+  addConstBinding: document.getElementById('add-const-binding'),
 };
 
 const keys = new Set();
+const pressed = new Set();
 const sources = new Map();
 const docs = new Map();
+const editingTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 let selected = ALL_CARDS.find(card => card.path === BOOT) || ALL_CARDS[0];
 let dk;
 let last = performance.now();
@@ -50,6 +58,122 @@ let scrubbing = false;
 let lastPatternKey = '';
 let sourceDirty = false;
 let mouse = [0, -3];
+let bindings = defaultBindings();
+let capturing = null;
+
+function defaultBindings() {
+  return {
+    rows: [
+      { type: 'axis', neg: 'KeyA', pos: 'KeyD', channel: 'move-x' },
+      { type: 'axis', neg: 'KeyS', pos: 'KeyW', channel: 'move-y' },
+      { type: 'axis', neg: 'ArrowLeft', pos: 'ArrowRight', channel: 'move-x' },
+      { type: 'axis', neg: 'ArrowDown', pos: 'ArrowUp', channel: 'move-y' },
+      { type: 'axis', neg: 'KeyA', pos: 'KeyD', channel: 'p1-move-x' },
+      { type: 'axis', neg: 'KeyS', pos: 'KeyW', channel: 'p1-move-y' },
+      { type: 'axis', neg: 'ArrowLeft', pos: 'ArrowRight', channel: 'p2-move-x' },
+      { type: 'axis', neg: 'ArrowDown', pos: 'ArrowUp', channel: 'p2-move-y' },
+      { type: 'button', key: 'ShiftLeft', mode: 'hold', channel: 'focus-firing', latch: false, tap: false },
+      { type: 'button', key: 'KeyX', mode: 'hold', channel: 'bomb', latch: false, tap: false },
+    ],
+    consts: [{ channel: 'rank', value: 1.0 }],
+  };
+}
+
+function keyLabel(code) {
+  const labels = {
+    ArrowLeft: 'Left',
+    ArrowRight: 'Right',
+    ArrowUp: 'Up',
+    ArrowDown: 'Down',
+    ShiftLeft: 'LShift',
+    ShiftRight: 'RShift',
+    Space: 'Space',
+  };
+  if (labels[code]) return labels[code];
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  return code;
+}
+
+function cleanChannel(s) {
+  return s.trim().replace(/^\$/, '') || 'chan';
+}
+
+function setConst(channel, value) {
+  const clean = cleanChannel(channel);
+  const row = bindings.consts.find(c => c.channel === clean);
+  if (row) {
+    row.value = value;
+  } else {
+    bindings.consts.push({ channel: clean, value });
+  }
+  renderBindings();
+}
+
+function isArrow(code) {
+  return ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(code);
+}
+
+function captureKey(row, slot) {
+  capturing = { row, slot };
+  renderBindings();
+}
+
+function keyDownForBinding(code) {
+  return !(dk?.paused() && isArrow(code)) && keys.has(code);
+}
+
+function writeInputChannels() {
+  const acc = new Map();
+  const add = (channel, value) => acc.set(channel, (acc.get(channel) || 0) + value);
+
+  for (const row of bindings.rows) {
+    if (row.type === 'axis') {
+      add(cleanChannel(row.channel), (keyDownForBinding(row.pos) ? 1 : 0) - (keyDownForBinding(row.neg) ? 1 : 0));
+    } else {
+      if (row.mode === 'tap' && pressed.has(row.key)) row.tap = true;
+      if (row.mode === 'toggle' && pressed.has(row.key)) row.latch = !row.latch;
+      const value = row.mode === 'hold'
+        ? (keyDownForBinding(row.key) ? 1 : 0)
+        : row.mode === 'tap'
+          ? (row.tap ? 1 : 0)
+          : (row.latch ? 1 : 0);
+      add(cleanChannel(row.channel), value);
+    }
+  }
+
+  for (const [channel, value] of acc) {
+    acc.set(channel, Math.max(-1, Math.min(1, value)));
+  }
+  for (const channel of Array.from(acc.keys())) {
+    if (!channel.endsWith('-x')) continue;
+    const stem = channel.slice(0, -2);
+    const yChannel = `${stem}-y`;
+    if (!acc.has(yChannel)) continue;
+    const x = acc.get(channel) || 0;
+    const y = acc.get(yChannel) || 0;
+    const mag = Math.hypot(x, y);
+    if (mag > 1) {
+      acc.set(channel, x / mag);
+      acc.set(yChannel, y / mag);
+    }
+  }
+  for (const [channel, value] of acc) dk.input_num(channel, value);
+  for (const c of bindings.consts) dk.input_num(cleanChannel(c.channel), Number(c.value) || 0);
+}
+
+function consumeTapBindings() {
+  for (const row of bindings.rows) {
+    if (row.type === 'button' && row.tap) {
+      row.tap = false;
+      dk.input_num(cleanChannel(row.channel), 0);
+    }
+  }
+}
+
+function hasArmedTapBinding() {
+  return bindings.rows.some(row => row.type === 'button' && row.tap);
+}
 
 function selectedPattern() {
   return dk?.current_pattern() || undefined;
@@ -171,9 +295,111 @@ function resetSource() {
   setDirty(false);
 }
 
+function textInput(value, onChange) {
+  const input = document.createElement('input');
+  input.value = value;
+  input.spellcheck = false;
+  input.onchange = () => onChange(input.value);
+  input.oninput = () => onChange(input.value);
+  return input;
+}
+
+function keyButton(label, row, slot) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'key-capture';
+  if (capturing?.row === row && capturing?.slot === slot) {
+    btn.classList.add('capturing');
+    btn.textContent = 'press key';
+  } else {
+    btn.textContent = label;
+  }
+  btn.onclick = () => captureKey(row, slot);
+  return btn;
+}
+
+function removeButton(onClick) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'x';
+  btn.onclick = onClick;
+  return btn;
+}
+
+function renderBindings() {
+  els.bindingRows.replaceChildren(...bindings.rows.map((row, i) => {
+    const el = document.createElement('div');
+    el.className = `binding-row ${row.type}`;
+    el.append(textInput(`$${row.channel}`, v => { row.channel = cleanChannel(v); }));
+    if (row.type === 'axis') {
+      el.append(
+        keyButton(`-${keyLabel(row.neg)}`, i, 'neg'),
+        keyButton(`+${keyLabel(row.pos)}`, i, 'pos'),
+      );
+      const kind = document.createElement('span');
+      kind.className = 'subtle';
+      kind.textContent = 'axis';
+      el.append(kind);
+    } else {
+      el.append(keyButton(keyLabel(row.key), i, 'key'));
+      const mode = document.createElement('select');
+      for (const value of ['hold', 'tap', 'toggle']) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        mode.append(opt);
+      }
+      mode.value = row.mode;
+      mode.onchange = () => {
+        row.mode = mode.value;
+        row.tap = false;
+        row.latch = false;
+      };
+      el.append(mode);
+    }
+    el.append(removeButton(() => {
+      bindings.rows.splice(i, 1);
+      renderBindings();
+    }));
+    return el;
+  }));
+
+  els.constRows.replaceChildren(...bindings.consts.map((row, i) => {
+    const el = document.createElement('div');
+    el.className = 'const-row';
+    el.append(
+      textInput(`$${row.channel}`, v => { row.channel = cleanChannel(v); }),
+      textInput(String(row.value), v => {
+        const n = Number(v);
+        if (Number.isFinite(n)) row.value = n;
+      }),
+      removeButton(() => {
+        bindings.consts.splice(i, 1);
+        renderBindings();
+      }),
+    );
+    return el;
+  }));
+}
+
 function installEvents() {
   addEventListener('keydown', e => {
-    if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+    if (capturing) {
+      if (e.code !== 'Escape') {
+        const row = bindings.rows[capturing.row];
+        if (row) {
+          if (row.type === 'axis' && capturing.slot === 'neg') row.neg = e.code;
+          if (row.type === 'axis' && capturing.slot === 'pos') row.pos = e.code;
+          if (row.type === 'button' && capturing.slot === 'key') row.key = e.code;
+        }
+      }
+      capturing = null;
+      renderBindings();
+      e.preventDefault();
+      return;
+    }
+    if (editingTags.has(e.target?.tagName)) return;
+    if (!keys.has(e.code)) pressed.add(e.code);
     keys.add(e.code);
     if (e.code === 'Space') {
       dk.toggle_pause();
@@ -181,6 +407,10 @@ function installEvents() {
     }
     if (e.code >= 'Digit1' && e.code <= 'Digit9') dk.select(+e.code.slice(5) - 1);
     if (e.code === 'KeyR') dk.restart();
+    if (e.code === 'KeyT') setConst('rank', 0.7);
+    if (e.code === 'KeyY') setConst('rank', 1.0);
+    if (e.code === 'KeyU') setConst('rank', 1.4);
+    if (e.code === 'KeyI') setConst('rank', 2.0);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       if (dk.paused()) {
         const d = { ArrowRight: 1, ArrowLeft: -1, ArrowUp: 30, ArrowDown: -30 }[e.code];
@@ -189,7 +419,9 @@ function installEvents() {
       e.preventDefault();
     }
   });
-  addEventListener('keyup', e => keys.delete(e.code));
+  addEventListener('keyup', e => {
+    keys.delete(e.code);
+  });
   cv.addEventListener('mousemove', e => {
     const r = cv.getBoundingClientRect();
     const scaleX = cv.width / r.width;
@@ -211,6 +443,23 @@ function installEvents() {
   els.source.addEventListener('input', () => setDirty(els.source.value !== sourceFor(selected)));
   els.docsToggle.onclick = openDocs;
   els.docsClose.onclick = closeDocs;
+  els.resetBindings.onclick = () => {
+    bindings = defaultBindings();
+    capturing = null;
+    renderBindings();
+  };
+  els.addButtonBinding.onclick = () => {
+    bindings.rows.push({ type: 'button', key: 'Space', mode: 'hold', channel: 'chan', latch: false, tap: false });
+    renderBindings();
+  };
+  els.addAxisBinding.onclick = () => {
+    bindings.rows.push({ type: 'axis', neg: 'Comma', pos: 'Period', channel: 'chan' });
+    renderBindings();
+  };
+  els.addConstBinding.onclick = () => {
+    bindings.consts.push({ channel: 'chan', value: 0 });
+    renderBindings();
+  };
   for (const cmd of ['run', 'swap', 'add']) {
     document.getElementById(cmd).onclick = () => {
       dk.command(`(${cmd} ${stripWireWrapper(commandBody())})`);
@@ -227,6 +476,7 @@ async function boot() {
   dk = new Danmaku(`${rigSrc}\n(player-rig)`);
   registerVfs();
   installEvents();
+  renderBindings();
   await selectCard(selected);
   requestAnimationFrame(frame);
 }
@@ -237,29 +487,17 @@ function frame(now) {
   const steps = Math.floor(acc * TICK_RATE);
   acc -= steps / TICK_RATE;
 
-  const wadx = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-  const wady = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-  const arx = !dk.paused() ? (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0) : 0;
-  const ary = !dk.paused() ? (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0) : 0;
-  const norm = (x, y) => {
-    const m = Math.hypot(x, y);
-    return m > 1 ? [x / m, y / m] : [x, y];
-  };
-  const [mx, my] = norm(wadx + arx, wady + ary);
-  const [p1x, p1y] = norm(wadx, wady);
-  const [p2x, p2y] = norm(arx, ary);
-
   dk.input_vec2('player', mouse[0], mouse[1]);
   dk.input_vec2('nearest-enemy', mouse[0], mouse[1]);
-  dk.input_num('move-x', mx);
-  dk.input_num('move-y', my);
-  dk.input_num('p1-move-x', p1x);
-  dk.input_num('p1-move-y', p1y);
-  dk.input_num('p2-move-x', p2x);
-  dk.input_num('p2-move-y', p2y);
-  dk.input_num('focus-firing', keys.has('ShiftLeft') || keys.has('ShiftRight') ? 1 : 0);
-  dk.input_num('bomb', keys.has('KeyX') ? 1 : 0);
-  dk.step(steps);
+  writeInputChannels();
+  if (steps > 0 && hasArmedTapBinding()) {
+    dk.step(1);
+    consumeTapBindings();
+    dk.step(steps - 1);
+  } else {
+    dk.step(steps);
+  }
+  pressed.clear();
 
   draw();
   requestAnimationFrame(frame);

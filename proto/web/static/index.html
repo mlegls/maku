@@ -181,6 +181,64 @@
     flex-direction: column;
     gap: 8px;
   }
+  .bindings {
+    border-top: 1px solid var(--line);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .bindings-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .binding-table {
+    display: grid;
+    gap: 6px;
+  }
+  .binding-row {
+    display: grid;
+    grid-template-columns: minmax(82px, 1fr) minmax(92px, 1fr) 62px 26px;
+    gap: 6px;
+    align-items: center;
+  }
+  .binding-row.axis {
+    grid-template-columns: minmax(82px, 1fr) 44px 44px 48px 26px;
+  }
+  .binding-row input, .binding-row select {
+    min-width: 0;
+    width: 100%;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: #11131b;
+    color: var(--text);
+    padding: 3px 6px;
+  }
+  .binding-row button {
+    min-height: 28px;
+    padding: 2px 6px;
+  }
+  .key-capture.capturing {
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+  .const-row {
+    display: grid;
+    grid-template-columns: minmax(90px, 1fr) 84px 26px;
+    gap: 6px;
+  }
+  .const-row input {
+    min-width: 0;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: #11131b;
+    color: var(--text);
+    padding: 3px 6px;
+  }
   #eval-code {
     width: 100%;
     height: 120px;
@@ -339,7 +397,26 @@
         <button id="add">add</button>
         <button id="restart">restart</button>
       </div>
-      <div class="subtle">WASD/arrows move. Shift focus. X bomb. Space pause.</div>
+      <div class="subtle">Default bindings: WASD/arrows move, Shift focus, X bomb. T/Y/U/I set $rank.</div>
+    </div>
+    <div class="bindings">
+      <div class="bindings-head">
+        <div>
+          <div class="panel-title">Bindings</div>
+          <div class="subtle">Host channels written into the input tape.</div>
+        </div>
+        <button id="reset-bindings">Reset</button>
+      </div>
+      <div id="binding-rows" class="binding-table"></div>
+      <div class="eval-row">
+        <button id="add-button-binding">+ button</button>
+        <button id="add-axis-binding">+ axis</button>
+      </div>
+      <div class="panel-title">Constants</div>
+      <div id="const-rows" class="binding-table"></div>
+      <div class="eval-row">
+        <button id="add-const-binding">+ const</button>
+      </div>
     </div>
   </aside>
 </div>
