@@ -126,6 +126,20 @@ needs no tutorial port.
 | player invulnerability after death | automatic `iframe-until`; window duration = the `:iframes` column |
 | boss HP bar / phase name on the HUD | `:expose {:hp $boss-hp}` on the boss entity; the machine exports `$phase` |
 
+## Firing index and empty-guided fires (Tutorial 8)
+
+| DMK | here |
+|---|---|
+| `p this` / `preloop b{ hvar itr = i }` | an ordinary binder: `(map (fn [k] …) (iota n))` per bullet, `dotimes` seq bindings per volley, `:cols` for indices the bullet carries |
+| `p add` / `p mod` / `p invmod`, unpacking via `p1`/`p2`/`pm` | nothing — nested indices are separate named variables; there is no packing because the index never leaves scope |
+| `bindArrow` (`axd`/`ayd`/`aixd`/`aiyd` autovars) | a formation is a function: four lines of card code mapping index → offset frame (tutorial 7) |
+| `guideempty2(p, {("eloc", code(loc)), ("edir", code(dir))}, path, children)` | a level of the frame tree: `((vel path) children…)` — the guide is an unexpressed dyn, nothing spawns |
+| `dtpoffset("eloc", "edir", p, offset)` = `eloc + rotatev(edir, offset)` | frame composition — every pose carries a heading, children rotate with it automatically |
+| `p` as the unique child-to-guide key | lexical nesting — the association is structural |
+| `dir2(load("edir", p))` bullet option | the rendered facing already follows the composed frame heading; `:facing` overrides when wanted |
+| empty bullets (invisible, bomb-immune, hard-destroyed on clear) | spawn a guide entity only when you want it *seen*: `:team :scenery`, no colliders |
+| SM riding the empty / shared guide | `let`-bound guide = the shared instance; `(spawn guide …)` expresses it, `(in-frame guide (fork …))` rides it |
+
 ## Model-level notes
 
 - **Repeaters vs arrays.** DMK expresses multiplicity through repeater

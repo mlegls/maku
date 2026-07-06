@@ -189,8 +189,11 @@ language.md.
   mapping DMK t07: bare `states`, the `phases` sugar table, spawn-boss,
   phase-edge policy as finally code; DMK's own t06 is a philosophy
   essay — concept mapping in docs/from-dmk.md instead of a port).
-  Next: DMK t08 (empty-guided fires), then t09 (the repeater-modifier
-  reference — big, likely a mapping appendix not a tutorial).
+  07 done (= DMK t08: firing index → ordinary binders, formations as
+  functions, empty-guided fires → frame nesting with the pivot shim,
+  let-bound shared guides). Next: DMK t09 (the repeater-modifier
+  reference — big, likely a mapping appendix not a tutorial), then
+  tbosses/tstages.
   Tutorials are standalone; DMK mappings live in docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

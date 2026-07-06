@@ -1,0 +1,68 @@
+;; Tutorial 7: indices, formations, and guided fires — the runnable
+;; companion to docs/tutorials/07-guided-fires.md. Press 1-9 to run each
+;; example.
+;;
+;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t07.dmk
+
+(import "touhou")
+
+;; 1. DMK's "firing index" p is just a variable here: map over iota and
+;; the index is in scope. Ten bullets spread toward the player, speed
+;; staggered by index — later bullets faster.
+(defpattern ex1-index []
+  (for [vol inf :every 1]
+    (spawn-bullet ((aim $player)
+             (map (fn [k] ((rot (- (* 6 k) 27))
+                            (linear p[(+ 2 (* 0.2 k)) 0])))
+                  (iota 10))) {:style {:family :arrow :color :red :variant :w}})))
+
+;; A formation is a function from indices to offset frames — DMK's
+;; bindArrow (engine-bound autovars axd/ayd/aixd/aiyd) is four lines of
+;; card code. Wing w = 0 0 1 1 2 2 …, side s alternating.
+(defn arrow-at [k dx dy]
+  (let [w (quot (+ k 1) 2)
+        s (- 1 (* 2 (mod k 2)))]
+    (cart (* dx w) (* dy s w))))
+(defn arrow [n dx dy]
+  (map (fn [k] (pose (arrow-at k dx dy))) (iota n)))
+
+;; 2. the arrow, moving straight: offsets inside a (linear …) frame.
+(defpattern ex2-arrow []
+  (for [vol inf :every 1]
+    (spawn-bullet ((linear c[2 0]) (arrow 11 -0.2 0.1)) {:style {:family :amulet :color :red}})))
+
+;; 3. the naive turn: give each bullet its own turning velocity, with the
+;; offsets OUTSIDE the moving frame. The formation translates rigidly but
+;; never rotates — after the turn the arrow points right while flying
+;; down. (This is the failure DMK's empty-guided fires exist to fix.)
+(defpattern ex3-unguided []
+  (for [vol inf :every 1.5]
+    (spawn-bullet (map (fn [k] ((pose (arrow-at k -0.2 0.1))
+                          (vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])))
+               (iota 11)) {:style {:family :amulet :color :purple}})))
+
+;; 4. the guided turn: the SAME offsets, moved INSIDE the turning frame.
+;; A frame's pose carries heading, and children compose with it — the
+;; formation rotates with the guide's direction of motion and the
+;; amulets' facing follows for free. The (pose c[0.6 0]) shim shifts the
+;; pivot from the arrow's tip toward its center (DMK's 0.6 + -0.2*aixd).
+;; No empty bullet is spawned: the guide is a LEVEL OF THE FRAME TREE.
+(defpattern ex4-guided []
+  (for [vol inf :every 1.5]
+    (spawn-bullet ((vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])
+             ((pose c[0.6 0]) (arrow 11 -0.2 0.1))) {:style {:family :amulet :color :red}})))
+
+;; 5. when the guide is SHARED — one trajectory carrying a visible rider
+;; and a turret loop — let-bind it: the binding is the shared instance.
+;; The rider spawn expresses it (scenery, no colliders); the turret fires
+;; aimed shots from wherever the guide currently is. Spawning a visible
+;; guide is a choice, not a requirement of the mechanism.
+(defpattern ex5-rig []
+  (let [guide (vel p[(lerp 0.4 1.6 t 4 0) 45])]
+    (par
+      (spawn guide {:style {:family :lstar :color :teal}
+                    :scale 1.4
+                    :team :scenery})
+      (in-frame guide
+        (for [i inf :every 0.7]
+          (spawn-bullet ((aim $player) (fan 3 10 (linear p[2.5 0]))) {:style {:family :circle :color :teal :variant :w}}))))))
