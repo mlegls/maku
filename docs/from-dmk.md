@@ -90,6 +90,24 @@ decode notes.
 | `Lplayer` / engine-privileged player | the player is card content: an entity with `:pilot`, deriving `$player` |
 | exposing boss state to UI | `:expose {:col $chan}` on the entity; `(export cell)` for card state |
 
+## Design philosophy (Tutorial 6)
+
+DMK's t06 is a manifesto, not a mechanics tutorial — it introduces no
+constructs. Its three arguments map at the level of principles, and each
+lands somewhere specific here:
+
+| DMK's pitch | here |
+|---|---|
+| movement is function-based: drop `3 + sine(4, 0.6, t)` into any velocity slot instead of falling back to manual update loops | the signal model *is* the language: every dyn/meta slot takes an expression over `t`/`u`, and closed-vs-integrated is typed (which DMK doesn't do — that's what buys scrubbing) |
+| the showcase: 4 spiral bullets, `gsrepeat({ times(4), circle }, s(polar(2*t, 80*t)))` vs pages of LuaSTG/DNH update-loop code | `(spawn-bullet (circle 4 (polar m"2*t" m"80*t")))` — see `cards/translations/060_polar.dmk` for a production-strength version of the same shot |
+| modifiers/options (`scale`, `dir`, `opacity` on `simple`) extend entities without breaking signatures | meta maps merged per-key + render-signal tags (`:scale` `:facing` `:opacity` `:hue`); colliders, columns, triggers are the same open-map story |
+| extensible by "writing a C# function and putting it somewhere" — engine-language extension, engine rebuild | extension is *in-language*: `defn`/`defmacro`/lib cards. The whole touhou genre layer (spawn templates, contact rules, phases) is card code over a bare engine — a user card extends the vocabulary with no engine involvement at all |
+
+The divergence worth noting is the last row: DMK's extensibility story
+bottoms out in its host language, ours bottoms out in the card language
+itself (the engine keeps only detection, scheduling, and signals). t06
+needs no tutorial port.
+
 ## Bosses, phases, script structure (Tutorial 7)
 
 | DMK | here |
