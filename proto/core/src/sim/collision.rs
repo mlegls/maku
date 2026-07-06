@@ -180,7 +180,7 @@ fn materialize_collider_slot(
     sig: &SigEnv,
     scale: f64,
 ) -> ColliderData {
-    let DynCollider::Const(projection) = slot else {
+    let ColliderDynRepr::Const(projection) = slot.repr() else {
         return ColliderData::None;
     };
     let ColliderShape::Circle { radius } = projection.shape;

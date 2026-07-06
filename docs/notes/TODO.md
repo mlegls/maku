@@ -220,6 +220,11 @@ language.md.
       collision and render paths now consume `ColliderData`/`RenderData`
       values, with `None` as an explicit data variant rather than maybe
       semantics. Compatibility slots still produce these data values.
+  2n. ~~Make collider/render slots typed dyn containers.~~ Done;
+      `DynCollider` and `DynRender` are now aliases for
+      `Dyn<ColliderData>` and `Dyn<RenderData>`, with typed compatibility
+      reprs. The next step is to move slot materialization/evaluation out of
+      sim hot paths and into slot evaluators that take entity context.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

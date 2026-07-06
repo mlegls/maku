@@ -64,17 +64,6 @@ pub struct EntityCachePolicy {
 }
 
 #[derive(Clone, Debug)]
-pub enum DynCollider {
-    Const(ColliderProjection),
-    CurveCompat(CurveColliderSlotCompat),
-}
-
-#[derive(Clone, Debug)]
-pub enum DynRender {
-    CurveCompat(CurveRenderSlotCompat),
-}
-
-#[derive(Clone, Debug)]
 pub enum ColliderData {
     None,
     Circle { layer: Rc<str>, center: (f64, f64), radius: f64 },
@@ -97,6 +86,28 @@ pub enum RenderData {
     None,
     Polyline { points: Vec<(f64, f64)>, active: bool },
 }
+
+#[derive(Clone, Debug)]
+pub enum ColliderDynRepr {
+    Const(ColliderProjection),
+    CurveCompat(CurveColliderSlotCompat),
+}
+
+#[derive(Clone, Debug)]
+pub enum RenderDynRepr {
+    CurveCompat(CurveRenderSlotCompat),
+}
+
+impl DynKind for ColliderData {
+    type Repr = ColliderDynRepr;
+}
+
+impl DynKind for RenderData {
+    type Repr = RenderDynRepr;
+}
+
+pub type DynCollider = Dyn<ColliderData>;
+pub type DynRender = Dyn<RenderData>;
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
 #[derive(Debug, Clone)]
@@ -214,33 +225,39 @@ impl ColliderProjection {
     }
 }
 
-impl DynCollider {
-    pub fn layer(&self) -> Option<&str> {
-        match self {
-            DynCollider::Const(c) => Some(c.layer.as_ref()),
-            DynCollider::CurveCompat(_) => None,
-        }
+impl Dyn<ColliderData> {
+    pub fn collider_const(projection: ColliderProjection) -> DynCollider {
+        Dyn { repr: ColliderDynRepr::Const(projection) }
     }
 
-    pub fn circle_radius(&self) -> Option<f64> {
-        match self {
-            DynCollider::Const(c) => c.circle_radius(),
-            DynCollider::CurveCompat(_) => None,
-        }
+    pub fn collider_curve_compat(slot: CurveColliderSlotCompat) -> DynCollider {
+        Dyn { repr: ColliderDynRepr::CurveCompat(slot) }
+    }
+
+    pub fn repr(&self) -> &ColliderDynRepr {
+        &self.repr
     }
 
     pub fn curve_compat(&self) -> Option<&CurveColliderSlotCompat> {
-        match self {
-            DynCollider::CurveCompat(c) => Some(c),
-            DynCollider::Const(_) => None,
+        match &self.repr {
+            ColliderDynRepr::CurveCompat(c) => Some(c),
+            ColliderDynRepr::Const(_) => None,
         }
     }
 }
 
-impl DynRender {
+impl Dyn<RenderData> {
+    pub fn render_curve_compat(slot: CurveRenderSlotCompat) -> DynRender {
+        Dyn { repr: RenderDynRepr::CurveCompat(slot) }
+    }
+
+    pub fn repr(&self) -> &RenderDynRepr {
+        &self.repr
+    }
+
     pub fn curve_compat(&self) -> Option<&CurveRenderSlotCompat> {
-        match self {
-            DynRender::CurveCompat(r) => Some(r),
+        match &self.repr {
+            RenderDynRepr::CurveCompat(r) => Some(r),
         }
     }
 }

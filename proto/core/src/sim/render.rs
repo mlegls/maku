@@ -40,8 +40,8 @@ impl Sim {
         tau: f64,
         sig: &SigEnv,
     ) -> Vec<RenderData> {
-        match slot {
-            DynRender::CurveCompat(projection) => {
+        match slot.repr() {
+            RenderDynRepr::CurveCompat(projection) => {
                 let hot = hot_frac(&projection.activity, tau, sig);
                 let partly = tau >= projection.activity.warn && hot < 1.0;
                 let mut out = Vec::new();
