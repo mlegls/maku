@@ -197,9 +197,9 @@ language.md.
       slots (`Rc<[DynCollider]>`, `Rc<[DynRender]>`) that evaluate to
       `None` when inactive, rather than static slots plus activity masks.
   2h. ~~Introduce internal dyn collider/render slots.~~ Done for the current
-      compatibility bridge: circle colliders are `DynCollider::Const`,
-      curve capsule compatibility is `DynCollider::CurveCompat`, and curve
-      rendering is `DynRender::CurveCompat`.
+      bridge: circle colliders are `DynCollider::CircleProjection`, curve
+      collision shape data is `DynCollider::CapsuleChain`, and curve
+      rendering is `DynRender::Polyline`.
   2i. ~~Make figure dyns use the shared `Dyn<T>` shell.~~ Done;
       `DynFigure` is now `Dyn<Figure>`, backed by `DynRepr`. The remaining
       work is to generalize `DynRepr`/evaluation beyond pose and figure.
@@ -222,13 +222,21 @@ language.md.
       semantics. Compatibility slots still produce these data values.
   2n. ~~Make collider/render slots typed dyn containers.~~ Done;
       `DynCollider` and `DynRender` are now aliases for
-      `Dyn<ColliderData>` and `Dyn<RenderData>`, with typed compatibility
+      `Dyn<ColliderData>` and `Dyn<RenderData>`, with typed projection
       reprs. The next step is to move slot materialization/evaluation out of
       sim hot paths and into slot evaluators that take entity context.
   2o. ~~Move slot materialization behind evaluator functions.~~ Done;
       collision and render now consume `eval_collider_slot` /
       `eval_render_slot`, while compatibility curve sampling lives in the
       neutral sim slot module rather than in either hot path.
+  2p. ~~Rename compatibility slot reps to generic projection-shaped slots.~~
+      Done; the runtime now talks about circle projections, capsule-chain
+      collider slots, and polyline render slots instead of laser/compat
+      slot variants. Current surface `laser` lowering still happens in Rust
+      as a bridge, and curve capsule collision still borrows layer/radius
+      from the spawning template's circle projection. The next step is to
+      expose low-level slot construction so Touhou/library code can build
+      those slots directly and the bridge can disappear.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

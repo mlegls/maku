@@ -194,13 +194,13 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     Some(Val::Num(n)) => n,
                     _ => return Err("colliders: missing :r".into()),
                 };
-                cs.push(DynCollider::collider_const(ColliderProjection {
+                cs.push(DynCollider::collider_circle(ColliderProjection {
                     layer,
                     shape: ColliderShape::Circle { radius: r },
                 }));
             }
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
-                if let ColliderDynRepr::Const(c) = &mut first.repr {
+                if let ColliderDynRepr::CircleProjection(c) = &mut first.repr {
                     c.shape = ColliderShape::Circle { radius: r };
                 }
             }
@@ -267,22 +267,22 @@ pub(crate) fn flatten_elems(
                 } => {
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
-                        vec![DynCollider::collider_curve_compat(CurveColliderSlotCompat {
+                        vec![DynCollider::collider_capsule_chain(CurveColliderSlot {
                                 sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
                                 width: *width,
-                                activity: CurveSlotActivityCompat {
+                                activity: SlotActivity {
                                     warn: *warn,
                                     active: *active,
                                     hot_frac_sig: fill_sig.clone(),
                                 },
                         })]
                         .into(),
-                        vec![DynRender::render_curve_compat(CurveRenderSlotCompat {
+                        vec![DynRender::render_polyline(CurveRenderSlot {
                                 sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
                                 width: *width,
-                                activity: CurveSlotActivityCompat {
+                                activity: SlotActivity {
                                     warn: *warn,
                                     active: *active,
                                     hot_frac_sig: fill_sig.clone(),

@@ -14,7 +14,7 @@ pub fn sample_curve_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let projection = b.renderers.iter().find_map(DynRender::curve_compat)?;
+    let projection = b.renderers.first().map(DynRender::polyline)?;
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
@@ -24,7 +24,7 @@ fn sample_curve_collider_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let projection = b.colliders.iter().find_map(DynCollider::curve_compat)?;
+    let projection = b.colliders.iter().find_map(DynCollider::capsule_chain)?;
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
@@ -81,7 +81,7 @@ fn sample_curve_projection(
 /// A curve's hot fraction at age tau. Curves without :fill are hot in full
 /// the moment the warn ends. :fill itself is a fraction signal; helpers like
 /// fill-linear live in card/library code.
-pub fn hot_frac(activity: &CurveSlotActivityCompat, tau: f64, sig: &SigEnv) -> f64 {
+pub fn hot_frac(activity: &SlotActivity, tau: f64, sig: &SigEnv) -> f64 {
     if let Some(d) = &activity.hot_frac_sig {
         return eval_dyn(d, tau, &MotionState::new(), sig)
             .map(|x| x.clamp(0.0, 1.0))
@@ -97,52 +97,58 @@ pub fn eval_collider_slot(
     sig: &SigEnv,
     scale: f64,
 ) -> ColliderData {
-    let ColliderDynRepr::Const(projection) = slot.repr() else {
-        return ColliderData::None;
-    };
-    let ColliderShape::Circle { radius } = projection.shape;
-    match b.dyn_figure.repr() {
-        FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
-            let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
-            if points.len() < 2 {
-                ColliderData::None
-            } else {
-                ColliderData::CapsuleChain {
-                    layer: projection.layer.clone(),
-                    points,
-                    radius: CURVE_R + radius * scale,
+    match slot.repr() {
+        ColliderDynRepr::CircleProjection(projection) => {
+            let ColliderShape::Circle { radius } = projection.shape;
+            match b.dyn_figure.repr() {
+                FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
+                    let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
+                    if points.len() < 2 {
+                        ColliderData::None
+                    } else {
+                        ColliderData::CapsuleChain {
+                            layer: projection.layer.clone(),
+                            points,
+                            radius: CURVE_R + radius * scale,
+                        }
+                    }
+                }
+                FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
+                    Ok(p) => ColliderData::Circle {
+                        layer: projection.layer.clone(),
+                        center: (p.x, p.y),
+                        radius: radius * scale,
+                    },
+                    Err(_) => ColliderData::None,
+                },
+                FigureDynRepr::Curve { .. } => {
+                    let Some(curve_slot) = b.colliders.iter().find_map(DynCollider::capsule_chain) else {
+                        return ColliderData::None;
+                    };
+                    if tau < curve_slot.activity.warn {
+                        return ColliderData::None;
+                    }
+                    let Some(points) = sample_curve_collider_frac(
+                        b,
+                        tau,
+                        sig,
+                        hot_frac(&curve_slot.activity, tau, sig),
+                    ) else {
+                        return ColliderData::None;
+                    };
+                    ColliderData::CapsuleChain {
+                        layer: projection.layer.clone(),
+                        points,
+                        radius: CURVE_R * curve_slot.width + radius * scale,
+                    }
                 }
             }
         }
-        FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
-            Ok(p) => ColliderData::Circle {
-                layer: projection.layer.clone(),
-                center: (p.x, p.y),
-                radius: radius * scale,
-            },
-            Err(_) => ColliderData::None,
-        },
-        FigureDynRepr::Curve { .. } => {
-            let Some(curve_slot) = b.colliders.iter().find_map(DynCollider::curve_compat) else {
-                return ColliderData::None;
-            };
-            if tau < curve_slot.activity.warn {
-                return ColliderData::None;
-            }
-            let Some(points) = sample_curve_collider_frac(
-                b,
-                tau,
-                sig,
-                hot_frac(&curve_slot.activity, tau, sig),
-            ) else {
-                return ColliderData::None;
-            };
-            ColliderData::CapsuleChain {
-                layer: projection.layer.clone(),
-                points,
-                radius: CURVE_R * curve_slot.width + radius * scale,
-            }
-        }
+        // Transitional shape-only slot: current curve lowering still takes
+        // layer/radius from a sibling CircleProjection supplied by the
+        // spawning template. The final lib-facing slot will own layer/radius
+        // and can materialize directly here.
+        ColliderDynRepr::CapsuleChain(_) => ColliderData::None,
     }
 }
 
@@ -153,7 +159,7 @@ pub fn eval_render_slot(
     sig: &SigEnv,
 ) -> Vec<RenderData> {
     match slot.repr() {
-        RenderDynRepr::CurveCompat(projection) => {
+        RenderDynRepr::Polyline(projection) => {
             let hot = hot_frac(&projection.activity, tau, sig);
             let partly = tau >= projection.activity.warn && hot < 1.0;
             let mut out = Vec::new();

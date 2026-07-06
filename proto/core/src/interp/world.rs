@@ -15,7 +15,7 @@ pub struct Style {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveSlotActivityCompat {
+pub struct SlotActivity {
     pub warn: f64,
     pub active: f64,
     /// Signal-valued active-domain fraction, clamped to 0..1.
@@ -23,31 +23,28 @@ pub struct CurveSlotActivityCompat {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveColliderSlotCompat {
-    /// Sampling used by the current compatibility collision projection.
+pub struct CurveColliderSlot {
+    /// Sampling used by this collision projection.
     /// Abstract parametric figures do not own sampling.
     pub sample_set: SampleSet,
-    /// Signal-valued compatibility override for the upper range bound
-    /// (:u-max varLength).
+    /// Signal-valued override for the upper range bound (:u-max varLength).
     pub u_max_sig: Option<DynNum>,
-    /// Width multiplier for the current capsule-chain half-width.
+    /// Width multiplier for the capsule-chain half-width.
     pub width: f64,
-    pub activity: CurveSlotActivityCompat,
+    pub activity: SlotActivity,
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveRenderSlotCompat {
-    /// Sampling used by the current compatibility render projection.
+pub struct CurveRenderSlot {
+    /// Sampling used by this render projection.
     /// Abstract parametric figures do not own sampling.
     pub sample_set: SampleSet,
-    /// Signal-valued compatibility override for the upper range bound
-    /// (:u-max varLength).
+    /// Signal-valued override for the upper range bound (:u-max varLength).
     pub u_max_sig: Option<DynNum>,
     /// Width multiplier for the current rendered stroke. The host still
-    /// controls final appearance; this exists to preserve laser behavior
-    /// while slots are being split.
+    /// controls final appearance.
     pub width: f64,
-    pub activity: CurveSlotActivityCompat,
+    pub activity: SlotActivity,
 }
 
 #[derive(Debug, Clone)]
@@ -89,13 +86,13 @@ pub enum RenderData {
 
 #[derive(Clone, Debug)]
 pub enum ColliderDynRepr {
-    Const(ColliderProjection),
-    CurveCompat(CurveColliderSlotCompat),
+    CircleProjection(ColliderProjection),
+    CapsuleChain(CurveColliderSlot),
 }
 
 #[derive(Clone, Debug)]
 pub enum RenderDynRepr {
-    CurveCompat(CurveRenderSlotCompat),
+    Polyline(CurveRenderSlot),
 }
 
 impl DynKind for ColliderData {
@@ -226,38 +223,38 @@ impl ColliderProjection {
 }
 
 impl Dyn<ColliderData> {
-    pub fn collider_const(projection: ColliderProjection) -> DynCollider {
-        Dyn { repr: ColliderDynRepr::Const(projection) }
+    pub fn collider_circle(projection: ColliderProjection) -> DynCollider {
+        Dyn { repr: ColliderDynRepr::CircleProjection(projection) }
     }
 
-    pub fn collider_curve_compat(slot: CurveColliderSlotCompat) -> DynCollider {
-        Dyn { repr: ColliderDynRepr::CurveCompat(slot) }
+    pub fn collider_capsule_chain(slot: CurveColliderSlot) -> DynCollider {
+        Dyn { repr: ColliderDynRepr::CapsuleChain(slot) }
     }
 
     pub fn repr(&self) -> &ColliderDynRepr {
         &self.repr
     }
 
-    pub fn curve_compat(&self) -> Option<&CurveColliderSlotCompat> {
+    pub fn capsule_chain(&self) -> Option<&CurveColliderSlot> {
         match &self.repr {
-            ColliderDynRepr::CurveCompat(c) => Some(c),
-            ColliderDynRepr::Const(_) => None,
+            ColliderDynRepr::CapsuleChain(c) => Some(c),
+            ColliderDynRepr::CircleProjection(_) => None,
         }
     }
 }
 
 impl Dyn<RenderData> {
-    pub fn render_curve_compat(slot: CurveRenderSlotCompat) -> DynRender {
-        Dyn { repr: RenderDynRepr::CurveCompat(slot) }
+    pub fn render_polyline(slot: CurveRenderSlot) -> DynRender {
+        Dyn { repr: RenderDynRepr::Polyline(slot) }
     }
 
     pub fn repr(&self) -> &RenderDynRepr {
         &self.repr
     }
 
-    pub fn curve_compat(&self) -> Option<&CurveRenderSlotCompat> {
+    pub fn polyline(&self) -> &CurveRenderSlot {
         match &self.repr {
-            RenderDynRepr::CurveCompat(r) => Some(r),
+            RenderDynRepr::Polyline(r) => r,
         }
     }
 }

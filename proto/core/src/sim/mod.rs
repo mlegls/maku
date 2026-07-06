@@ -325,12 +325,13 @@ impl Sim {
                 FigureDynRepr::Curve { .. } => b
                     .renderers
                     .iter()
-                    .find_map(DynRender::curve_compat)
+                    .next()
+                    .map(DynRender::polyline)
                     .map(|projection| tau <= projection.activity.warn + projection.activity.active)
                     .or_else(|| {
                         b.colliders
                             .iter()
-                            .find_map(DynCollider::curve_compat)
+                            .find_map(DynCollider::capsule_chain)
                             .map(|projection| tau <= projection.activity.warn + projection.activity.active)
                     })
                     .unwrap_or(true),
