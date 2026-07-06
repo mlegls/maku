@@ -41,8 +41,8 @@ impl Sim {
                 continue;
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
-        match &b.geometry {
-            Geometry::Pose => {
+            match &b.dyn_figure {
+                DynFigure::Pose(_) => {
                     if b.legacy.trace.is_some() {
                         if b.trail.len() >= 2 {
                             out.push(RenderItem::Polyline {
@@ -53,7 +53,7 @@ impl Sim {
                                 alpha: self.sample_sig(&b.sigs.opacity, tau, 1.0),
                             });
                         }
-                    } else if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, sig) {
+                    } else if let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
                         out.push(RenderItem::Dot {
                             x: p.x,
                             y: p.y,
@@ -66,7 +66,7 @@ impl Sim {
                         });
                     }
                 }
-                Geometry::Curve(_) => {
+                DynFigure::Curve { .. } => {
                     let Some(lifecycle) = &b.legacy.curve_lifecycle else { continue };
                     let hot = hot_frac(b, tau, sig);
                     let partly = tau >= lifecycle.warn && hot < 1.0;

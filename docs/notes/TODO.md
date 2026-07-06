@@ -33,36 +33,69 @@ language.md.
 ## Known approximations (documented in code)
 - Core semantic model target (2026-07):
   ```text
-  Geometry = Pose | Curve
-  Dyn<G> = t -> G
-  Entity = Dyn<Geometry> * Colliders * Meta
+  Figure = Pose | Polyline | ParametricCurve | Composite...
+  Dyn<F> = t -> F
+  Entity = Dyn<Figure> * ColliderProjection(s) * RenderProjection(s) * Meta
   ```
-  A pose carries position plus orientation, which is why current "point"
-  entities can drive facing and subfire semantics. Interpreter `DynNode`s are
+  A pose carries position plus orientation, which is why current point-like
+  figures can drive facing and subfire semantics. Interpreter `DynNode`s are
   prototype-level `Dyn<Pose>` expressions, not the semantic `Pose` value; a
   compiled core should store pose data compactly, e.g. `(x, y, ax, ay)`.
-  `Curve` is pose-valued over `u` plus its domain and
-  sampling/materialization hints:
+  The Rust prototype currently represents the first slice of `Dyn<Figure>` as
+  `DynFigure`, which evaluates to the materialized `Figure` enum. Rename
+  this toward Figure vocabulary once the projection split starts.
+
+  The important layer boundary is:
   ```text
-  CurveSpec = eval + CurveDomain
-  eval = u -> Pose
-  CurveDomain = Range(min, max) | Values(Vec<u>)
+  Figure:       abstract/math geometry evolving over time
+  Collider:     projection from a figure into hit tests
+  Presentation: projection from a figure into renderable records/meshes
+  Meta:         opaque library/host data
+  ```
+  The abstract figure should not be locked to one sampled/renderable form.
+  A parametric curve may render as a sampled polyline today, a mesh tomorrow,
+  and collide through a sampled capsule chain today or an analytic distance
+  test later. Sampling is therefore not intrinsic to the figure; it belongs
+  to the collider/render projection or to an authoring helper that generates
+  a sampled figure.
+
+  Candidate figure and projection shapes:
+  ```text
+  Figure =
+    Pose(Pose)
+    Polyline(Rc<[Pose]>)
+    ParametricCurve { eval: u -> Pose, domain: CurveDomain }
+
+  ColliderProjection =
+    Circle { radius }
+    CapsuleChain { source, samples, radius, active_mask? }
+    AnalyticCurveDistance { source, tolerance, radius } // later
+
+  RenderProjection =
+    Point { source }
+    Polyline { source, samples, stroke, active_mask? }
+    Mesh { source/cache/material } // later
+
+  SampleSet = Values(Vec<u>) | RangeStep(min, max, step)
   ```
   Normalized curves are just `Range(0, 1)`. Higher-level helpers can turn
-  min/max/step descriptions into `Values`; step size is not a distinct core
-  domain. Traces are derived curves over an entity's dyn history, not a
-  separate geometry kind. The interpreter may cache recent pose samples for
-  integrated/scanned dyns; retention is a performance policy, and shortening
-  it should be indistinguishable from observing a younger trace. Facing is
-  part of each pose sample; finite-difference facing is only a possible
-  helper/default, not the core representation. Interpolation over trace
-  sample indices is an explicit higher-level helper, not implicit core
-  behavior. A filling laser is a `Dyn<Curve>` whose active domain/mask changes
-  over `t` (warning render and hot collision may be separate host/collider
-  interpretations of the same curve). Core exposes geometry, colliders,
-  events, and opaque indexed meta/fields; hosts decide how meta renders.
-  Touhou names like bullet/shot/enemy/boss/player/laser are library
-  constructors over this core.
+  min/max/step descriptions into `Values`; callers/projections must provide
+  sample sets compatible with the source domain when they use sampled
+  projections. Traces are derived figures over an entity's dyn history, not a
+  separate primitive kind; retained samples are a cache/policy for integrated
+  dyns. Facing is part of each pose sample; finite-difference facing is only
+  a possible helper/default, not the core representation. Interpolation over
+  trace sample indices is an explicit higher-level helper, not implicit core
+  behavior.
+
+  A filling laser should become a Touhou/library constructor that creates a
+  time-varying figure plus collider/render projections with active masks.
+  Warning render and hot collision are separate projections over the same
+  figure, not special curve semantics in core. Core exposes figures,
+  collider results/events, render projections or abstract render records, and
+  opaque indexed meta/fields; hosts decide how meta renders. Touhou names
+  like bullet/shot/enemy/boss/player/laser are library constructors over this
+  core.
 - Core vocabulary migration toward the "2D graphing + collision engine"
   boundary:
   1. ~~Rename runtime `Bullet`/`bullets` to `Entity`/`entities`, keeping
@@ -75,16 +108,22 @@ language.md.
      and explicit query culls.
   4. Move Touhou-facing API to short library names (`bullet`, `shot`,
      `enemy`, `player`, `boss`) with `spawn-*` compatibility aliases.
-- Geometry refactor staging:
+- Figure refactor staging:
   1. ~~Introduce internal curve/geometry vocabulary while preserving surface
      `laser`/`pather` aliases.~~ Done for entity kinds and pre-spawn values.
   2. ~~Collapse `Val::CurveV` and `Val::TrailV` toward one geometry value
      representation that `spawn` materializes.~~ Done as `CurveV` with
      parametric/traced backings.
   2a. ~~Carry `CurveDomain` into runtime curve sampling instead of flattening
-      it immediately to `u-max`.~~ Done for `Geometry::Curve`; traced curves
+      it immediately to `u-max`.~~ Done for curve entities; traced curves
       use dynamic integer-indexed sample domains, with interpolation reserved
       for an explicit higher-level helper.
+  2b. ~~Collapse runtime `Entity` from separate pose motion plus static
+      geometry into one `DynFigure` value.~~ Done; compatibility lifecycle,
+      stroke, and trace policy still live in the legacy component bucket.
+  2c. ~~Move concrete curve sampling back out of `ParametricCurve`.~~ Done;
+      the current compatibility projection owns `SampleSet` and dynamic
+      `:u-max` while the abstract curve figure remains `eval + domain`.
   3. Represent fill as a time-varying curve domain/mask rather than a
      laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

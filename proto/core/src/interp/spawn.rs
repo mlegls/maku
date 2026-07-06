@@ -72,8 +72,8 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // rand in signal expressions is an ir constant per element (§5): clone the
     // motion tree per element, substituting rand calls with drawn constants
     for e in elems.iter_mut() {
-        if dyn_has_rand(&e.motion) {
-            e.motion = instantiate_rand(&e.motion, world);
+        if dyn_figure_has_rand(&e.dyn_figure) {
+            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, world);
         }
     }
     let styles = resolve_styles(&meta, &elems)?;
@@ -214,8 +214,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     let dyns = elems
         .into_iter()
         .map(|e| SpawnMade {
-            motion: e.motion,
-            geometry: e.geometry,
+            dyn_figure: e.dyn_figure,
             legacy: e.legacy,
         })
         .collect();
@@ -248,22 +247,22 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (geometry, legacy) = match &l.backing {
+            let (dyn_figure, legacy) = match &l.backing {
                 CurveBacking::Parametric {
                     curve,
+                    sample_set,
                     u_max_sig,
-                    resolution,
                     warn,
                     active,
                     width,
                     fill_sig,
                 } => {
                     (
-                        Geometry::Curve(curve.clone()),
+                        DynFigure::Curve { frame: l.anchor.clone(), curve: curve.clone() },
                         LegacyComponents {
-                            curve_sampling: Some(CurveSampling {
+                            curve_projection: Some(CurveProjectionCompat {
+                                sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
-                                resolution: *resolution,
                             }),
                             curve_lifecycle: Some(CurveLifecycle {
                                 warn: *warn,
@@ -276,7 +275,7 @@ pub(crate) fn flatten_elems(
                     )
                 }
                 CurveBacking::Trace { window } => (
-                    Geometry::Pose,
+                    DynFigure::Pose(l.anchor.clone()),
                     LegacyComponents {
                         trace: Some(TracePolicy { window: Some(*window) }),
                         ..LegacyComponents::default()
@@ -284,8 +283,7 @@ pub(crate) fn flatten_elems(
                 ),
             };
             out.push(SpawnElem {
-                motion: l.anchor.clone(),
-                geometry,
+                dyn_figure,
                 legacy,
                 path: path.clone(),
             });
@@ -293,8 +291,7 @@ pub(crate) fn flatten_elems(
         }
         other => {
             out.push(SpawnElem {
-                motion: as_dyn(other)?,
-                geometry: Geometry::Pose,
+                dyn_figure: DynFigure::Pose(as_dyn(other)?),
                 legacy: LegacyComponents::default(),
                 path: path.clone(),
             });
@@ -323,6 +320,16 @@ pub(crate) fn dyn_has_rand(d: &DynNode) -> bool {
         DynNode::Translate { child, .. } => dyn_has_rand(child),
         DynNode::Frame(a, b) => dyn_has_rand(a) || dyn_has_rand(b),
         _ => false,
+    }
+}
+
+pub(crate) fn dyn_figure_has_rand(d: &DynFigure) -> bool {
+    match d {
+        DynFigure::Pose(p) => dyn_has_rand(p),
+        DynFigure::Curve { frame, curve } => {
+            dyn_has_rand(frame)
+                || matches!(&curve.eval, CurveEval::Expr(shape) if dyn_has_rand(shape))
+        }
     }
 }
 
@@ -384,6 +391,25 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
             instantiate_rand(b, world),
         )),
         _ => d.clone(),
+    }
+}
+
+pub(crate) fn instantiate_rand_geometry(d: &DynFigure, world: &mut World) -> DynFigure {
+    match d {
+        DynFigure::Pose(p) => DynFigure::Pose(instantiate_rand(p, world)),
+        DynFigure::Curve { frame, curve } => {
+            let eval = match &curve.eval {
+                CurveEval::Straight => CurveEval::Straight,
+                CurveEval::Expr(shape) => CurveEval::Expr(instantiate_rand(shape, world)),
+            };
+            DynFigure::Curve {
+                frame: instantiate_rand(frame, world),
+                curve: ParametricCurve {
+                    eval,
+                    domain: curve.domain.clone(),
+                },
+            }
+        }
     }
 }
 

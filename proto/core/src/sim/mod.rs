@@ -267,7 +267,7 @@ impl Sim {
         for b in &mut self.world.entities {
             if b.scanned {
                 let tau = (tick - b.birth) as f64 / TICK_RATE;
-                step_motion(&b.motion, tau, dt, &mut b.state, &sig)?;
+                step_dyn_figure(&b.dyn_figure, tau, dt, &mut b.state, &sig)?;
             }
         }
         // record traced curves: a dynamic integer sample domain over the
@@ -279,7 +279,7 @@ impl Sim {
                 if let Some(policy) = &b.legacy.trace {
                     let Some(window) = policy.window else { continue };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
-                    if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) {
+                    if let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         b.trail.push(p);
                         if b.trail.len() > cap {
@@ -313,15 +313,15 @@ impl Sim {
                 return true; // the player rides a channel; never field-culled
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            match &b.geometry {
-                Geometry::Pose => match dyn_pose(&b.motion, tau, &b.state, &sig) {
+            match &b.dyn_figure {
+                DynFigure::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);
                         false
                     }
                 },
-                Geometry::Curve(_) => b
+                DynFigure::Curve { .. } => b
                     .legacy
                     .curve_lifecycle
                     .as_ref()

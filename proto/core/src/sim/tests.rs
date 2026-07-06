@@ -62,7 +62,7 @@
         assert_eq!(b.birth, 0);
         assert_eq!(b.style.family, "gem");
         assert_eq!(b.style.color, "yellow");
-        let p = dyn_pose(&b.motion, 1.0, &b.state, &sig).unwrap();
+        let p = dyn_figure_pose(&b.dyn_figure, 1.0, &b.state, &sig).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
@@ -101,8 +101,8 @@
         let sig = SigEnv::default();
         for (a, b) in sa.world.entities.iter().zip(sb.world.entities.iter()) {
             assert_eq!(a.birth, b.birth);
-            let pa = dyn_pose(&a.motion, 0.7, &a.state, &sig).unwrap();
-            let pb = dyn_pose(&b.motion, 0.7, &b.state, &sig).unwrap();
+            let pa = dyn_figure_pose(&a.dyn_figure, 0.7, &a.state, &sig).unwrap();
+            let pb = dyn_figure_pose(&b.dyn_figure, 0.7, &b.state, &sig).unwrap();
             assert!(
                 (pa.x - pb.x).abs() < 1e-6 && (pa.y - pb.y).abs() < 1e-6,
                 "A/B diverged: {:?} vs {:?}",
@@ -141,7 +141,7 @@
         let sig = SigEnv::default();
         let ring: Vec<_> =
             sim.world.entities.iter().filter(|b| b.style.family == "star").collect();
-        let p = dyn_pose(&ring[0].motion, 0.0, &ring[0].state, &sig).unwrap();
+        let p = dyn_figure_pose(&ring[0].dyn_figure, 0.0, &ring[0].state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
     }
 
@@ -164,8 +164,8 @@
         for (x, y) in a.world.entities.iter().zip(b.world.entities.iter()) {
             assert_eq!(x.id, y.id);
             let tau = (a.world.tick - x.birth) as f64 / TICK_RATE;
-            let px = dyn_pose(&x.motion, tau, &x.state, &a.ctx.sig).unwrap();
-            let py = dyn_pose(&y.motion, tau, &y.state, &b.ctx.sig).unwrap();
+            let px = dyn_figure_pose(&x.dyn_figure, tau, &x.state, &a.ctx.sig).unwrap();
+            let py = dyn_figure_pose(&y.dyn_figure, tau, &y.state, &b.ctx.sig).unwrap();
             assert!(
                 (px.x - py.x).abs() < 1e-12 && (px.y - py.y).abs() < 1e-12,
                 "diverged: {:?} vs {:?}",
@@ -646,7 +646,7 @@
         }
         let b = &sim.world.entities[0];
         let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
-        let p = dyn_pose(&b.motion, tau, &b.state, &sim.ctx.sig).unwrap();
+        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sim.ctx.sig).unwrap();
         let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
         assert!((p.x - mid).abs() < 0.03 && p.y.abs() < 1e-9, "mid-move pose: {:?}", p);
 
@@ -655,7 +655,7 @@
         }
         let b = &sim.world.entities[0];
         let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
-        let p = dyn_pose(&b.motion, tau, &b.state, &sim.ctx.sig).unwrap();
+        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sim.ctx.sig).unwrap();
         assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
     }
 
@@ -677,7 +677,7 @@
             }
             let b = &sim.world.entities[0];
             let sig = SigEnv::default();
-            let p = dyn_pose(&b.motion, 0.5, &b.state, &sig).unwrap();
+            let p = dyn_figure_pose(&b.dyn_figure, 0.5, &b.state, &sig).unwrap();
             assert!(
                 p.x.abs() < 1e-9 && (p.y - 2.0).abs() < 1e-9,
                 "{}: fired from (0,3) toward the player below: {:?}",
@@ -703,8 +703,20 @@
             b.step().unwrap();
         }
         let sig = SigEnv::default();
-        let pa = dyn_pose(&a.world.entities[0].motion, 0.5, &a.world.entities[0].state, &sig).unwrap();
-        let pb = dyn_pose(&b.world.entities[0].motion, 0.5, &b.world.entities[0].state, &sig).unwrap();
+        let pa = dyn_figure_pose(
+            &a.world.entities[0].dyn_figure,
+            0.5,
+            &a.world.entities[0].state,
+            &sig,
+        )
+        .unwrap();
+        let pb = dyn_figure_pose(
+            &b.world.entities[0].dyn_figure,
+            0.5,
+            &b.world.entities[0].state,
+            &sig,
+        )
+        .unwrap();
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
         // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 → (0, 1.5)
         assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
@@ -1188,7 +1200,7 @@
         let b = sim.world.entities.iter().find(|b| b.style.family == "amulet").unwrap();
         let sig = sim.ctx.sig.clone();
         let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
-        let p = dyn_pose(&b.motion, tau, &b.state, &sig).unwrap();
+        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
 

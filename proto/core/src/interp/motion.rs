@@ -114,6 +114,15 @@ pub enum CurveDomain {
 }
 
 #[derive(Debug, Clone)]
+pub enum SampleSet {
+    /// Concrete parameter values supplied by the constructor/caller.
+    Values(Rc<[f64]>),
+    /// Compatibility sampling for ranged curves. Higher-level constructors
+    /// should prefer Values when they need an exact concrete curve.
+    Step { resolution: f64 },
+}
+
+#[derive(Debug, Clone)]
 pub enum CurveEval {
     /// Compatibility straight curve along the local +x axis.
     Straight,
@@ -123,9 +132,61 @@ pub enum CurveEval {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveSpec {
+pub struct ParametricCurve {
     pub eval: CurveEval,
     pub domain: CurveDomain,
+}
+
+#[derive(Debug, Clone)]
+pub struct Curve {
+    pub frame: Pose,
+    pub spec: ParametricCurve,
+}
+
+#[derive(Debug, Clone)]
+pub enum Figure {
+    Pose(Pose),
+    Curve(Curve),
+}
+
+/// Prototype representation of the semantic `Dyn<Figure>`:
+/// pose-valued entities carry one pose dyn; curve-valued entities carry a
+/// world-frame pose dyn plus a curve expression sampled in that frame.
+/// Evaluating one at a tick produces a materialized `Figure` value.
+#[derive(Debug, Clone)]
+pub enum DynFigure {
+    Pose(Rc<DynNode>),
+    Curve { frame: Rc<DynNode>, curve: ParametricCurve },
+}
+
+impl DynFigure {
+    pub fn pose_dyn(&self) -> &Rc<DynNode> {
+        match self {
+            DynFigure::Pose(d) => d,
+            DynFigure::Curve { frame, .. } => frame,
+        }
+    }
+
+    pub fn curve(&self) -> Option<&ParametricCurve> {
+        match self {
+            DynFigure::Curve { curve, .. } => Some(curve),
+            DynFigure::Pose(_) => None,
+        }
+    }
+
+    pub fn framed(&self, frame: Pose) -> DynFigure {
+        if frame == Pose::IDENTITY {
+            return self.clone();
+        }
+        let parent = Rc::new(DynNode::Const(frame));
+        match self {
+            DynFigure::Pose(d) => DynFigure::Pose(Rc::new(DynNode::Frame(parent, d.clone()))),
+            DynFigure::Curve { frame: child, curve } => DynFigure::Curve {
+                frame: Rc::new(DynNode::Frame(parent, child.clone())),
+                curve: curve.clone(),
+            },
+        }
+    }
 }
 
 pub fn eval_curve_pose(
@@ -146,9 +207,9 @@ pub fn eval_curve_pose(
 pub enum CurveBacking {
     /// Surface `laser` syntax currently lowers to this representation.
     Parametric {
-        curve: CurveSpec,
+        curve: ParametricCurve,
+        sample_set: SampleSet,
         u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
-        resolution: f64,
         warn: f64,
         active: f64,
         width: f64,
@@ -226,6 +287,30 @@ pub(crate) fn read_scan(state: &MotionState, base: usize) -> ScanShared {
 
 pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
     dyn_pose_u(d, tau, 0.0, state, sig)
+}
+
+pub fn dyn_figure_pose(
+    d: &DynFigure,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Pose, String> {
+    dyn_pose(d.pose_dyn(), tau, state, sig)
+}
+
+pub fn eval_dyn_figure(
+    d: &DynFigure,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Figure, String> {
+    match d {
+        DynFigure::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
+        DynFigure::Curve { frame, curve } => Ok(Figure::Curve(Curve {
+            frame: dyn_pose(frame, tau, state, sig)?,
+            spec: curve.clone(),
+        })),
+    }
 }
 
 pub fn dyn_pose_u(
@@ -418,6 +503,22 @@ pub fn step_motion(
     }
 }
 
+pub fn step_dyn_figure(
+    d: &DynFigure,
+    tau: f64,
+    dt: f64,
+    state: &mut MotionState,
+    sig: &SigEnv,
+) -> Result<(), String> {
+    step_motion(d.pose_dyn(), tau, dt, state, sig)?;
+    if let Some(curve) = d.curve() {
+        if let CurveEval::Expr(shape) = &curve.eval {
+            step_motion(shape, tau, dt, state, sig)?;
+        }
+    }
+    Ok(())
+}
+
 /// Walk through unrotated const offsets to an integrating Vel node and
 /// clamp its state (bounds shifted into the integrator's local frame).
 /// Anything else: the output clamp in dyn_pose is the only effect.
@@ -482,6 +583,16 @@ pub fn is_scanned(d: &DynNode) -> bool {
         DynNode::Clamp { child, .. } => is_scanned(child),
         _ => false,
     }
+}
+
+pub fn is_scanned_figure(d: &DynFigure) -> bool {
+    is_scanned(d.pose_dyn())
+        || d.curve()
+            .and_then(|curve| match &curve.eval {
+                CurveEval::Expr(shape) => Some(is_scanned(shape)),
+                CurveEval::Straight => None,
+            })
+            .unwrap_or(false)
 }
 
 /// Is this form time-dependent — does it reference the slot-bound

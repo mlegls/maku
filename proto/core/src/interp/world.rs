@@ -15,21 +15,6 @@ pub struct Style {
 }
 
 #[derive(Debug, Clone)]
-pub enum Geometry {
-    Pose,
-    Curve(CurveSpec),
-}
-
-#[derive(Debug, Clone)]
-pub struct CurveSampling {
-    /// Signal-valued compatibility override for the upper range bound
-    /// (:u-max varLength).
-    pub u_max_sig: Option<(Form, Env)>,
-    /// Sampling step for the interpreter's polyline approximation.
-    pub resolution: f64,
-}
-
-#[derive(Debug, Clone)]
 pub struct CurveLifecycle {
     pub warn: f64,
     pub active: f64,
@@ -51,9 +36,19 @@ pub struct TracePolicy {
     pub window: Option<f64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CurveProjectionCompat {
+    /// Sampling used by the current compatibility render/collision
+    /// projections. Abstract parametric figures do not own sampling.
+    pub sample_set: SampleSet,
+    /// Signal-valued compatibility override for the upper range bound
+    /// (:u-max varLength).
+    pub u_max_sig: Option<(Form, Env)>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct LegacyComponents {
-    pub curve_sampling: Option<CurveSampling>,
+    pub curve_projection: Option<CurveProjectionCompat>,
     pub curve_lifecycle: Option<CurveLifecycle>,
     pub curve_stroke: Option<CurveStroke>,
     pub trace: Option<TracePolicy>,
@@ -89,9 +84,8 @@ pub struct Entity {
     /// queries over tagged entities). Collision ignores this; layer tags and
     /// contact rules define interactions.
     pub team: Option<Rc<str>>,
-    pub geometry: Geometry,
+    pub dyn_figure: DynFigure,
     pub legacy: LegacyComponents,
-    pub motion: Rc<DynNode>,
     pub birth: u64,
     pub style: Style,
     pub alive: bool,

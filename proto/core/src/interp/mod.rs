@@ -132,8 +132,7 @@ impl Val {
 /// path — (axis_len, index) per array level, root to leaf — for the F15
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
-    pub motion: Rc<DynNode>,
-    pub geometry: Geometry,
+    pub dyn_figure: DynFigure,
     pub legacy: LegacyComponents,
     pub path: Vec<(usize, usize)>,
 }
@@ -254,8 +253,7 @@ pub enum FrameSpec {
 
 #[derive(Debug)]
 pub struct SpawnMade {
-    pub motion: Rc<DynNode>,
-    pub geometry: Geometry,
+    pub dyn_figure: DynFigure,
     pub legacy: LegacyComponents,
 }
 
@@ -724,7 +722,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 };
                 let b = &world.entities[i];
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-                let p = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
+                let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
                 return Ok(Val::Vec2 { x: p.x, y: p.y });
             }
             "in-frame" => {
@@ -880,11 +878,11 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
                 };
                 let b = &world.entities[i];
-                let Geometry::Curve(curve) = &b.geometry else {
+                let Some(curve) = b.dyn_figure.curve() else {
                     return Err("on-laser: not a laser".into());
                 };
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-                let anchor = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
+                let anchor = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
                 let at = |uu: f64| -> Result<Pose, String> {
                     let local = eval_curve_pose(&curve.eval, tau, uu, &b.state, &ctx.sig)?;
                     Ok(anchor.compose(&local))
@@ -1010,7 +1008,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     let Some(i) = world.find(id) else { continue };
                     let b = &world.entities[i];
                     let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-                    let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) else { continue };
+                    let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) else { continue };
                     let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
                     if best.map(|(bd, _)| d2 < bd).unwrap_or(true) {
                         best = Some((d2, (p.x, p.y)));
@@ -1248,7 +1246,7 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
     let b = &world.entities[i];
     let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-    let p = dyn_pose(&b.motion, tau, &b.state, sig)?;
+    let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
     let vel = match b.prev_pos {
         Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
         None => (0.0, 0.0),
@@ -1258,10 +1256,10 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
-        (Val::Kw("kind".into()), Val::Kw(match &b.geometry {
-            Geometry::Pose if b.legacy.trace.is_some() => "pather",
-            Geometry::Pose => "point",
-            Geometry::Curve(_) => "laser",
+        (Val::Kw("kind".into()), Val::Kw(match &b.dyn_figure {
+            DynFigure::Pose(_) if b.legacy.trace.is_some() => "pather",
+            DynFigure::Pose(_) => "point",
+            DynFigure::Curve { .. } => "laser",
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -1596,15 +1594,8 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, expose } => {
             let mut handles = Vec::new();
             for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(sigs.iter()).enumerate() {
-                let motion = if ctx.ambient == Pose::IDENTITY {
-                    d.motion.clone()
-                } else {
-                    Rc::new(DynNode::Frame(
-                        Rc::new(DynNode::Const(ctx.ambient)),
-                        d.motion.clone(),
-                    ))
-                };
-                let scanned = is_scanned(&motion);
+                let dyn_figure = d.dyn_figure.framed(ctx.ambient);
+                let scanned = is_scanned_figure(&dyn_figure);
                 let id = world.next_id;
                 world.next_id += 1;
                 let mut col_slots = Vec::new();
@@ -1618,9 +1609,8 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 world.entities.push(Entity {
                     id,
                     team: team.clone(),
-                    geometry: d.geometry.clone(),
+                    dyn_figure,
                     legacy: d.legacy.clone(),
-                    motion,
                     birth: world.tick,
                     style: s.clone(),
                     alive: true,
@@ -1669,7 +1659,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let (exit, anchor) = {
                 let b = &world.entities[i];
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-                let p = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
+                let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
                 let vel = match b.prev_pos {
                     Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
                     None => (0.0, 0.0),
@@ -1695,8 +1685,11 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let b = &mut world.entities[i];
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
-            b.motion = Rc::new(DynNode::Frame(Rc::new(DynNode::Const(anchor)), new_dyn));
-            b.scanned = is_scanned(&b.motion);
+            b.dyn_figure = DynFigure::Pose(Rc::new(DynNode::Frame(
+                Rc::new(DynNode::Const(anchor)),
+                new_dyn,
+            )));
+            b.scanned = is_scanned_figure(&b.dyn_figure);
             b.state = MotionState::new();
             b.birth = world.tick;
             b.prev_pos = Some((anchor.x, anchor.y));
@@ -2355,12 +2348,12 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     Ok(Val::CurveV(Rc::new(ExtCurve {
         anchor: Rc::new(DynNode::Const(Pose::IDENTITY)),
         backing: CurveBacking::Parametric {
-            curve: CurveSpec {
+            curve: ParametricCurve {
                 eval: shape.map(CurveEval::Expr).unwrap_or(CurveEval::Straight),
                 domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
             },
+            sample_set: SampleSet::Step { resolution: getf("resolution", 0.1) },
             u_max_sig,
-            resolution: getf("resolution", 0.1),
             warn: getf("warn", 0.0),
             active: getf("active", f64::INFINITY),
             width: getf("width", 1.0),
@@ -2694,10 +2687,11 @@ mod tests {
         };
         assert_eq!(items.len(), 6);
         let Val::CurveV(l) = &items[0] else { panic!("expected laser") };
-        let CurveBacking::Parametric { curve, .. } = &l.backing else {
+        let CurveBacking::Parametric { curve, sample_set, .. } = &l.backing else {
             panic!("expected parametric curve")
         };
         assert!(matches!(&curve.domain, CurveDomain::Range { min, max } if *min == 0.0 && *max == 3.5));
+        assert!(matches!(sample_set, SampleSet::Step { resolution } if *resolution == 0.4));
         // shape at t=1, u=1: r=2, θ=-14°
         let p = eval_curve_pose(&curve.eval, 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
         let ex = 2.0 * (-14f64).to_radians().cos();

@@ -13,18 +13,31 @@ pub fn sample_curve_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let Geometry::Curve(curve) = &b.geometry else {
+    let Figure::Curve(curve) = eval_dyn_figure(&b.dyn_figure, tau, &b.state, sig).ok()? else {
         return None;
     };
-    let sampling = b.legacy.curve_sampling.as_ref()?;
+    let projection = b.legacy.curve_projection.as_ref()?;
     if frac <= 0.0 {
         return None;
     }
-    let anchor = dyn_pose(&b.motion, tau, &b.state, sig).ok()?;
-    let us: Vec<f64> = match &curve.domain {
-        CurveDomain::Range { min, max } => {
+    let us: Vec<f64> = match (&curve.spec.domain, &projection.sample_set) {
+        (_, SampleSet::Values(vals)) => {
+            if vals.is_empty() {
+                return None;
+            }
+            let n = ((vals.len() as f64) * frac.min(1.0)).ceil() as usize;
+            vals.iter().take(n.max(2).min(vals.len())).copied().collect()
+        }
+        (CurveDomain::Values(vals), SampleSet::Step { .. }) => {
+            if vals.is_empty() {
+                return None;
+            }
+            let n = ((vals.len() as f64) * frac.min(1.0)).ceil() as usize;
+            vals.iter().take(n.max(2).min(vals.len())).copied().collect()
+        }
+        (CurveDomain::Range { min, max }, SampleSet::Step { resolution }) => {
             let min = *min;
-            let max = match &sampling.u_max_sig {
+            let max = match &projection.u_max_sig {
                 Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
                     .and_then(|v| v.num())
                     .unwrap_or(*max),
@@ -32,21 +45,14 @@ pub fn sample_curve_frac(
             };
             let end = min + (max - min) * frac.min(1.0);
             let span = (end - min).abs().max(0.01);
-            let steps = ((span / sampling.resolution).ceil() as usize).clamp(2, 400);
+            let steps = ((span / resolution).ceil() as usize).clamp(2, 400);
             (0..=steps).map(|k| min + (end - min) * k as f64 / steps as f64).collect()
-        }
-        CurveDomain::Values(vals) => {
-            if vals.is_empty() {
-                return None;
-            }
-            let n = ((vals.len() as f64) * frac.min(1.0)).ceil() as usize;
-            vals.iter().take(n.max(2).min(vals.len())).copied().collect()
         }
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = eval_curve_pose(&curve.eval, tau, u, &b.state, sig).ok()?;
-        let w = anchor.compose(&local);
+        let local = eval_curve_pose(&curve.spec.eval, tau, u, &b.state, sig).ok()?;
+        let w = curve.frame.compose(&local);
         pts.push((w.x, w.y));
     }
     Some(pts)
@@ -108,7 +114,7 @@ impl Sim {
                 continue;
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            let p = dyn_pose(&b.motion, tau, &b.state, &sig)?;
+            let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
             scl.push(self.sample_sig(&b.sigs.scale, tau, 1.0));
         }
@@ -118,14 +124,14 @@ impl Sim {
         // distance to the sampled polyline (capsule chain)
         let target_d2 = |b: &Entity, i: usize, to: (f64, f64)| -> Option<f64> {
             let (bx, by) = pos[i]?;
-            match &b.geometry {
-                Geometry::Pose if b.legacy.trace.is_some() => {
+            match &b.dyn_figure {
+                DynFigure::Pose(_) if b.legacy.trace.is_some() => {
                     let pts: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R).max(0.0).powi(2))
                 }
-                Geometry::Pose => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
-                Geometry::Curve(_) => {
+                DynFigure::Pose(_) => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
+                DynFigure::Curve { .. } => {
                     let Some(lifecycle) = &b.legacy.curve_lifecycle else { return None };
                     let Some(stroke) = &b.legacy.curve_stroke else { return None };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
