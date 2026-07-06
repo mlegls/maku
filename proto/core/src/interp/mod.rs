@@ -79,7 +79,7 @@ pub enum Val {
     Pose(Pose),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
-    Dyn(Rc<DynNode>),
+    Dyn(DynPose),
     CurveV(Rc<ExtCurve>),
     /// A form as a value — what macros manipulate and quasiquote builds.
     FormV(Rc<Form>),
@@ -772,7 +772,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                             })),
                             other => other, // dyns: value composition has no anchor to strip
                         },
-                        Val::Dyn(d) => apply_dyn_frame(d, val)?,
+                        Val::Dyn(d) => apply_dyn_frame(d.into_node(), val)?,
                         other => apply_frame_val(as_pose(other)?, val)?,
                     };
                 }
@@ -783,11 +783,11 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let lo = as_pose(evaluate(&items[1], env, ctx, world)?)?;
                 let hi = as_pose(evaluate(&items[2], env, ctx, world)?)?;
                 let child = as_dyn(evaluate(&items[3], env, ctx, world)?)?;
-                return Ok(Val::Dyn(Rc::new(DynNode::Clamp {
+                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Clamp {
                     lo: (lo.x, lo.y),
                     hi: (hi.x, hi.y),
-                    child,
-                })));
+                    child: child.into_node(),
+                }))));
             }
             "circle" => return sf_circle(items, env, ctx, world),
             "arrow" => return sf_arrow(items, env, ctx, world),
@@ -796,12 +796,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 if items.len() != 3 {
                     return Err(format!("{}: expected two components", s));
                 }
-                return Ok(Val::Dyn(Rc::new(DynNode::ClosedPt {
+                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::ClosedPt {
                     a: items[1].clone(),
                     b: items[2].clone(),
                     polar: &**s == "polar",
                     env: env.clone(),
-                })));
+                }))));
             }
             "vel" => return sf_vel(items, env, ctx, world),
             "laser" => return sf_laser(items, env, ctx, world),
@@ -910,8 +910,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                             Ok(cur)
                         } else {
                             match cur {
-                                Val::Vec2 { .. } | Val::Pose(_) => Ok(Val::Dyn(Rc::new(
-                                    DynNode::Live { channel: Rc::from(name) },
+                                Val::Vec2 { .. } | Val::Pose(_) => Ok(Val::Dyn(DynPose::pose_node(
+                                    Rc::new(DynNode::Live { channel: Rc::from(name) }),
                                 ))),
                                 v => Ok(v),
                             }
@@ -956,10 +956,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_t(&items[1]) => {
-                return Ok(Val::Dyn(Rc::new(DynNode::RotExpr {
+                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::RotExpr {
                     form: items[1].clone(),
                     env: env.clone(),
-                })));
+                }))));
             }
             "aim" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
@@ -1071,11 +1071,11 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "path" => {
                 let curve = as_dyn(evaluate(&items[1], env, ctx, world)?)?;
-                return Ok(Val::Dyn(Rc::new(DynNode::Path {
-                    curve,
+                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Path {
+                    curve: curve.into_node(),
                     progress: items[2].clone(),
                     env: env.clone(),
-                })));
+                }))));
             }
             "rand" => {
                 let (a, b) = (
@@ -1165,7 +1165,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             let child = evaluate(&items[1], env, ctx, world);
             ctx.ambient = saved;
             let child = child?;
-            apply_dyn_frame(fd, child)
+            apply_dyn_frame(fd.into_node(), child)
         }
         Val::Arr(_) => {
             if items.len() != 2 {
@@ -1233,10 +1233,13 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             Ok(Val::arr(out))
         }
         Val::CurveV(l) => Ok(Val::CurveV(Rc::new(ExtCurve {
-            anchor: Rc::new(DynNode::Frame(frame, l.anchor.clone())),
+            anchor: l.anchor.framed(frame),
             backing: l.backing.clone(),
         }))),
-        other => Ok(Val::Dyn(Rc::new(DynNode::Frame(frame, as_dyn(other)?)))),
+        other => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+            frame,
+            as_dyn(other)?.into_node(),
+        ))))),
     }
 }
 
@@ -1702,10 +1705,10 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let b = &mut world.entities[i];
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
-            b.dyn_figure = DynFigure::pose(Rc::new(DynNode::Frame(
+            b.dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
                 Rc::new(DynNode::Const(anchor)),
-                new_dyn,
-            )));
+                new_dyn.into_node(),
+            ))));
             b.scanned = is_scanned_figure(&b.dyn_figure);
             b.state = MotionState::new();
             b.birth = world.tick;
@@ -1920,11 +1923,11 @@ fn as_pose(v: Val) -> Result<Pose, String> {
     }
 }
 
-fn as_dyn(v: Val) -> Result<Rc<DynNode>, String> {
+fn as_dyn(v: Val) -> Result<DynPose, String> {
     match v {
         Val::Dyn(d) => Ok(d),
-        Val::Pose(p) => Ok(Rc::new(DynNode::Const(p))),
-        Val::Vec2 { x, y } => Ok(Rc::new(DynNode::Const(Pose { x, y, th: 0.0 }))),
+        Val::Pose(p) => Ok(DynPose::pose_node(Rc::new(DynNode::Const(p)))),
+        Val::Vec2 { x, y } => Ok(DynPose::pose_node(Rc::new(DynNode::Const(Pose { x, y, th: 0.0 })))),
         v => Err(format!("expected dyn, got {:?}", v)),
     }
 }
@@ -1943,15 +1946,15 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             Ok(Val::arr(out))
         }
         Val::CurveV(l) => Ok(Val::CurveV(Rc::new(ExtCurve {
-            anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), l.anchor.clone())),
+            anchor: l.anchor.framed(Rc::new(DynNode::Const(frame))),
             backing: l.backing.clone(),
         }))),
         other => {
             let d = as_dyn(other)?;
-            Ok(Val::Dyn(Rc::new(DynNode::Frame(
+            Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
                 Rc::new(DynNode::Const(frame)),
-                d,
-            ))))
+                d.into_node(),
+            )))))
         }
     }
 }
@@ -2298,7 +2301,7 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
         env: env.clone(),
     });
     match items.get(2) {
-        None => Ok(Val::Dyn(node)),
+        None => Ok(Val::Dyn(DynPose::pose_node(node))),
         Some(cf) => {
             // trailing-child sugar on dyn constructors
             let child = evaluate(cf, env, ctx, world)?;
@@ -2309,12 +2312,18 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
                     let out = kids
                         .iter()
                         .map(|k| {
-                            Ok(Val::Dyn(Rc::new(DynNode::Frame(node.clone(), as_dyn(k.clone())?))))
+                            Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+                                node.clone(),
+                                as_dyn(k.clone())?.into_node(),
+                            )))))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
                     Ok(Val::arr(out))
                 }
-                other => Ok(Val::Dyn(Rc::new(DynNode::Frame(node, as_dyn(other)?)))),
+                other => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+                    node,
+                    as_dyn(other)?.into_node(),
+                ))))),
             }
         }
     }
@@ -2363,10 +2372,10 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         map_get(&opts, key).and_then(|v| v.num().ok()).unwrap_or(dflt)
     };
     Ok(Val::CurveV(Rc::new(ExtCurve {
-        anchor: Rc::new(DynNode::Const(Pose::IDENTITY)),
+        anchor: DynPose::pose_node(Rc::new(DynNode::Const(Pose::IDENTITY))),
         backing: CurveBacking::Parametric {
             curve: ParametricCurve {
-                eval: shape.map(CurveEval::Expr).unwrap_or(CurveEval::Straight),
+                eval: shape.map(|d| CurveEval::Expr(d.into_node())).unwrap_or(CurveEval::Straight),
                 domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
             },
             sample_set: SampleSet::Step { resolution: getf("resolution", 0.1) },
@@ -2481,7 +2490,7 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     if matches!(segs[0].make, StageMake::Lazy(_)) {
         return Err("stages: first segment cannot be lazy (no exit yet)".into());
     }
-    Ok(Val::Dyn(Rc::new(DynNode::Stages { segs })))
+    Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Stages { segs }))))
 }
 #[cfg(test)]
 mod tests {
@@ -2680,11 +2689,11 @@ mod tests {
         let dt = 1.0 / TICK_RATE;
         let sig = SigEnv::default();
         for k in 0..120 {
-            step_motion(&d, k as f64 * dt, dt, &mut st, &sig).unwrap();
+            step_motion(d.node(), k as f64 * dt, dt, &mut st, &sig).unwrap();
         }
         let p = dyn_pose(&d, 1.0, &st, &sig).unwrap();
         assert!((p.x - 4.0).abs() < 1e-6, "integrated x: {}", p.x);
-        assert!(is_scanned(&d));
+        assert!(is_scanned(d.node()));
     }
 
     #[test]
@@ -2692,7 +2701,7 @@ mod tests {
         // 200's guide: (vel c[..] (circle 7 (polar ...)))
         let Val::Arr(items) = ev("(vel c[1 0] (circle 7 (linear c[1 0])))") else { panic!() };
         assert_eq!(items.len(), 7);
-        assert!(matches!(&items[0], Val::Dyn(d) if is_scanned(d)));
+        assert!(matches!(&items[0], Val::Dyn(d) if is_scanned(d.node())));
     }
 
     #[test]

@@ -266,7 +266,7 @@ pub(crate) fn flatten_elems(
                     fill_sig,
                 } => {
                     (
-                        DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
+                        DynFigure::figure_curve(l.anchor.node().clone(), curve.clone()),
                         vec![DynCollider::CurveCompat(CurveColliderSlotCompat {
                                 sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
@@ -420,7 +420,7 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
 
 pub(crate) fn instantiate_rand_geometry(d: &DynFigure, world: &mut World) -> DynFigure {
     match d.repr() {
-        DynRepr::Pose(p) => DynFigure::pose(instantiate_rand(p, world)),
+        DynRepr::Pose(p) => DynFigure::pose_node(instantiate_rand(p, world)),
         DynRepr::FigureCurve { frame, curve } => {
             let eval = match &curve.eval {
                 CurveEval::Straight => CurveEval::Straight,

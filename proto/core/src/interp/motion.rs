@@ -33,7 +33,7 @@ impl Pose {
 #[derive(Debug, Clone)]
 pub enum Cell {
     N([f64; 2]),
-    D(Rc<DynNode>),
+    D(DynPose),
 }
 pub type MotionState = HashMap<usize, Cell>;
 
@@ -104,7 +104,7 @@ pub enum StageTerm {
 
 #[derive(Debug)]
 pub enum StageMake {
-    Ready(Rc<DynNode>),
+    Ready(DynPose),
     Lazy(Val), // an (fn [exit] ...) closure, instantiated at the boundary
 }
 
@@ -183,6 +183,7 @@ pub fn eval_dyn<T: DynEval>(
 }
 
 pub type DynNum = Dyn<f64>;
+pub type DynPose = Dyn<Pose>;
 pub type DynFigure = Dyn<Figure>;
 
 impl Dyn<f64> {
@@ -199,9 +200,37 @@ impl Dyn<f64> {
     }
 }
 
+impl Dyn<Pose> {
+    pub fn pose_node(node: Rc<DynNode>) -> DynPose {
+        Dyn { repr: DynRepr::Pose(node), _marker: PhantomData }
+    }
+
+    pub fn node(&self) -> &Rc<DynNode> {
+        match &self.repr {
+            DynRepr::Pose(node) => node,
+            _ => unreachable!("internal type error: expected Dyn<Pose>"),
+        }
+    }
+
+    pub fn into_node(self) -> Rc<DynNode> {
+        match self.repr {
+            DynRepr::Pose(node) => node,
+            _ => unreachable!("internal type error: expected Dyn<Pose>"),
+        }
+    }
+
+    pub fn framed(&self, frame: Rc<DynNode>) -> DynPose {
+        DynPose::pose_node(Rc::new(DynNode::Frame(frame, self.node().clone())))
+    }
+}
+
 impl Dyn<Figure> {
-    pub fn pose(d: Rc<DynNode>) -> DynFigure {
-        Dyn { repr: DynRepr::Pose(d), _marker: PhantomData }
+    pub fn pose(d: DynPose) -> DynFigure {
+        Dyn { repr: DynRepr::Pose(d.into_node()), _marker: PhantomData }
+    }
+
+    pub fn pose_node(d: Rc<DynNode>) -> DynFigure {
+        DynFigure::pose(DynPose::pose_node(d))
     }
 
     pub fn figure_curve(frame: Rc<DynNode>, curve: ParametricCurve) -> DynFigure {
@@ -234,7 +263,7 @@ impl Dyn<Figure> {
         }
         let parent = Rc::new(DynNode::Const(frame));
         match &self.repr {
-            DynRepr::Pose(d) => DynFigure::pose(Rc::new(DynNode::Frame(parent, d.clone()))),
+            DynRepr::Pose(d) => DynFigure::pose_node(Rc::new(DynNode::Frame(parent, d.clone()))),
             DynRepr::FigureCurve { frame: child, curve } => {
                 DynFigure::figure_curve(Rc::new(DynNode::Frame(parent, child.clone())), curve.clone())
             }
@@ -266,13 +295,24 @@ impl DynEval for Figure {
         sig: &SigEnv,
     ) -> Result<Figure, String> {
         match d.repr() {
-            DynRepr::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
+            DynRepr::Pose(p) => Ok(Figure::Pose(dyn_node_pose(p, tau, state, sig)?)),
             DynRepr::FigureCurve { frame, curve } => Ok(Figure::Curve(Curve {
-                frame: dyn_pose(frame, tau, state, sig)?,
+                frame: dyn_node_pose(frame, tau, state, sig)?,
                 spec: curve.clone(),
             })),
             _ => Err("internal type error: expected Dyn<Figure>".into()),
         }
+    }
+}
+
+impl DynEval for Pose {
+    fn eval_dyn(
+        d: &Dyn<Pose>,
+        tau: f64,
+        state: &MotionState,
+        sig: &SigEnv,
+    ) -> Result<Pose, String> {
+        dyn_node_pose(d.node(), tau, state, sig)
     }
 }
 
@@ -285,7 +325,7 @@ pub fn eval_curve_pose(
 ) -> Result<Pose, String> {
     match eval {
         CurveEval::Straight => Ok(Pose { x: u, y: 0.0, th: 0.0 }),
-        CurveEval::Expr(d) => dyn_pose_u(d, tau, u, state, sig),
+        CurveEval::Expr(d) => dyn_node_pose_u(d, tau, u, state, sig),
     }
 }
 
@@ -310,7 +350,7 @@ pub enum CurveBacking {
 
 #[derive(Debug)]
 pub struct ExtCurve {
-    pub anchor: Rc<DynNode>,
+    pub anchor: DynPose,
     pub backing: CurveBacking,
 }
 
@@ -372,8 +412,12 @@ pub(crate) fn read_scan(state: &MotionState, base: usize) -> ScanShared {
     }))
 }
 
-pub fn dyn_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
-    dyn_pose_u(d, tau, 0.0, state, sig)
+pub fn dyn_node_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
+    dyn_node_pose_u(d, tau, 0.0, state, sig)
+}
+
+pub fn dyn_pose(d: &DynPose, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
+    eval_dyn(d, tau, state, sig)
 }
 
 pub fn dyn_figure_pose(
@@ -382,7 +426,7 @@ pub fn dyn_figure_pose(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Pose, String> {
-    dyn_pose(d.pose_dyn(), tau, state, sig)
+    dyn_node_pose(d.pose_dyn(), tau, state, sig)
 }
 
 pub fn eval_dyn_figure(
@@ -395,6 +439,16 @@ pub fn eval_dyn_figure(
 }
 
 pub fn dyn_pose_u(
+    d: &DynPose,
+    tau: f64,
+    u: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Pose, String> {
+    dyn_node_pose_u(d.node(), tau, u, state, sig)
+}
+
+pub fn dyn_node_pose_u(
     d: &DynNode,
     tau: f64,
     u: f64,
@@ -431,7 +485,7 @@ pub fn dyn_pose_u(
             Ok(Pose { x, y, th: 0.0 })
         }
         DynNode::Clamp { lo, hi, child } => {
-            let p = dyn_pose(child, tau, state, sig)?;
+            let p = dyn_node_pose(child, tau, state, sig)?;
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), th: p.th })
         }
         DynNode::RotExpr { form, env } => {
@@ -450,18 +504,18 @@ pub fn dyn_pose_u(
             dyn_pose_u(&cur, tau - epoch, u, state, sig)
         }
         DynNode::Translate { dx, dy, child } => {
-            let p = dyn_pose_u(child, tau, u, state, sig)?;
+            let p = dyn_node_pose_u(child, tau, u, state, sig)?;
             Ok(Pose { x: p.x + dx, y: p.y + dy, th: p.th })
         }
         DynNode::Path { curve, progress, env } => {
             let key = d as *const DynNode as usize;
             let u = eval_sig(progress, env, sig, tau, 0.0, Some(read_scan(state, key)), None)?
                 .num()?;
-            dyn_pose_u(curve, tau, u, state, sig)
+            dyn_node_pose_u(curve, tau, u, state, sig)
         }
         DynNode::Frame(parent, child) => {
-            let pp = dyn_pose_u(parent, tau, u, state, sig)?;
-            let cp = dyn_pose_u(child, tau, u, state, sig)?;
+            let pp = dyn_node_pose_u(parent, tau, u, state, sig)?;
+            let cp = dyn_node_pose_u(child, tau, u, state, sig)?;
             Ok(pp.compose(&cp))
         }
     }
@@ -473,7 +527,7 @@ pub(crate) fn stage_dyn(
     idx: usize,
     state: &MotionState,
     key: usize,
-) -> Result<Rc<DynNode>, String> {
+) -> Result<DynPose, String> {
     let seg = segs.get(idx).ok_or("stages: segment index out of range")?;
     match &seg.make {
         StageMake::Ready(d) => Ok(d.clone()),
@@ -568,7 +622,7 @@ pub fn step_motion(
             state.insert(key, Cell::N([idx, epoch]));
             let cur = stage_dyn(segs, idx as usize, state, key)?;
             // step the inner dyn on the segment-local clock
-            step_motion(&cur, tau - epoch, dt, state, sig)
+            step_motion(cur.node(), tau - epoch, dt, state, sig)
         }
         DynNode::Translate { child, .. } => step_motion(child, tau, dt, state, sig),
         DynNode::Frame(a, b) => {

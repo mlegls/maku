@@ -82,13 +82,13 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
     for b in &world.entities {
         if b.alive && b.state.contains_key(&key) {
             let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-            if let Ok(p) = dyn_pose(node, tau, &b.state, sig) {
+            if let Ok(p) = dyn_node_pose(node, tau, &b.state, sig) {
                 return p;
             }
         }
     }
     // no carrier yet (or stateless node): evaluate with empty state at t=0
-    dyn_pose(node, 0.0, &MotionState::new(), sig).unwrap_or(Pose::IDENTITY)
+    dyn_node_pose(node, 0.0, &MotionState::new(), sig).unwrap_or(Pose::IDENTITY)
 }
 
 /// Bump a `states` machine's generation cell (state exit: everything

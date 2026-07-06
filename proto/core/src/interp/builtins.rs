@@ -62,7 +62,11 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
             Ok(Val::arr(out))
         }
         (Val::Vec2 { x, y }, Val::Dyn(d)) | (Val::Dyn(d), Val::Vec2 { x, y }) => Ok(Val::Dyn(
-            Rc::new(DynNode::Translate { dx: x, dy: y, child: d }),
+            DynPose::pose_node(Rc::new(DynNode::Translate {
+                dx: x,
+                dy: y,
+                child: d.into_node(),
+            })),
         )),
         (a @ (Val::Num(_) | Val::Arr(_)), b @ (Val::Num(_) | Val::Arr(_))) => {
             num_bin(a, b, |x, y| x + y)
@@ -217,7 +221,10 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "or" => Ok(Val::Bool(args.iter().any(truthy))),
         "not" => Ok(Val::Bool(!truthy(&args[0]))),
         "linear" => match &args[0] {
-            Val::Vec2 { x, y } => Ok(Val::Dyn(Rc::new(DynNode::Linear { vx: *x, vy: *y }))),
+            Val::Vec2 { x, y } => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Linear {
+                vx: *x,
+                vy: *y,
+            })))),
             v => Err(format!("linear: expected point, got {:?}", v)),
         },
         "angle-of" => match &args[0] {

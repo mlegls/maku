@@ -207,6 +207,11 @@ language.md.
       compatibility curve `:u-max` and hot fill fractions now store
       `Dyn<f64>` rather than raw `(Form, Env)` pairs, and evaluate through
       the generic `eval_dyn` path.
+  2k. ~~Wrap pose-valued dyns in `Dyn<Pose>`.~~ Done for the interpreter
+      value/stage/curve-anchor boundary: `Val::Dyn`, stage continuations,
+      and extended curve anchors now carry `DynPose`. `DynNode` remains the
+      recursive prototype IR underneath, and raw node references still appear
+      inside that IR and frame specs.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with
