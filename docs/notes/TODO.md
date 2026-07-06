@@ -119,6 +119,18 @@ language.md.
   warning, fill, changing radius, and disappearing colliders are just the
   collider/render dyn returning different per-tick data.
 
+  Target predicate model, especially if we adopt more k-like verbs/adverbs:
+  there should be no distinct long-term language-level `Bool` type. Predicate
+  values are numeric masks: `0` is false and nonzero integer values are true
+  (schema/lint can prefer `0`/`1` for flag-like fields). There is no general
+  truthiness for keywords, strings, lists, maps, poses, or geometry. Reader
+  `true`/`false` may remain temporary compatibility sugar for `1`/`0`.
+  Predicate schemas should be numeric subcontracts such as `Mask`, `Flag`,
+  `Count`, and `Index`; comparisons and logical forms should return numeric
+  `0`/`1`, and conditionals/guards should consume masks. This lets square
+  waves and array-mask expressions flow naturally into `Dyn<Predicate>`
+  contexts without explicit conversion while preserving schema vocabulary.
+
   Low-level collider/render specs are spawn arguments, not generally
   first-class functions. This keeps the primitive vocabulary small and lets
   each slot know the spawned `Dyn<Figure>` type at each tick:
