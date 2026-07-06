@@ -26,10 +26,10 @@ replays, rewind, and live code-swap are exact by construction.
 
 ```sh
 # play the demo fight: WASD move, Shift focus, X bomb
-cargo run --manifest-path proto/Cargo.toml -p maku-player -- cards/reimu_vs_mima.dmk
+cargo run --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/reimu_vs_mima.dmk
 
 # tests (52: conformance corpus + gameplay + session/scrubbing)
-cargo test --manifest-path proto/Cargo.toml -p maku-core
+cargo test --manifest-path proto/Cargo.toml -p maku
 ```
 
 Live editing: the player is a server (`docs/player.md`); install

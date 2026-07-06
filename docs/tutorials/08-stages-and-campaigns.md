@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t08.dmk`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t08.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t08.dmk
 ```
 
 DMK distinguishes boss scripts, stage scripts, and campaign assets. This

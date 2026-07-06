@@ -6,7 +6,7 @@ send-a-form-to-a-socket shims; `proto/editors/danmaku.nvim` is the reference
 client (see its README for mappings).
 
 ```
-cargo run --manifest-path proto/Cargo.toml -p maku-player -- [card.dmk [pattern]]
+cargo run --manifest-path proto/Cargo.toml --features player --bin maku-player -- [card.dmk [pattern]]
 ```
 
 With no card argument the player starts empty and waits for clients.

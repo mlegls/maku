@@ -4,7 +4,7 @@
 #   ./build.sh serve    build + serve the repo root on :8000
 set -e
 cd "$(dirname "$0")"
-wasm-pack build --target web --out-dir static/pkg
+wasm-pack build ../core --target web --out-dir ../web/static/pkg --features web
 echo "built -> proto/web/static/pkg"
 if [ "$1" = "serve" ]; then
   PORT="${PORT:-8000}"

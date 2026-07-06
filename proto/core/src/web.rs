@@ -1,29 +1,29 @@
-//! wasm bindings over core::host::Instance — the browser is just another
+//! wasm bindings over host::Instance — the browser is just another
 //! host: input devices → Inputs, a fixed-timestep loop, a canvas renderer
 //! over flat f32 buffers, and command_line as the transport. Cards arrive
 //! through the vfs (fetched by the page; import expansion runs in core).
 
-use maku_core::host::{dot_radius, style_rgb_hued, Instance};
-use maku_core::interp::Val;
-use maku_core::sim::{Inputs, RenderItem};
+use crate::host::{dot_radius, style_rgb_hued, Instance};
+use crate::interp::Val;
+use crate::sim::{Inputs, RenderItem};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = stdlibSource)]
 pub fn stdlib_source(name: &str) -> Option<String> {
-    maku_core::edn::stdlib(name).map(str::to_owned)
+    crate::edn::stdlib(name).map(str::to_owned)
 }
 
 #[wasm_bindgen]
-pub struct Danmaku {
+pub struct Maku {
     inst: Instance,
     pending: Inputs,
 }
 
 #[wasm_bindgen]
-impl Danmaku {
+impl Maku {
     #[wasm_bindgen(constructor)]
-    pub fn new(rig: Option<String>) -> Danmaku {
-        Danmaku { inst: Instance::new(rig), pending: Inputs::default() }
+    pub fn new(rig: Option<String>) -> Maku {
+        Maku { inst: Instance::new(rig), pending: Inputs::default() }
     }
 
     /// Register a card file in the virtual filesystem (path → text).

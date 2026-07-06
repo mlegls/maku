@@ -1,7 +1,7 @@
 ;; Tutorial 6: bosses, phases, and script structure — the runnable
 ;; companion to docs/tutorials/06-bosses.md. Press 1-9 to run each example.
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t06.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t06.dmk
 
 (import "touhou")
 

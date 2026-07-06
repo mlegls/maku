@@ -1,8 +1,0 @@
-[package]
-name = "maku-player"
-version = "0.1.0"
-edition.workspace = true
-
-[dependencies]
-maku-core = { path = "../core" }
-macroquad = "0.4"

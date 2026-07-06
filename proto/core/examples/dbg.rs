@@ -1,5 +1,5 @@
 
-use maku_core::sim::Sim;
+use maku::sim::Sim;
 
 fn main() {
     let cases: &[(&str, &str, usize)] = &[

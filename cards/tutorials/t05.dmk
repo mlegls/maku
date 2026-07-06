@@ -2,7 +2,7 @@
 ;; docs/tutorials/05-channels.md. Press 1-9 to run each example.
 ;; In the native player, T/Y/U/I set $rank (0.7 / 1.0 / 1.4 / 2.0).
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t05.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t05.dmk
 
 ;; 1. difficulty is a channel: $rank scales density multiplicatively.
 ;; Press T/Y/U/I and rerun — more bullets, faster volleys.

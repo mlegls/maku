@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t06.dmk`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t06.dmk
+cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t06.dmk
 ```
 
 Every card so far was one pattern firing forever. Real fights have

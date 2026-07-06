@@ -3,7 +3,7 @@
 ;; The card is factored the way it was built: parts get names at the
 ;; moment they'd otherwise be repeated.
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t03.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t03.dmk
 
 ;; ---------------------------------------------------------------------------
 ;; Spell 1: Miracle Fruit (Touhou 11 extra) — seed bullets that each

@@ -1,6 +1,6 @@
 // Interactive browser host: card/tutorial picker, editable vfs source, wasm
 // simulation loop, canvas renderer, and the debug wire protocol.
-import init, { Danmaku, stdlibSource } from './pkg/maku_web.js';
+import init, { Maku, stdlibSource } from './pkg/maku.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
 
@@ -51,7 +51,7 @@ const sources = new Map();
 const docs = new Map();
 const editingTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 let selected = ALL_CARDS.find(card => card.path === BOOT) || ALL_CARDS[0];
-let dk;
+let maku;
 let last = performance.now();
 let acc = 0;
 let scrubbing = false;
@@ -120,7 +120,7 @@ function captureKey(row, slot) {
 }
 
 function keyDownForBinding(code) {
-  return !(dk?.paused() && isArrow(code)) && keys.has(code);
+  return !(maku?.paused() && isArrow(code)) && keys.has(code);
 }
 
 function writeInputChannels() {
@@ -158,15 +158,15 @@ function writeInputChannels() {
       acc.set(yChannel, y / mag);
     }
   }
-  for (const [channel, value] of acc) dk.input_num(channel, value);
-  for (const c of bindings.consts) dk.input_num(cleanChannel(c.channel), Number(c.value) || 0);
+  for (const [channel, value] of acc) maku.input_num(channel, value);
+  for (const c of bindings.consts) maku.input_num(cleanChannel(c.channel), Number(c.value) || 0);
 }
 
 function consumeTapBindings() {
   for (const row of bindings.rows) {
     if (row.type === 'button' && row.tap) {
       row.tap = false;
-      dk.input_num(cleanChannel(row.channel), 0);
+      maku.input_num(cleanChannel(row.channel), 0);
     }
   }
 }
@@ -176,7 +176,7 @@ function hasArmedTapBinding() {
 }
 
 function selectedPattern() {
-  return dk?.current_pattern() || undefined;
+  return maku?.current_pattern() || undefined;
 }
 
 function stripWireWrapper(body) {
@@ -216,7 +216,7 @@ async function loadSources() {
 
 function registerVfs() {
   for (const [path, src] of sources) {
-    dk.add_file(path, src);
+    maku.add_file(path, src);
   }
 }
 
@@ -241,7 +241,7 @@ function renderLists() {
 }
 
 function bootSelected(pattern = undefined) {
-  dk.boot(selected.path, pattern);
+  maku.boot(selected.path, pattern);
   lastPatternKey = '';
 }
 
@@ -293,7 +293,7 @@ function closeDocs() {
 
 function applySource() {
   sources.set(selected.path, els.source.value);
-  dk.add_file(selected.path, els.source.value);
+  maku.add_file(selected.path, els.source.value);
   bootSelected(selectedPattern());
   setDirty(false);
 }
@@ -410,19 +410,19 @@ function installEvents() {
     if (!keys.has(e.code)) pressed.add(e.code);
     keys.add(e.code);
     if (e.code === 'Space') {
-      dk.toggle_pause();
+      maku.toggle_pause();
       e.preventDefault();
     }
-    if (e.code >= 'Digit1' && e.code <= 'Digit9') dk.select(+e.code.slice(5) - 1);
-    if (e.code === 'KeyR') dk.restart();
+    if (e.code >= 'Digit1' && e.code <= 'Digit9') maku.select(+e.code.slice(5) - 1);
+    if (e.code === 'KeyR') maku.restart();
     if (e.code === 'KeyT') setConst('rank', 0.7);
     if (e.code === 'KeyY') setConst('rank', 1.0);
     if (e.code === 'KeyU') setConst('rank', 1.4);
     if (e.code === 'KeyI') setConst('rank', 2.0);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
-      if (dk.paused()) {
+      if (maku.paused()) {
         const d = { ArrowRight: 1, ArrowLeft: -1, ArrowUp: 30, ArrowDown: -30 }[e.code];
-        dk.seek(dk.tick() + d);
+        maku.seek(maku.tick() + d);
       }
       e.preventDefault();
     }
@@ -440,12 +440,12 @@ function installEvents() {
   });
   els.scrub.addEventListener('input', () => {
     scrubbing = true;
-    dk.seek(+els.scrub.value);
+    maku.seek(+els.scrub.value);
   });
   els.scrub.addEventListener('change', () => {
     scrubbing = false;
   });
-  els.play.onclick = () => dk.toggle_pause();
+  els.play.onclick = () => maku.toggle_pause();
   els.apply.onclick = applySource;
   els.reset.onclick = resetSource;
   els.source.addEventListener('input', () => setDirty(els.source.value !== sourceFor(selected)));
@@ -470,10 +470,10 @@ function installEvents() {
   };
   for (const cmd of ['run', 'swap', 'add']) {
     document.getElementById(cmd).onclick = () => {
-      dk.command(`(${cmd} ${stripWireWrapper(commandBody())})`);
+      maku.command(`(${cmd} ${stripWireWrapper(commandBody())})`);
     };
   }
-  document.getElementById('restart').onclick = () => dk.restart();
+  document.getElementById('restart').onclick = () => maku.restart();
 }
 
 async function boot() {
@@ -481,7 +481,7 @@ async function boot() {
   await init();
   await loadSources();
   const rigSrc = stdlibSource('player-rig');
-  dk = new Danmaku(`${rigSrc}\n(player-rig)`);
+  maku = new Maku(`${rigSrc}\n(player-rig)`);
   registerVfs();
   installEvents();
   renderBindings();
@@ -495,15 +495,15 @@ function frame(now) {
   const steps = Math.floor(acc * TICK_RATE);
   acc -= steps / TICK_RATE;
 
-  dk.input_vec2('player', mouse[0], mouse[1]);
-  dk.input_vec2('nearest-enemy', mouse[0], mouse[1]);
+  maku.input_vec2('player', mouse[0], mouse[1]);
+  maku.input_vec2('nearest-enemy', mouse[0], mouse[1]);
   writeInputChannels();
   if (steps > 0 && hasArmedTapBinding()) {
-    dk.step(1);
+    maku.step(1);
     consumeTapBindings();
-    dk.step(steps - 1);
+    maku.step(steps - 1);
   } else {
-    dk.step(steps);
+    maku.step(steps);
   }
   pressed.clear();
 
@@ -519,7 +519,7 @@ function draw() {
   ctx.lineWidth = 1;
   ctx.strokeRect(sx(-3.8), sy(4.4), 7.6 * PPU, 8.8 * PPU);
 
-  const bm = dk.beams();
+  const bm = maku.beams();
   for (let i = 0; i < bm.length;) {
     const active = bm[i] > 0.5;
     const r = bm[i + 1], g = bm[i + 2], b = bm[i + 3], a = bm[i + 4], n = bm[i + 5];
@@ -534,7 +534,7 @@ function draw() {
     ctx.stroke();
   }
 
-  const d = dk.dots();
+  const d = maku.dots();
   for (let i = 0; i < d.length; i += 7) {
     ctx.beginPath();
     ctx.arc(sx(d[i]), sy(d[i + 1]), d[i + 2] * PPU, 0, 7);
@@ -545,7 +545,7 @@ function draw() {
     ctx.stroke();
   }
 
-  const fl = dk.flashes(24);
+  const fl = maku.flashes(24);
   const FC = ['96,230,255', '255,60,80', '255,200,80', '255,150,50'];
   for (let i = 0; i < fl.length; i += 4) {
     const k = fl[i + 1] / 24;
@@ -556,8 +556,8 @@ function draw() {
     ctx.stroke();
   }
 
-  const pilots = dk.positions('pilot');
-  const pp = pilots.length ? pilots : dk.player_pos();
+  const pilots = maku.positions('pilot');
+  const pp = pilots.length ? pilots : maku.player_pos();
   for (let i = 0; i < pp.length; i += 2) {
     const x = sx(pp[i]), y = sy(pp[i + 1]);
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
@@ -574,7 +574,7 @@ function draw() {
     ctx.beginPath();
     ctx.arc(x, y, 0.06 * PPU, 0, 7);
     ctx.fill();
-    if (dk.iframes() && (dk.tick() / 6 | 0) % 2 === 0) {
+    if (maku.iframes() && (maku.tick() / 6 | 0) % 2 === 0) {
       ctx.strokeStyle = 'rgba(255,80,80,0.8)';
       ctx.beginPath();
       ctx.arc(x, y, 13, 0, 7);
@@ -582,7 +582,7 @@ function draw() {
     }
   }
 
-  const bossHp = dk.channel_num('boss-hp');
+  const bossHp = maku.channel_num('boss-hp');
   if (bossHp > 0) {
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
     ctx.fillRect(20, 10, cv.width - 40, 6);
@@ -594,24 +594,24 @@ function draw() {
 }
 
 function updateHud() {
-  const lives = dk.lives();
+  const lives = maku.lives();
   els.hud.textContent =
-    `tick ${dk.tick()}  entities ${dk.entity_count()}  graze ${dk.graze()}` +
-    `  hits ${dk.hits()}  lives ${lives < 0 ? '-' : lives}` +
-    (dk.paused() ? '  [paused]' : '') +
+    `tick ${maku.tick()}  entities ${maku.entity_count()}  graze ${maku.graze()}` +
+    `  hits ${maku.hits()}  lives ${lives < 0 ? '-' : lives}` +
+    (maku.paused() ? '  [paused]' : '') +
     (sourceDirty ? '  [source edited]' : '');
-  const cells = dk.cells();
-  els.status.textContent = dk.status() + (cells ? `\ncells: ${cells.replaceAll('\n', '  ')}` : '');
-  els.play.textContent = dk.paused() ? '>' : '||';
-  const tl = dk.timeline();
+  const cells = maku.cells();
+  els.status.textContent = maku.status() + (cells ? `\ncells: ${cells.replaceAll('\n', '  ')}` : '');
+  els.play.textContent = maku.paused() ? '>' : '||';
+  const tl = maku.timeline();
   if (tl.length && !scrubbing) {
     els.scrub.max = Math.max(tl[1], 1);
     els.scrub.value = tl[0];
     els.tick.textContent = `${tl[0]} / ${tl[1]}`;
   }
 
-  const cur = dk.current_pattern();
-  const patterns = dk.patterns().split('\n').filter(Boolean);
+  const cur = maku.current_pattern();
+  const patterns = maku.patterns().split('\n').filter(Boolean);
   const key = `${patterns.join('|')}|${cur}`;
   if (key !== lastPatternKey) {
     lastPatternKey = key;
@@ -620,7 +620,7 @@ function updateHud() {
       btn.type = 'button';
       btn.textContent = `${i + 1} ${name}`;
       btn.className = name === cur ? 'active' : '';
-      btn.onclick = () => dk.select(i);
+      btn.onclick = () => maku.select(i);
       return btn;
     }));
   }

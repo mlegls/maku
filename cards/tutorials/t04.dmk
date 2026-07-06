@@ -1,7 +1,7 @@
 ;; Tutorial 4: pathers, lasers, and subfiring — the runnable companion to
 ;; docs/tutorials/04-pathers-and-lasers.md. Press 1-9 to run each example.
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t04.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku-player -- cards/tutorials/t04.dmk
 
 ;; 1. pathers: a trailing window of the trajectory drawn as geometry.
 ;; (pather window dyn) — the trail is the hitbox. Three wavy ribbons

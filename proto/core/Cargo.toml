@@ -1,6 +1,21 @@
 [package]
-name = "maku-core"
+name = "maku"
 version = "0.1.0"
 edition.workspace = true
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+player = ["dep:macroquad"]
+web = ["dep:wasm-bindgen"]
+
+[[bin]]
+name = "maku-player"
+path = "../player/src/main.rs"
+required-features = ["player"]
+
 [dependencies]
+macroquad = { version = "0.4", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }

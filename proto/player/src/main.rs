@@ -29,9 +29,9 @@
 //!                                    (old snapshots auto-thin regardless)
 //!   (pause) (resume)
 
-use maku_core::host::Instance;
-use maku_core::interp::{Val, TICK_RATE};
-use maku_core::sim::{Inputs, RenderItem};
+use maku::host::Instance;
+use maku::interp::{Val, TICK_RATE};
+use maku::sim::{Inputs, RenderItem};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -70,8 +70,8 @@ fn serve(port: u16) -> Receiver<String> {
 }
 
 /// Style color with hue shift, as a macroquad Color (core::host palette).
-fn styled(style: &maku_core::interp::Style, hue: f64) -> Color {
-    let (r, g, b) = maku_core::host::style_rgb_hued(style, hue);
+fn styled(style: &maku::interp::Style, hue: f64) -> Color {
+    let (r, g, b) = maku::host::style_rgb_hued(style, hue);
     Color::new(r, g, b, 1.0)
 }
 
@@ -180,7 +180,7 @@ async fn main() {
     // (swap in your own live: <localleader>es a rig defpattern)
     let rig = format!(
         "{}\n(player-rig)",
-        maku_core::edn::stdlib("player-rig").unwrap()
+        maku::edn::stdlib("player-rig").unwrap()
     );
     let mut app = App {
         inst: Instance::new(Some(rig)),
@@ -330,7 +330,7 @@ async fn main() {
                 match item {
                     RenderItem::Dot { x, y, style, hue, scale, alpha, .. } => {
                         let (sx, sy) = to_screen(x, y);
-                        let r = maku_core::host::dot_radius(&style.family)
+                        let r = maku::host::dot_radius(&style.family)
                             * PIXELS_PER_UNIT
                             * scale as f32;
                         let a = alpha.clamp(0.0, 1.0) as f32;
