@@ -229,7 +229,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .world
-            .bullets
+            .entities
             .iter()
             .filter(|b| b.style.family == fam)
             .count()
@@ -256,7 +256,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .world
-            .bullets
+            .entities
             .iter()
             .filter(|b| b.style.family == "y")
             .map(|b| b.birth)
@@ -276,7 +276,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .world
-            .bullets
+            .entities
             .iter()
             .filter(|b| b.style.family == "y")
             .map(|b| b.birth)
@@ -294,7 +294,7 @@ mod tests {
         for _ in 0..70 {
             sess.advance(CARD).unwrap();
         }
-        // swap kills a's control tree at tick 70; old bullets keep flying
+        // swap kills a's control tree at tick 70; old entities keep flying
         sess.record_swap("(seq (wait (ticks 10)) (spawn (circle 5 (linear c[2 0])) {:style {:family :z}}))".into())
             .unwrap();
         for _ in 0..60 {

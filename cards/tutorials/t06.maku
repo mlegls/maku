@@ -75,8 +75,7 @@
 ;; down (in the sandbox the rig fires with the mouse).
 (defpattern ex5-boss []
   (seq
-    (move 0.9 :out-sine c[0 2.6])
-    (spawn-boss $tutorial-boss (live $boss)
+    (spawn-boss $tutorial-boss (pose c[0 2.6])
                 {:hp 40 :hitbox 0.45
                  :style {:family :lstar :color :purple}
                  :scale 2}

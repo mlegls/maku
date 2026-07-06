@@ -64,7 +64,7 @@ pub(super) fn new_task(stack: Vec<TF>) -> Task {
 
 
 fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
-    let mut p = world.boss;
+    let mut p = Pose::IDENTITY;
     for tf in stack {
         if let TF::Frame(fs) = tf {
             match fs {
@@ -79,7 +79,7 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
 
 fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
     let key = Rc::as_ptr(node) as usize;
-    for b in &world.bullets {
+    for b in &world.entities {
         if b.alive && b.state.contains_key(&key) {
             let tau = (world.tick - b.birth) as f64 / TICK_RATE;
             if let Ok(p) = dyn_pose(node, tau, &b.state, sig) {
@@ -399,16 +399,6 @@ fn run_action(
         ActionV::DefVar { .. } | ActionV::SetVar { .. } => {
             exec_instant(a, ctx, world)?;
             Ok(false)
-        }
-        ActionV::Move { dur_ticks, dest } => {
-            world.boss_anim = Some(BossAnim {
-                from: world.boss,
-                to: *dest,
-                start: world.tick,
-                dur: (*dur_ticks).max(1),
-            });
-            task.wait = *dur_ticks;
-            Ok(*dur_ticks > 0)
         }
         ActionV::Seq { items, env } => {
             task.stack.push(TF::Seq { items: items.clone(), idx: 0, env: env.clone() });

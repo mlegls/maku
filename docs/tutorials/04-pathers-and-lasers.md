@@ -73,21 +73,23 @@ over time.
 ## Slow lasers
 
 A classic shape: the *whole path* telegraphs at once, but the deadly part
-sweeps out from the source. That's `:fill` — seconds for the hot front to
-travel source→tip once the warn ends (`ex6-slow`):
+sweeps out from the source. `:fill` is a signal returning the swept
+fraction, clamped to 0…1. The stock linear helper is `fill-linear`
+(`ex6-slow`):
 
 ```clojure
-(laser {:warn 0.8 :active 4 :u-max 7 :fill 1.5})
+(laser {:warn 0.8 :active 4 :u-max 7
+        :fill (fill-linear 0.8 1.5)})
 ```
 
 While filling, the full path renders dim (still a telegraph) and the
 swept prefix renders bright; the hitbox covers only the prefix. Players
 standing on the far end of a telegraphed line have exactly `warn +
-fill·(u/u-max)` seconds to move — the fairness knob is explicit.
+dur·(u/u-max)` seconds to move — the fairness knob is explicit.
 
-For a non-linear sweep, give `:fill` a *signal*: an expression over the
-laser's age `t` returning the swept fraction (clamped to 0…1). A fast
-start that decelerates toward the tip:
+For a non-linear sweep, provide any expression over the laser's age `t`
+returning the swept fraction. A fast start that decelerates toward the
+tip:
 
 ```clojure
 (laser {:warn 0.8 :active 4 :u-max 7

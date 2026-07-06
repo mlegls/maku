@@ -7,7 +7,7 @@ pub enum RenderItem {
 }
 
 impl Sim {
-    /// Sample one render-signal tag at bullet-local t (default when absent).
+    /// Sample one render-signal tag at entity-local t (default when absent).
     pub(super) fn sample_sig(&self, s: &Option<MetaSig>, tau: f64, default: f64) -> f64 {
         let Some(h) = s else { return default };
         let env = h.env.bind("t".into(), Val::Num(tau));
@@ -29,16 +29,16 @@ impl Sim {
         }
     }
 
-    fn sample_hue(&self, b: &Bullet, tau: f64) -> f64 {
+    fn sample_hue(&self, b: &Entity, tau: f64) -> f64 {
         self.sample_sig(&b.sigs.hue, tau, 0.0)
     }
 
     pub fn render(&self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
-        for b in &self.world.bullets {
-            if !b.alive || b.team.as_deref() == Some("player-body") {
-                continue; // the host draws its own player marker
+        for b in &self.world.entities {
+            if !b.alive {
+                continue;
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
             match &b.kind {
@@ -56,10 +56,10 @@ impl Sim {
                         });
                     }
                 }
-                Kind::Pather { .. } => {
+                Kind::Trail { .. } => {
                     if b.trail.len() >= 2 {
                         out.push(RenderItem::Polyline {
-                            pts: b.trail.clone(),
+                            pts: b.trail.iter().map(|p| (p.x, p.y)).collect(),
                             style: b.style.clone(),
                             active: true,
                             hue: self.sample_hue(b, tau),
@@ -67,23 +67,23 @@ impl Sim {
                         });
                     }
                 }
-                Kind::Laser { warn, .. } => {
+                Kind::Curve { warn, .. } => {
                     let hot = hot_frac(&b.kind, tau, sig);
                     let partly = tau >= *warn && hot < 1.0;
                     let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
-                    if let Some(pts) = sample_laser(b, tau, sig) {
+                    if let Some(pts) = sample_curve(b, tau, sig) {
                         out.push(RenderItem::Polyline {
                             pts,
                             style: b.style.clone(),
-                            // a filling laser's full path stays a telegraph
+                            // a filling curve's full path stays a telegraph
                             active: tau >= *warn && !partly,
                             hue: self.sample_hue(b, tau),
                             alpha,
                         });
                     }
-                    // slow laser: the hot prefix renders bright on top
+                    // filling curve: the hot prefix renders bright on top
                     if partly {
-                        if let Some(pts) = sample_laser_frac(b, tau, sig, hot) {
+                        if let Some(pts) = sample_curve_frac(b, tau, sig, hot) {
                             out.push(RenderItem::Polyline {
                                 pts,
                                 style: b.style.clone(),

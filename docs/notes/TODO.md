@@ -31,6 +31,70 @@ language.md.
   time-dependence for signal deferral, which was the one engine fix.)
 
 ## Known approximations (documented in code)
+- Core semantic model target (2026-07):
+  ```text
+  Geometry = Pose | Curve
+  Dyn<G> = t -> G
+  Entity = Dyn<Geometry> * Colliders * Meta
+  ```
+  A pose carries position plus orientation, which is why current "point"
+  entities can drive facing and subfire semantics. Interpreter `DynNode`s are
+  prototype-level `Dyn<Pose>` expressions, not the semantic `Pose` value; a
+  compiled core should store pose data compactly, e.g. `(x, y, ax, ay)`.
+  `Curve` is pose-valued over `u` plus its domain and
+  sampling/materialization hints:
+  ```text
+  Curve = u -> Pose, with CurveDomain
+  CurveDomain = Range(min, max) | Values(Vec<u>)
+  ```
+  Normalized curves are just `Range(0, 1)`. Higher-level helpers can turn
+  min/max/step descriptions into `Values`; step size is not a distinct core
+  domain. Traced/history curves are `TracedCurve { samples: Vec<Pose>,
+  domain: Range<uint> }`: only valid pose samples are stored, indexed from
+  entity-local sample 0, and before the history fills the domain is shorter.
+  The current domain can be derived from entity age and sample count rather
+  than stored separately. Facing is part of each pose sample; finite-difference
+  facing is only a possible helper/default, not the core representation.
+  Interpolation over those sample indices is an explicit higher-level helper,
+  not implicit core behavior. Parametric curves and traced/history curves
+  occupy the same semantic slot; the difference is backing and optimization,
+  not type. A filling laser is a `Dyn<Curve>` whose active domain/mask changes
+  over `t` (warning render and hot collision may be separate host/collider
+  interpretations of the same curve). Core exposes geometry, colliders,
+  events, and opaque indexed meta/fields; hosts decide how meta renders.
+  Touhou names like bullet/shot/enemy/boss/player/laser are library
+  constructors over this core.
+- Core vocabulary migration toward the "2D graphing + collision engine"
+  boundary:
+  1. ~~Rename runtime `Bullet`/`bullets` to `Entity`/`entities`, keeping
+     source syntax stable for compatibility.~~ Done in Rust core; docs/cards
+     still use "bullet" for Touhou-authored entities where appropriate.
+  2. ~~Rename geometry kinds internally (`Laser`/`Pather` → `Curve`/`Trail`)
+     while keeping surface aliases until docs/cards move.~~ Done in core.
+  3. Remove gameplay-domain fields from core (`team`, `damage`, bare
+     hostile `(cull)`); replace them with generic indexed metadata/tags
+     and explicit query culls.
+  4. Move Touhou-facing API to short library names (`bullet`, `shot`,
+     `enemy`, `player`, `boss`) with `spawn-*` compatibility aliases.
+- Geometry refactor staging:
+  1. ~~Introduce internal curve/geometry vocabulary while preserving surface
+     `laser`/`pather` aliases.~~ Done for entity kinds and pre-spawn values.
+  2. ~~Collapse `Val::CurveV` and `Val::TrailV` toward one geometry value
+     representation that `spawn` materializes.~~ Done as `CurveV` with
+     parametric/traced backings.
+  2a. ~~Carry `CurveDomain` into runtime curve sampling instead of flattening
+      it immediately to `u-max`.~~ Done for `Kind::Curve`; traced curves
+      use dynamic integer-indexed sample domains, with interpolation reserved
+      for an explicit higher-level helper.
+  3. Represent fill as a time-varying curve domain/mask rather than a
+     laser-only lifecycle shortcut.
+  4. Recast trails/pathers as traced-curve backings of `Dyn<Curve>`.
+  5. Move render tags into ordinary signal-valued meta/fields; collider
+     scale/radius should be explicit collider data, not borrowed from a
+     render-specific `:scale`.
+  6. Remove remaining gameplay-domain metadata from core (`team`, `damage`,
+     bare hostile `(cull)`) in favor of generic fields/tags and Touhou
+     helpers.
 - ~~Pathers render as points; laser `:width` ignored by collision~~ done
   with tutorial 04: pathers record trails (rendered + capsule-chain
   hitbox, bounded by the window); `:width` scales laser collision.
@@ -56,24 +120,16 @@ language.md.
   `touhou` (spawn templates, variadic metas; spawn-boss = enemy + phase
   machine owning the boss conventions — structured boss channel binding, registration
   wait, bound `boss`; `phases` as a macro over `states` with {:hp n}
-  gates; invuln; $enemies/$nearest-enemy as defchannels) and
-  `player-rig`. Authored as files, inlined via include_str — every host
+  gates; invuln; spawn-player/player-rig; $player/$lives/$enemies/
+  $nearest-enemy as defchannels) and `player-rig` as a compatibility shim.
+  Authored as files, inlined via include_str — every host
   resolves `(import "touhou")` identically; users import the lib, they
   don't edit it.
-- Channel conventions still engine (sim/channels.rs): the per-pilot
-  families ($player-k/$lives-k/$nearest-enemy-k), the host-contract
-  default/mock list (move-x…boss-hp), $lives counters, and $boss =
-  world.boss (the move anchor as engine state; wants generic named
-  anchors, which would also de-genre `move`). Per-pilot DECISION
-  (2026-07): no computed channel names — they'd make the channel
-  namespace dynamic (bad for host bindings and eventual static
-  analysis). Instead the engine block just DELETES: touhou stays
-  single-player (scalar $player/$lives/$nearest-enemy as derived
-  channels over the one piloted entity — no per-tick map build for the
-  common case), and multiplayer becomes an opt-in lib/template that
-  defines a map-valued $players channel ad hoc (needs strict non-cyclic
-  `get` at read sites; pilot ids are sparse, so a map keyed by pilot
-  number, not an array).
+- Channel conventions: core only refreshes host inputs, $tick, top-level
+  defchannels, runtime bind-channel! producers, :expose, and export. Touhou
+  keeps the single-player DMK/BDSL defaults. Multiplayer is an opt-in
+  lib/template convention that binds its own per-pilot channels rather than
+  asking the engine for computed channel-name families.
 - `match` special SHIPPED: destructuring over forms AND values with `_`,
   binders, literals, quote-form patterns, `(as n p)`, vector rest/mid-rest
   patterns, and map key-presence discrimination. It now covers the phase

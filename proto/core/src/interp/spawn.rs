@@ -89,7 +89,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // later maps' columns shadowing earlier ones (columns are independent
     // facts — they deep-merge where scalar keys replace).
     // Column values may be ARRAYS, binding per spawn element exactly like
-    // style axes (leading-axis / by-length / nested-structural) — per-bullet
+    // style axes (leading-axis / by-length / nested-structural) — per-entity
     // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
     let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
     if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(&meta, "hp") {
@@ -243,30 +243,32 @@ pub(crate) fn flatten_elems(
             }
             Ok(())
         }
-        Val::Ext(l) => {
-            out.push(SpawnElem {
-                motion: l.anchor.clone(),
-                kind: Kind::Laser {
-                    shape: l.shape.clone(),
-                    warn: l.warn,
-                    active: l.active,
-                    u_max: l.u_max,
-                    u_max_sig: l.u_max_sig.clone(),
-                    resolution: l.resolution,
-                    width: l.width,
-                    fill: l.fill,
-                    fill_sig: l.fill_sig.clone(),
-                },
-                path: path.clone(),
-            });
-            Ok(())
-        }
-        Val::PatherV(pv) => {
-            out.push(SpawnElem {
-                motion: pv.anchor.clone(),
-                kind: Kind::Pather { window: pv.window },
-                path: path.clone(),
-            });
+        Val::CurveV(l) => {
+            let kind = match &l.backing {
+                CurveBacking::Parametric {
+                    shape,
+                    domain,
+                    u_max_sig,
+                    resolution,
+                    warn,
+                    active,
+                    width,
+                    fill_sig,
+                } => {
+                    Kind::Curve {
+                        shape: shape.clone(),
+                        warn: *warn,
+                        active: *active,
+                        domain: domain.clone(),
+                        u_max_sig: u_max_sig.clone(),
+                        resolution: *resolution,
+                        width: *width,
+                        fill_sig: fill_sig.clone(),
+                    }
+                }
+                CurveBacking::Trace { window } => Kind::Trail { window: *window },
+            };
+            out.push(SpawnElem { motion: l.anchor.clone(), kind, path: path.clone() });
             Ok(())
         }
         other => {

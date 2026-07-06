@@ -13,7 +13,7 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-pub use collision::{sample_laser, sample_laser_frac};
+pub use collision::{sample_curve, sample_curve_frac};
 pub use render::RenderItem;
 
 use exec::{new_task, step_task, Task, TF};
@@ -190,7 +190,7 @@ impl Sim {
     }
 
     /// Generational hot-swap (design.md §11): replace the program, KEEP the
-    /// world — in-flight bullets keep the delegates they spawned with; the
+    /// world — in-flight entities keep the delegates they spawned with; the
     /// new pattern's control tree starts now. Cells persist.
     pub fn swap_forms(&mut self, card_src: &str, form_src: &str) -> Result<(), String> {
         let task = self.program_task(card_src, form_src)?;
@@ -260,39 +260,27 @@ impl Sim {
             }
             self.tasks.extend(new_tasks);
         }
-        // boss anchor animation (eased)
-        if let Some(anim) = world_anim(&self.world) {
-            let r = ((self.world.tick - anim.start) as f64 / anim.dur as f64).clamp(0.0, 1.0);
-            let e = (r * std::f64::consts::FRAC_PI_2).sin(); // eoutsine
-            self.world.boss = Pose {
-                x: anim.from.x + e * (anim.to.0 - anim.from.x),
-                y: anim.from.y + e * (anim.to.1 - anim.from.y),
-                th: anim.from.th,
-            };
-            if r >= 1.0 {
-                self.world.boss_anim = None;
-            }
-        }
         // integrate Scanned motion
         let dt = 1.0 / TICK_RATE;
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
-        for b in &mut self.world.bullets {
+        for b in &mut self.world.entities {
             if b.scanned {
                 let tau = (tick - b.birth) as f64 / TICK_RATE;
                 step_motion(&b.motion, tau, dt, &mut b.state, &sig)?;
             }
         }
-        // record pather trails (the remembrance window, in ticks)
+        // record traced-curve trails: a dynamic integer sample domain over
+        // the remembrance window
         {
             let tick = self.world.tick;
             let sig = self.ctx.sig.clone();
-            for b in &mut self.world.bullets {
-                if let Kind::Pather { window } = &b.kind {
+            for b in &mut self.world.entities {
+                if let Kind::Trail { window } = &b.kind {
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) {
-                        b.trail.push((p.x, p.y));
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
+                        b.trail.push(p);
                         if b.trail.len() > cap {
                             let drop = b.trail.len() - cap;
                             b.trail.drain(..drop);
@@ -313,10 +301,10 @@ impl Sim {
             self.world.log.borrow_mut().prune(cutoff);
         }
         self.world.tick += 1;
-        // cull: off-playfield points; lasers past their active window
+        // cull: off-playfield points and trails; curves past their active window
         let tick = self.world.tick;
         let mut err = None;
-        self.world.bullets.retain(|b| {
+        self.world.entities.retain(|b| {
             if !b.alive {
                 return false;
             }
@@ -332,8 +320,8 @@ impl Sim {
                         false
                     }
                 },
-                Kind::Laser { warn, active, .. } => tau <= warn + active,
-                Kind::Pather { .. } => match dyn_pose(&b.motion, tau, &b.state, &sig) {
+                Kind::Curve { warn, active, .. } => tau <= warn + active,
+                Kind::Trail { .. } => match dyn_pose(&b.motion, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);
@@ -384,10 +372,6 @@ impl Sim {
     pub fn rewind_events(&mut self) {
         self.world.log.borrow_mut().truncate_to(self.world.cursor);
     }
-}
-
-fn world_anim(w: &World) -> Option<BossAnim> {
-    w.boss_anim
 }
 
 fn truthy_pub(v: &Val) -> bool {

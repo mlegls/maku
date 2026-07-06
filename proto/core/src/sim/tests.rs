@@ -28,8 +28,8 @@
                     .unwrap_or_else(|e| panic!("{} [{}]: {}", path, pattern, e));
             }
             assert!(
-                !sim.world.bullets.is_empty(),
-                "{} [{}]: no bullets after {} ticks",
+                !sim.world.entities.is_empty(),
+                "{} [{}]: no entities after {} ticks",
                 path,
                 pattern,
                 ticks
@@ -55,10 +55,10 @@
         for _ in 0..120 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.bullets.len(), 15 * 5, "15 volleys × 5 arms");
+        assert_eq!(sim.world.entities.len(), 15 * 5, "15 volleys × 5 arms");
 
         let sig = SigEnv::default();
-        let b = &sim.world.bullets[0];
+        let b = &sim.world.entities[0];
         assert_eq!(b.birth, 0);
         assert_eq!(b.style.family, "gem");
         assert_eq!(b.style.color, "yellow");
@@ -67,10 +67,10 @@
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
 
-        assert_eq!(sim.world.bullets[1].style.color, "orange");
-        assert_eq!(sim.world.bullets[4].style.color, "purple");
+        assert_eq!(sim.world.entities[1].style.color, "orange");
+        assert_eq!(sim.world.entities[4].style.color, "purple");
 
-        let b5 = &sim.world.bullets[5];
+        let b5 = &sim.world.entities[5];
         assert_eq!(b5.birth, 8);
     }
 
@@ -97,9 +97,9 @@
             sa.step().unwrap();
             sb.step().unwrap();
         }
-        assert_eq!(sa.world.bullets.len(), sb.world.bullets.len());
+        assert_eq!(sa.world.entities.len(), sb.world.entities.len());
         let sig = SigEnv::default();
-        for (a, b) in sa.world.bullets.iter().zip(sb.world.bullets.iter()) {
+        for (a, b) in sa.world.entities.iter().zip(sb.world.entities.iter()) {
             assert_eq!(a.birth, b.birth);
             let pa = dyn_pose(&a.motion, 0.7, &a.state, &sig).unwrap();
             let pb = dyn_pose(&b.motion, 0.7, &b.state, &sig).unwrap();
@@ -132,15 +132,15 @@
         for _ in 0..120 {
             sim.step().unwrap();
         }
-        let lstars = sim.world.bullets.iter().filter(|b| b.style.family == "lstar").count();
-        let stars = sim.world.bullets.iter().filter(|b| b.style.family == "star").count();
+        let lstars = sim.world.entities.iter().filter(|b| b.style.family == "lstar").count();
+        let stars = sim.world.entities.iter().filter(|b| b.style.family == "star").count();
         assert_eq!(lstars, 3, "one big star culled");
         assert_eq!(stars, 8, "explosion ring spawned");
         // ring anchored at the culled star's position at t≈0.5 (x = 0.5 from
         // anchor (0,1)); fn bodies drop the ambient frame, so no double anchor
         let sig = SigEnv::default();
         let ring: Vec<_> =
-            sim.world.bullets.iter().filter(|b| b.style.family == "star").collect();
+            sim.world.entities.iter().filter(|b| b.style.family == "star").collect();
         let p = dyn_pose(&ring[0].motion, 0.0, &ring[0].state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
     }
@@ -160,13 +160,12 @@
             a.step_with(&inputs).unwrap();
             b.step_with(&inputs).unwrap();
         }
-        assert_eq!(a.world.bullets.len(), b.world.bullets.len());
-        let sig = SigEnv::default();
-        for (x, y) in a.world.bullets.iter().zip(b.world.bullets.iter()) {
+        assert_eq!(a.world.entities.len(), b.world.entities.len());
+        for (x, y) in a.world.entities.iter().zip(b.world.entities.iter()) {
             assert_eq!(x.id, y.id);
             let tau = (a.world.tick - x.birth) as f64 / TICK_RATE;
-            let px = dyn_pose(&x.motion, tau, &x.state, &sig).unwrap();
-            let py = dyn_pose(&y.motion, tau, &y.state, &sig).unwrap();
+            let px = dyn_pose(&x.motion, tau, &x.state, &a.ctx.sig).unwrap();
+            let py = dyn_pose(&y.motion, tau, &y.state, &b.ctx.sig).unwrap();
             assert!(
                 (px.x - py.x).abs() < 1e-12 && (px.y - py.y).abs() < 1e-12,
                 "diverged: {:?} vs {:?}",
@@ -180,7 +179,7 @@
     /// the follow-up; the bullet that hit is culled.
     #[test]
     fn player_hit_and_iframes() {
-        // two bullets aimed straight down the player's column, 10 ticks apart
+        // two entities aimed straight down the player's column, 10 ticks apart
         const CARD: &str = r#"
 (import "touhou")
 (defpattern rig []
@@ -204,7 +203,7 @@
             sim.events_vec().into_iter().filter(|e| &*e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
-        assert_eq!(sim.world.bullets.iter().filter(|b| b.team.is_none()).count(), 1);
+        assert_eq!(sim.world.entities.iter().filter(|b| b.team.is_none()).count(), 1);
         assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 2.0), "graze ring precedes the hitbox; iframes graze too");
         // the hit effect is a column write; $lives is a channel
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == 2.0));
@@ -266,7 +265,12 @@
             sim.step().unwrap();
         }
         assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 1);
-        assert!(sim.world.bullets.iter().any(|b| b.col_get("latched") == Some(1.0)));
+        assert!(sim
+            .world
+            .entities
+            .iter()
+            .enumerate()
+            .any(|(i, _)| sim.world.col_get_at(i, "latched") == Some(1.0)));
     }
 
     #[test]
@@ -399,7 +403,7 @@
         // the column keeps counting (what game-over MEANS is host policy)
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == -2.0));
         // non-culling: the player entity is still there (host decides)
-        assert!(sim.world.bullets.iter().any(|b| b.team.as_deref() == Some("player-body")));
+        assert!(sim.world.entities.iter().any(|b| b.team.as_deref() == Some("player-body")));
     }
 
     /// Death is not special: :triggers replaces the synthesized default,
@@ -482,7 +486,7 @@
         }
         assert_eq!(sim.channel_u64("hits"), 1, "active beam hits");
         assert_eq!(
-            sim.world.bullets.iter().filter(|b| b.team.is_none()).count(),
+            sim.world.entities.iter().filter(|b| b.team.is_none()).count(),
             1,
             "the beam persists through the hit"
         );
@@ -491,9 +495,9 @@
 
     /// The duel-card bug: aim inside an expression-level frame must aim
     /// FROM that frame's position (the frame is ambient for its body),
-    /// not from the world origin. Player just below the source → bullets
+    /// not from the world origin. Player just below the source → entities
     /// head down at the player, not up.
-    /// Lifecycle trees: handles + per-bullet forked timelines express
+    /// Lifecycle trees: handles + per-entity forked timelines express
     /// multi-stage lifecycles with no queries — (for [b handles] …)
     /// iterates an array in the lead binding.
     #[test]
@@ -518,8 +522,8 @@
         for _ in 0..90 {
             sim.step().unwrap();
         }
-        let count = |f: &str| sim.world.bullets.iter().filter(|b| b.style.family == f).count();
-        assert_eq!(count("circle"), 0, "stage-1 bullets consumed");
+        let count = |f: &str| sim.world.entities.iter().filter(|b| b.style.family == f).count();
+        assert_eq!(count("circle"), 0, "stage-1 entities consumed");
         assert_eq!(count("gem"), 12, "even indices: two 6-rings");
         assert_eq!(count("star"), 6, "odd indices: two 3-fans");
     }
@@ -548,10 +552,11 @@
         }
         let hp = |sim: &Sim| {
             sim.world
-                .bullets
+                .entities
                 .iter()
-                .find(|b| b.team.as_deref() == Some("enemy"))
-                .and_then(|b| b.col_get("hp"))
+                .enumerate()
+                .find(|(_, b)| b.team.as_deref() == Some("enemy"))
+                .and_then(|(i, _)| sim.world.col_get_at(i, "hp"))
                 .unwrap()
         };
         assert_eq!(hp(&sim), 10.0, "shots absorbed during the window");
@@ -577,7 +582,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let (x, y) = sim.world.bullets[0].prev_pos.unwrap_or((f64::NAN, f64::NAN));
+        let (x, y) = sim.world.entities[0].prev_pos.unwrap_or((f64::NAN, f64::NAN));
         assert!((x - 2.0).abs() < 1e-6 && y.abs() < 1e-6, "point at u=1 on a straight radial curve: ({}, {})", x, y);
     }
 
@@ -595,7 +600,7 @@
 (defpattern beam []
   (par (rig)
        (spawn-bullet ((pose c[-2 0])
-                (laser {:warn 0.5 :active 6 :u-max 6 :fill 2}))
+                (laser {:warn 0.5 :active 6 :u-max 6 :fill (fill-linear 0.5 2)}))
               {:style {:family :laser :color :red}})))
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
@@ -628,6 +633,33 @@
     }
 
     #[test]
+    fn move_can_target_an_entity() {
+        const CARD: &str = r#"
+(import "touhou")
+(defpattern p []
+  (let [enemy (spawn-enemy (pose c[0 0]) {:style {:family :lstar}})]
+    (move-to (nth enemy 0) 1.0 eoutsine c[2 0])))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..60 {
+            sim.step().unwrap();
+        }
+        let b = &sim.world.entities[0];
+        let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
+        let p = dyn_pose(&b.motion, tau, &b.state, &sim.ctx.sig).unwrap();
+        let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
+        assert!((p.x - mid).abs() < 0.03 && p.y.abs() < 1e-9, "mid-move pose: {:?}", p);
+
+        for _ in 0..70 {
+            sim.step().unwrap();
+        }
+        let b = &sim.world.entities[0];
+        let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
+        let p = dyn_pose(&b.motion, tau, &b.state, &sim.ctx.sig).unwrap();
+        assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
+    }
+
+    #[test]
     fn aim_sees_expression_frame_ambient() {
         const CARD: &str = r#"
 (defpattern nested []
@@ -643,7 +675,7 @@
             for _ in 0..60 {
                 sim.step_with(&inputs).unwrap();
             }
-            let b = &sim.world.bullets[0];
+            let b = &sim.world.entities[0];
             let sig = SigEnv::default();
             let p = dyn_pose(&b.motion, 0.5, &b.state, &sig).unwrap();
             assert!(
@@ -671,8 +703,8 @@
             b.step().unwrap();
         }
         let sig = SigEnv::default();
-        let pa = dyn_pose(&a.world.bullets[0].motion, 0.5, &a.world.bullets[0].state, &sig).unwrap();
-        let pb = dyn_pose(&b.world.bullets[0].motion, 0.5, &b.world.bullets[0].state, &sig).unwrap();
+        let pa = dyn_pose(&a.world.entities[0].motion, 0.5, &a.world.entities[0].state, &sig).unwrap();
+        let pb = dyn_pose(&b.world.entities[0].motion, 0.5, &b.world.entities[0].state, &sig).unwrap();
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
         // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 → (0, 1.5)
         assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
@@ -717,7 +749,7 @@
         assert_eq!(src.matches("(def shared 7)").count(), 1, "include-once");
         let mut sim = Sim::load(&src, Some("m")).unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.world.bullets.len(), 1, "imported defs resolve through layers");
+        assert_eq!(sim.world.entities.len(), 1, "imported defs resolve through layers");
     }
 
     /// (until pred body): the tick the predicate holds, the body's whole
@@ -739,13 +771,13 @@
         for _ in 0..60 {
             sim.step().unwrap();
         }
-        let at_cancel = sim.world.bullets.len();
+        let at_cancel = sim.world.entities.len();
         assert!(at_cancel >= 20, "both spawners ran: {}", at_cancel);
         for _ in 0..200 {
             sim.step().unwrap();
         }
         assert_eq!(
-            sim.world.bullets.len(),
+            sim.world.entities.len(),
             at_cancel,
             "cancelled subtree (loop AND its fork) spawns nothing more"
         );
@@ -757,10 +789,11 @@
     fn clamp_slides_not_banks() {
         const CARD: &str = r#"
 (defpattern c []
-  (spawn (clamp c[-2 -2] c[2 2]
-           (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
-         {:team :player-body :colliders [{:layer :player-hurt :r 0.05}]
-          :cols {:pilot 1}}))
+  (let [h (spawn (clamp c[-2 -2] c[2 2]
+                   (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
+                 {:team :player-body :colliders [{:layer :player-hurt :r 0.05}]
+                  :cols {:pilot 1}})]
+    (bind-channel! $player (:pos (nth h 0)))))
 "#;
         let mut sim = Sim::load(CARD, Some("c")).unwrap();
         let mut inputs = Inputs::default();
@@ -805,7 +838,7 @@
             sim.step().unwrap();
         }
         // rings keep spawning; the where-sugar control ages them out
-        let n = sim.world.bullets.len();
+        let n = sim.world.entities.len();
         assert!(n >= 6 && n <= 18, "steady state through macro sugar: {}", n);
     }
 
@@ -833,24 +866,24 @@
         }
         // only the seed with ci=3 matched the query and died
         assert_eq!(
-            sim.world.bullets.iter().filter(|b| b.style.family == "seed").count(),
+            sim.world.entities.iter().filter(|b| b.style.family == "seed").count(),
             3,
             "per-element column selected exactly one seed"
         );
-        assert_eq!(sim.world.bullets.iter().filter(|b| b.style.family == "burst").count(), 0);
+        assert_eq!(sim.world.entities.iter().filter(|b| b.style.family == "burst").count(), 0);
         for _ in 0..15 {
             sim.step().unwrap();
         }
         // the deferred fork's timed spawn landed after its wait
         assert_eq!(
-            sim.world.bullets.iter().filter(|b| b.style.family == "burst").count(),
+            sim.world.entities.iter().filter(|b| b.style.family == "burst").count(),
             6,
             "callback-forked timed work ran as an adopted task"
         );
     }
 
     /// Accessor sugar: dotted symbols are keyword chains (reader-level);
-    /// they read handles (live bullet view), maps, and vectors; m-strings
+    /// they read handles (live entity view), maps, and vectors; m-strings
     /// add postfix indexing with array gather.
     #[test]
     fn accessor_sugar() {
@@ -876,7 +909,7 @@
         );
         let mut sim = Sim::load(CARD, Some("gather")).unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.world.bullets.len(), 3, "m-string postfix array gather");
+        assert_eq!(sim.world.entities.len(), 3, "m-string postfix array gather");
     }
 
     /// Nested meta arrays resolve structurally: depth = axis along the
@@ -893,7 +926,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let col = |g: usize, i: usize| sim.world.bullets[g * 3 + i].style.color.clone();
+        let col = |g: usize, i: usize| sim.world.entities[g * 3 + i].style.color.clone();
         assert_eq!(
             (col(0, 0), col(0, 1), col(0, 2)),
             ("red".into(), "blue".into(), "red".into()),
@@ -926,7 +959,7 @@
                     });
                 }
                 assert!(
-                    !sim.world.bullets.is_empty() || sim.world.cursor > 0,
+                    !sim.world.entities.is_empty() || sim.world.cursor > 0,
                     "{:?} [{}]: example did nothing visible",
                     path,
                     name
@@ -967,8 +1000,8 @@
         // two counter instances spawned rings of 2 and 6 — isolated cells
         // (shared cells would give 2 and 3, or collide with outer's 100)
         let mut sizes: Vec<usize> = Vec::new();
-        let counts = sim.world.bullets.len();
-        assert_eq!(counts, 8, "2 + 6 bullets: {}", counts);
+        let counts = sim.world.entities.len();
+        assert_eq!(counts, 8, "2 + 6 entities: {}", counts);
         sizes.push(counts);
         // inline (bump) wrote through to OUTER's exported cell
         assert!(
@@ -1086,7 +1119,7 @@
             if !saw_needles {
                 saw_needles = sim
                     .world
-                    .bullets
+                    .entities
                     .iter()
                     .any(|b| b.team.as_deref() == Some("player") && b.style.family == "gem");
             }
@@ -1105,7 +1138,7 @@
             panic!("no $player channel");
         }
         // field quiets after the kill (rig + parked guides only)
-        assert!(sim.world.bullets.len() <= 6, "post-fight field: {}", sim.world.bullets.len());
+        assert!(sim.world.entities.len() <= 6, "post-fight field: {}", sim.world.entities.len());
     }
 
     /// The playable demo card exercises the whole gameplay layer at once:
@@ -1113,12 +1146,13 @@
     #[test]
     fn duel_card_plays() {
         let src = std::fs::read_to_string("../../cards/duel.maku").unwrap();
-        let rig = crate::edn::stdlib("player-rig").unwrap();
+        let rig = crate::edn::stdlib("touhou").unwrap();
         let mut sim = Sim::load(&src, Some("duel")).unwrap();
         // the host layers the stock rig; boss/stage cards stay player-free
-        sim.add_forms(&src, &format!("{}\n(player-rig)", rig)).unwrap();
-        let inputs = Inputs::classic((0.0, -2.0), (0.0, -2.0));
-        for _ in 0..1200 {
+        sim.add_forms(&src, &format!("(defpattern __host-player-rig [] (player-rig))\n{}", rig)).unwrap();
+        let mut inputs = Inputs::classic((0.0, -2.0), (0.0, -2.0));
+        for k in 0..1200 {
+            inputs.set_num("move-y", if k < 27 { 1.0 } else { 0.0 });
             sim.step_with(&inputs).unwrap();
         }
         assert!(sim.channel_u64("hits") > 0, "aimed spray reaches a stationary player");
@@ -1137,12 +1171,13 @@
 (defpattern hunt []
   (seq
     (spawn-enemy (pose c[2 3]) {:style {:family :dummy}})
+    (wait (ticks 1))
     (spawn-bullet (vel p[3 (slew 720 90 (angle-of (- (live $nearest-enemy) pos)))])
                   {:style {:family :amulet}})))
 "#;
         let mut sim = Sim::load(CARD, Some("hunt")).unwrap();
         for _ in 0..120 {
-            sim.step().unwrap(); // mock target defaults to (0, 3)
+            sim.step().unwrap();
         }
         match sim.channel_val("nearest-enemy") {
             Some(Val::Vec2 { x, y }) => {
@@ -1150,14 +1185,14 @@
             }
             v => panic!("bad channel: {:?}", v),
         }
-        let sig = SigEnv::default();
-        let b = sim.world.bullets.iter().find(|b| b.style.family == "amulet").unwrap();
+        let b = sim.world.entities.iter().find(|b| b.style.family == "amulet").unwrap();
+        let sig = sim.ctx.sig.clone();
         let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
         let p = dyn_pose(&b.motion, tau, &b.state, &sig).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
 
-    /// Generational hot-swap: bullets persist, program changes.
+    /// Generational hot-swap: entities persist, program changes.
     #[test]
     fn swap_keeps_world() {
         const CARD: &str = r#"
@@ -1167,10 +1202,10 @@
         for _ in 0..60 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.bullets.len(), 6);
+        assert_eq!(sim.world.entities.len(), 6);
         sim.swap_forms(CARD, "(spawn (circle 3 (linear c[0.2 0])))").unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.world.bullets.len(), 9, "old 6 keep flying + new 3");
+        assert_eq!(sim.world.entities.len(), 9, "old 6 keep flying + new 3");
         assert_eq!(sim.tick(), 61, "clock continues");
     }
 
@@ -1193,14 +1228,14 @@
             sim.step().unwrap();
         }
         // b waits 30 ticks from ITS start: nothing through tick 129
-        assert_eq!(sim.world.bullets.iter().filter(|b| b.style.family == "y").count(), 0);
+        assert_eq!(sim.world.entities.iter().filter(|b| b.style.family == "y").count(), 0);
         sim.step().unwrap(); // the step processing tick 130 = add(100) + 30
         let ys: Vec<_> =
-            sim.world.bullets.iter().filter(|b| b.style.family == "y").collect();
+            sim.world.entities.iter().filter(|b| b.style.family == "y").collect();
         assert_eq!(ys.len(), 3);
         assert_eq!(ys[0].birth, 130, "b's clock anchored at the add tick");
         // a kept its own cadence meanwhile (volleys at ticks 0, 60, 120)
-        assert_eq!(sim.world.bullets.iter().filter(|b| b.style.family == "x").count(), 6);
+        assert_eq!(sim.world.entities.iter().filter(|b| b.style.family == "x").count(), 6);
     }
 
     /// Patterns are callable: (par (a) (b)) plays two patterns in parallel.
@@ -1214,8 +1249,8 @@
         for _ in 0..30 {
             sim.step().unwrap();
         }
-        let x = sim.world.bullets.iter().filter(|b| b.style.family == "x").count();
-        let y = sim.world.bullets.iter().filter(|b| b.style.family == "y").count();
+        let x = sim.world.entities.iter().filter(|b| b.style.family == "x").count();
+        let y = sim.world.entities.iter().filter(|b| b.style.family == "y").count();
         assert_eq!((x, y), (4, 3), "both patterns ran in parallel");
     }
 
@@ -1229,14 +1264,14 @@
         let mut sim =
             Sim::load_forms(card, "(spawn (circle 8 (linear c[spd 0])))").unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.world.bullets.len(), 8);
+        assert_eq!(sim.world.entities.len(), 8);
         let mut sim2 = Sim::load_forms(
             card,
             "(defpattern ring [n 5] (spawn (circle n (linear c[spd 0]))))",
         )
         .unwrap();
         sim2.step().unwrap();
-        assert_eq!(sim2.world.bullets.len(), 5);
+        assert_eq!(sim2.world.entities.len(), 5);
     }
 
     /// F15 in the sim: 200's variant (axis 0, len 3) and color (axis 1 via
@@ -1253,8 +1288,8 @@
 "#;
         let mut sim = Sim::load(CARD, Some("axes")).unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.world.bullets.len(), 18);
-        let b = |k: usize| &sim.world.bullets[k].style;
+        assert_eq!(sim.world.entities.len(), 18);
+        let b = |k: usize| &sim.world.entities[k].style;
         assert_eq!(b(0).variant, "b");
         assert_eq!(b(6).variant, "c");
         assert_eq!(b(12).variant, "w");
@@ -1264,7 +1299,7 @@
     }
 
     /// Render-affecting signal tags (§7): :scale/:facing/:opacity sampled at
-    /// bullet-local t like :hue; :scale also multiplies collider radii.
+    /// entity-local t like :hue; :scale also multiplies collider radii.
     #[test]
     fn render_signal_tags() {
         const CARD: &str = r#"
@@ -1330,7 +1365,7 @@
         for _ in 0..30 {
             sim.step().unwrap();
         }
-        let n = sim.world.bullets.len();
+        let n = sim.world.entities.len();
         assert!((5..=8).contains(&n), "spawner ran ~0.1s then died: {}", n);
         assert!(
             sim.world.log.borrow().entries.iter().any(|e| &*e.name == "after-until"),
@@ -1478,11 +1513,11 @@
 "#;
         let mut sim = Sim::load(CARD, Some("m")).unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.world.bullets.len(), 5, ":opening routed straight to :b");
+        assert_eq!(sim.world.entities.len(), 5, ":opening routed straight to :b");
         for _ in 0..20 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.bullets.len(), 5, "the :b loop died at the timeout");
+        assert_eq!(sim.world.entities.len(), 5, "the :b loop died at the timeout");
         let names: Vec<String> =
             sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
         let b_done = names.iter().position(|n| n == "b-done");
@@ -1516,7 +1551,7 @@
         for _ in 0..30 {
             sim.step().unwrap();
         }
-        let n = sim.world.bullets.len();
+        let n = sim.world.entities.len();
         assert!((3..=6).contains(&n), "spawner died at the goto: {}", n);
         let names: Vec<String> =
             sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
@@ -1569,7 +1604,7 @@
         for _ in 0..30 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.bullets.len(), 4, ":timeout ended the spell loop");
+        assert_eq!(sim.world.entities.len(), 4, ":timeout ended the spell loop");
         let has = |sim: &Sim, n: &str| {
             sim.world.log.borrow().entries.iter().any(|e| &*e.name == n)
         };
@@ -1624,7 +1659,7 @@
             sim.step_with(&inp).unwrap();
         }
         let count = |sim: &Sim, fam: &str| {
-            sim.world.bullets.iter().filter(|b| b.style.family == fam).count()
+            sim.world.entities.iter().filter(|b| b.style.family == fam).count()
         };
         let g1 = count(&sim, "circle");
         assert!(g1 >= 8, "ground moveset firing: {}", g1);
@@ -1678,9 +1713,9 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let b = &sim.world.bullets[0];
-        assert_eq!(b.col_get("hp"), Some(2.0), "later map wins per-key");
-        assert_eq!(b.col_get("a"), Some(1.0), "earlier keys survive");
+        let b = &sim.world.entities[0];
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(2.0), "later map wins per-key");
+        assert_eq!(sim.world.col_get_at(0, "a"), Some(1.0), "earlier keys survive");
         assert_eq!(b.team.as_deref(), Some("enemy"));
         assert_eq!(b.style.family, "star", ":style replaces wholesale");
     }
@@ -1697,11 +1732,11 @@
         for _ in 0..4 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.bullets.len(), 0, "gate still closed");
+        assert_eq!(sim.world.entities.len(), 0, "gate still closed");
         for _ in 0..4 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.bullets.len(), 1, "gate opened at tick 5");
+        assert_eq!(sim.world.entities.len(), 1, "gate opened at tick 5");
     }
 
 /// Variadic macros (& rest) + macro-time form processing: a macro that
@@ -1717,7 +1752,7 @@ fn variadic_macro_processes_clauses() {
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
-    assert_eq!(sim.world.bullets.len(), 3, "one spawn per clause");
+    assert_eq!(sim.world.entities.len(), 3, "one spawn per clause");
 }
 
 /// `when`/`unless` are prelude macros now (autoimported): a false
@@ -1734,7 +1769,7 @@ fn prelude_when_unless() {
     for _ in 0..8 {
         sim.step().unwrap();
     }
-    assert_eq!(sim.world.bullets.len(), 2, "even iterations only");
+    assert_eq!(sim.world.entities.len(), 2, "even iterations only");
 }
 
 /// spawn-boss owns the boss conventions: map-valued boss state is bound
@@ -1767,7 +1802,7 @@ fn spawn_boss_owns_conventions() {
         "public boss channel is a map with hp"
     );
     // knock hp down: the exposure publishes, the gate releases
-    sim.world.bullets[0].col_set(&"hp".into(), 1.0);
+    sim.world.col_set_at(0, &"hp".into(), 1.0);
     for _ in 0..4 {
         sim.step().unwrap();
     }
@@ -1832,7 +1867,11 @@ fn defchannel_derives_per_tick() {
     assert!(matches!(sim.ctx.sig.channel("enemies"), Some(Val::Num(n)) if n == 2.0));
     assert!(matches!(sim.ctx.sig.channel("reds"), Some(Val::Num(n)) if n == 1.0));
     assert!(
-        sim.world.bullets.iter().any(|b| b.col_get("marker").is_some()),
+        sim.world
+            .entities
+            .iter()
+            .enumerate()
+            .any(|(i, _)| sim.world.col_get_at(i, "marker").is_some()),
         "control layer saw the derived channel"
     );
     // $nearest-enemy now derives from the stdlib defchannel
@@ -1861,7 +1900,7 @@ fn defchannel_derives_per_tick() {
         for _ in 0..91 {
             sim.step().unwrap();
         }
-        let x = |i: usize| sim.world.bullets[i].prev_pos.unwrap().0;
+        let x = |i: usize| sim.world.entities[i].prev_pos.unwrap().0;
         // pattern-epoch clock: spawned at tick 30, prev_pos as of tick 90
         assert!((x(0) - 0.5).abs() < 0.02, "live clock minus epoch: {}", x(0));
         // without live, the channel read snaps at spawn (the boundary)

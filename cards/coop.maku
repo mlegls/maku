@@ -1,14 +1,13 @@
 ;; Two-pilot co-op: player 1 on WASD ($p1-move-*), player 2 on arrows
 ;; ($p2-move-*). Nothing engine-side knows about "two players" -- each rig
-;; is an entity whose :pilot column VALUE keys its derived channels
+;; is an entity whose handle is bound to its derived channels
 ;; ($player-1/$player-2, $nearest-enemy-1/-2, $lives-1/-2), iframes are a
 ;; per-entity column so the pilots dodge independently, and the hostile
-;; spray aims at $nearest-pilot (a derived query, like $nearest-enemy
-;; pointed the other way).
+;; spray aims at $nearest-pilot.
 
 (import "touhou")
 (defpattern coop []
-  (par (in-frame :world (par (pilot-rig 1) (pilot-rig 2)
+  (par (in-frame :world (par (pilot-rig-1) (pilot-rig-2)
                              (autofire 1) (autofire 2)))
        (drones)
        (spray)))
@@ -19,14 +18,30 @@
       (vel c[(* 4.5 (live (nth [$p1-move-x $p2-move-x] (dec k))))
              (* 4.5 (live (nth [$p1-move-y $p2-move-y] (dec k))))]))))
 
-;; parameterized patterns: (pilot-rig 2) binds k=2, defaults fill the
-;; rest; each invocation gets its own cell scope (the §10 adapter default).
-(defpattern pilot-rig [k 1]
-  (spawn (pilot-rig-motion k)
-         {:team :player-body
-          :colliders [{:layer :player-hurt :r 0.05}]
-          :cols {:lives 3 :pilot k :graze 0 :hits 0}
-          :triggers [{:col :lives :leq 0 :event :game-over}]}))
+(defn pilot-meta [k]
+  {:team :player-body
+   :colliders [{:layer :player-hurt :r 0.05}]
+   :cols {:lives 3 :pilot k :graze 0 :hits 0}
+   :triggers [{:col :lives :leq 0 :event :game-over}]})
+
+(defpattern pilot-rig-1 []
+  (let [p (spawn (pilot-rig-motion 1) (pilot-meta 1))]
+    (let [h (nth p 0)]
+      (seq
+        (bind-channel! $player-1 (:pos h))
+        (bind-channel! $lives-1 (:lives h))
+        (bind-channel! $nearest-enemy-1 (nearest-entity {:team :enemy} $player-1))))))
+
+(defpattern pilot-rig-2 []
+  (let [p (spawn (pilot-rig-motion 2) (pilot-meta 2))]
+    (let [h (nth p 0)]
+      (seq
+        (bind-channel! $player-2 (:pos h))
+        (bind-channel! $lives-2 (:lives h))
+        (bind-channel! $nearest-enemy-2 (nearest-entity {:team :enemy} $player-2))))))
+
+(defchannel $nearest-pilot
+  (nearest-entity {:team :player-body} c[0 3.2]))
 
 (defpattern autofire [k 1]
   (seq

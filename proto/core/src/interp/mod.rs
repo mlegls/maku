@@ -6,7 +6,7 @@
 //!
 //! Signals evaluate against a SigEnv (defs + injected snapshot) and never
 //! touch the world — the spec's purity rule is also what breaks the borrow
-//! cycle here. Scanned nodes (Vel) keep per-bullet state keyed by node
+//! cycle here. Scanned nodes (Vel) keep per-entity state keyed by node
 //! identity.
 //!
 //! Two rules this prototype surfaced for the spec:
@@ -80,8 +80,7 @@ pub enum Val {
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     Dyn(Rc<DynNode>),
-    Ext(Rc<ExtLaser>),
-    PatherV(Rc<ExtPather>),
+    CurveV(Rc<ExtCurve>),
     /// A form as a value — what macros manipulate and quasiquote builds.
     FormV(Rc<Form>),
     Action(Rc<ActionV>),
@@ -233,9 +232,6 @@ pub enum ActionV {
     WaitFor { pred: Form, env: Env },
     DefVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, init: Val },
     SetVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, val: Val },
-    /// Boss/self-entity eased move (derived from remat per the spec; the
-    /// prototype animates the world's boss anchor and blocks for `dur`).
-    Move { dur_ticks: u64, dest: (f64, f64) },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
     Event { channel: Rc<str>, pos: Option<(f64, f64)> },
@@ -309,16 +305,9 @@ pub struct SigEnv {
 
 impl Default for SigEnv {
     fn default() -> Self {
-        let mut ch = HashMap::new();
-        ch.insert("player".into(), Val::Vec2 { x: 0.0, y: -4.0 });
-        ch.insert("nearest-enemy".into(), Val::Vec2 { x: 0.0, y: 3.0 });
-        ch.insert("rank".into(), Val::Num(1.0));
-        // truthy default so :while (live $focus-firing) lasers run headless;
-        // numeric so rigs can do arithmetic on it (hosts override per tick)
-        ch.insert("focus-firing".into(), Val::Num(1.0));
         SigEnv {
             defs: Rc::new(HashMap::new()),
-            channels: Rc::new(ch),
+            channels: Rc::new(HashMap::new()),
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
             exports: Rc::new(std::cell::RefCell::new(Vec::new())),
             bound_channels: Rc::new(std::cell::RefCell::new(Vec::new())),
@@ -531,7 +520,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let target = evaluate(&items[1], env, ctx, world)?;
                 let callback = evaluate(&items[2], env, ctx, world)?;
                 // a query map selects by style axes (Kw exact / Arr any-of)
-                // and :where (pure fn over the bullet view) — queries cut
+                // and :where (pure fn over the entity view) — queries cut
                 // across birth structures (§9); handles are the degenerate
                 // case
                 if matches!(target, Val::Map(_)) {
@@ -564,7 +553,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Action(Rc::new(ActionV::Remat { target: id, f })));
             }
             "set-col" => {
-                // (set-col b :name v) — columns are writable per-bullet data
+                // (set-col b :name v) — columns are writable per-entity data
                 let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
                     return Err("set-col: expected bullet handle".into());
                 };
@@ -731,7 +720,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Some(i) = world.find(id) else {
                     return Err("pos: dead handle".into());
                 };
-                let b = &world.bullets[i];
+                let b = &world.entities[i];
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
                 let p = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
                 return Ok(Val::Vec2 { x: p.x, y: p.y });
@@ -851,12 +840,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // trajectory, materialized as geometry (§6)
                 let window = evaluate(&items[1], env, ctx, world)?.num()?;
                 let dv = as_dyn(evaluate(&items[2], env, ctx, world)?)?;
-                return Ok(Val::PatherV(Rc::new(ExtPather { anchor: dv, window })));
+                return Ok(Val::CurveV(Rc::new(ExtCurve {
+                    anchor: dv,
+                    backing: CurveBacking::Trace { window },
+                })));
             }
             "sample" => {
                 // (sample dyn t) / (sample dyn t u): pure evaluation of a
-                // dyn at a given time (and beam parameter) — pose with
-                // tangent heading. The laser-free version of on-laser: any
+                // dyn at a given time (and curve parameter) — pose with
+                // tangent heading. The entity-free version of on-laser: any
                 // shape can be sampled without spawning an entity.
                 let dv = as_dyn(evaluate(&items[1], env, ctx, world)?)?;
                 let tv = evaluate(&items[2], env, ctx, world)?.num()?;
@@ -885,8 +877,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Some(i) = world.find(id) else {
                     return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
                 };
-                let b = &world.bullets[i];
-                let Kind::Laser { shape, .. } = &b.kind else {
+                let b = &world.entities[i];
+                let Kind::Curve { shape, .. } = &b.kind else {
                     return Err("on-laser: not a laser".into());
                 };
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
@@ -935,6 +927,21 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 }
                 return evaluate(&items[1], env, ctx, world);
             }
+            "channel" => {
+                let Some(Form::Sym(ch)) = items.get(1) else {
+                    return Err("channel: expected a $channel name".into());
+                };
+                let Some(name) = ch.strip_prefix('$') else {
+                    return Err("channel: name must start with $".into());
+                };
+                if let Some(v) = ctx.sig.channel(name) {
+                    return Ok(v);
+                }
+                return match items.get(2) {
+                    Some(default) => evaluate(default, env, ctx, world),
+                    None => Ok(Val::Nothing),
+                };
+            }
             "slew" | "smooth" => {
                 if ctx.scan.is_none() {
                     // deferred shared instance (§5): forced in scan contexts
@@ -982,7 +989,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let mut total = 0.0;
                 for id in ids {
                     if let Some(i) = world.find(id) {
-                        total += world.bullets[i].col_get(&col).unwrap_or(0.0);
+                        total += world.col_get_at(i, &col).unwrap_or(0.0);
                     }
                 }
                 return Ok(Val::Num(total));
@@ -1002,7 +1009,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let mut best: Option<(f64, (f64, f64))> = None;
                 for id in ids {
                     let Some(i) = world.find(id) else { continue };
-                    let b = &world.bullets[i];
+                    let b = &world.entities[i];
                     let tau = (world.tick - b.birth) as f64 / TICK_RATE;
                     let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) else { continue };
                     let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
@@ -1060,16 +1067,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     env: env.clone(),
                 })));
             }
-            "move" => {
-                // (move dur ease dest)
-                let dur = evaluate(&items[1], env, ctx, world)?.num()?;
-                let dest = match evaluate(&items[3], env, ctx, world)? {
-                    Val::Vec2 { x, y } => (x, y),
-                    v => return Err(format!("move: expected point dest, got {:?}", v)),
-                };
-                return Ok(Val::Action(Rc::new(ActionV::Move {
-                    dur_ticks: (dur * TICK_RATE).round().max(0.0) as u64,
-                    dest,
+            "path" => {
+                let curve = as_dyn(evaluate(&items[1], env, ctx, world)?)?;
+                return Ok(Val::Dyn(Rc::new(DynNode::Path {
+                    curve,
+                    progress: items[2].clone(),
+                    env: env.clone(),
                 })));
             }
             "rand" => {
@@ -1171,13 +1174,13 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
         Val::Kw(k) => {
             // keyword application: map access, e.g. (:vel exit); on
-            // Vec2/Pose, :x/:y/:th read components; on a bullet Handle,
-            // fields of the live bullet view (b.pos.y just works in
+            // Vec2/Pose, :x/:y/:th read components; on an entity Handle,
+            // fields of the live entity view (b.pos.y just works in
             // callbacks and :where alike)
             let arg = evaluate(&items[1], env, ctx, world)?;
             if let Val::Handle(id) = &arg {
-                if let Some(i) = world.bullets.iter().position(|b| b.id == *id) {
-                    let view = bullet_view(i, world, &ctx.sig.clone())?;
+                if let Some(i) = world.entities.iter().position(|b| b.id == *id) {
+                    let view = entity_view(i, world, &ctx.sig.clone())?;
                     return Ok(map_get(&view, &k).unwrap_or(Val::Nothing));
                 }
                 return Ok(Val::Nothing);
@@ -1227,21 +1230,9 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Val::arr(out))
         }
-        Val::Ext(l) => Ok(Val::Ext(Rc::new(ExtLaser {
+        Val::CurveV(l) => Ok(Val::CurveV(Rc::new(ExtCurve {
             anchor: Rc::new(DynNode::Frame(frame, l.anchor.clone())),
-            shape: l.shape.clone(),
-            warn: l.warn,
-            active: l.active,
-            u_max: l.u_max,
-            u_max_sig: l.u_max_sig.clone(),
-            resolution: l.resolution,
-            width: l.width,
-            fill: l.fill,
-            fill_sig: l.fill_sig.clone(),
-        }))),
-        Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
-            anchor: Rc::new(DynNode::Frame(frame, pv.anchor.clone())),
-            window: pv.window,
+            backing: l.backing.clone(),
         }))),
         other => Ok(Val::Dyn(Rc::new(DynNode::Frame(frame, as_dyn(other)?)))),
     }
@@ -1252,11 +1243,11 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 /// run instantaneously; ordinary fns RETURN action values for composition.
 /// Evaluate a manipulate query map against the world in canonical order:
 /// style axes / team match exactly (Kw) or any-of (Arr); :where is a pure
-/// fn over the bullet view {:pos :vel :t :family :color :variant + cols}.
-/// The bullet view: what predicates and field access see — current
-/// {:pos :vel :t :family} plus the bullet's columns.
-pub(crate) fn bullet_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
-    let b = &world.bullets[i];
+/// fn over the entity view {:pos :vel :t :family :color :variant + cols}.
+/// The entity view: what predicates and field access see — current
+/// {:pos :vel :t :family} plus the entity's columns.
+pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
+    let b = &world.entities[i];
     let tau = (world.tick - b.birth) as f64 / TICK_RATE;
     let p = dyn_pose(&b.motion, tau, &b.state, sig)?;
     let vel = match b.prev_pos {
@@ -1270,8 +1261,8 @@ pub(crate) fn bullet_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("kind".into()), Val::Kw(match &b.kind {
             Kind::Point => "point",
-            Kind::Laser { .. } => "laser",
-            Kind::Pather { .. } => "pather",
+            Kind::Curve { .. } => "laser",
+            Kind::Trail { .. } => "pather",
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -1283,8 +1274,8 @@ pub(crate) fn bullet_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     if !matches!(b.damage, Val::Nothing) {
         view.push((Val::Kw("damage".into()), b.damage.clone()));
     }
-    for (k, v) in &b.cols {
-        view.push((Val::Kw(k.as_ref().into()), Val::Num(*v)));
+    for (k, v) in world.cols_for_view(b) {
+        view.push((Val::Kw(k), Val::Num(v)));
     }
     Ok(Val::Map(Rc::new(view)))
 }
@@ -1308,7 +1299,7 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
     let where_f = get("where");
     let sig = ctx.sig.clone();
     let mut candidates: Vec<u64> = Vec::new();
-    for b in &world.bullets {
+    for b in &world.entities {
         if !b.alive
             || !axis_ok(&family, &b.style.family)
             || !axis_ok(&color, &b.style.color)
@@ -1324,7 +1315,7 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
         let keep = match &where_f {
             Some(f) => {
                 let view = match world.find(id) {
-                    Some(i) => bullet_view(i, world, &sig)?,
+                    Some(i) => entity_view(i, world, &sig)?,
                     None => continue,
                 };
                 truthy(&apply_fn(f.clone(), &[view], ctx, world, false)?)
@@ -1590,7 +1581,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::Nothing)
         }
         ActionV::CullHostile => {
-            for b in world.bullets.iter_mut() {
+            for b in world.entities.iter_mut() {
                 if b.team.is_none() {
                     b.alive = false;
                 }
@@ -1599,7 +1590,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::Cull { target } => {
             if let Some(i) = world.find(*target) {
-                world.bullets[i].alive = false;
+                world.entities[i].alive = false;
             }
             Ok(Val::Nothing)
         }
@@ -1617,7 +1608,15 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let scanned = is_scanned(&motion);
                 let id = world.next_id;
                 world.next_id += 1;
-                world.bullets.push(Bullet {
+                let mut col_slots = Vec::new();
+                for (name, val) in cols.get(ei).into_iter().flatten() {
+                    let slot = world.intern_col(name);
+                    if col_slots.len() <= slot {
+                        col_slots.resize(slot + 1, None);
+                    }
+                    col_slots[slot] = Some(*val);
+                }
+                world.entities.push(Entity {
                     id,
                     team: team.clone(),
                     kind: d.kind.clone(),
@@ -1629,7 +1628,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     sigs: h.clone(),
                     colliders: colliders.clone(),
-                    cols: cols.get(ei).cloned().unwrap_or_default(),
+                    cols: col_slots,
                     triggers: triggers.clone(),
                     damage: damage.clone(),
                     prev_pos: None,
@@ -1639,7 +1638,12 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     world.exposes.push((chan.clone(), id, col.clone()));
                     // same-tick availability: the channel exists the moment
                     // the entity does (gates may read it this very tick)
-                    let v = world.bullets.last().and_then(|b| b.col_get(col)).unwrap_or(0.0);
+                    let v = world
+                        .entities
+                        .len()
+                        .checked_sub(1)
+                        .and_then(|i| world.col_get_at(i, col))
+                        .unwrap_or(0.0);
                     let mut m = (*ctx.sig.channels).clone();
                     m.insert(chan.to_string(), Val::Num(v));
                     ctx.sig.channels = Rc::new(m);
@@ -1663,7 +1667,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Remat { target, f } => {
             let Some(i) = world.find(*target) else { return Ok(Val::Nothing) };
             let (exit, anchor) = {
-                let b = &world.bullets[i];
+                let b = &world.entities[i];
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
                 let p = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
                 let vel = match b.prev_pos {
@@ -1688,7 +1692,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 }
                 direct => as_dyn((*direct).clone())?,
             };
-            let b = &mut world.bullets[i];
+            let b = &mut world.entities[i];
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
             b.motion = Rc::new(DynNode::Frame(Rc::new(DynNode::Const(anchor)), new_dyn));
@@ -1700,13 +1704,13 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::SetCol { target, col, val } => {
             if let Some(i) = world.find(*target) {
-                world.bullets[i].col_set(col, *val);
+                world.col_set_at(i, col, *val);
             }
             Ok(Val::Nothing)
         }
         ActionV::SetStyle { target, style } => {
             if let Some(i) = world.find(*target) {
-                let mut st = world.bullets[i].style.clone();
+                let mut st = world.entities[i].style.clone();
                 if let Val::Map(kvs) = style {
                     for (k, v) in kvs.iter() {
                         if let Val::Kw(k) = k {
@@ -1720,7 +1724,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                         }
                     }
                 }
-                world.bullets[i].style = st;
+                world.entities[i].style = st;
             }
             Ok(Val::Nothing)
         }
@@ -1928,21 +1932,9 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Val::arr(out))
         }
-        Val::Ext(l) => Ok(Val::Ext(Rc::new(ExtLaser {
+        Val::CurveV(l) => Ok(Val::CurveV(Rc::new(ExtCurve {
             anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), l.anchor.clone())),
-            shape: l.shape.clone(),
-            warn: l.warn,
-            active: l.active,
-            u_max: l.u_max,
-            u_max_sig: l.u_max_sig.clone(),
-            resolution: l.resolution,
-            width: l.width,
-            fill: l.fill,
-            fill_sig: l.fill_sig.clone(),
-        }))),
-        Val::PatherV(pv) => Ok(Val::PatherV(Rc::new(ExtPather {
-            anchor: Rc::new(DynNode::Frame(Rc::new(DynNode::Const(frame)), pv.anchor.clone())),
-            window: pv.window,
+            backing: l.backing.clone(),
         }))),
         other => {
             let d = as_dyn(other)?;
@@ -2336,12 +2328,15 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
             let mut pairs = Vec::new();
             for (k, v) in kvs.iter() {
                 let kv = evaluate(k, env, ctx, world)?;
-                if contains_t(v) {
+                if matches!(&kv, Val::Kw(kw) if &**kw == "fill") {
+                    if matches!(v, Form::Num(_)) {
+                        return Err("laser :fill expects a fraction signal; use (fill-linear warn dur) for a linear sweep".into());
+                    }
+                    fill_sig = Some((v.clone(), env.clone()));
+                    pairs.push((kv, Val::Nothing));
+                } else if contains_t(v) {
                     if matches!(&kv, Val::Kw(kw) if &**kw == "u-max") {
                         u_max_sig = Some((v.clone(), env.clone()));
-                    }
-                    if matches!(&kv, Val::Kw(kw) if &**kw == "fill") {
-                        fill_sig = Some((v.clone(), env.clone()));
                     }
                     pairs.push((kv, Val::Nothing));
                 } else {
@@ -2357,20 +2352,18 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     let getf = |key: &str, dflt: f64| -> f64 {
         map_get(&opts, key).and_then(|v| v.num().ok()).unwrap_or(dflt)
     };
-    Ok(Val::Ext(Rc::new(ExtLaser {
+    Ok(Val::CurveV(Rc::new(ExtCurve {
         anchor: Rc::new(DynNode::Const(Pose::IDENTITY)),
-        shape,
-        warn: getf("warn", 0.0),
-        active: getf("active", f64::INFINITY),
-        u_max: getf("u-max", 10.0),
-        u_max_sig,
-        resolution: getf("resolution", 0.1),
-        width: getf("width", 1.0),
-        fill: match map_get(&opts, "fill") {
-            Some(Val::Nothing) | None => None, // signal-valued or absent
-            Some(v) => Some(v.num()?),
+        backing: CurveBacking::Parametric {
+            shape,
+            domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
+            u_max_sig,
+            resolution: getf("resolution", 0.1),
+            warn: getf("warn", 0.0),
+            active: getf("active", f64::INFINITY),
+            width: getf("width", 1.0),
+            fill_sig,
         },
-        fill_sig,
     })))
 }
 
@@ -2499,6 +2492,11 @@ mod tests {
         let env = Env::empty().bind("i".into(), Val::Num(3.0));
         let v = evaluate(&f, &env, &mut Ctx::default(), &mut World::default()).unwrap();
         assert!((v.num().unwrap() - 0.2 * 4.0 * 5.0).abs() < 1e-9);
+
+        let f = read_one("-x").unwrap();
+        let env = Env::empty().bind("x".into(), Val::Num(3.0));
+        let v = evaluate(&f, &env, &mut Ctx::default(), &mut World::default()).unwrap();
+        assert_eq!(v.num().unwrap(), -3.0);
     }
 
     #[test]
@@ -2693,10 +2691,13 @@ mod tests {
             panic!()
         };
         assert_eq!(items.len(), 6);
-        let Val::Ext(l) = &items[0] else { panic!("expected laser") };
-        assert_eq!(l.u_max, 3.5);
+        let Val::CurveV(l) = &items[0] else { panic!("expected laser") };
+        let CurveBacking::Parametric { shape, domain, .. } = &l.backing else {
+            panic!("expected parametric curve")
+        };
+        assert!(matches!(domain, CurveDomain::Range { min, max } if *min == 0.0 && *max == 3.5));
         // shape at t=1, u=1: r=2, θ=-14°
-        let p = dyn_pose_u(l.shape.as_ref().unwrap(), 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
+        let p = dyn_pose_u(shape.as_ref().unwrap(), 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
         let ex = 2.0 * (-14f64).to_radians().cos();
         assert!((p.x - ex).abs() < 1e-9);
     }
@@ -2704,6 +2705,9 @@ mod tests {
     #[test]
     fn aim_is_ambient_relative() {
         let ctx = &mut Ctx::default();
+        let mut ch = HashMap::new();
+        ch.insert("player".to_string(), Val::Vec2 { x: 0.0, y: -4.0 });
+        ctx.sig.channels = Rc::new(ch);
         let f = read_one("(aim $player)").unwrap();
         let Val::Pose(p) = evaluate(&f, &Env::empty(), ctx, &mut World::default()).unwrap()
         else {

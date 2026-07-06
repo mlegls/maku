@@ -17,3 +17,28 @@
 ;; (unless pred body…)
 (defmacro unless [pred & body]
   `(if (not ~pred) (seq ~@body)))
+
+;; A laser :fill helper: fraction reaches 0 at `warn` and 1 at
+;; `warn + dur`. The laser clamps the sampled fraction to 0..1.
+(defn fill-linear [warn dur]
+  (/ (- t warn) dur))
+
+;; Eased 0..1 progress over the same interval shape.
+(defn fill-ease [ease warn dur]
+  (ease (/ (- t warn) dur)))
+
+;; A local straight curve from the origin to `delta`; useful for move.
+(defn line-to [delta]
+  (cart (* u delta.x) (* u delta.y)))
+
+;; Rematerialize an entity onto a curve sampled by a progress signal.
+;; Macro so `progress` reaches `path` as a signal form with t in scope.
+(defmacro move [entity curve progress]
+  `(remat ~entity (path ~curve ~progress)))
+
+;; Blocking point-to-point entity move. The core only supplies remat/path;
+;; this helper owns the timeline convention.
+(defmacro move-to [entity dur ease dest]
+  `(seq
+     (move ~entity (line-to (- ~dest (:pos ~entity))) (fill-ease ~ease 0 ~dur))
+     (wait ~dur)))

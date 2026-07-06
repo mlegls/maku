@@ -87,7 +87,7 @@ options over `states` (`ex4-phases`):
 | `{:hp n}` | `(until (<= (hp-of boss-main) n) body)` — the local health-bar gate inside `spawn-boss` |
 | `{:until pred}` | the same race with any predicate |
 | `{:timeout d}` | `(fork (seq (wait d) (goto)))` |
-| `{:root pos}` | `(move 0.9 :out-sine pos)` at the body head |
+| `{:root pos}` | `(move-to boss-main 0.9 eoutsine pos)` at the body head |
 | `(finally …)` tail | core `(finally body cleanup…)` — cleanup on *every* exit path: gate, timeout, goto |
 
 That table is the whole feature. `phases` is a macro in
@@ -105,8 +105,7 @@ difference. `spawn-boss` owns the conventions (`ex5-boss`):
 (defchannel $tutorial-boss {:hp 0})
 
 (seq
-  (move 0.9 :out-sine c[0 2.6])
-  (spawn-boss $tutorial-boss (live $boss)
+  (spawn-boss $tutorial-boss (pose c[0 2.6])
               {:hp 40 :hitbox 0.45 :style {:family :lstar :color :purple} :scale 2}
     (phases
       (:opening {:timeout 2 :root c[0 2.2]}
@@ -120,6 +119,10 @@ difference. `spawn-boss` owns the conventions (`ex5-boss`):
         (for [vol inf :every (ticks 24)]
           (spawn-bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) …))))))
 ```
+
+The leading `move` is the legacy boss-anchor shortcut used before the
+boss entity exists. Inside `phases`, `:root` now targets the local
+`boss-main` handle directly.
 
 What the macro does for you: binds `$tutorial-boss` as a map-valued
 host channel (`{:hp … :pos …}`), holds the machine until the boss has

@@ -175,7 +175,7 @@ impl Maku {
         self.channel_vec("player")
     }
 
-    /// Point bullets: [x, y, radius_world, r, g, b, a]* (colors 0–1, hue
+    /// Point entities: [x, y, radius_world, r, g, b, a]* (colors 0–1, hue
     /// pre-applied — every host renders identical colors; :scale is
     /// pre-applied to the radius, :opacity arrives as a).
     pub fn dots(&self) -> Vec<f32> {

@@ -17,11 +17,17 @@
 ;; 0.20 were the classic values.
 
 ;; Derived channels — recomputed once per tick from the world; card
-;; code, not engine. nearest-entity yields nothing when no enemy
-;; exists, which leaves the host's mock $nearest-enemy (mouse) in
-;; place — the same fallback the engine used to hardcode.
+;; code, not engine.
+(defchannel $player (channel $player c[0 -4]))
+(defchannel $move-x (channel $move-x 0))
+(defchannel $move-y (channel $move-y 0))
+(defchannel $focus-firing (channel $focus-firing 0))
+(defchannel $bomb (channel $bomb 0))
+(defchannel $rank (channel $rank 1))
 (defchannel $enemies (count-entities {:team :enemy}))
-(defchannel $nearest-enemy (nearest-entity {:team :enemy} $player))
+(defchannel $nearest-enemy
+  (let [target (nearest-entity {:team :enemy} $player)]
+    (if (nothing? target) (channel $nearest-enemy c[0 3]) target)))
 
 ;; hostile bullet: a damage core inside a graze ring
 (defmacro spawn-bullet [dyn & metas]
@@ -99,6 +105,34 @@
 ;; sum over every player body is what "the run's graze count" means.
 (defchannel $graze (sum-entities {:team :player-body} :graze))
 (defchannel $hits (sum-entities {:team :player-body} :hits))
+(defchannel $lives (sum-entities {:team :player-body} :lives))
+
+;; player: a piloted Touhou hurtbox. This owns the DMK-like player
+;; convention, but only as library code: a different game can shadow this
+;; macro or bind $player itself.
+(defmacro spawn-player [dyn & metas]
+  `(let [player (spawn ~dyn
+                       {:team :player-body
+                        :colliders [{:layer :player-hurt :r 0.06}]
+                        :cols {:lives 3 :bombs 3 :graze 0 :hits 0}
+                        :triggers [{:col :lives :leq 0 :event :game-over}]}
+                       ~@metas)]
+     (let [player-main (nth player 0)]
+       (seq
+         (bind-channel! $player (:pos player-main))))))
+
+(defn touhou-player-motion [speed focus_speed]
+  (clamp c[-3.8 -4.4] c[3.8 4.4]
+    (in-frame c[0 -3]
+      (vel c[m"live($move-x) * (speed - (speed - focus_speed) * live($focus-firing))"
+             m"live($move-y) * (speed - (speed - focus_speed) * live($focus-firing))"]))))
+
+(defpattern player-rig [lives 3
+                        bombs 3
+                        speed 4.5
+                        focus-speed 1.8]
+  (spawn-player (touhou-player-motion speed focus-speed)
+                {:cols {:lives lives :bombs bombs}}))
 
 ;; shot damage: the shot dies either way (absorbed during the target's mercy
 ;; window); :damage is a number or a pure (fn [self other] n) resolved here
@@ -121,8 +155,8 @@
 ;;   :hp n      → :until (<= (hp-of boss-main) n) [the health-bar gate]
 ;;   :until p   → body becomes (until p body…)    [the gate race]
 ;;   :timeout d → (fork (seq (wait d) (goto)))    [timer arms on arrival]
-;;   :root pos  → (move 0.9 :out-sine pos)        [reposition the boss
-;;                anchor first — boss dyns follow (live $boss)]
+;;   :root pos  → (move-to boss-main 0.9 eoutsine pos)
+;;                [reposition the local boss entity first]
 ;; The (finally …) tail is phase sugar for core `(finally body cleanup…)`:
 ;; cancellation-safe cleanup lives in the scheduler, while `states` stays a
 ;; plain FSM. Macro-time plumbing only — same machine underneath, and
@@ -148,7 +182,7 @@
         root (get opts :root)
         rooted (if (nothing? root)
                  timed
-                 (concat [`(move 0.9 :out-sine ~root)] timed))]
+                 (concat [`(move-to boss-main 0.9 eoutsine ~root)] timed))]
     (if (= (count fin) 0)
       `(~label ~@rooted)
       `(~label (finally (seq ~@rooted) ~@fin)))))

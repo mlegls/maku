@@ -38,16 +38,10 @@
   (par (rig) (free-fire) (bombs)))
 
 ;; the piloted rig: position = integral of the raw axes, clamped to the
-;; field; focus slows. :pilot marks this entity as the source of $player.
+;; field; focus slows. Reimu uses a smaller hitbox than the stock rig.
 (defpattern rig []
-  (spawn (clamp c[-3.8 -4.4] c[3.8 4.4]
-           (in-frame c[0 -3]
-             (vel c[(* (live $move-x) (- 4.5 (* 2.7 (live $focus-firing))))
-                    (* (live $move-y) (- 4.5 (* 2.7 (live $focus-firing))))])))
-         {:team :player-body
-          :colliders [{:layer :player-hurt :r 0.05}]
-          :cols {:lives 3 :pilot 1 :graze 0 :hits 0}
-          :triggers [{:col :lives :leq 0 :event :game-over}]}))
+  (spawn-player (touhou-player-motion 4.5 1.8)
+                {:hitbox 0.05}))
 
 ;; focus switches the fire mode (player_homing's A/B split): homing
 ;; amulets unfocused; tight forward needles focused (more dps, must aim)
@@ -87,10 +81,9 @@
 
 (defpattern mima []
   (seq
-    (move 0.9 :out-sine c[0 2.6])
     ;; spawn-boss owns the boss conventions: $mima bound for host state,
     ;; machine held until the boss registers, `boss` handles bound.
-    (spawn-boss $mima (live $boss)
+    (spawn-boss $mima (pose c[0 2.6])
                 {:hp 100 :hitbox 0.45
                   :triggers [{:col :hp :leq 60 :event :spell-break}
                              {:col :hp :leq 0 :event :died :cull true}]

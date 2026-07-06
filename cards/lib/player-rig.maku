@@ -1,15 +1,3 @@
-;; The stock player kit. "The host mounts the player" inverted: the rig is
-;; ordinary card content -- an entity tracking the $player channel, hurtbox
-;; as a collider, lives as a column, game-over as its trigger. The host
-;; merely layers it in ((add (player-rig)) rides the command tape, so
-;; card + tapes fully determine a replay). Different characters, co-op
-;; ($player-1/$player-2 rigs), or card-integrated movement (motion in the
-;; vel domain over raw input channels) are different rig cards, not engine
-;; changes.
-
-(defpattern player-rig [lives 3]
-  (spawn (live $player)
-         {:team :player-body
-          :colliders [{:layer :player-hurt :r 0.06}]
-          :cols {:lives lives :graze 0 :hits 0}
-          :triggers [{:col :lives :leq 0 :event :game-over}]}))
+;; Compatibility shim: the stock Touhou player rig now lives in touhou.maku
+;; with the rest of the DMK/BDSL gameplay conventions.
+(import "touhou")

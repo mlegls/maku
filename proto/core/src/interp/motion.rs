@@ -64,12 +64,15 @@ pub enum DynNode {
     Const(Pose),
     /// pos = v·τ in the local frame; θ = heading.
     Linear { vx: f64, vy: f64 },
-    /// Closed position expression over slot-bound t (and u, for laser shapes).
+    /// Closed pose expression over slot-bound t (and u, for curve shapes).
     ClosedPt { a: Form, b: Form, polar: bool, env: Env },
     /// Integrated velocity (Scanned): components over slot-bound t.
     Vel { a: Form, b: Form, polar: bool, env: Env },
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
     Translate { dx: f64, dy: f64, child: Rc<DynNode> },
+    /// Sample a curve dyn at u = progress(t). This is the point-motion
+    /// analogue of curve materialization, without expressing a curve entity.
+    Path { curve: Rc<DynNode>, progress: Form, env: Env },
     Frame(Rc<DynNode>, Rc<DynNode>),
     /// A live injected channel as a pose (class (b): pointwise, no state).
     Live { channel: Rc<str> },
@@ -80,7 +83,7 @@ pub enum DynNode {
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
     RotExpr { form: Form, env: Env },
-    /// SCANNED.md's `stages`: segment list with per-bullet (idx, epoch) state
+    /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state
     /// and explicit exit handoff into Lazy segments.
     Stages { segs: Vec<StageSeg> },
 }
@@ -104,27 +107,36 @@ pub enum StageMake {
     Lazy(Val), // an (fn [exit] ...) closure, instantiated at the boundary
 }
 
-/// Extended entity (§6 axis materialization): a laser = anchor dyn + shape
-/// over (t, u) + lifecycle window.
-#[derive(Debug)]
-pub struct ExtLaser {
-    pub anchor: Rc<DynNode>,
-    pub shape: Option<Rc<DynNode>>, // None = straight along frame +x
-    pub warn: f64,
-    pub active: f64,
-    pub u_max: f64,
-    pub u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
-    pub resolution: f64,
-    pub width: f64,
-    pub fill: Option<f64>,
-    pub fill_sig: Option<(Form, Env)>,
+#[derive(Debug, Clone)]
+pub enum CurveDomain {
+    Range { min: f64, max: f64 },
+    Values(Rc<[f64]>),
 }
 
-/// A pather value pre-spawn: the guide dyn plus its remembrance window.
+/// Parametric and traced curves occupy one semantic slot; the backing says
+/// how this interpreter materializes the curve for spawn/collision/render.
+#[derive(Debug, Clone)]
+pub enum CurveBacking {
+    /// Surface `laser` syntax currently lowers to this representation.
+    Parametric {
+        shape: Option<Rc<DynNode>>, // None = straight along frame +x
+        domain: CurveDomain,
+        u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
+        resolution: f64,
+        warn: f64,
+        active: f64,
+        width: f64,
+        /// Swept hot fraction as a function of curve age t.
+        fill_sig: Option<(Form, Env)>,
+    },
+    /// Surface `pather` syntax currently lowers to this representation.
+    Trace { window: f64 },
+}
+
 #[derive(Debug)]
-pub struct ExtPather {
+pub struct ExtCurve {
     pub anchor: Rc<DynNode>,
-    pub window: f64,
+    pub backing: CurveBacking,
 }
 
 pub fn eval_sig(
@@ -248,6 +260,12 @@ pub fn dyn_pose_u(
             let p = dyn_pose_u(child, tau, u, state, sig)?;
             Ok(Pose { x: p.x + dx, y: p.y + dy, th: p.th })
         }
+        DynNode::Path { curve, progress, env } => {
+            let key = d as *const DynNode as usize;
+            let u = eval_sig(progress, env, sig, tau, 0.0, Some(read_scan(state, key)), None)?
+                .num()?;
+            dyn_pose_u(curve, tau, u, state, sig)
+        }
         DynNode::Frame(parent, child) => {
             let pp = dyn_pose_u(parent, tau, u, state, sig)?;
             let cp = dyn_pose_u(child, tau, u, state, sig)?;
@@ -300,6 +318,13 @@ pub fn step_motion(
                 eval_sig(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)))?.num()
             })?;
             Ok(())
+        }
+        DynNode::Path { curve, progress, env } => {
+            let key = d as *const DynNode as usize;
+            advance_sites(state, key, dt, |scan| {
+                eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
+            })?;
+            step_motion(curve, tau, dt, state, sig)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
@@ -424,7 +449,7 @@ pub(crate) fn advance_sites<T>(
 
 pub fn is_scanned(d: &DynNode) -> bool {
     match d {
-        DynNode::Vel { .. } | DynNode::RotExpr { .. } | DynNode::Stages { .. } => true,
+        DynNode::Vel { .. } | DynNode::RotExpr { .. } | DynNode::Stages { .. } | DynNode::Path { .. } => true,
         DynNode::Translate { child, .. } => is_scanned(child),
         DynNode::Frame(a, b) => is_scanned(a) || is_scanned(b),
         DynNode::Clamp { child, .. } => is_scanned(child),

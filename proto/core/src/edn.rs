@@ -171,8 +171,8 @@ impl<'a> Reader<'a> {
             }
             b'$' => {
                 self.bump();
-                let s = self.read_symbol_chars()?;
-                Ok(desugar_dotted(format!("${}", s)))
+                let s = self.read_symbol_segment_chars()?;
+                self.read_access_tail(Form::Sym(format!("${}", s).into()))
             }
             b'c' | b'p' if self.peek2() == b'[' => {
                 let head = if self.bump() == b'c' { "cart" } else { "polar" };
@@ -211,12 +211,24 @@ impl<'a> Reader<'a> {
             }
             c if c == b'-' && self.peek2().is_ascii_digit() => self.read_number(),
             c if c.is_ascii_digit() => self.read_number(),
+            b'-' if is_symbol_start(self.peek2()) => {
+                self.bump();
+                let form = if self.peek() == b'$' {
+                    self.bump();
+                    let s = self.read_symbol_segment_chars()?;
+                    self.read_access_tail(Form::Sym(format!("${}", s).into()))?
+                } else {
+                    let s = self.read_symbol_segment_chars()?;
+                    self.read_access_tail(Form::Sym(s.into()))?
+                };
+                Ok(Form::call("-", vec![Form::Num(0.0), form]))
+            }
             _ => {
-                let s = self.read_symbol_chars()?;
+                let s = self.read_symbol_segment_chars()?;
                 Ok(match s.as_str() {
                     "true" => Form::Bool(true),
                     "false" => Form::Bool(false),
-                    _ => desugar_dotted(s),
+                    _ => self.read_access_tail(Form::Sym(s.into()))?,
                 })
             }
         }
@@ -304,6 +316,49 @@ impl<'a> Reader<'a> {
         }
         Ok(std::str::from_utf8(&self.src[start..self.pos]).unwrap().to_string())
     }
+
+    fn read_symbol_segment_chars(&mut self) -> Result<String, ReadError> {
+        let start = self.pos;
+        while !self.at_end() {
+            let c = self.peek();
+            if is_symbol_char(c) && c != b'.' {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        if self.pos == start {
+            return self.err(format!("unexpected character '{}'", self.peek() as char));
+        }
+        Ok(std::str::from_utf8(&self.src[start..self.pos]).unwrap().to_string())
+    }
+
+    fn read_access_tail(&mut self, mut form: Form) -> Result<Form, ReadError> {
+        while self.peek() == b'.' {
+            self.bump();
+            if self.peek() == b'[' {
+                let items = self.read_seq(b']')?;
+                let idx = match items.len() {
+                    1 => items.iter().next().unwrap().clone(),
+                    _ => Form::Vector(items),
+                };
+                form = Form::call("nth", vec![form, idx]);
+            } else {
+                let field = self.read_symbol_segment_chars()?;
+                form = Form::list(vec![Form::Kw(field.into()), form]);
+            }
+        }
+        Ok(form)
+    }
+}
+
+fn is_symbol_char(c: u8) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(c, b'-' | b'_' | b'*' | b'+' | b'/' | b'<' | b'>' | b'=' | b'!' | b'?' | b'.' | b'&')
+}
+
+fn is_symbol_start(c: u8) -> bool {
+    c.is_ascii_alphabetic() || matches!(c, b'_' | b'$')
 }
 
 /// The math macro: parse-only infix (language.md §11). Emits the same
@@ -630,6 +685,17 @@ mod tests {
         assert_eq!(rt("c[0 2]"), "(cart 0 2)");
         assert_eq!(rt("p[4 90]"), "(polar 4 90)");
         assert_eq!(rt("c[(lerp 0.4 0.8 t 12 2) 0]"), "(cart (lerp 0.4 0.8 t 12 2) 0)");
+        assert_eq!(rt("c[-x -x.pos.x]"), "(cart (- 0 x) (- 0 (:x (:pos x))))");
+        assert_eq!(rt("-$rank"), "(- 0 $rank)");
+    }
+
+    #[test]
+    fn access_sugar_canonical() {
+        assert_eq!(rt("b.pos.y"), "(:y (:pos b))");
+        assert_eq!(rt("xs.[0]"), "(nth xs 0)");
+        assert_eq!(rt("xs.[0 1]"), "(nth xs [0 1])");
+        assert_eq!(rt("b.children.[i].pos.x"), "(:x (:pos (nth (:children b) i)))");
+        assert_eq!(rt("$mima.hp"), "(:hp $mima)");
     }
 
     #[test]
@@ -679,24 +745,9 @@ mod tests {
     }
 }
 
-/// Accessor sugar: a symbol containing dots reads as a field chain —
-/// `b.pos.y` desugars in the READER to `(:y (:pos b))`, so the canonical
-/// tree is ordinary keyword application (card transformations never see
-/// dots). Malformed chains (empty segments) stay plain symbols.
-fn desugar_dotted(s: String) -> Form {
-    if !s.contains('.') {
-        return Form::Sym(s.into());
-    }
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.iter().any(|p| p.is_empty()) {
-        return Form::Sym(s.into());
-    }
-    let mut form = Form::Sym(parts[0].into());
-    for field in &parts[1..] {
-        form = Form::list(vec![Form::Kw((*field).into()), form]);
-    }
-    form
-}
+// Accessor sugar is read by `read_access_tail`: `b.pos.y` becomes
+// `(:y (:pos b))`, and `xs.[i]` becomes `(nth xs i)`. The canonical tree
+// is ordinary keyword/nth application, so transformations never see dots.
 
 // ---------------------------------------------------------------------------
 // imports: (import "relative/path.maku") on its own line splices that card's

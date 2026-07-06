@@ -57,8 +57,7 @@
 ;; run, and a card can embed one directly.
 (defpattern ex3-midboss []
   (seq
-    (move 0.7 :out-sine c[0 2.4])
-    (spawn-boss $stage-boss (live $boss)
+    (spawn-boss $stage-boss (pose c[0 2.4])
                 {:hp 30 :hitbox 0.45 :style {:family :lstar :color :purple} :scale 1.8}
       (phases
         (:midboss {:timeout 3 :root c[0 2.1]}

@@ -89,6 +89,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         _ => return Err(format!("{}: expected param vector", name)),
                     };
                     let body: Rc<[Form]> = items[3..].to_vec().into();
+                    order.retain(|n| n != &name);
                     order.push(name.clone());
                     patterns.insert(name.clone(), Pattern { name, params, body });
                 }

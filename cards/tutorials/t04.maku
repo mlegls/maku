@@ -60,13 +60,13 @@
         ((rot 90)
           (spawn-bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))))
 
-;; 6. slow lasers: :fill makes the hot front sweep source→tip over d
-;; seconds after the warn — the full path stays telegraphed (dim) while
-;; only the swept prefix is bright and deadly. Three staggered sweeps.
+;; 6. slow lasers: :fill is a swept-fraction signal; fill-linear is the
+;; ordinary source→tip helper. The full path stays telegraphed (dim) while
+;; only the swept prefix is bright and deadly.
 (defpattern ex6-slow []
   (spawn-bullet ((pose c[-3 3])
            ((rot m"-90 + 15 * iota(3)")
-             (laser {:warn [0.8 1.2 1.6] :active 4 :u-max 7 :fill 1.5}))) {:style {:family :laser :color [:red :yellow :pink]}}))
+             (laser {:warn 0.8 :active 4 :u-max 7 :fill (fill-linear 0.8 1.5)}))) {:style {:family :laser :color [:red :yellow :pink]}}))
 
 ;; 7. lifecycle trees: multi-stage bullet lives with NO queries — spawn
 ;; returns handles (the pointers), and each bullet forks its own timeline.

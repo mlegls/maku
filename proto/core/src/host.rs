@@ -374,15 +374,16 @@ impl Instance {
     pub fn positions(&self, col: &str) -> Vec<(f64, f64)> {
         let Some(sim) = &self.session.sim else { return Vec::new() };
         sim.world
-            .bullets
+            .entities
             .iter()
-            .filter(|b| b.alive && b.col_get(col).is_some())
-            .filter_map(|b| b.prev_pos)
+            .enumerate()
+            .filter(|(i, b)| b.alive && sim.world.col_get_at(*i, col).is_some())
+            .filter_map(|(_, b)| b.prev_pos)
             .collect()
     }
 
     pub fn entity_count(&self) -> usize {
-        self.session.sim.as_ref().map(|s| s.world.bullets.len()).unwrap_or(0)
+        self.session.sim.as_ref().map(|s| s.world.entities.len()).unwrap_or(0)
     }
 
     pub fn graze(&self) -> u64 {
@@ -401,10 +402,10 @@ impl Instance {
             .as_ref()
             .map(|s| {
                 let t = s.tick() as f64;
-                s.world.bullets.iter().any(|b| {
+                s.world.entities.iter().enumerate().any(|(i, b)| {
                     b.alive
                         && b.team.as_deref() == Some("player-body")
-                        && b.col_get("iframe-until").map(|u| u > t).unwrap_or(false)
+                        && s.world.col_get_at(i, "iframe-until").map(|u| u > t).unwrap_or(false)
                 })
             })
             .unwrap_or(false)
@@ -514,20 +515,24 @@ mod tests {
     #[test]
     fn facade_drives_a_frontend() {
         let rig = format!(
-            "{}\n(player-rig)",
-            crate::edn::stdlib("player-rig").unwrap()
+            "(defpattern __host-player-rig [] (player-rig))\n{}",
+            crate::edn::stdlib("touhou").unwrap()
         );
         let mut inst = Instance::new(Some(rig));
         inst.boot("../../cards/translations/130_bowap.maku".into(), None);
         assert!(inst.running());
         assert!(inst.patterns().len() >= 2, "menu populated");
 
-        let inputs = Inputs::default();
+        let mut inputs = Inputs::classic((0.0, -4.0), (0.0, 3.0));
+        inputs.set_num("move-x", 0.0);
+        inputs.set_num("move-y", 0.0);
+        inputs.set_num("focus-firing", 0.0);
+        inputs.set_num("bomb", 0.0);
         for _ in 0..240 {
             inst.advance(inputs.clone());
         }
-        assert_eq!(inst.tick(), Some(240));
-        assert!(!inst.render().is_empty(), "bullets to draw");
+        assert_eq!(inst.tick(), Some(240), "{}", inst.status);
+        assert!(!inst.render().is_empty(), "entities to draw");
         assert!(inst.channel("player").is_some());
 
         // wire dispatch: hot-eval an anonymous pattern (tape replays)

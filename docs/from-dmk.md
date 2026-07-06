@@ -73,7 +73,7 @@ decode notes.
 | `static(path)` / `dynamic(path)` with `lt` | one shape slot over `(t, u)`: u-only = static, t entering = dynamic |
 | `s(width)` / `stagger(x)` options | `:width` (also scales the hitbox) / `:resolution` |
 | `varLength` | signal-valued `:u-max` (grows the beam AND hitbox together) |
-| slow/filling lasers | `:fill d` — full path telegraphs, the hitbox sweeps from the source |
+| slow/filling lasers | `:fill (fill-linear warn d)` — full path telegraphs, the hitbox sweeps from the source |
 | `hueshift(x*t)` option | signal-valued `:hue` tag |
 | `scale(fn)` / `dir(fn)` / `opacity(fn)` SB options | signal-valued `:scale` / `:facing` / `:opacity` tags (`:scale` scales colliders too) |
 | `sm` option (SM at the tip) | `let`-bound guide + `(in-frame guide (fork …))` |
@@ -116,7 +116,7 @@ needs no tutorial port.
 | the boss BEH entity | `(spawn-boss $boss dyn meta machine…)` — library macro: an *enemy with a phase machine*. It owns the boss conventions: binds a map-valued `$boss` channel, holds the machine until the boss registers, binds `boss`/`boss-main` for the machine body; hp/hurtbox/triggers are ordinary meta |
 | `hp(4000)` phase property | `{:hp n}` — desugars to `(until (<= (hp-of boss-main) n) body)`, reading the local boss handle; `{:until pred}` is the general gate |
 | phase timeout `phase X {…}` | `{:timeout X}` — desugars to `(fork (seq (wait X) (goto)))`; bare goto = exit to successor |
-| `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to a `(move …)` at the body head; the card knows its boss |
+| `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to `(move-to boss-main …)` at the body head; the card knows its boss |
 | `type(spell, "Name")` | card data: an exported cell written at state heads (or a card-level template macro) |
 | `shiftphaseto(N)` (index) | `(goto :label)` — labels survive phase insertion; scoped to the innermost machine; labels are values, so routing may be computed (Markov chains) |
 | the zeroeth setup phase convention | a routing state: `(:opening (goto :spell1))` — or nothing; setup is just code before the machine |

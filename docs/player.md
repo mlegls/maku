@@ -58,7 +58,8 @@ shared append-only structure; snapshots hold only a cursor.
 | drag slider | scrub; orange marks = command-tape entries; faint notches = snapshots |
 
 The host layers the stock player rig (the `player-rig` standard-library
-card, embedded in the engine — authored at `cards/lib/player-rig.maku`)
+shim; the implementation lives with the Touhou conventions in
+`cards/lib/touhou.maku`)
 into every fresh timeline via the command tape — swap in your own rig
 live with the editor. The status line shows tick, entity count, graze, hits, lives.
 

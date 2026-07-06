@@ -1,10 +1,11 @@
-//! World data: bullets, colliders, triggers, events, contact rules.
+//! World data: entities, colliders, triggers, events, contact rules.
 
 use super::*;
 use crate::edn::Form;
+use std::collections::HashMap;
 use std::rc::Rc;
 
-// World: bullets + events. The control layer's mutable half.
+// World: entities + events. The control layer's mutable half.
 
 #[derive(Clone, Debug, Default)]
 pub struct Style {
@@ -16,26 +17,22 @@ pub struct Style {
 #[derive(Debug, Clone)]
 pub enum Kind {
     Point,
-    Laser {
+    Curve {
         shape: Option<Rc<DynNode>>,
         warn: f64,
         active: f64,
-        u_max: f64,
+        domain: CurveDomain,
         u_max_sig: Option<(Form, Env)>,
         resolution: f64,
         /// Width multiplier: render thickness AND collision half-width.
         width: f64,
-        /// Slow laser: seconds for the hot front to sweep source→tip after
-        /// the warn ends. The telegraph always shows the full path; the
-        /// hitbox (and bright render) fills out from u=0.
-        fill: Option<f64>,
-        /// Signal-valued :fill — the swept FRACTION (clamped 0..1) as a
-        /// function of laser age t, for non-linear fill rates.
+        /// Signal-valued :fill — the swept fraction, clamped to 0..1, as a
+        /// function of curve age t. Linear-over-duration is library code.
         fill_sig: Option<(Form, Env)>,
     },
-    /// A trailing time-window of the trajectory, materialized as geometry
-    /// (§6): positions are recorded per tick into Bullet.trail.
-    Pather { window: f64 },
+    /// A traced curve: positions are recorded per tick into Entity.trail.
+    /// Its domain is discrete values, not an interpolated range.
+    Trail { window: f64 },
 }
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
@@ -47,7 +44,7 @@ pub struct MetaSig {
 }
 
 /// The render-affecting signal tags (§7): each is an optional signal over
-/// bullet-local t, sampled at render time (scale also at collision time —
+/// entity-local t, sampled at render time (scale also at collision time —
 /// a scaled sprite scales its colliders). DMK's simple-bullet modifiers
 /// (scale/dir/opacity), dissolved into meta tags like :hue.
 #[derive(Debug, Clone, Default)]
@@ -62,7 +59,7 @@ pub struct RenderSigs {
 }
 
 #[derive(Clone)]
-pub struct Bullet {
+pub struct Entity {
     pub id: u64,
     /// Gameplay team tag (F20: derived channels like $nearest-enemy are
     /// queries over tagged entities). Collision ignores this; layer tags and
@@ -78,9 +75,10 @@ pub struct Bullet {
     pub sigs: RenderSigs,
     /// Collider set — archetype data, Rc-shared across a spawn's elements.
     pub colliders: Rc<[Collider]>,
-    /// User-defined numeric columns (§9's sidecar, inline for the
-    /// prototype). hp is not special — it's just the first custom column.
-    pub cols: Vec<(Rc<str>, f64)>,
+    /// User-defined numeric columns in World's dense column layout. hp is
+    /// not special — it is just another named source column assigned to a
+    /// slot by the world.
+    pub cols: Vec<Option<f64>>,
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
@@ -91,22 +89,14 @@ pub struct Bullet {
     /// Last tick's position (collision pass) — contact velocity is the
     /// finite difference, uniform across Closed and Scanned motion.
     pub prev_pos: Option<(f64, f64)>,
-    /// Pather trail: recorded positions, capped at window·rate ticks.
-    /// Bounded, so snapshots stay O(world).
-    pub trail: Vec<(f64, f64)>,
-}
-
-impl Bullet {
-    pub fn col_get(&self, name: &str) -> Option<f64> {
-        self.cols.iter().find(|(k, _)| &**k == name).map(|(_, v)| *v)
-    }
-
-    pub fn col_set(&mut self, name: &Rc<str>, v: f64) {
-        match self.cols.iter_mut().find(|(k, _)| k == name) {
-            Some((_, slot)) => *slot = v,
-            None => self.cols.push((name.clone(), v)),
-        }
-    }
+    /// Traced curve samples, capped at the remembrance window. Only valid
+    /// pose samples are stored; before the trace fills, the domain is
+    /// shorter and indexed from entity-local sample 0. Facing is part of the
+    /// sample data; finite-difference facing is only a possible
+    /// helper/default, not the core representation.
+    /// Interpolation over these samples should be an explicit higher-level
+    /// curve function, not implicit core behavior.
+    pub trail: Vec<Pose>,
 }
 
 /// A standing rule over an entity's own columns: when `col ≤ leq` first
@@ -175,7 +165,7 @@ pub enum SkipRhs { Tick, Num(f64) }
 pub struct World {
     pub tick: u64,
     pub next_id: u64,
-    pub bullets: Vec<Bullet>,
+    pub entities: Vec<Entity>,
     /// The event log is SHARED across snapshots (Rc): the log is monotonic,
     /// so a snapshot needs only `cursor` — restore truncates the shared
     /// tail and re-stepping re-emits deterministically. Snapshots carry
@@ -184,8 +174,10 @@ pub struct World {
     /// Global index one past the last event THIS timeline emitted.
     pub cursor: u64,
     pub rng: u64,
-    pub boss: Pose,
-    pub boss_anim: Option<BossAnim>,
+    /// Source column name → dense numeric slot. Entities store only slot
+    /// values; names live once in the world layout.
+    pub col_slots: HashMap<Rc<str>, usize>,
+    pub col_names: Vec<Rc<str>>,
     /// Column-expose rules from spawn meta :expose {$channel :col}:
     /// channel := that entity's column while alive, else 0. Registered at
     /// spawn, persists past the entity (death reads as 0, so hp gates fire).
@@ -255,25 +247,17 @@ impl World {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct BossAnim {
-    pub from: Pose,
-    pub to: (f64, f64),
-    pub start: u64,
-    pub dur: u64,
-}
-
 impl Default for World {
     fn default() -> Self {
         World {
             tick: 0,
             next_id: 0,
-            bullets: Vec::new(),
+            entities: Vec::new(),
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
             cursor: 0,
             rng: 0x9e37_79b9_7f4a_7c15,
-            boss: Pose::IDENTITY,
-            boss_anim: None,
+            col_slots: HashMap::new(),
+            col_names: Vec::new(),
             exposes: Vec::new(),
             contacts: Vec::new(),
         }
@@ -293,6 +277,46 @@ impl World {
     }
 
     pub fn find(&self, id: u64) -> Option<usize> {
-        self.bullets.iter().position(|b| b.id == id && b.alive)
+        self.entities.iter().position(|b| b.id == id && b.alive)
+    }
+
+    pub fn col_slot(&self, name: &str) -> Option<usize> {
+        self.col_slots.get(name).copied()
+    }
+
+    pub fn intern_col(&mut self, name: &Rc<str>) -> usize {
+        if let Some(slot) = self.col_slots.get(name).copied() {
+            return slot;
+        }
+        let slot = self.col_names.len();
+        self.col_names.push(name.clone());
+        self.col_slots.insert(name.clone(), slot);
+        slot
+    }
+
+    pub fn col_get_at(&self, bullet_idx: usize, name: &str) -> Option<f64> {
+        let slot = self.col_slot(name)?;
+        self.entities.get(bullet_idx)?.cols.get(slot).copied().flatten()
+    }
+
+    pub fn col_set_at(&mut self, bullet_idx: usize, name: &Rc<str>, v: f64) {
+        let slot = self.intern_col(name);
+        let Some(b) = self.entities.get_mut(bullet_idx) else { return };
+        if b.cols.len() <= slot {
+            b.cols.resize(slot + 1, None);
+        }
+        b.cols[slot] = Some(v);
+    }
+
+    pub fn cols_for_view(&self, b: &Entity) -> Vec<(Rc<str>, f64)> {
+        b.cols
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, v)| {
+                let v = (*v)?;
+                let name = self.col_names.get(slot)?;
+                Some((name.clone(), v))
+            })
+            .collect()
     }
 }
