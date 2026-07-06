@@ -194,14 +194,16 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     Some(Val::Num(n)) => n,
                     _ => return Err("colliders: missing :r".into()),
                 };
-                cs.push(DynCollider::collider_circle(ColliderProjection {
-                    layer,
-                    shape: ColliderShape::Circle { radius: r },
-                }));
+                cs.push(DynCollider::collider_circle(layer, r));
             }
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
-                if let ColliderDynRepr::CircleProjection(c) = &mut first.repr {
-                    c.shape = ColliderShape::Circle { radius: r };
+                let slot = first.slot();
+                let layer = match slot.shape {
+                    ColliderSlotShape::Circle { .. } => Some(slot.layer.clone()),
+                    ColliderSlotShape::CapsuleChain { .. } => None,
+                };
+                if let Some(layer) = layer {
+                    *first = DynCollider::collider_circle(layer, r);
                 }
             }
             cs.into()
@@ -221,6 +223,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         .map(|e| SpawnMade {
             dyn_figure: e.dyn_figure,
             colliders: e.colliders,
+            curve_collider: e.curve_collider,
             renderers: e.renderers,
             cache_policy: e.cache_policy,
         })
@@ -255,7 +258,7 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (dyn_figure, colliders, renderers, cache_policy) = match &l.backing {
+            let (dyn_figure, colliders, curve_collider, renderers, cache_policy) = match &l.backing {
                 CurveBacking::Parametric {
                     curve,
                     sample_set,
@@ -267,26 +270,26 @@ pub(crate) fn flatten_elems(
                 } => {
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
-                        vec![DynCollider::collider_capsule_chain(CurveColliderSlot {
-                                sample_set: sample_set.clone(),
-                                u_max_sig: u_max_sig.clone(),
-                                width: *width,
-                                activity: SlotActivity {
-                                    warn: *warn,
-                                    active: *active,
-                                    hot_frac_sig: fill_sig.clone(),
-                                },
-                        })]
-                        .into(),
+                        Vec::new().into(),
+                        Some(CapsuleChainSlot {
+                            sample_set: sample_set.clone(),
+                            u_max_sig: u_max_sig.clone(),
+                            width: *width,
+                            activity: SlotActivity {
+                                warn: *warn,
+                                active: *active,
+                                hot_frac_sig: fill_sig.clone(),
+                            },
+                        }),
                         vec![DynRender::render_polyline(CurveRenderSlot {
-                                sample_set: sample_set.clone(),
-                                u_max_sig: u_max_sig.clone(),
-                                width: *width,
-                                activity: SlotActivity {
-                                    warn: *warn,
-                                    active: *active,
-                                    hot_frac_sig: fill_sig.clone(),
-                                },
+                            sample_set: sample_set.clone(),
+                            u_max_sig: u_max_sig.clone(),
+                            width: *width,
+                            activity: SlotActivity {
+                                warn: *warn,
+                                active: *active,
+                                hot_frac_sig: fill_sig.clone(),
+                            },
                         })]
                         .into(),
                         EntityCachePolicy::default(),
@@ -295,6 +298,7 @@ pub(crate) fn flatten_elems(
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
                     Vec::new().into(),
+                    None,
                     Vec::new().into(),
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
@@ -304,6 +308,7 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure,
                 colliders,
+                curve_collider,
                 renderers,
                 cache_policy,
                 path: path.clone(),
@@ -314,6 +319,7 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure: DynFigure::pose(as_dyn(other)?),
                 colliders: Vec::new().into(),
+                curve_collider: None,
                 renderers: Vec::new().into(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),

@@ -134,6 +134,7 @@ impl Val {
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
     pub colliders: Rc<[DynCollider]>,
+    pub curve_collider: Option<CapsuleChainSlot>,
     pub renderers: Rc<[DynRender]>,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
@@ -258,6 +259,7 @@ pub enum FrameSpec {
 pub struct SpawnMade {
     pub dyn_figure: DynFigure,
     pub colliders: Rc<[DynCollider]>,
+    pub curve_collider: Option<CapsuleChainSlot>,
     pub renderers: Rc<[DynRender]>,
     pub cache_policy: EntityCachePolicy,
 }
@@ -1627,7 +1629,25 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     sigs: h.clone(),
                     colliders: {
                         let mut slots = Vec::with_capacity(colliders.len() + d.colliders.len());
-                        slots.extend(colliders.iter().cloned());
+                        if let Some(curve_slot) = &d.curve_collider {
+                            for collider in colliders.iter() {
+                                let slot = collider.slot();
+                                match &slot.shape {
+                                    ColliderSlotShape::Circle { radius } => {
+                                        slots.push(DynCollider::collider_capsule_chain(
+                                            slot.layer.clone(),
+                                            *radius,
+                                            curve_slot.clone(),
+                                        ));
+                                    }
+                                    ColliderSlotShape::CapsuleChain { .. } => {
+                                        slots.push(collider.clone());
+                                    }
+                                }
+                            }
+                        } else {
+                            slots.extend(colliders.iter().cloned());
+                        }
                         slots.extend(d.colliders.iter().cloned());
                         slots.into()
                     },

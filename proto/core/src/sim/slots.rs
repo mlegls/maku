@@ -24,7 +24,7 @@ fn sample_curve_collider_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let projection = b.colliders.iter().find_map(DynCollider::capsule_chain)?;
+    let (_, projection, _) = b.colliders.iter().find_map(DynCollider::capsule_chain)?;
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
@@ -98,57 +98,70 @@ pub fn eval_collider_slot(
     scale: f64,
 ) -> ColliderData {
     match slot.repr() {
-        ColliderDynRepr::CircleProjection(projection) => {
-            let ColliderShape::Circle { radius } = projection.shape;
-            match b.dyn_figure.repr() {
-                FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
-                    let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
-                    if points.len() < 2 {
-                        ColliderData::None
-                    } else {
+        ColliderDynRepr::Slot(projection) => match &projection.shape {
+            ColliderSlotShape::Circle { radius } => {
+                let radius = *radius;
+                match b.dyn_figure.repr() {
+                    FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
+                        let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
+                        if points.len() < 2 {
+                            ColliderData::None
+                        } else {
+                            ColliderData::CapsuleChain {
+                                layer: projection.layer.clone(),
+                                points,
+                                radius: CURVE_R + radius * scale,
+                            }
+                        }
+                    }
+                    FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
+                        Ok(p) => ColliderData::Circle {
+                            layer: projection.layer.clone(),
+                            center: (p.x, p.y),
+                            radius: radius * scale,
+                        },
+                        Err(_) => ColliderData::None,
+                    },
+                    FigureDynRepr::Curve { .. } => ColliderData::None,
+                }
+            }
+            ColliderSlotShape::CapsuleChain { radius, slot: curve_slot } => {
+                let radius = *radius;
+                if tau < curve_slot.activity.warn {
+                    return ColliderData::None;
+                }
+                match b.dyn_figure.repr() {
+                    FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
+                        let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
+                        if points.len() < 2 {
+                            ColliderData::None
+                        } else {
+                            ColliderData::CapsuleChain {
+                                layer: projection.layer.clone(),
+                                points,
+                                radius: CURVE_R * curve_slot.width + radius * scale,
+                            }
+                        }
+                    }
+                    FigureDynRepr::Curve { .. } => {
+                        let Some(points) = sample_curve_collider_frac(
+                            b,
+                            tau,
+                            sig,
+                            hot_frac(&curve_slot.activity, tau, sig),
+                        ) else {
+                            return ColliderData::None;
+                        };
                         ColliderData::CapsuleChain {
                             layer: projection.layer.clone(),
                             points,
-                            radius: CURVE_R + radius * scale,
+                            radius: CURVE_R * curve_slot.width + radius * scale,
                         }
                     }
-                }
-                FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
-                    Ok(p) => ColliderData::Circle {
-                        layer: projection.layer.clone(),
-                        center: (p.x, p.y),
-                        radius: radius * scale,
-                    },
-                    Err(_) => ColliderData::None,
-                },
-                FigureDynRepr::Curve { .. } => {
-                    let Some(curve_slot) = b.colliders.iter().find_map(DynCollider::capsule_chain) else {
-                        return ColliderData::None;
-                    };
-                    if tau < curve_slot.activity.warn {
-                        return ColliderData::None;
-                    }
-                    let Some(points) = sample_curve_collider_frac(
-                        b,
-                        tau,
-                        sig,
-                        hot_frac(&curve_slot.activity, tau, sig),
-                    ) else {
-                        return ColliderData::None;
-                    };
-                    ColliderData::CapsuleChain {
-                        layer: projection.layer.clone(),
-                        points,
-                        radius: CURVE_R * curve_slot.width + radius * scale,
-                    }
+                    FigureDynRepr::Pose(_) => ColliderData::None,
                 }
             }
-        }
-        // Transitional shape-only slot: current curve lowering still takes
-        // layer/radius from a sibling CircleProjection supplied by the
-        // spawning template. The final lib-facing slot will own layer/radius
-        // and can materialize directly here.
-        ColliderDynRepr::CapsuleChain(_) => ColliderData::None,
+        },
     }
 }
 

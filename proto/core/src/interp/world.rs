@@ -23,7 +23,7 @@ pub struct SlotActivity {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveColliderSlot {
+pub struct CapsuleChainSlot {
     /// Sampling used by this collision projection.
     /// Abstract parametric figures do not own sampling.
     pub sample_set: SampleSet,
@@ -86,8 +86,7 @@ pub enum RenderData {
 
 #[derive(Clone, Debug)]
 pub enum ColliderDynRepr {
-    CircleProjection(ColliderProjection),
-    CapsuleChain(CurveColliderSlot),
+    Slot(ColliderSlot),
 }
 
 #[derive(Clone, Debug)]
@@ -201,44 +200,58 @@ impl TriggerRule {
     }
 }
 
-/// A collider projection: a layer plus a shape-specific interpretation of
-/// the entity's current figure.
+/// A collider slot: universal collision-routing metadata plus a
+/// shape-specific interpretation of the entity's current figure.
 #[derive(Clone, Debug)]
-pub struct ColliderProjection {
+pub struct ColliderSlot {
     pub layer: Rc<str>,
-    pub shape: ColliderShape,
+    pub shape: ColliderSlotShape,
 }
 
 #[derive(Clone, Debug)]
-pub enum ColliderShape {
+pub enum ColliderSlotShape {
     Circle { radius: f64 },
-}
-
-impl ColliderProjection {
-    pub fn circle_radius(&self) -> Option<f64> {
-        match self.shape {
-            ColliderShape::Circle { radius } => Some(radius),
-        }
-    }
+    CapsuleChain { radius: f64, slot: CapsuleChainSlot },
 }
 
 impl Dyn<ColliderData> {
-    pub fn collider_circle(projection: ColliderProjection) -> DynCollider {
-        Dyn { repr: ColliderDynRepr::CircleProjection(projection) }
+    pub fn collider(slot: ColliderSlot) -> DynCollider {
+        Dyn { repr: ColliderDynRepr::Slot(slot) }
     }
 
-    pub fn collider_capsule_chain(slot: CurveColliderSlot) -> DynCollider {
-        Dyn { repr: ColliderDynRepr::CapsuleChain(slot) }
+    pub fn collider_circle(layer: Rc<str>, radius: f64) -> DynCollider {
+        DynCollider::collider(ColliderSlot {
+            layer,
+            shape: ColliderSlotShape::Circle { radius },
+        })
+    }
+
+    pub fn collider_capsule_chain(
+        layer: Rc<str>,
+        radius: f64,
+        slot: CapsuleChainSlot,
+    ) -> DynCollider {
+        DynCollider::collider(ColliderSlot {
+            layer,
+            shape: ColliderSlotShape::CapsuleChain { radius, slot },
+        })
     }
 
     pub fn repr(&self) -> &ColliderDynRepr {
         &self.repr
     }
 
-    pub fn capsule_chain(&self) -> Option<&CurveColliderSlot> {
+    pub fn slot(&self) -> &ColliderSlot {
         match &self.repr {
-            ColliderDynRepr::CapsuleChain(c) => Some(c),
-            ColliderDynRepr::CircleProjection(_) => None,
+            ColliderDynRepr::Slot(slot) => slot,
+        }
+    }
+
+    pub fn capsule_chain(&self) -> Option<(&ColliderSlot, &CapsuleChainSlot, f64)> {
+        let slot = self.slot();
+        match &slot.shape {
+            ColliderSlotShape::CapsuleChain { radius, slot: shape } => Some((slot, shape, *radius)),
+            ColliderSlotShape::Circle { .. } => None,
         }
     }
 }

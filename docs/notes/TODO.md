@@ -137,9 +137,10 @@ language.md.
     shape: Point | Polyline | Mesh...
   }
   ```
-  The current `colliders: Rc<[ColliderProjection]>` plus curve-specific
-  compatibility slots should collapse into `colliders: Rc<[DynCollider]>`
-  and `renderers: Rc<[DynRender]>`.
+  The prototype now stores collider/render slots as
+  `colliders: Rc<[DynCollider]>` and `renderers: Rc<[DynRender]>`; the
+  remaining work is exposing those low-level slot constructors to library
+  code and removing the Rust-side `laser` bridge.
   Normalized curves are just `Range(0, 1)`. Higher-level helpers can turn
   min/max/step descriptions into `Values`; callers/slots must provide
   sample sets compatible with the source domain when they use sampled
@@ -189,17 +190,16 @@ language.md.
       slot-shaped components. Trace policy is separate cache policy.
   2e. ~~Move projection/cache fields out of the generic legacy bucket.~~ Done;
       entities now carry dyn collider/render slots plus `EntityCachePolicy`.
-  2f. ~~Make layer universal collider metadata.~~ Done for existing point
-      colliders: `ColliderProjection { layer, shape: Circle { radius } }`.
-      Curve capsule-chain collision is still represented by the temporary
-      curve slot and should be folded into dyn collider slots.
+  2f. ~~Make layer universal collider metadata.~~ Done; entity collider
+      slots are now `ColliderSlot { layer, shape }`, with layer outside the
+      circle/capsule-chain shape.
   2g. Target update: collider/render slots should become stable dyn
       slots (`Rc<[DynCollider]>`, `Rc<[DynRender]>`) that evaluate to
       `None` when inactive, rather than static slots plus activity masks.
   2h. ~~Introduce internal dyn collider/render slots.~~ Done for the current
-      bridge: circle colliders are `DynCollider::CircleProjection`, curve
-      collision shape data is `DynCollider::CapsuleChain`, and curve
-      rendering is `DynRender::Polyline`.
+      bridge: collider slots are `DynCollider::Slot(ColliderSlot)`, with
+      shape variants for circles and capsule chains, and curve rendering is
+      `DynRender::Polyline`.
   2i. ~~Make figure dyns use the shared `Dyn<T>` shell.~~ Done;
       `DynFigure` is now `Dyn<Figure>`, backed by `DynRepr`. The remaining
       work is to generalize `DynRepr`/evaluation beyond pose and figure.
@@ -233,10 +233,15 @@ language.md.
       Done; the runtime now talks about circle projections, capsule-chain
       collider slots, and polyline render slots instead of laser/compat
       slot variants. Current surface `laser` lowering still happens in Rust
-      as a bridge, and curve capsule collision still borrows layer/radius
-      from the spawning template's circle projection. The next step is to
-      expose low-level slot construction so Touhou/library code can build
-      those slots directly and the bridge can disappear.
+      as a bridge.
+  2q. ~~Make curve collider slots self-contained after spawn lowering.~~
+      Done; curve values still supply only capsule-chain sampling/fill shape
+      parameters, but action materialization now combines those parameters
+      with template collider layer/radius into self-contained
+      `ColliderSlot { layer, shape: CapsuleChain { ... } }` values on the
+      entity. The next step is to expose low-level slot construction so
+      Touhou/library code can build those slots directly and the Rust
+      `laser` bridge can disappear.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

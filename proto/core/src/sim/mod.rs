@@ -332,7 +332,7 @@ impl Sim {
                         b.colliders
                             .iter()
                             .find_map(DynCollider::capsule_chain)
-                            .map(|projection| tau <= projection.activity.warn + projection.activity.active)
+                            .map(|(_, projection, _)| tau <= projection.activity.warn + projection.activity.active)
                     })
                     .unwrap_or(true),
             }
