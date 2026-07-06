@@ -2,7 +2,7 @@
 ;; companion to docs/tutorials/07-guided-fires.md. Press 1-9 to run each
 ;; example.
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t07.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t07.dmk
 
 (import "touhou")
 

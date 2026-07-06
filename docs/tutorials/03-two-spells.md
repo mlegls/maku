@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t03.dmk`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t03.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t03.dmk
 ```
 
 This tutorial builds two recognizable spell cards from the tools of the

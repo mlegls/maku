@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t07.dmk`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t07.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t07.dmk
 ```
 
 This tutorial builds up to one skill: making a *complex shape* of

@@ -1,4 +1,4 @@
--- danmaku.nvim — thin client for the danmaku-player server.
+-- danmaku.nvim — thin client for the maku-player server.
 --
 -- The player (proto/player) listens on 127.0.0.1:7777 for newline-delimited
 -- EDN commands; the wire format is the card format, so this plugin is just

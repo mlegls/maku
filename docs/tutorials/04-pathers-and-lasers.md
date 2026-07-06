@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t04.dmk`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t04.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t04.dmk
 ```
 
 Bullets so far have been points. This tutorial covers the two extended

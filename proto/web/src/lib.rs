@@ -3,14 +3,14 @@
 //! over flat f32 buffers, and command_line as the transport. Cards arrive
 //! through the vfs (fetched by the page; import expansion runs in core).
 
-use danmaku_core::host::{dot_radius, style_rgb_hued, Instance};
-use danmaku_core::interp::Val;
-use danmaku_core::sim::{Inputs, RenderItem};
+use maku_core::host::{dot_radius, style_rgb_hued, Instance};
+use maku_core::interp::Val;
+use maku_core::sim::{Inputs, RenderItem};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = stdlibSource)]
 pub fn stdlib_source(name: &str) -> Option<String> {
-    danmaku_core::edn::stdlib(name).map(str::to_owned)
+    maku_core::edn::stdlib(name).map(str::to_owned)
 }
 
 #[wasm_bindgen]

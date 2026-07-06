@@ -66,26 +66,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "danmaku-core"
-version = "0.1.0"
-
-[[package]]
-name = "danmaku-player"
-version = "0.1.0"
-dependencies = [
- "danmaku-core",
- "macroquad",
-]
-
-[[package]]
-name = "danmaku-web"
-version = "0.1.0"
-dependencies = [
- "danmaku-core",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -181,6 +161,26 @@ name = "macroquad_macro"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64b1d96218903768c1ce078b657c0d5965465c95a60d2682fd97443c9d2483dd"
+
+[[package]]
+name = "maku-core"
+version = "0.1.0"
+
+[[package]]
+name = "maku-player"
+version = "0.1.0"
+dependencies = [
+ "macroquad",
+ "maku-core",
+]
+
+[[package]]
+name = "maku-web"
+version = "0.1.0"
+dependencies = [
+ "maku-core",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "malloc_buf"

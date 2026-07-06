@@ -4,7 +4,7 @@ Runnable companion: **`cards/tutorials/t02.dmk`** — press the number keys
 to run each example.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t02.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t02.dmk
 ```
 
 Tutorial 1 created bullets; this one changes them mid-flight. There are

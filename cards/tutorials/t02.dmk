@@ -1,7 +1,7 @@
 ;; Tutorial 2: changing bullets in flight — the runnable companion to
 ;; docs/tutorials/02-bullet-controls.md. Press 1-9 to run each example.
 ;;
-;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t02.dmk
+;;   cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t02.dmk
 ;;
 ;; Topic sequence after Danmokou's tutorials (MIT, (c) Bagoum); see
 ;; docs/from-dmk.md if you're coming from DMK/BDSL.

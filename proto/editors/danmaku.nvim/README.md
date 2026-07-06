@@ -1,11 +1,11 @@
 # danmaku.nvim
 
-Thin editor client for the danmaku-player server (sclang/scsynth split):
+Thin editor client for the maku-player server (sclang/scsynth split):
 newline-delimited EDN over 127.0.0.1:7777.
 
 Start the player once:
 
-    cargo run --manifest-path proto/Cargo.toml -p danmaku-player -- cards/translations/130_bowap.dmk
+    cargo run --manifest-path proto/Cargo.toml -p maku-player -- cards/translations/130_bowap.dmk
 
 Then from any `.dmk` card buffer:
 
@@ -45,7 +45,7 @@ lazy.nvim spec (local dir):
 
 ```lua
 return {
-  dir = "/path/to/danmaku-engine/proto/editors/danmaku.nvim",
+  dir = "/path/to/Maku/proto/editors/danmaku.nvim",
   name = "danmaku.nvim",
   opts = {},   -- { host = ..., port = ... }
 }

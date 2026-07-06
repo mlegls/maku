@@ -3,12 +3,12 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import init, { Danmaku, stdlibSource } from './pkg/danmaku_web.js';
+import init, { Danmaku, stdlibSource } from './pkg/maku_web.js';
 import { CARD_FILES } from './manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
-await init({ module_or_path: readFileSync(join(here, 'pkg/danmaku_web_bg.wasm')) });
+await init({ module_or_path: readFileSync(join(here, 'pkg/maku_web_bg.wasm')) });
 
 const rig = stdlibSource('player-rig');
 const dk = new Danmaku(rig + '\n(player-rig)');

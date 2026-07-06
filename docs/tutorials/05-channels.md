@@ -4,7 +4,7 @@ Runnable companion: **`cards/tutorials/t05.dmk`**. In the native player,
 **T / Y / U / I** set the difficulty (0.7 / 1.0 / 1.4 / 2.0).
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t05.dmk
+cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t05.dmk
 ```
 
 Everything so far lived inside the card. This tutorial is about the

@@ -1,6 +1,6 @@
 //! The debug player: a sim+render SERVER (sclang/scsynth split).
 //!
-//! Usage: danmaku-player [card.dmk [pattern-name]]
+//! Usage: maku-player [card.dmk [pattern-name]]
 //! With no card argument the player starts empty and waits for clients.
 //!
 //! The CLI card argument is the degenerate client. A TCP listener on
@@ -29,9 +29,9 @@
 //!                                    (old snapshots auto-thin regardless)
 //!   (pause) (resume)
 
-use danmaku_core::host::Instance;
-use danmaku_core::interp::{Val, TICK_RATE};
-use danmaku_core::sim::{Inputs, RenderItem};
+use maku_core::host::Instance;
+use maku_core::interp::{Val, TICK_RATE};
+use maku_core::sim::{Inputs, RenderItem};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -70,8 +70,8 @@ fn serve(port: u16) -> Receiver<String> {
 }
 
 /// Style color with hue shift, as a macroquad Color (core::host palette).
-fn styled(style: &danmaku_core::interp::Style, hue: f64) -> Color {
-    let (r, g, b) = danmaku_core::host::style_rgb_hued(style, hue);
+fn styled(style: &maku_core::interp::Style, hue: f64) -> Color {
+    let (r, g, b) = maku_core::host::style_rgb_hued(style, hue);
     Color::new(r, g, b, 1.0)
 }
 
@@ -161,7 +161,7 @@ struct App {
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "danmaku-player".into(),
+        window_title: "maku-player".into(),
         window_width: 900,
         window_height: 960,
         ..Default::default()
@@ -170,7 +170,7 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    // usage: danmaku-player [card.dmk [pattern-name]] — with no card, start
+    // usage: maku-player [card.dmk [pattern-name]] — with no card, start
     // empty and wait for (load ...) / (run ...) from clients
     let mut args = std::env::args().skip(1);
     let card_path = args.next().unwrap_or_default();
@@ -180,7 +180,7 @@ async fn main() {
     // (swap in your own live: <localleader>es a rig defpattern)
     let rig = format!(
         "{}\n(player-rig)",
-        danmaku_core::edn::stdlib("player-rig").unwrap()
+        maku_core::edn::stdlib("player-rig").unwrap()
     );
     let mut app = App {
         inst: Instance::new(Some(rig)),
@@ -330,7 +330,7 @@ async fn main() {
                 match item {
                     RenderItem::Dot { x, y, style, hue, scale, alpha, .. } => {
                         let (sx, sy) = to_screen(x, y);
-                        let r = danmaku_core::host::dot_radius(&style.family)
+                        let r = maku_core::host::dot_radius(&style.family)
                             * PIXELS_PER_UNIT
                             * scale as f32;
                         let a = alpha.clamp(0.0, 1.0) as f32;

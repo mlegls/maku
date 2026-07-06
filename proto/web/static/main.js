@@ -1,6 +1,6 @@
 // Interactive browser host: card/tutorial picker, editable vfs source, wasm
 // simulation loop, canvas renderer, and the debug wire protocol.
-import init, { Danmaku, stdlibSource } from './pkg/danmaku_web.js';
+import init, { Danmaku, stdlibSource } from './pkg/maku_web.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
 
