@@ -198,7 +198,8 @@ language.md.
   (one row per repeater modifier; no tutorial — 25 modifiers, six
   ideas, all already taught); writing it doubled as the §13.1
   ancestor-clock audit, which closed the decision and yielded the
-  contains_t live-read fix. Next: tbosses, then tstages.
+  contains_t live-read fix. tbosses done as a host-boundary appendix.
+  tstages done as Tutorial 8 plus a campaign host-boundary mapping.
   Tutorials are standalone; DMK mappings live in docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

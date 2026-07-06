@@ -1,0 +1,99 @@
+;; Tutorial 8: stages and campaigns — the runnable companion to
+;; docs/tutorials/08-stages-and-campaigns.md. Press 1-9 to run each
+;; example.
+;;
+;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t08.dmk
+
+(import "touhou")
+
+(defchannel $stage-boss {:hp 0})
+(defchannel $stage {:section :none})
+
+;; A "stage phase" is just a scoped action with a timeout and cleanup.
+;; This one fires from the invisible stage origin for two seconds, clears,
+;; and then starts a second section.
+(defpattern ex1-stage-phase []
+  (seq
+    (bind-channel! $stage {:section :opening})
+    (event :stage-opening)
+    (let [end (+ $tick (ticks 2))]
+      (finally
+        (until (>= $tick end)
+          (for [i inf :every (ticks 12)]
+            (spawn-bullet ((rot m"17*i")
+                     (circle 10 (linear p[1.6 0]))) {:style {:family :triangle :color :red :variant :w}})))
+        (cull)
+        (event :stage-section-clear)))
+    (bind-channel! $stage {:section :after-clear})
+    (for [i inf :every (ticks 30)]
+      (spawn-bullet ((aim $player) (fan 5 9 (linear p[2.2 0]))) {:style {:family :arrow :color :blue :variant :w}}))))
+
+;; Stage scripts usually summon enemies, and the enemies run their own
+;; little timelines. Handles replace DMK's summoned BehaviorEntity IDs.
+(defpattern ex2-fairy-wave []
+  (let [fairies
+        (spawn-enemy
+          (map (fn [k]
+                 ((pose c[(+ -3.5 (* 1.4 k)) 5])
+                   (stages
+                     (stage 1.0 (vel c[0 -3.0]))
+                     (stage 2.0 (still))
+                     (forever (vel c[0 1.5])))))
+               (iota 6))
+          {:hp 12 :hitbox 0.25 :style {:family :circle :color :teal}})]
+    (for [e fairies]
+      (fork
+        (seq
+          (invuln e 1.0)
+          (wait 1.0)
+          (for [v 4 :every (ticks 24)]
+            ((pose (pos e))
+              (spawn-bullet ((aim $player)
+                       (fan 3 12 (linear p[(+ 1.5 (* 0.25 v)) 0]))) {:style {:family :amulet :color :red :variant :w}})))
+          (cull e))))))
+
+;; A stage summons a boss by running a boss pattern. There is no engine
+;; boss registry here; a host campaign can choose which card/pattern to
+;; run, and a card can embed one directly.
+(defpattern ex3-midboss []
+  (seq
+    (move 0.7 :out-sine c[0 2.4])
+    (spawn-boss $stage-boss (live $boss)
+                {:hp 30 :hitbox 0.45 :style {:family :lstar :color :purple} :scale 1.8}
+      (phases
+        (:midboss {:timeout 3 :root c[0 2.1]}
+          (for [i inf :every (ticks 18)]
+            (spawn-bullet ((rot m"13*i")
+                     (circle 14 (linear p[1.7 0]))) {:style {:family :circle :color :purple :variant :w}}))
+          (finally
+            (cull)
+            (cull (nth boss 0))
+            (event :midboss-clear)))))))
+
+;; Announce and dialogue phases are host handoffs. The card emits a
+;; command/event, then either waits a fixed duration or waits for a host
+;; event/channel. This demo uses short waits so it runs headless.
+(defpattern ex4-announce-dialogue []
+  (seq
+    (bind-channel! $stage {:section :announce})
+    (event :stage-announce)
+    (wait 0.7)
+    (bind-channel! $stage {:section :dialogue})
+    (event :dialogue "pre-midboss")
+    (wait 0.8)
+    (bind-channel! $stage {:section :resume})
+    (for [i inf :every (ticks 20)]
+      (spawn-bullet ((rot m"25*i") (fan 7 8 (linear p[2 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09}))))
+
+;; A compact whole-stage script: announce, fairy wave, midboss, deannounce.
+;; A campaign host would run this pattern as one stage in a stage list.
+(defpattern ex5-full-stage []
+  (seq
+    (event :stage-start)
+    (wait 0.5)
+    (ex2-fairy-wave)
+    (wait 0.8)
+    (ex3-midboss)
+    (event :stage-end)
+    (for [i inf :every (ticks 16)]
+      (spawn-bullet ((rot m"9*i") (circle 18 (linear p[1.8 0]))) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))

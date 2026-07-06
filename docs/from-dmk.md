@@ -249,6 +249,38 @@ mechanics are already covered by Tutorial 6 (`spawn-boss`, `phases`,
 channels), and the remaining material belongs in the first concrete host
 integration guide.
 
+## Stages and campaigns (Tutorial 11 / `tstages`)
+
+Stage scripts are worth a runnable port because their engine-facing
+semantics are card timelines: timed sections, enemy summons, boss
+handoffs, announce/dialogue handoffs, and cleanup. Campaign construction
+is host metadata and is not a core-language feature.
+
+| DMK | here |
+|---|---|
+| LevelManager stage script | ordinary `defpattern`; the host runs it as a stage |
+| `phase 8 { stage } { ... }` | scoped action: `(until timeout body...)` plus `(finally ... cleanup ...)`; host labels it as a stage practice segment if desired |
+| stage phase timeout clearing bullets | explicit phase-edge policy: `(finally body (cull) (event :stage-section-clear))` |
+| `stage` / `midboss` / `endboss` / `announce` / `dialogue` phase properties | published stage state and events, e.g. `(bind-channel! $stage {:section :dialogue})` and `(event :dialogue)`; timer freezing/UI visibility are host policy |
+| stage script firing from LevelManager origin | direct `spawn-bullet` from the pattern's ambient frame |
+| `summonr(root, saction, { hp ... })` | `(spawn-enemy ((pose root) dyn) meta)` returning handles; per-enemy `fork`ed timelines use `(pos e)`, `invuln`, `set-col`, and `cull` |
+| enemy entrance movement + firing script | piecewise dyns such as `(stages (stage enter ...) (stage hover ...) (forever exit ...))` plus control-layer `seq`/`for` |
+| `vulnerableafter` | `(invuln e dur)` or direct `:iframe-until` column writes |
+| `boss "tutorial"` in a stage | host-selected boss card/pattern, or direct `(spawn-boss $boss dyn meta (phases ...))` inside the stage pattern |
+| boss config's `State Machine` field | host registry mapping boss/stage ids to card patterns |
+| `stageannounce` / `stagedeannounce` | host-facing events such as `(event :stage-announce)` / `(event :stage-end)` |
+| `executevn ExampleVNScript "log-key"` | host handoff: emit an event or set a channel, then wait on a host-provided completion signal if needed |
+| `GameDefinition` / `CampaignConfig` / `StageConfig` / `SceneConfig` | host campaign data: ordered stage patterns, scene/background ids, player choices, practice entries, endings |
+| `CampaignConfig` stage order | host controller that runs patterns in sequence; nonlinear routing is just host code choosing the next pattern |
+| `EndingConfig` predicates | host-side predicates over recorded campaign state and card events |
+| practice unlocks based on campaign completion | host save/unlock policy; core can expose checkpoints/section ids but does not own menus |
+
+The runnable port is `cards/tutorials/t08.dmk` with
+`docs/tutorials/08-stages-and-campaigns.md`. It demonstrates the core
+half of `tstages`: a timed stage section, a fairy wave, a midboss
+handoff, announce/dialogue events, and a compact full-stage timeline.
+The Unity asset half of the upstream tutorial maps to the host shell.
+
 ## Model-level notes
 
 - **Repeaters vs arrays.** DMK expresses multiplicity through repeater
