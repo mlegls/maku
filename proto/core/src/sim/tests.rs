@@ -519,6 +519,35 @@
         );
     }
 
+    #[test]
+    fn structural_dyn_collider_fields() {
+        const CARD: &str = r#"
+(defcontact [:expanding :body] {:once :hit} (fn [a b] (event :hit)))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0])
+           {:colliders [{:layer :body :shape [:circle {:r 0.05}]}]})
+    (let [meta {:colliders [{:layer :expanding
+                             :shape [:circle {:r m"t"}]}]}]
+      (spawn (pose c[1 0]) meta))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.events_vec().iter().all(|e| &*e.name != "hit"),
+            "radius is still too small before the dyn field grows"
+        );
+        for _ in 0..120 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.events_vec().iter().any(|e| &*e.name == "hit"),
+            "dynamic radius inside a collider structure is sampled at collision time"
+        );
+    }
+
     /// The duel-card bug: aim inside an expression-level frame must aim
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → entities

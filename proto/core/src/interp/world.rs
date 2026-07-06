@@ -210,8 +210,8 @@ pub struct ColliderSlot {
 
 #[derive(Clone, Debug)]
 pub enum ColliderSlotShape {
-    Circle { radius: f64 },
-    CapsuleChain { radius: f64, slot: CapsuleChainSlot },
+    Circle { radius: DynNum },
+    CapsuleChain { radius: DynNum, slot: CapsuleChainSlot },
 }
 
 impl Dyn<ColliderData> {
@@ -219,22 +219,34 @@ impl Dyn<ColliderData> {
         Dyn { repr: ColliderDynRepr::Slot(slot) }
     }
 
-    pub fn collider_circle(layer: Rc<str>, radius: f64) -> DynCollider {
+    pub fn collider_circle(layer: Rc<str>, radius: DynNum) -> DynCollider {
         DynCollider::collider(ColliderSlot {
             layer,
             shape: ColliderSlotShape::Circle { radius },
         })
     }
 
+    pub fn collider_circle_const(layer: Rc<str>, radius: f64) -> DynCollider {
+        DynCollider::collider_circle(layer, DynNum::num(radius))
+    }
+
     pub fn collider_capsule_chain(
         layer: Rc<str>,
-        radius: f64,
+        radius: DynNum,
         slot: CapsuleChainSlot,
     ) -> DynCollider {
         DynCollider::collider(ColliderSlot {
             layer,
             shape: ColliderSlotShape::CapsuleChain { radius, slot },
         })
+    }
+
+    pub fn collider_capsule_chain_const(
+        layer: Rc<str>,
+        radius: f64,
+        slot: CapsuleChainSlot,
+    ) -> DynCollider {
+        DynCollider::collider_capsule_chain(layer, DynNum::num(radius), slot)
     }
 
     pub fn repr(&self) -> &ColliderDynRepr {
@@ -247,10 +259,10 @@ impl Dyn<ColliderData> {
         }
     }
 
-    pub fn capsule_chain(&self) -> Option<(&ColliderSlot, &CapsuleChainSlot, f64)> {
+    pub fn capsule_chain(&self) -> Option<(&ColliderSlot, &CapsuleChainSlot, &DynNum)> {
         let slot = self.slot();
         match &slot.shape {
-            ColliderSlotShape::CapsuleChain { radius, slot: shape } => Some((slot, shape, *radius)),
+            ColliderSlotShape::CapsuleChain { radius, slot: shape } => Some((slot, shape, radius)),
             ColliderSlotShape::Circle { .. } => None,
         }
     }

@@ -95,6 +95,12 @@ language.md.
   constant dyn. m"..." is only the numeric shorthand for one leaf; it does
   not make maps/arrays special by itself.
   ```
+  Ordinary structure types remain ordinary structure types: `List<T>`,
+  `List<Dyn<T>>`, and `Dyn<List<T>>` are distinct. A list literal is a
+  normal `List<T>` unless an expected `Dyn<List<T>>` context asks the
+  coercer to lift the whole structure. The same source value can therefore
+  flow through ordinary code as a structure and only be schema-checked/lifted
+  when a typed boundary such as `spawn` expects `Dyn<[Collider]>`.
   Any typed dyn field follows this same handler, so projector-specific dyn
   constructors should not be necessary. If `Dyn<Collider>` is expected, both
   `{:layer :hostile :shape [:circle {:radius 0.08}]}` and
@@ -256,6 +262,12 @@ language.md.
       `:polyline` specs. This is intentionally only the static-data bridge:
       structural `Dyn<T>` coercion should replace parser-specific dynamic
       field handling before low-level spawn becomes the final public form.
+  2s. ~~Prototype structural dyn coercion for ordinary maps/vectors at the
+      spawn boundary.~~ Done; dynamic numeric leaves inside precomputed
+      collider structures now survive until `spawn` validates the expected
+      collider/render schema. Current implementation covers static structure
+      shape plus dyn numeric leaves; whole-list/whole-shape dynamic
+      expressions still need typed conditional/function lowering.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

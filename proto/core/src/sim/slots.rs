@@ -100,7 +100,7 @@ pub fn eval_collider_slot(
     match slot.repr() {
         ColliderDynRepr::Slot(projection) => match &projection.shape {
             ColliderSlotShape::Circle { radius } => {
-                let radius = *radius;
+                let radius = eval_dyn(radius, tau, &b.state, sig).unwrap_or(0.0);
                 match b.dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
                         let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
@@ -126,7 +126,7 @@ pub fn eval_collider_slot(
                 }
             }
             ColliderSlotShape::CapsuleChain { radius, slot: curve_slot } => {
-                let radius = *radius;
+                let radius = eval_dyn(radius, tau, &b.state, sig).unwrap_or(0.0);
                 if tau < curve_slot.activity.warn {
                     return ColliderData::None;
                 }
