@@ -111,6 +111,7 @@ function updateSourceHighlight() {
     els.source.value,
     delimiterMarks(els.source.value, els.source.selectionStart),
   );
+  syncSourceHighlightScroll();
 }
 
 function updateEvalHighlight() {
@@ -118,10 +119,13 @@ function updateEvalHighlight() {
     els.evalCode.value,
     delimiterMarks(els.evalCode.value, els.evalCode.selectionStart),
   );
+  syncEvalHighlightScroll();
 }
 
 function syncHighlightScroll(textarea, code) {
   const pre = code.parentElement;
+  pre.style.width = `${textarea.clientWidth}px`;
+  pre.style.height = `${textarea.clientHeight}px`;
   pre.scrollTop = textarea.scrollTop;
   pre.scrollLeft = textarea.scrollLeft;
 }
