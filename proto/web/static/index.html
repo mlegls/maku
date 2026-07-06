@@ -163,6 +163,8 @@
     white-space: nowrap;
   }
   #source {
+    position: relative;
+    z-index: 1;
     flex: 1;
     width: 100%;
     min-height: 240px;
@@ -175,6 +177,49 @@
     color: #e7e9f1;
     tab-size: 2;
   }
+  .source-editor {
+    position: relative;
+    flex: 1;
+    min-height: 240px;
+    border-bottom: 1px solid var(--line);
+    background: #101219;
+    overflow: hidden;
+  }
+  .source-editor #source {
+    height: 100%;
+    min-height: 0;
+    border-bottom: 0;
+    background: transparent;
+    color: transparent;
+    caret-color: #e7e9f1;
+    resize: none;
+  }
+  .source-editor #source::selection {
+    background: rgba(120, 214, 198, 0.22);
+  }
+  .source-highlight {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 12px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    color: #d9deeb;
+    tab-size: 2;
+  }
+  .source-highlight code {
+    font: inherit;
+  }
+  .tok-comment { color: #6f778a; }
+  .tok-string { color: #c3df8c; }
+  .tok-keyword { color: #f2b56b; }
+  .tok-channel { color: #83d7ff; }
+  .tok-number { color: #b99cff; }
+  .tok-delim { color: #aeb6c8; }
+  .tok-form { color: #78d6c6; }
+  .tok-symbol { color: #e7e9f1; }
   .eval {
     padding: 12px;
     display: flex;
@@ -385,7 +430,10 @@
         <button id="reset-source">Reset</button>
       </div>
     </div>
-    <textarea id="source" spellcheck="false"></textarea>
+    <div class="source-editor">
+      <pre id="source-highlight" class="source-highlight" aria-hidden="true"><code></code></pre>
+      <textarea id="source" spellcheck="false"></textarea>
+    </div>
     <div class="eval">
       <div class="panel-title">Eval</div>
       <textarea id="eval-code" spellcheck="false">(spawn ((rot m"20*t")
