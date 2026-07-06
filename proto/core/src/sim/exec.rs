@@ -365,6 +365,7 @@ fn run_action(
         | ActionV::Cull { .. }
         | ActionV::CullHostile
         | ActionV::Export { .. }
+        | ActionV::BindChannel { .. }
         | ActionV::Remat { .. }
         | ActionV::SetCol { .. }
         | ActionV::SetStyle { .. }

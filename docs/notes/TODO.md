@@ -54,7 +54,7 @@ language.md.
 ## Standard library (cards/lib/, compile-time embedded)
 - Shipped: `prelude` (AUTOIMPORTED, sentinel-deduped: `when`/`unless`),
   `touhou` (spawn templates, variadic metas; spawn-boss = enemy + phase
-  machine owning the boss conventions — $boss-hp exposure, registration
+  machine owning the boss conventions — structured boss channel binding, registration
   wait, bound `boss`; `phases` as a macro over `states` with {:hp n}
   gates; invuln; $enemies/$nearest-enemy as defchannels) and
   `player-rig`. Authored as files, inlined via include_str — every host

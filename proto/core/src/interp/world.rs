@@ -186,7 +186,7 @@ pub struct World {
     pub rng: u64,
     pub boss: Pose,
     pub boss_anim: Option<BossAnim>,
-    /// Column-expose rules from spawn meta :expose {:col :channel}:
+    /// Column-expose rules from spawn meta :expose {$channel :col}:
     /// channel := that entity's column while alive, else 0. Registered at
     /// spawn, persists past the entity (death reads as 0, so hp gates fire).
     pub exposes: Vec<(Rc<str>, u64, Rc<str>)>,

@@ -47,16 +47,22 @@ habits from the start:
 toward it at spawn time (`ex3-aimed`) — aimed fire is a frame
 operation, not a special bullet type.
 
-## Publishing: expose and export
+## Publishing: defchannel, bind-channel!, expose, and export
 
-The boundary runs both ways. A card publishes state two ways:
+The boundary runs both ways. A card publishes state with declared
+channels and runtime producers:
 
-**`:expose`** maps an entity's *column* to a channel — the value tracks
-the live entity, and reads 0 once it dies (`ex4-expose`):
+**`(defchannel $name default)`** declares a public derived channel and
+its fallback/default value. Runtime code can then produce that channel.
+**`:expose`** is the short form for the common entity-column case: it
+maps a public channel to an entity *column*. The value tracks the live
+entity, and reads 0 once it dies (`ex4-expose`):
 
 ```clojure
+(defchannel $dummy-hp 0)
+
 (spawn-enemy ((pose c[0 2.5]) (still)) { :hp 20
-        :expose {:hp $dummy-hp}
+        :expose {$dummy-hp :hp}
         :style {:family :lstar :color :green}
         :scale 1.5})
 ```
@@ -71,8 +77,13 @@ and other patterns react to it —
   (spawn-bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))
 ```
 
-**`(export cell)`** publishes card-level state that isn't any entity's
-column (`ex5-export`):
+For richer state, **`(bind-channel! $name expr)`** registers an
+instance-scoped derived channel. The expression can close over local
+handles and cells, so a boss can publish a map like `{:hp … :phase …}`
+without mutating fields in a shared structure.
+
+**`(export cell)`** publishes a card-level cell by its own name
+(`ex5-export`):
 
 ```clojure
 (defvar volleys 0)

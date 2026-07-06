@@ -88,7 +88,7 @@ decode notes.
 | difficulty enum + reload keys (T/Y/U/I) | the host injects `$rank`; the sandbox binds T/Y/U/I |
 | `target(ang, Lplayer)` | `((aim $player) …)` — a frame operation |
 | `Lplayer` / engine-privileged player | the player is card content: an entity with `:pilot`, deriving `$player` |
-| exposing boss state to UI | `:expose {:col $chan}` on the entity; `(export cell)` for card state |
+| exposing boss state to UI | `(defchannel $boss {...})` plus `(bind-channel! $boss expr)` for structured state; `:expose {$chan :col}` is sugar for a single numeric column |
 
 ## Design philosophy (Tutorial 6)
 
@@ -113,8 +113,8 @@ needs no tutorial port.
 | DMK | here |
 |---|---|
 | `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — a `(import "touhou")` macro over the `states` FSM primitive |
-| the boss BEH entity | `(spawn-boss dyn meta machine…)` — library macro: an *enemy with a phase machine*. It owns the boss conventions: publishes hp as `$boss-hp`, holds the machine until the boss registers, binds `boss` for the machine body; hp/hurtbox/triggers are ordinary meta |
-| `hp(4000)` phase property | `{:hp n}` — desugars to `(until (<= $boss-hp n) body)`, reading the channel `spawn-boss` publishes; `{:until pred}` is the general gate |
+| the boss BEH entity | `(spawn-boss $boss dyn meta machine…)` — library macro: an *enemy with a phase machine*. It owns the boss conventions: binds a map-valued `$boss` channel, holds the machine until the boss registers, binds `boss`/`boss-main` for the machine body; hp/hurtbox/triggers are ordinary meta |
+| `hp(4000)` phase property | `{:hp n}` — desugars to `(until (<= (hp-of boss-main) n) body)`, reading the local boss handle; `{:until pred}` is the general gate |
 | phase timeout `phase X {…}` | `{:timeout X}` — desugars to `(fork (seq (wait X) (goto)))`; bare goto = exit to successor |
 | `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to a `(move …)` at the body head; the card knows its boss |
 | `type(spell, "Name")` | card data: an exported cell written at state heads (or a card-level template macro) |
@@ -124,7 +124,7 @@ needs no tutorial port.
 | end-of-phase item drops / cleanup | the clause's `finally` block — runs on every exit path |
 | `vulnerable(false)` phase property | `(invuln boss dur)` in the previous phase's `finally` — a column both resolve paths honor |
 | player invulnerability after death | automatic `iframe-until`; window duration = the `:iframes` column |
-| boss HP bar / phase name on the HUD | `:expose {:hp $boss-hp}` on the boss entity; the machine exports `$phase` |
+| boss HP bar / phase name on the HUD | `spawn-boss` binds a structured boss channel such as `$mima`; richer phase metadata is card-level state over `bind-channel!` |
 
 ## Firing index and empty-guided fires (Tutorial 8)
 
@@ -191,6 +191,63 @@ it ever feels heavy, is lib code. The one engine change the audit
 forced was a bugfix, not a feature: `(live …)` reads now count as
 time-dependence, so wall-clock-driven closed signals defer instead of
 silently constant-folding at spawn.
+
+## Boss configuration (Tutorial 10 / `tbosses`)
+
+DMK's `tbosses` is mostly a Unity host tutorial: `BossConfig` and
+`BossColorScheme` ScriptableObjects, sidebar portraits, spell stars,
+cutins, background transitions, practice-selector registration, bottom
+trackers, and localization strings. Those are not core-language
+features here. The core publishes structured state; a host decides how
+to render it.
+
+| DMK | here |
+|---|---|
+| `boss("key")` pattern property | host/content metadata associated with the card or encounter; the core card publishes whatever state the host needs |
+| `BossConfig.Key` / `GameUniqueReferences` registration | host asset registry / practice menu data, outside the sim core |
+| boss names, replay names, tracker names, localization base keys | host metadata; cards may publish current phase/card ids, but text lookup is a host/content concern |
+| `BossColorScheme` | host theme data; renderable entities still carry structured style records and signal tags (`:hue`, `:opacity`, etc.) |
+| boss portraits, sidebars, hexagram overlays, spell-circle effects | host/UI/render-layer effects driven by boss channel state |
+| default nonspell/spell backgrounds and transitions | host scene/background policy, usually keyed from published phase type |
+| spell cutins and boss cutins | host timeline effects; card code can emit events such as `(event :spell)` or publish `{:type :spell}` |
+| secondary HP display / bottom tracker / spell stars | host reads a map-valued boss channel such as `$mima` from `(spawn-boss $mima dyn meta …)` |
+| `phaset` special timer | explicit phase-local state: use bullet-local `t`, or capture an epoch from `$tick` when a whole phase needs a shared clock |
+| `type(non/spell, "Name")` as phase config | card-level phase metadata, commonly folded into a structured boss channel with `bind-channel!` |
+
+The key design difference is direction of ownership. DMK uses a boss key
+to pull a large bundle of Unity assets into the script. Here, the script
+publishes a small, typed surface and the host chooses presentation:
+
+```clojure
+(defchannel $mima {:hp 0 :phase :none})
+
+(spawn-boss $mima (live $boss) {:hp 100 ...}
+  (phases
+    (:nonspell {:hp 60} ...)
+    (:spell2 {:hp 0} ...)))
+```
+
+`spawn-boss` binds `$mima` as structured boss state and `phases` gates on
+the local `boss-main` handle, not a global hp channel. If a game wants
+phase names, spell indices, capture timers, or active-boss ids, those are
+ordinary cells/events folded into the same map with `bind-channel!` or a
+small boss-template macro.
+
+Multiple bosses follow from the same rule. The sim can spawn any number
+of enemies and boss-like phase machines; the host still needs a policy
+for which one is "the UI boss". DMK's legal multi-boss cases map as:
+
+| DMK multi-boss case | here |
+|---|---|
+| one main boss plus invincible supports | spawn support entities without hurt colliders or death triggers; publish only the main boss channel |
+| subbosses sharing one health pool via `diverthp` | expose/bind one shared hp value, or have shot contact write one designated entity's hp |
+| subbosses with separate hp pools | supported at the sim level by separate entities/channels; host UI decides whether and how to display multiple bars |
+| changing which boss drives UI by phase index | publish an active boss id/channel in phase code; host follows that value |
+
+There is no standalone tutorial port for `tbosses`: the engine-facing
+mechanics are already covered by Tutorial 6 (`spawn-boss`, `phases`,
+channels), and the remaining material belongs in the first concrete host
+integration guide.
 
 ## Model-level notes
 

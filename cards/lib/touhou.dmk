@@ -45,28 +45,33 @@
            :triggers [{:col :hp :leq 0 :event :died :cull true}]}
           ~@metas))
 
+;; a col read that defaults when the column is absent
+(defn col-or [x d] (if (nothing? x) d x))
+(defn hp-of [b] (col-or (:hp b) 0))
+
 ;; boss: an enemy WITH A PHASE MACHINE — that is the whole difference.
 ;; The macro owns the boss conventions, so every touhou boss gets them
 ;; without writing them out:
-;;   - hp published as $boss-hp (:expose is defaulted; override to rename)
-;;   - the machine starts only once the boss is REGISTERED (its exposure
-;;     is live: $boss-hp > 0) — no hand-written wait-for at call sites
-;;   - `boss` (the spawn's handle array) is bound for the machine body
+;;   - one public map-valued channel is bound for host/UI state
+;;   - the machine starts only once the boss is REGISTERED
+;;   - `boss` (the spawn's handle array) and `boss-main` (its first handle)
+;;     are bound for the machine body
 ;; Meta supplies :hp/:hitbox/:triggers/:style as usual. Gate phases with
-;; {:hp n} (below), which reads the same $boss-hp this macro publishes.
-(defmacro spawn-boss [dyn meta & machine]
-  `(let [boss (spawn-enemy ~dyn {:expose {:hp $boss-hp}} ~meta)]
-     (seq (wait-for (> $boss-hp 0))
-          ~@machine)))
+;; {:hp n} (below), which reads boss-main's local hp.
+(defmacro spawn-boss [chan dyn meta & machine]
+  `(let [boss (spawn-enemy ~dyn ~meta)]
+     (let [boss-main (nth boss 0)]
+       (seq
+         (bind-channel! ~chan {:hp (hp-of boss-main)
+                               :pos (:pos boss-main)})
+         (wait-for (> (hp-of boss-main) 0))
+         ~@machine))))
 
 ;; ---------------------------------------------------------------------
 ;; Contacts are card code. The engine now detects overlaps between opaque
 ;; layer tags and evaluates two data prefilters (:once and :skip-if); it
 ;; does not know what damage, graze, shots, hurtboxes, or mercy windows are.
 ;; These Touhou rules sit next to the spawn templates that create the tags.
-
-;; a col read that defaults when the column is absent
-(defn col-or [x d] (if (nothing? x) d x))
 
 ;; player hit: bullets pass through during the mercy window (:skip-if is the
 ;; engine-evaluated prefilter — same-tick double hits suppress themselves);
@@ -113,7 +118,7 @@
 ;; (phases (:label opts? body… (finally …)?) …) — the boss-shaped layer
 ;; over the bare `states` FSM, defined HERE because what a "phase" means
 ;; is genre policy. Clause opts desugar to state-body code:
-;;   :hp n      → :until (<= $boss-hp n)          [the health-bar gate]
+;;   :hp n      → :until (<= (hp-of boss-main) n) [the health-bar gate]
 ;;   :until p   → body becomes (until p body…)    [the gate race]
 ;;   :timeout d → (fork (seq (wait d) (goto)))    [timer arms on arrival]
 ;;   :root pos  → (move 0.9 :out-sine pos)        [reposition the boss
@@ -126,7 +131,7 @@
 ;; gate predicate from a clause's opts map form (nothing when ungated)
 (defn phase-gate* [opts]
   (let [hp (get opts :hp)]
-    (if (nothing? hp) (get opts :until) `(<= $boss-hp ~hp))))
+    (if (nothing? hp) (get opts :until) `(<= (hp-of boss-main) ~hp))))
 
 ;; one clause's already-split pieces → a `states` clause
 (defn phase-emit* [label opts body fin]

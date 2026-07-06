@@ -7,6 +7,8 @@
 ;; 1. difficulty is a channel: $rank scales density multiplicatively.
 ;; Press T/Y/U/I and rerun — more bullets, faster volleys.
 (import "touhou")
+
+(defchannel $dummy-hp 0)
 (defpattern ex1-rank-density []
   (for [vol inf :every (/ 2.5 $rank)]
     (spawn-bullet (circle (* 24 $rank) (linear p[1.8 0])) {:style {:family :circle :color :red :variant :w}})))
@@ -26,14 +28,14 @@
   (for [vol inf :every 1]
     (spawn-bullet ((aim $player) (fan 5 8 (linear p[2.5 0]))) {:style {:family :arrow :color :purple :variant :w}})))
 
-;; 4. cards PUBLISH channels: :expose maps a column to a channel name.
+;; 4. cards PUBLISH channels: :expose maps a channel name to a column.
 ;; The dummy's hp drives both the host HUD and other patterns — here a
 ;; victory ring fires when $dummy-hp runs out. Shoot the dummy (the rig
 ;; fires with the mouse in the sandbox; hold near it).
 (defpattern ex4-expose []
   (par
     (spawn-enemy ((pose c[0 2.5]) (still)) { :hp 20
-            :expose {:hp $dummy-hp}
+            :expose {$dummy-hp :hp}
             :style {:family :lstar :color :green}
             :scale 1.5})
     (seq

@@ -85,6 +85,8 @@ impl Clone for Sim {
             Rc::new(std::cell::RefCell::new(self.ctx.sig.cells.borrow().clone()));
         ctx.sig.exports =
             Rc::new(std::cell::RefCell::new(self.ctx.sig.exports.borrow().clone()));
+        ctx.sig.bound_channels =
+            Rc::new(std::cell::RefCell::new(self.ctx.sig.bound_channels.borrow().clone()));
         Sim {
             world: self.world.clone(),
             tasks: self.tasks.clone(),

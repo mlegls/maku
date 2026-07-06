@@ -86,9 +86,20 @@ impl Sim {
         }
         // boss anchor (the move-action target — engine state, not an entity)
         ch.insert("boss".into(), Val::Vec2 { x: self.world.boss.x, y: self.world.boss.y });
+        // (defchannel $name expr) — card-defined derived channel defaults:
+        // evaluated in definition order, before runtime producers.
+        let rules = self.card_channels.clone();
+        for (name, form) in rules.iter() {
+            self.ctx.sig.channels = Rc::new(ch.clone());
+            let v = evaluate(form, &Env::empty(), &mut self.ctx, &mut self.world)
+                .map_err(|e| format!("defchannel ${}: {}", name, e))?;
+            if !matches!(v, Val::Nothing) {
+                ch.insert(name.to_string(), v);
+            }
+        }
         // :expose rules — entity columns published as channels; a dead or
         // absent entity reads 0, so hp gates fire (cards declare these:
-        // {:expose {:hp :boss-hp}})
+        // {:expose {$some-hp :hp}})
         for (chan, id, col) in &self.world.exposes {
             let v = self
                 .world
@@ -105,16 +116,12 @@ impl Sim {
                 ch.insert(name.clone(), v.clone());
             }
         }
-        // (defchannel $name expr) — card-defined derived channels, LAST:
-        // evaluated in definition order, each seeing the engine channels
-        // and its predecessors. A nothing result leaves the channel
-        // untouched (so host mocks survive as fallbacks); errors surface
-        // — a broken defchannel should fail the tick, not vanish.
-        let rules = self.card_channels.clone();
-        for (name, form) in rules.iter() {
+        // (bind-channel! $name expr) — instance-scoped derived channels.
+        let bound = self.ctx.sig.bound_channels.borrow().clone();
+        for (name, form, env) in bound.iter() {
             self.ctx.sig.channels = Rc::new(ch.clone());
-            let v = evaluate(form, &Env::empty(), &mut self.ctx, &mut self.world)
-                .map_err(|e| format!("defchannel ${}: {}", name, e))?;
+            let v = evaluate(form, env, &mut self.ctx, &mut self.world)
+                .map_err(|e| format!("bind-channel ${}: {}", name, e))?;
             if !matches!(v, Val::Nothing) {
                 ch.insert(name.to_string(), v);
             }

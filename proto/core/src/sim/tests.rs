@@ -187,7 +187,7 @@
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
           :cols {:lives 3 :graze 0 :hits 0}
-          :expose {:graze $graze :hits $hits}
+          :expose {$graze :graze $hits :hits}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 (defpattern atk []
   (par (rig)
@@ -219,7 +219,7 @@
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
           :cols {:graze 0 :hits 0}
-          :expose {:graze $graze :hits $hits}}))
+          :expose {$graze :graze $hits :hits}}))
 (defpattern g []
   (par (rig) (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
 "#;
@@ -349,7 +349,7 @@
         sess.rig = Some(
             "(defpattern rig [] (spawn (live $player) {:team :player-body \
              :colliders [{:layer :player-hurt :r 0.06}] \
-             :cols {:graze 0 :hits 0} :expose {:graze $graze :hits $hits}}))"
+             :cols {:graze 0 :hits 0} :expose {$graze :graze $hits :hits}}))"
                 .into(),
         );
         sess.last_inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -380,7 +380,7 @@
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
           :cols {:lives 2 :graze 0 :hits 0}
-          :expose {:graze $graze :hits $hits}
+          :expose {$graze :graze $hits :hits}
           :triggers [{:col :lives :leq 0 :event :game-over}]}))
 (defpattern atk []
   (par (rig)
@@ -465,7 +465,7 @@
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
           :cols {:graze 0 :hits 0}
-          :expose {:graze $graze :hits $hits}}))
+          :expose {$graze :graze $hits :hits}}))
 (defpattern beam []
   (par (rig) (spawn-bullet ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})) {})))
 "#;
@@ -591,7 +591,7 @@
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
           :cols {:graze 0 :hits 0}
-          :expose {:graze $graze :hits $hits}}))
+          :expose {$graze :graze $hits :hits}}))
 (defpattern beam []
   (par (rig)
        (spawn-bullet ((pose c[-2 0])
@@ -984,12 +984,13 @@
     fn expose_and_export() {
         const CARD: &str = r#"
 (import "touhou")
+(defchannel $target-hp 0)
 (defpattern e []
   (seq
     (defvar phase 1)
     (export phase)
     (spawn-enemy (pose c[0 2])
-           {:hp 2 :hitbox 0.3 :expose {:hp $target-hp}})
+           {:hp 2 :hitbox 0.3 :expose {$target-hp :hp}})
     (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
     (wait-for (<= $target-hp 1))
     (set! phase 2)
@@ -1291,7 +1292,7 @@
   (spawn (live $player)
          {:team :player-body :colliders [{:layer :player-hurt :r 0.06}]
           :cols {:graze 0 :hits 0}
-          :expose {:graze $graze :hits $hits}}))
+          :expose {$graze :graze $hits :hits}}))
 (defpattern scaled [s 1]
   (par (rig)
        (spawn ((pose c[0.5 0]) (still))
@@ -1736,15 +1737,16 @@ fn prelude_when_unless() {
     assert_eq!(sim.world.bullets.len(), 2, "even iterations only");
 }
 
-/// spawn-boss owns the boss conventions: hp exposed as $boss-hp, the
-/// machine held until the boss registers, `boss` bound for the body,
-/// and phases' {:hp n} gate reading the same channel.
+/// spawn-boss owns the boss conventions: map-valued boss state is bound
+/// for the host, the machine is held until the boss registers, `boss` is
+/// bound for the body, and phases' {:hp n} gate reads local boss hp.
 #[test]
 fn spawn_boss_owns_conventions() {
     const CARD: &str = r#"
 (import "touhou")
+(defchannel $m {:hp 0})
 (defpattern m []
-  (spawn-boss (pose c[0 2])
+  (spawn-boss $m (pose c[0 2])
               {:hp 3 :hitbox 0.4 :style {:family :lstar}}
     (phases
       (:one {:hp 1} (seq (event :phase-one) (wait 99))
@@ -1758,8 +1760,12 @@ fn spawn_boss_owns_conventions() {
     let has = |sim: &Sim, n: &str| {
         sim.world.log.borrow().entries.iter().any(|e| &*e.name == n)
     };
-    assert!(has(&sim, "phase-one"), "machine started once $boss-hp registered");
+    assert!(has(&sim, "phase-one"), "machine started once local boss hp registered");
     assert!(!has(&sim, "phase-two"), "hp gate holds while hp > 1");
+    assert!(
+        matches!(sim.channel_val("m"), Some(Val::Map(kvs)) if matches!(map_get(&Val::Map(kvs.clone()), "hp"), Some(Val::Num(n)) if n == 3.0)),
+        "public boss channel is a map with hp"
+    );
     // knock hp down: the exposure publishes, the gate releases
     sim.world.bullets[0].col_set(&"hp".into(), 1.0);
     for _ in 0..4 {
@@ -1767,6 +1773,40 @@ fn spawn_boss_owns_conventions() {
     }
     assert!(has(&sim, "one-out"), "finally ran at the phase edge");
     assert!(has(&sim, "phase-two"), "hp gate released into the next phase");
+}
+
+/// (bind-channel! $name expr): instance-scoped derived channels can close
+/// over handles and cells, overriding a top-level defchannel default.
+#[test]
+fn bind_channel_closes_over_handles_and_cells() {
+    const CARD: &str = r#"
+(import "touhou")
+(defchannel $dummy {:hp 0 :phase :none})
+(defpattern p []
+  (seq
+    (defvar phase :warmup)
+    (let [e (spawn-enemy (pose c[0 2]) {:hp 5})]
+      (let [b (nth e 0)]
+        (bind-channel! $dummy {:hp (:hp b) :phase phase})
+        (wait (ticks 2))
+        (set! phase :main)
+        (set-col b :hp 2)))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    assert!(
+        matches!(sim.channel_val("dummy"), Some(Val::Map(kvs)) if
+            matches!(map_get(&Val::Map(kvs.clone()), "hp"), Some(Val::Num(n)) if n == 5.0) &&
+            matches!(map_get(&Val::Map(kvs.clone()), "phase"), Some(Val::Kw(k)) if &*k == "warmup"))
+    );
+    for _ in 0..4 {
+        sim.step().unwrap();
+    }
+    assert!(
+        matches!(sim.channel_val("dummy"), Some(Val::Map(kvs)) if
+            matches!(map_get(&Val::Map(kvs.clone()), "hp"), Some(Val::Num(n)) if n == 2.0) &&
+            matches!(map_get(&Val::Map(kvs.clone()), "phase"), Some(Val::Kw(k)) if &*k == "main"))
+    );
 }
 
 /// (defchannel $name expr): card-defined derived channels, recomputed

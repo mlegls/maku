@@ -84,7 +84,7 @@ options over `states` (`ex4-phases`):
 
 | option | desugars to |
 |---|---|
-| `{:hp n}` | `(until (<= $boss-hp n) body)` — the health-bar gate |
+| `{:hp n}` | `(until (<= (hp-of boss-main) n) body)` — the local health-bar gate inside `spawn-boss` |
 | `{:until pred}` | the same race with any predicate |
 | `{:timeout d}` | `(fork (seq (wait d) (goto)))` |
 | `{:root pos}` | `(move 0.9 :out-sine pos)` at the body head |
@@ -102,9 +102,11 @@ A boss is an *enemy with a phase machine* — that is the entire
 difference. `spawn-boss` owns the conventions (`ex5-boss`):
 
 ```clojure
+(defchannel $tutorial-boss {:hp 0})
+
 (seq
   (move 0.9 :out-sine c[0 2.6])
-  (spawn-boss (live $boss)
+  (spawn-boss $tutorial-boss (live $boss)
               {:hp 40 :hitbox 0.45 :style {:family :lstar :color :purple} :scale 2}
     (phases
       (:opening {:timeout 2 :root c[0 2.2]}
@@ -119,16 +121,18 @@ difference. `spawn-boss` owns the conventions (`ex5-boss`):
           (spawn-bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) …))))))
 ```
 
-What the macro does for you: publishes the boss's hp as `$boss-hp` (the
-channel the `{:hp n}` gates read), holds the machine until the boss has
-actually registered, and binds `boss` (the spawn's handles) for the
-machine body. What it *doesn't* do is policy. Look at the `finally`
+What the macro does for you: binds `$tutorial-boss` as a map-valued
+host channel (`{:hp … :pos …}`), holds the machine until the boss has
+actually registered, and binds `boss` (the spawn's handles) plus
+`boss-main` (the first handle) for the machine body. The `{:hp n}` gates
+read that local handle, so multiple bosses do not fight over a global hp
+channel. What it *doesn't* do is policy. Look at the `finally`
 block: clearing the field at a phase break and granting a mercy window
 are one `cull` and one `invuln` — card code, stated where it happens.
 There is no phase *type*; a phase is characterized by which gate and
 which cleanup you wrote. That keeps the genre conventions in reach of
-the card: a capture bonus is a `wait`-vs-`$boss-hp` race (did the
-health bar empty before the timer?) with an item drop in the winning
+the card: a capture bonus is a `wait`-vs-`(hp-of boss-main)` race (did
+the health bar empty before the timer?) with an item drop in the winning
 branch — three lines, next to the phase they judge.
 
 Two structural notes:

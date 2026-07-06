@@ -5,6 +5,8 @@
 
 (import "touhou")
 
+(defchannel $tutorial-boss {:hp 0})
+
 ;; 1. the FSM primitive: (states (:label body…) …). A state ends by goto
 ;; or by its body completing; work forked inside a state dies when the
 ;; state exits. The "timeout" here is nothing special — a forked timer
@@ -66,15 +68,15 @@
         (spawn-bullet ((rot m"9*i") (circle 14 (linear p[1.8 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})))))
 
 ;; 5. the full stack: spawn-boss = an enemy WITH a phase machine. The
-;; macro publishes hp as $boss-hp, holds the machine until the boss
-;; registers, and binds `boss`. {:hp 0} gates the last phase on the
+;; macro binds $tutorial-boss as a map-valued host channel, holds the
+;; machine until the boss registers, and binds `boss`. {:hp 0} gates the last phase on the
 ;; health bar; the phase edge (field clear + mercy window) is the first
 ;; clause's finally — card policy, not engine behavior. Shoot the boss
 ;; down (in the sandbox the rig fires with the mouse).
 (defpattern ex5-boss []
   (seq
     (move 0.9 :out-sine c[0 2.6])
-    (spawn-boss (live $boss)
+    (spawn-boss $tutorial-boss (live $boss)
                 {:hp 40 :hitbox 0.45
                  :style {:family :lstar :color :purple}
                  :scale 2}

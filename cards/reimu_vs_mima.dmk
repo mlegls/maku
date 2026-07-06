@@ -11,16 +11,17 @@
 ;;   boss phases: (phases ...) — touhou's boss-shaped sugar over the
 ;;   `states` FSM — non-spell while hp > 60, then Spell 2 (imported
 ;;   ph_boss2_mima translation) until hp 0. Each clause's {:hp n} gate
-;;   desugars to (until (<= $boss-hp n) body): its cancellation kills the
+;;   desugars to a local boss-hp gate: its cancellation kills the
 ;;   phase's whole task subtree (turret forks, guide loops) the tick it
 ;;   holds, and the finally block is the phase-edge bookkeeping (field
-;;   clear, transition mercy window). spawn-boss publishes $boss-hp and
+;;   clear, transition mercy window). spawn-boss publishes $mima and
 ;;   holds the machine until the boss registers.
 ;;
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
 ;;   anchor); the player kit opts out with (in-frame :world ...).
 
 (import "touhou")
+(defchannel $mima {:hp 0})
 (defpattern reimu-vs-mima []
   (par (in-frame :world (reimu))
        (mima)))
@@ -52,7 +53,7 @@
 ;; amulets unfocused; tight forward needles focused (more dps, must aim)
 (defpattern free-fire []
   (for [i inf :every (ticks 8)]
-    (when (> $boss-hp 0)
+    (when (> (:hp $mima) 0)
       (when (< $focus-firing 0.5)
         (spawn-shot (in-frame $player
                  (vel p[10 (slew 60 90
@@ -87,16 +88,16 @@
 (defpattern mima []
   (seq
     (move 0.9 :out-sine c[0 2.6])
-    ;; spawn-boss owns the boss conventions: hp published as $boss-hp,
+    ;; spawn-boss owns the boss conventions: $mima bound for host state,
     ;; machine held until the boss registers, `boss` handles bound.
-    (spawn-boss (live $boss)
+    (spawn-boss $mima (live $boss)
                 {:hp 100 :hitbox 0.45
                   :triggers [{:col :hp :leq 60 :event :spell-break}
                              {:col :hp :leq 0 :event :died :cull true}]
                   :style {:family :lstar :color :purple}
                   :scale 2}
       (phases                            ; touhou's sugar over `states`:
-        (:nonspell {:hp 60}              ; ≡ (until (<= $boss-hp 60) …)
+        (:nonspell {:hp 60}              ; local hp gate
           (nonspell)
           (finally
             (event :spell)

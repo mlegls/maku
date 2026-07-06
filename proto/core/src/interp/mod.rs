@@ -190,6 +190,9 @@ pub enum ActionV {
     /// same name — the pattern-level export surface (host renders it; the
     /// pattern stays the single writer).
     Export { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str> },
+    /// (bind-channel! $name expr): publish an instance-scoped derived
+    /// channel. Unlike top-level defchannel, expr closes over this env.
+    BindChannel { name: Rc<str>, expr: Form, env: Env },
     /// Pattern invocation: args pre-evaluated in the CALLER's scope (ir
     /// values); params fill from defaults. The §10 embedding adapter:
     /// fresh_cells=true (the default — isolated defvar state per instance),
@@ -300,6 +303,8 @@ pub struct SigEnv {
     pub cells: Rc<std::cell::RefCell<HashMap<u64, (String, Val)>>>,
     /// Cells published as channels via (export cell): (public name, id).
     pub exports: Rc<std::cell::RefCell<Vec<(String, u64)>>>,
+    /// Instance-scoped derived channels registered by (bind-channel! ...).
+    pub bound_channels: Rc<std::cell::RefCell<Vec<(Rc<str>, Form, Env)>>>,
 }
 
 impl Default for SigEnv {
@@ -316,6 +321,7 @@ impl Default for SigEnv {
             channels: Rc::new(ch),
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
             exports: Rc::new(std::cell::RefCell::new(Vec::new())),
+            bound_channels: Rc::new(std::cell::RefCell::new(Vec::new())),
         }
     }
 }
@@ -1016,6 +1022,22 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let scope = cell_scope(env).ok_or("export: no cell scope")?;
                 return Ok(Val::Action(Rc::new(ActionV::Export { scope, name: name.clone() })));
             }
+            "bind-channel!" => {
+                let Some(Form::Sym(n)) = items.get(1) else {
+                    return Err("bind-channel!: expected a $channel name".into());
+                };
+                let Some(name) = n.strip_prefix('$') else {
+                    return Err("bind-channel!: name must start with $".into());
+                };
+                let Some(expr) = items.get(2) else {
+                    return Err(format!("bind-channel! ${}: expected an expression", name));
+                };
+                return Ok(Val::Action(Rc::new(ActionV::BindChannel {
+                    name: Rc::from(name),
+                    expr: expr.clone(),
+                    env: env.clone(),
+                })));
+            }
             "defvar" => {
                 let Some(Form::Sym(name)) = items.get(1) else {
                     return Err("defvar: expected name".into());
@@ -1535,6 +1557,16 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             // same-tick availability
             let v = ctx.sig.cells.borrow().get(&id).map(|(_, v)| v.clone());
             if let Some(v) = v {
+                let mut m = (*ctx.sig.channels).clone();
+                m.insert(name.to_string(), v);
+                ctx.sig.channels = Rc::new(m);
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::BindChannel { name, expr, env } => {
+            ctx.sig.bound_channels.borrow_mut().push((name.clone(), expr.clone(), env.clone()));
+            let v = evaluate(expr, env, ctx, world)?;
+            if !matches!(v, Val::Nothing) {
                 let mut m = (*ctx.sig.channels).clone();
                 m.insert(name.to_string(), v);
                 ctx.sig.channels = Rc::new(m);

@@ -9,7 +9,7 @@ use std::rc::Rc;
 /// spawn time (they reference slot-bound t).
 /// Meta tags whose values are NOT evaluated at spawn: signal-valued tags
 /// (contain t), and :expose (whose $names are channel DESIGNATORS, not
-/// reads — evaluated, $boss-hp would resolve as a channel read).
+/// reads — evaluated, $some-channel would resolve as a channel read).
 const SIGNAL_TAGS: &[&str] = &["hue", "scale", "facing", "opacity", "expose"];
 
 pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
@@ -21,13 +21,12 @@ pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
         for (k, v) in kvs.iter() {
             if matches!(k, Form::Kw(kw) if &**kw == "expose") {
                 if let Form::Map(pairs) = v {
-                    for (col, chan) in pairs.iter() {
-                        let Form::Kw(col) = col else { continue };
+                    for (chan, col) in pairs.iter() {
                         let chan: Option<Rc<str>> = match chan {
                             Form::Sym(s) if s.starts_with('$') => Some(s[1..].into()),
-                            Form::Kw(c) => Some(c.as_ref().into()),
                             _ => None,
                         };
+                        let Form::Kw(col) = col else { continue };
                         if let Some(chan) = chan {
                             out.push((col.as_ref().into(), chan));
                         }
@@ -163,10 +162,10 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         Some(Val::Num(n)) => Some(n),
         _ => None,
     };
-    // :expose {:hp $boss-hp}: publish this entity's column as a derived
+    // :expose {$some-hp :hp}: publish this entity's column as a derived
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
-    // the keys of (with {$rank 0.5} …) — not reads); :keywords accepted too.
+    // the keys of (with {$rank 0.5} …) — not reads).
     let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(metas);
     // collider set: archetype data, one Rc shared by every spawned element.
     // No genre defaults — an entity with no :colliders is inert to the

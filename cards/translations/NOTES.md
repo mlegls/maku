@@ -219,7 +219,7 @@ Everything the opts did is expressible as state-body code
 with two small generalizations of `goto`: labels are *values* (evaluated —
 `(goto (nth [:a :b] (rand-int 0 2)))` makes the machine a Markov chain) and
 bare `(goto)` exits to the default successor (state order). Then: the hp
-race is `(until (<= $boss-hp n) attack)` *as* the body (scope cancellation
+race is `(until (<= (hp-of boss-main) n) attack)` *as* the body (scope cancellation
 falls through), a timeout is `(fork (seq (wait d) (goto)))` (it can't name
 what comes next; bare goto is exactly that), `root` is `(move …)` at the
 body head — the card knows who its boss is, the machine doesn't — and
@@ -275,8 +275,8 @@ lives beside `spawn-bullet`/`spawn-shot`/`spawn-enemy` in lib/touhou.dmk.
 
 **`phases` is genre policy, so the lib defines it — and macros became
 able to.** Mima showed the spawn-boss boundary sitting wrong: the card
-was hand-writing `:expose {:hp $boss-hp}`, the registration wait, and
-`{:until (<= $boss-hp n)}` gates — pure boss *convention*, repeated at
+was hand-writing hp channel exposure, the registration wait, and
+`{:until (<= (hp-of boss-main) n)}` gates — pure boss *convention*, repeated at
 every boss. Two moves fixed it. First, macro-time power became real
 language surface: macro bodies were always full evaluations, so what
 was missing was only vocabulary — `& rest` params (macros and fns), the
@@ -285,10 +285,10 @@ over map forms, `form-type`/`form-name`, and evaluator-backed
 `map`/`filter`. With those, `phases` moved out of Rust entirely: a
 touhou.dmk macro walking its clause list with a helper defn and
 splicing `states` clauses. Second, `spawn-boss` now owns the boss
-conventions: it publishes hp as `$boss-hp` (a defaulted, overridable
-`:expose`), holds the machine until the boss registers, and binds
-`boss`; `phases` gained `{:hp n}` as the gate sugar reading that same
-channel. The engine keeps only the bare FSM (`states`/`goto`) — what a
+conventions: it binds a structured boss channel with `bind-channel!`,
+holds the machine until the boss registers, and binds `boss`/`boss-main`;
+`phases` gained `{:hp n}` as gate sugar reading that local handle.
+The engine keeps only the bare FSM (`states`/`goto`) — what a
 "phase" means is entirely the library's business. The prelude rode the
 same wave: `when`/`unless` are autoimported stdlib macros over `if`
 (nothing coerces to the no-op action), with the `;;@prelude` sentinel
