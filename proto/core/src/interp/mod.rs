@@ -133,7 +133,9 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
-    pub legacy: LegacyComponents,
+    pub colliders: Rc<[DynCollider]>,
+    pub renderers: Rc<[DynRender]>,
+    pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
 }
 
@@ -176,7 +178,8 @@ pub enum ActionV {
         cols: Vec<Vec<(Rc<str>, f64)>>,
         triggers: Rc<[TriggerRule]>,
         damage: Val,
-        colliders: Rc<[Collider]>,
+        colliders: Rc<[DynCollider]>,
+        renderers: Rc<[DynRender]>,
         expose: Rc<[(Rc<str>, Rc<str>)]>,
     },
     Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
@@ -254,7 +257,9 @@ pub enum FrameSpec {
 #[derive(Debug)]
 pub struct SpawnMade {
     pub dyn_figure: DynFigure,
-    pub legacy: LegacyComponents,
+    pub colliders: Rc<[DynCollider]>,
+    pub renderers: Rc<[DynRender]>,
+    pub cache_policy: EntityCachePolicy,
 }
 
 // ---------------------------------------------------------------------------
@@ -1257,7 +1262,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("kind".into()), Val::Kw(match &b.dyn_figure {
-            DynFigure::Pose(_) if b.legacy.trace.is_some() => "pather",
+            DynFigure::Pose(_) if b.cache_policy.trace.is_some() => "pather",
             DynFigure::Pose(_) => "point",
             DynFigure::Curve { .. } => "laser",
         }.into())),
@@ -1591,7 +1596,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, expose } => {
+        ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, renderers, expose } => {
             let mut handles = Vec::new();
             for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(sigs.iter()).enumerate() {
                 let dyn_figure = d.dyn_figure.framed(ctx.ambient);
@@ -1610,14 +1615,25 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     id,
                     team: team.clone(),
                     dyn_figure,
-                    legacy: d.legacy.clone(),
+                    cache_policy: d.cache_policy.clone(),
                     birth: world.tick,
                     style: s.clone(),
                     alive: true,
                     state: MotionState::new(),
                     scanned,
                     sigs: h.clone(),
-                    colliders: colliders.clone(),
+                    colliders: {
+                        let mut slots = Vec::with_capacity(colliders.len() + d.colliders.len());
+                        slots.extend(colliders.iter().cloned());
+                        slots.extend(d.colliders.iter().cloned());
+                        slots.into()
+                    },
+                    renderers: {
+                        let mut slots = Vec::with_capacity(renderers.len() + d.renderers.len());
+                        slots.extend(renderers.iter().cloned());
+                        slots.extend(d.renderers.iter().cloned());
+                        slots.into()
+                    },
                     cols: col_slots,
                     triggers: triggers.clone(),
                     damage: damage.clone(),

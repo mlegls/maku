@@ -35,53 +35,114 @@ language.md.
   ```text
   Figure = Pose | Polyline | ParametricCurve | Composite...
   Dyn<F> = t -> F
-  Entity = Dyn<Figure> * ColliderProjection(s) * RenderProjection(s) * Meta
+  Entity = Dyn<Figure> * Dyn<[Collider]> * Dyn<[Render]> * Meta
   ```
   A pose carries position plus orientation, which is why current point-like
   figures can drive facing and subfire semantics. Interpreter `DynNode`s are
   prototype-level `Dyn<Pose>` expressions, not the semantic `Pose` value; a
-  compiled core should store pose data compactly, e.g. `(x, y, ax, ay)`.
+  compiled core should store pose data compactly as `(x, y, theta)`. Unit
+  vectors can be cached by optimized backends when useful, but the semantic
+  pose representation is angular.
   The Rust prototype currently represents the first slice of `Dyn<Figure>` as
   `DynFigure`, which evaluates to the materialized `Figure` enum. Rename
   this toward Figure vocabulary once the projection split starts.
 
   The important layer boundary is:
   ```text
-  Figure:       abstract/math geometry evolving over time
-  Collider:     projection from a figure into hit tests
-  Presentation: projection from a figure into renderable records/meshes
-  Meta:         opaque library/host data
+  Figure:    abstract/math geometry evolving over time
+  Collider:  per-tick collision data derived from the figure
+  Render:    per-tick renderable records/meshes derived from the figure
+  Meta:      opaque library/host data
   ```
   The abstract figure should not be locked to one sampled/renderable form.
   A parametric curve may render as a sampled polyline today, a mesh tomorrow,
   and collide through a sampled capsule chain today or an analytic distance
   test later. Sampling is therefore not intrinsic to the figure; it belongs
-  to the collider/render projection or to an authoring helper that generates
+  to the collider/render dyn slot or to an authoring helper that generates
   a sampled figure.
 
-  Candidate figure and projection shapes:
+  Candidate figure/collider/render shapes:
   ```text
   Figure =
     Pose(Pose)
     Polyline(Rc<[Pose]>)
     ParametricCurve { eval: u -> Pose, domain: CurveDomain }
 
-  ColliderProjection =
-    Circle { radius }
-    CapsuleChain { source, samples, radius, active_mask? }
+  Collider =
+    None
+    Circle { layer, radius }
+    CapsuleChain { layer, points, radius }
     AnalyticCurveDistance { source, tolerance, radius } // later
 
-  RenderProjection =
-    Point { source }
-    Polyline { source, samples, stroke, active_mask? }
+  Render =
+    None
+    Point { pose/style }
+    Polyline { points, stroke/style }
     Mesh { source/cache/material } // later
 
   SampleSet = Values(Vec<u>) | RangeStep(min, max, step)
   ```
+  Semantically the collider and render sets are dynamic:
+  ```text
+  Entity = Dyn<Figure> * Dyn<[Collider]> * Dyn<[Render]> * Meta
+  ```
+  General dyn typing rule:
+  ```text
+  Dyn<T> accepts T, an expression with t in scope that returns T, or a
+  function f(t) -> T. m"..." is only the numeric shorthand for this.
+  ```
+  Any typed dyn field follows this rule, so projector-specific dyn
+  constructors should not be necessary. A collider slot can be `(if (< t 2)
+  [:none] [:capsule-chain ...])`; a radius can be `m"0.1 + 0.02*t"`.
+  For implementation and compilation, the common/static-arity case can lower
+  to stable slots:
+  ```text
+  Entity = Dyn<Figure> * Rc<[DynCollider]> * Rc<[DynRender]> * Meta
+  ```
+  A slot that disappears evaluates to `Collider::None` or `Render::None`.
+  This removes separate activity/mask concepts from the low-level model:
+  warning, fill, changing radius, and disappearing colliders are just the
+  collider/render dyn returning different per-tick data.
+
+  Low-level collider/render specs are spawn arguments, not generally
+  first-class functions. This keeps the primitive vocabulary small and lets
+  each slot know the spawned `Dyn<Figure>` type at each tick:
+  ```text
+  (spawn dyn
+    [[:collider :hostile-shot :capsule-chain
+      {:domain hot-domain :radius r}]]
+    [[:renderer :polyline
+      {:domain render-domain :stroke w}]]
+    meta)
+  ```
+  A slot's domain is applied to the current figure. For a parametric curve it
+  supplies `u` values/ranges; for a polyline it can be omitted (`:full`) or
+  used as an index/subrange selector. Higher-level constructors like Touhou
+  `laser` produce these spawn arguments; core does not need one builtin per
+  collider/render mode.
+
+  The second spawn argument is an array of collider specs. Empty array means
+  no colliders. Collision layer is universal collider metadata owned by core
+  as an opaque routing key:
+  ```text
+  Collider slot {
+    layer: Rc<str>,
+    shape: Circle | CapsuleChain | ...
+  }
+  ```
+  The third spawn argument is an array of render slot specs:
+  ```text
+  Render slot {
+    shape: Point | Polyline | Mesh...
+  }
+  ```
+  The current `colliders: Rc<[ColliderProjection]>` plus curve-specific
+  compatibility slots should collapse into `colliders: Rc<[DynCollider]>`
+  and `renderers: Rc<[DynRender]>`.
   Normalized curves are just `Range(0, 1)`. Higher-level helpers can turn
-  min/max/step descriptions into `Values`; callers/projections must provide
+  min/max/step descriptions into `Values`; callers/slots must provide
   sample sets compatible with the source domain when they use sampled
-  projections. Traces are derived figures over an entity's dyn history, not a
+  slots. Traces are derived figures over an entity's dyn history, not a
   separate primitive kind; retained samples are a cache/policy for integrated
   dyns. Facing is part of each pose sample; finite-difference facing is only
   a possible helper/default, not the core representation. Interpolation over
@@ -89,13 +150,12 @@ language.md.
   behavior.
 
   A filling laser should become a Touhou/library constructor that creates a
-  time-varying figure plus collider/render projections with active masks.
-  Warning render and hot collision are separate projections over the same
-  figure, not special curve semantics in core. Core exposes figures,
-  collider results/events, render projections or abstract render records, and
-  opaque indexed meta/fields; hosts decide how meta renders. Touhou names
-  like bullet/shot/enemy/boss/player/laser are library constructors over this
-  core.
+  time-varying figure plus collider/render slots. Warning render and hot
+  collision are separate dyn slots over the same figure, not special curve
+  semantics in core. Core exposes figures, collider results/events, render
+  data, and opaque indexed meta/fields; hosts decide how meta renders.
+  Touhou names like bullet/shot/enemy/boss/player/laser are library
+  constructors over this core.
 - Core vocabulary migration toward the "2D graphing + collision engine"
   boundary:
   1. ~~Rename runtime `Bullet`/`bullets` to `Entity`/`entities`, keeping
@@ -119,13 +179,28 @@ language.md.
       use dynamic integer-indexed sample domains, with interpolation reserved
       for an explicit higher-level helper.
   2b. ~~Collapse runtime `Entity` from separate pose motion plus static
-      geometry into one `DynFigure` value.~~ Done; compatibility lifecycle,
-      stroke, and trace policy still live in the legacy component bucket.
+      geometry into one `DynFigure` value.~~ Done.
   2c. ~~Move concrete curve sampling back out of `ParametricCurve`.~~ Done;
-      the current compatibility projection owns `SampleSet` and dynamic
+      the current compatibility slot owns `SampleSet` and dynamic
       `:u-max` while the abstract curve figure remains `eval + domain`.
-  3. Represent fill as a time-varying curve domain/mask rather than a
-     laser-only lifecycle shortcut.
+  2d. ~~Split curve compatibility data into collision/render slot
+      structs.~~ Done; sampling, activity, and width now belong to temporary
+      slot-shaped components. Trace policy is separate cache policy.
+  2e. ~~Move projection/cache fields out of the generic legacy bucket.~~ Done;
+      entities now carry dyn collider/render slots plus `EntityCachePolicy`.
+  2f. ~~Make layer universal collider metadata.~~ Done for existing point
+      colliders: `ColliderProjection { layer, shape: Circle { radius } }`.
+      Curve capsule-chain collision is still represented by the temporary
+      curve slot and should be folded into dyn collider slots.
+  2g. Target update: collider/render slots should become stable dyn
+      slots (`Rc<[DynCollider]>`, `Rc<[DynRender]>`) that evaluate to
+      `None` when inactive, rather than static slots plus activity masks.
+  2h. ~~Introduce internal dyn collider/render slots.~~ Done for the current
+      compatibility bridge: circle colliders are `DynCollider::Const`,
+      curve capsule compatibility is `DynCollider::CurveCompat`, and curve
+      rendering is `DynRender::CurveCompat`.
+  3. Represent fill as dyn collider/render slots returning different data
+     over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with
      any retained samples treated as cache/policy rather than geometry.
   5. Move render tags into ordinary signal-valued meta/fields; collider

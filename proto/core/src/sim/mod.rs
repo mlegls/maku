@@ -276,7 +276,7 @@ impl Sim {
             let tick = self.world.tick;
             let sig = self.ctx.sig.clone();
             for b in &mut self.world.entities {
-                if let Some(policy) = &b.legacy.trace {
+                if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
@@ -322,10 +322,16 @@ impl Sim {
                     }
                 },
                 DynFigure::Curve { .. } => b
-                    .legacy
-                    .curve_lifecycle
-                    .as_ref()
-                    .map(|lifecycle| tau <= lifecycle.warn + lifecycle.active)
+                    .renderers
+                    .iter()
+                    .find_map(DynRender::curve_compat)
+                    .map(|projection| tau <= projection.activity.warn + projection.activity.active)
+                    .or_else(|| {
+                        b.colliders
+                            .iter()
+                            .find_map(DynCollider::curve_compat)
+                            .map(|projection| tau <= projection.activity.warn + projection.activity.active)
+                    })
                     .unwrap_or(true),
             }
         });

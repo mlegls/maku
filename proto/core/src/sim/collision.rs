@@ -13,14 +13,35 @@ pub fn sample_curve_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
+    let projection = b.renderers.iter().find_map(DynRender::curve_compat)?;
+    sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
+}
+
+pub(super) fn sample_curve_collider_frac(
+    b: &Entity,
+    tau: f64,
+    sig: &SigEnv,
+    frac: f64,
+) -> Option<Vec<(f64, f64)>> {
+    let projection = b.colliders.iter().find_map(DynCollider::curve_compat)?;
+    sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
+}
+
+fn sample_curve_projection(
+    b: &Entity,
+    tau: f64,
+    sig: &SigEnv,
+    frac: f64,
+    sample_set: &SampleSet,
+    u_max_sig: &Option<(Form, Env)>,
+) -> Option<Vec<(f64, f64)>> {
     let Figure::Curve(curve) = eval_dyn_figure(&b.dyn_figure, tau, &b.state, sig).ok()? else {
         return None;
     };
-    let projection = b.legacy.curve_projection.as_ref()?;
     if frac <= 0.0 {
         return None;
     }
-    let us: Vec<f64> = match (&curve.spec.domain, &projection.sample_set) {
+    let us: Vec<f64> = match (&curve.spec.domain, sample_set) {
         (_, SampleSet::Values(vals)) => {
             if vals.is_empty() {
                 return None;
@@ -37,7 +58,7 @@ pub fn sample_curve_frac(
         }
         (CurveDomain::Range { min, max }, SampleSet::Step { resolution }) => {
             let min = *min;
-            let max = match &projection.u_max_sig {
+            let max = match u_max_sig {
                 Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
                     .and_then(|v| v.num())
                     .unwrap_or(*max),
@@ -61,9 +82,8 @@ pub fn sample_curve_frac(
 /// A curve's hot fraction at age tau. Curves without :fill are hot in full
 /// the moment the warn ends. :fill itself is a fraction signal; helpers like
 /// fill-linear live in card/library code.
-pub(super) fn hot_frac(b: &Entity, tau: f64, sig: &SigEnv) -> f64 {
-    let Some(lifecycle) = &b.legacy.curve_lifecycle else { return 1.0 };
-    if let Some((f, e)) = &lifecycle.hot_frac_sig {
+pub(super) fn hot_frac(activity: &CurveSlotActivityCompat, tau: f64, sig: &SigEnv) -> f64 {
+    if let Some((f, e)) = &activity.hot_frac_sig {
         return eval_sig(f, e, sig, tau, 0.0, None, None)
             .and_then(|v| v.num())
             .map(|x| x.clamp(0.0, 1.0))
@@ -125,23 +145,27 @@ impl Sim {
         let target_d2 = |b: &Entity, i: usize, to: (f64, f64)| -> Option<f64> {
             let (bx, by) = pos[i]?;
             match &b.dyn_figure {
-                DynFigure::Pose(_) if b.legacy.trace.is_some() => {
+                DynFigure::Pose(_) if b.cache_policy.trace.is_some() => {
                     let pts: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R).max(0.0).powi(2))
                 }
                 DynFigure::Pose(_) => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
                 DynFigure::Curve { .. } => {
-                    let Some(lifecycle) = &b.legacy.curve_lifecycle else { return None };
-                    let Some(stroke) = &b.legacy.curve_stroke else { return None };
+                    let Some(projection) = b.colliders.iter().find_map(DynCollider::curve_compat) else { return None };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
-                    if tau < lifecycle.warn {
+                    if tau < projection.activity.warn {
                         return None; // warn phase: no hitbox yet
                     }
                     // filled curves: only the swept-out prefix is hot
-                    let pts = sample_curve_frac(b, tau, &sig, hot_frac(b, tau, &sig))?;
+                    let pts = sample_curve_collider_frac(
+                        b,
+                        tau,
+                        &sig,
+                        hot_frac(&projection.activity, tau, &sig),
+                    )?;
                     let d = dist_to_chain(to, &pts)?;
-                    Some((d - CURVE_R * stroke.width).max(0.0).powi(2))
+                    Some((d - CURVE_R * projection.width).max(0.0).powi(2))
                 }
             }
         };
@@ -160,9 +184,11 @@ impl Sim {
                     }
                     let Some(at) = pos[j] else { continue };
                     let Some(d2) = target_d2(a, i, at) else { continue };
-                    for ac in a.colliders.iter().filter(|c| c.layer.as_ref() == rule.a.as_ref()) {
-                        for bc in b.colliders.iter().filter(|c| c.layer.as_ref() == rule.b.as_ref()) {
-                            let r = ac.r * scl[i] + bc.r * scl[j];
+                    for ac in a.colliders.iter().filter(|c| c.layer() == Some(rule.a.as_ref())) {
+                        let Some(ar) = ac.circle_radius() else { continue };
+                        for bc in b.colliders.iter().filter(|c| c.layer() == Some(rule.b.as_ref())) {
+                            let Some(br) = bc.circle_radius() else { continue };
+                            let r = ar * scl[i] + br * scl[j];
                             if d2 < r * r {
                                 pairs.push((i, j));
                             }

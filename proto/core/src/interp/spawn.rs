@@ -173,7 +173,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // library's business (spawn-bullet/spawn-enemy in lib/touhou.maku).
     // :hitbox r resizes the PRIMARY (first) collider — the generic knob
     // that lets a template's default collider set fit a bigger sprite.
-    let colliders: Rc<[Collider]> = match map_get(&meta, "colliders") {
+    let colliders: Rc<[DynCollider]> = match map_get(&meta, "colliders") {
         Some(Val::Arr(items)) => {
             let mut cs = Vec::new();
             for it in items.iter() {
@@ -194,10 +194,15 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     Some(Val::Num(n)) => n,
                     _ => return Err("colliders: missing :r".into()),
                 };
-                cs.push(Collider { layer, r });
+                cs.push(DynCollider::Const(ColliderProjection {
+                    layer,
+                    shape: ColliderShape::Circle { radius: r },
+                }));
             }
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
-                first.r = r;
+                if let DynCollider::Const(c) = first {
+                    c.shape = ColliderShape::Circle { radius: r };
+                }
             }
             cs.into()
         }
@@ -215,7 +220,9 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         .into_iter()
         .map(|e| SpawnMade {
             dyn_figure: e.dyn_figure,
-            legacy: e.legacy,
+            colliders: e.colliders,
+            renderers: e.renderers,
+            cache_policy: e.cache_policy,
         })
         .collect();
     Ok(Val::Action(Rc::new(ActionV::Spawn {
@@ -227,6 +234,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         triggers,
         damage,
         colliders,
+        renderers: Vec::new().into(),
         expose,
     })))
 }
@@ -247,7 +255,7 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (dyn_figure, legacy) = match &l.backing {
+            let (dyn_figure, colliders, renderers, cache_policy) = match &l.backing {
                 CurveBacking::Parametric {
                     curve,
                     sample_set,
@@ -259,32 +267,45 @@ pub(crate) fn flatten_elems(
                 } => {
                     (
                         DynFigure::Curve { frame: l.anchor.clone(), curve: curve.clone() },
-                        LegacyComponents {
-                            curve_projection: Some(CurveProjectionCompat {
+                        vec![DynCollider::CurveCompat(CurveColliderSlotCompat {
                                 sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
-                            }),
-                            curve_lifecycle: Some(CurveLifecycle {
-                                warn: *warn,
-                                active: *active,
-                                hot_frac_sig: fill_sig.clone(),
-                            }),
-                            curve_stroke: Some(CurveStroke { width: *width }),
-                            ..LegacyComponents::default()
-                        },
+                                width: *width,
+                                activity: CurveSlotActivityCompat {
+                                    warn: *warn,
+                                    active: *active,
+                                    hot_frac_sig: fill_sig.clone(),
+                                },
+                        })]
+                        .into(),
+                        vec![DynRender::CurveCompat(CurveRenderSlotCompat {
+                                sample_set: sample_set.clone(),
+                                u_max_sig: u_max_sig.clone(),
+                                width: *width,
+                                activity: CurveSlotActivityCompat {
+                                    warn: *warn,
+                                    active: *active,
+                                    hot_frac_sig: fill_sig.clone(),
+                                },
+                        })]
+                        .into(),
+                        EntityCachePolicy::default(),
                     )
                 }
                 CurveBacking::Trace { window } => (
                     DynFigure::Pose(l.anchor.clone()),
-                    LegacyComponents {
+                    Vec::new().into(),
+                    Vec::new().into(),
+                    EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
-                        ..LegacyComponents::default()
                     },
                 ),
             };
             out.push(SpawnElem {
                 dyn_figure,
-                legacy,
+                colliders,
+                renderers,
+                cache_policy,
                 path: path.clone(),
             });
             Ok(())
@@ -292,7 +313,9 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: DynFigure::Pose(as_dyn(other)?),
-                legacy: LegacyComponents::default(),
+                colliders: Vec::new().into(),
+                renderers: Vec::new().into(),
+                cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });
             Ok(())

@@ -15,7 +15,7 @@ pub struct Style {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveLifecycle {
+pub struct CurveSlotActivityCompat {
     pub warn: f64,
     pub active: f64,
     /// Signal-valued active-domain fraction, clamped to 0..1.
@@ -23,9 +23,31 @@ pub struct CurveLifecycle {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveStroke {
-    /// Width multiplier: render thickness AND collision half-width.
+pub struct CurveColliderSlotCompat {
+    /// Sampling used by the current compatibility collision projection.
+    /// Abstract parametric figures do not own sampling.
+    pub sample_set: SampleSet,
+    /// Signal-valued compatibility override for the upper range bound
+    /// (:u-max varLength).
+    pub u_max_sig: Option<(Form, Env)>,
+    /// Width multiplier for the current capsule-chain half-width.
     pub width: f64,
+    pub activity: CurveSlotActivityCompat,
+}
+
+#[derive(Debug, Clone)]
+pub struct CurveRenderSlotCompat {
+    /// Sampling used by the current compatibility render projection.
+    /// Abstract parametric figures do not own sampling.
+    pub sample_set: SampleSet,
+    /// Signal-valued compatibility override for the upper range bound
+    /// (:u-max varLength).
+    pub u_max_sig: Option<(Form, Env)>,
+    /// Width multiplier for the current rendered stroke. The host still
+    /// controls final appearance; this exists to preserve laser behavior
+    /// while slots are being split.
+    pub width: f64,
+    pub activity: CurveSlotActivityCompat,
 }
 
 #[derive(Debug, Clone)]
@@ -36,22 +58,20 @@ pub struct TracePolicy {
     pub window: Option<f64>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CurveProjectionCompat {
-    /// Sampling used by the current compatibility render/collision
-    /// projections. Abstract parametric figures do not own sampling.
-    pub sample_set: SampleSet,
-    /// Signal-valued compatibility override for the upper range bound
-    /// (:u-max varLength).
-    pub u_max_sig: Option<(Form, Env)>,
+#[derive(Clone, Debug, Default)]
+pub struct EntityCachePolicy {
+    pub trace: Option<TracePolicy>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct LegacyComponents {
-    pub curve_projection: Option<CurveProjectionCompat>,
-    pub curve_lifecycle: Option<CurveLifecycle>,
-    pub curve_stroke: Option<CurveStroke>,
-    pub trace: Option<TracePolicy>,
+#[derive(Clone, Debug)]
+pub enum DynCollider {
+    Const(ColliderProjection),
+    CurveCompat(CurveColliderSlotCompat),
+}
+
+#[derive(Clone, Debug)]
+pub enum DynRender {
+    CurveCompat(CurveRenderSlotCompat),
 }
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
@@ -85,15 +105,19 @@ pub struct Entity {
     /// contact rules define interactions.
     pub team: Option<Rc<str>>,
     pub dyn_figure: DynFigure,
-    pub legacy: LegacyComponents,
+    pub cache_policy: EntityCachePolicy,
     pub birth: u64,
     pub style: Style,
     pub alive: bool,
     pub state: MotionState,
     pub scanned: bool,
     pub sigs: RenderSigs,
-    /// Collider set — archetype data, Rc-shared across a spawn's elements.
-    pub colliders: Rc<[Collider]>,
+    /// Collider slots — archetype data, Rc-shared across a spawn's
+    /// elements. Layers are opaque core routing keys; slots evaluate each
+    /// tick into collision data or nothing.
+    pub colliders: Rc<[DynCollider]>,
+    /// Render slots — archetype data, Rc-shared across a spawn's elements.
+    pub renderers: Rc<[DynRender]>,
     /// User-defined numeric columns in World's dense column layout. hp is
     /// not special — it is just another named source column assigned to a
     /// slot by the world.
@@ -145,12 +169,56 @@ impl TriggerRule {
     }
 }
 
-/// One collider: a circle in the owner's frame. Lasers derive capsule
-/// chains from their sampled curve at collision time instead.
+/// A collider projection: a layer plus a shape-specific interpretation of
+/// the entity's current figure.
 #[derive(Clone, Debug)]
-pub struct Collider {
+pub struct ColliderProjection {
     pub layer: Rc<str>,
-    pub r: f64,
+    pub shape: ColliderShape,
+}
+
+#[derive(Clone, Debug)]
+pub enum ColliderShape {
+    Circle { radius: f64 },
+}
+
+impl ColliderProjection {
+    pub fn circle_radius(&self) -> Option<f64> {
+        match self.shape {
+            ColliderShape::Circle { radius } => Some(radius),
+        }
+    }
+}
+
+impl DynCollider {
+    pub fn layer(&self) -> Option<&str> {
+        match self {
+            DynCollider::Const(c) => Some(c.layer.as_ref()),
+            DynCollider::CurveCompat(_) => None,
+        }
+    }
+
+    pub fn circle_radius(&self) -> Option<f64> {
+        match self {
+            DynCollider::Const(c) => c.circle_radius(),
+            DynCollider::CurveCompat(_) => None,
+        }
+    }
+
+    pub fn curve_compat(&self) -> Option<&CurveColliderSlotCompat> {
+        match self {
+            DynCollider::CurveCompat(c) => Some(c),
+            DynCollider::Const(_) => None,
+        }
+    }
+}
+
+impl DynRender {
+    pub fn curve_compat(&self) -> Option<&CurveRenderSlotCompat> {
+        match self {
+            DynRender::CurveCompat(r) => Some(r),
+        }
+    }
 }
 
 /// A collision rule: when an entity with an `a`-layer collider overlaps an

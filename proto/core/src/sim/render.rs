@@ -43,7 +43,7 @@ impl Sim {
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
             match &b.dyn_figure {
                 DynFigure::Pose(_) => {
-                    if b.legacy.trace.is_some() {
+                    if b.cache_policy.trace.is_some() {
                         if b.trail.len() >= 2 {
                             out.push(RenderItem::Polyline {
                                 pts: b.trail.iter().map(|p| (p.x, p.y)).collect(),
@@ -67,16 +67,16 @@ impl Sim {
                     }
                 }
                 DynFigure::Curve { .. } => {
-                    let Some(lifecycle) = &b.legacy.curve_lifecycle else { continue };
-                    let hot = hot_frac(b, tau, sig);
-                    let partly = tau >= lifecycle.warn && hot < 1.0;
+                    let Some(projection) = b.renderers.iter().find_map(DynRender::curve_compat) else { continue };
+                    let hot = hot_frac(&projection.activity, tau, sig);
+                    let partly = tau >= projection.activity.warn && hot < 1.0;
                     let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
                     if let Some(pts) = sample_curve(b, tau, sig) {
                         out.push(RenderItem::Polyline {
                             pts,
                             style: b.style.clone(),
                             // a filling curve's full path stays a telegraph
-                            active: tau >= lifecycle.warn && !partly,
+                            active: tau >= projection.activity.warn && !partly,
                             hue: self.sample_hue(b, tau),
                             alpha,
                         });
