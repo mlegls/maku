@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>danmaku-engine tutorials</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101116;
+    --panel: #171922;
+    --line: #303442;
+    --text: #d8dbe6;
+    --muted: #8e95a6;
+    --accent: #78d6c6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.65 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(220px, 300px) minmax(0, 860px);
+    justify-content: center;
+    min-height: 100vh;
+  }
+  nav {
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 18px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow: auto;
+  }
+  main {
+    padding: 28px 28px 64px;
+  }
+  h1, h2, h3 { line-height: 1.2; color: #fff; }
+  h1 { font-size: 34px; margin: 0 0 18px; }
+  h2 { font-size: 22px; margin: 34px 0 10px; }
+  h3 { font-size: 17px; margin: 24px 0 8px; }
+  a { color: var(--accent); }
+  button, .link-button {
+    width: 100%;
+    min-height: 34px;
+    margin: 0 0 6px;
+    padding: 5px 9px;
+    text-align: left;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    cursor: pointer;
+    text-decoration: none;
+    display: block;
+  }
+  button.active {
+    background: #232735;
+    border-color: #4f8f84;
+  }
+  .muted { color: var(--muted); }
+  pre {
+    overflow: auto;
+    background: #101219;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+  }
+  :not(pre) > code {
+    background: #202331;
+    border-radius: 4px;
+    padding: 1px 4px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 6px 8px;
+    vertical-align: top;
+  }
+  @media (max-width: 820px) {
+    .layout { display: block; }
+    nav {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    main { padding: 22px 18px 52px; }
+  }
+</style>
+</head>
+<body data-asset-base="/">
+<div class="layout">
+  <nav>
+    <a class="link-button" href="index.html">Interactive host</a>
+    <p class="muted">Reader mode loads tutorial text only.</p>
+    <div id="tutorial-list"></div>
+  </nav>
+  <main>
+    <article id="doc-body"></article>
+  </main>
+</div>
+<script type="module" src="reader.js"></script>
+</body>
+</html>

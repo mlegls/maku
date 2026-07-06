@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import init, { Danmaku, stdlibSource } from './pkg/danmaku_web.js';
+import { CARD_FILES } from './manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
@@ -11,11 +12,14 @@ await init({ module_or_path: readFileSync(join(here, 'pkg/danmaku_web_bg.wasm'))
 
 const rig = stdlibSource('player-rig');
 const dk = new Danmaku(rig + '\n(player-rig)');
-for (const f of ['cards/reimu_vs_mima.dmk',
-                 'cards/translations/ph_boss2_spell2.dmk',
-                 'cards/translations/player_homing.dmk']) {
+for (const f of CARD_FILES) {
   dk.add_file(f, readFileSync(join(root, f), 'utf8'));
 }
+dk.boot('cards/tutorials/t01.dmk', undefined);
+if (!dk.running()) throw new Error('tutorial boot failed: ' + dk.status());
+dk.step(2);
+if (dk.dots().length === 0) throw new Error('tutorial rendered nothing: ' + dk.status());
+
 dk.boot('cards/reimu_vs_mima.dmk', undefined);
 if (!dk.running()) throw new Error('boot failed: ' + dk.status());
 
