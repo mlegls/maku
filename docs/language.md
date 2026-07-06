@@ -74,7 +74,7 @@ Additional slot bindings in derived domains: **vel/acc slots bind self-state** �
 Three clocks with explicit nesting rules:
 
 1. Every action node gets a **local clock** zeroed at its activation (`seq`, `loop` iterations, etc. rebase).
-2. Every bullet's dyn runs on **bullet-local time** `t − birth`. Birth time is a column (each slot's initial epoch, §9); emission over time (spirals) is birth-time data, not phase-locked global-t functions. An explicit operator reaches an ancestor clock when phase-locking is wanted (ring vs spiral distinction) **[decide]**.
+2. Every bullet's dyn runs on **bullet-local time** `t − birth`. Birth time is a column (each slot's initial epoch, §9); emission over time (spirals) is birth-time data, not phase-locked global-t functions. Phase-locking (the ring-vs-spiral distinction) needs no operator — **resolved** (2026-07, the t09 audit): ancestor clocks are ordinary values. A pattern captures its epoch (`(let [t0 $tick] …)`, an `ir` constant) and any child signal reads the world clock live against it (`m"(live($tick) - t0)/120"`); a phase-locked ensemble is every bullet reading the same live clock instead of its own `t`. A `(live …)` read counts as time-dependence for signal deferral. Sugar naming the idiom, if wanted, is lib code.
 3. **World time / world parametrization is host-injected.** Nothing is sacred about `t`: patterns may be parametrized on any monotone-or-not host signal (e.g. tunnel arc-length `s`). Closed signals evaluate at arbitrary parameter values, enabling backward evaluation when the parameter is player-controlled.
 
 ### Injected signals and capture **[spec]**
@@ -333,7 +333,7 @@ Arithmetic `+ - * /` is variadic (n-ary fold; unary `-`/`/` negate/reciprocate) 
 
 ## 13. Open decisions **[decide]**
 
-1. Ancestor-clock operator design (reaching pattern/global time from bullet scope) and its interaction with extraction. (The remat side is settled by the epoch model.)
+1. ~~Ancestor-clock operator design~~ **resolved** (2026-07, the t09 audit — see §4.2): no operator; clocks are ordinary values. Parents capture `$tick` into bindings, child signals read `(live $tick)` against them, and `(live …)` counts as time-dependence for deferral (so wall-clock signals don't constant-fold at spawn). The remat side was already settled by the epoch model; what interaction extraction needs is extraction's own question (§10).
 2. Event vocabulary enumeration and the concrete channel API (injected/exported signal declaration, outbound event channels, host-handoff commands — §3 fixes the four-construct shape; the prototype has positioned events on a bounded shared log with per-snapshot cursors, but no declaration/manifest enforcement yet).
 3. Exact column set of the fixed `Bullet` struct (the boundary mechanism — built-in columns + escape pointer, cost split inferred from callback bodies — is settled, and user columns exist in the prototype as an inline sidecar; the built-in inventory is not fixed).
 4. Angle representation for θ columns (wrapped float vs unit vector) — storage-level; canonical-degrees is surface semantics either way.

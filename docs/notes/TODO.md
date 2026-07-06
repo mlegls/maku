@@ -25,7 +25,10 @@ language.md.
   at its ~1700-bullet steady state, dominated by per-bullet tree-walked
   signal eval; debug builds are 10-20x worse (tutorial run lines now
   say --release).
-- Extraction (§10), ancestor clocks (§13.1), 3D embedding (§12).
+- Extraction (§10), 3D embedding (§12). (Ancestor clocks closed by the
+  t09 audit: clocks are ordinary values — capture $tick, read
+  (live $tick) against the epoch; (live …) now counts as
+  time-dependence for signal deferral, which was the one engine fix.)
 
 ## Known approximations (documented in code)
 - ~~Pathers render as points; laser `:width` ignored by collision~~ done
@@ -191,9 +194,11 @@ language.md.
   essay — concept mapping in docs/from-dmk.md instead of a port).
   07 done (= DMK t08: firing index → ordinary binders, formations as
   functions, empty-guided fires → frame nesting with the pivot shim,
-  let-bound shared guides). Next: DMK t09 (the repeater-modifier
-  reference — big, likely a mapping appendix not a tutorial), then
-  tbosses/tstages.
+  let-bound shared guides). DMK t09 done as a from-dmk.md appendix
+  (one row per repeater modifier; no tutorial — 25 modifiers, six
+  ideas, all already taught); writing it doubled as the §13.1
+  ancestor-clock audit, which closed the decision and yielded the
+  contains_t live-read fix. Next: tbosses, then tstages.
   Tutorials are standalone; DMK mappings live in docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

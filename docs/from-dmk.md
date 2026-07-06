@@ -140,6 +140,58 @@ needs no tutorial port.
 | empty bullets (invisible, bomb-immune, hard-destroyed on clear) | spawn a guide entity only when you want it *seen*: `:team :scenery`, no colliders |
 | SM riding the empty / shared guide | `let`-bound guide = the shared instance; `(spawn guide …)` expresses it, `(in-frame guide (fork …))` rides it |
 
+## Repeater modifiers (Tutorial 9)
+
+DMK's t09 is a reference page over the `GenCtxProperty` repeater
+modifiers. There is no repeater here, so this table is the whole port:
+each modifier exists to parametrize repeater state (rv2, loop counters,
+timers), and maps to ordinary code — most rows are idioms the earlier
+tutorials already teach.
+
+| DMK | here |
+|---|---|
+| `bank <off>` / `bank0` ("inner repeats": shift rv2 into nonrotational coords) | frames nest — a child group composes around its parent's origin natively; rotational-vs-not is the inside/outside-`rot` choice (the V2RV2 row, Tutorial 1) |
+| `bindArrow` / `bindLR` / `bindUD` | formation fns and `[1 -1]` seq bindings (Tutorial 8 table above) |
+| `cancel(pred)` — checked every iteration | `(until pred loop)` — cancellation kills the loop's scope |
+| `clip(pred)` — checked once at entry | `(when pred …)` |
+| `whiletrue(pred)` — pause stepping while false | `(wait-for pred)` in the loop body |
+| `unpause(sm)` — run on the resume edge | the code after `(wait-for pred)` runs exactly at resume |
+| `rv2incr(<θ>)` | `(rot m"θ * iota(n)")` — arrays broadcast |
+| `spread(<Θ>)` — endpoints inclusive | `(fan n step …)`, step = Θ/(n−1) |
+| `circle` | `(circle n …)` |
+| `color({…})` + wildcards | style-record arrays; axes target structurally (Tutorial 1) |
+| `colorr` — reverse-direction merge | dissolves: records merge per-key, there is no string direction |
+| `colorf(list, idx)` | `(nth palette expr)` |
+| `delay(f)` | `(wait d)` before the loop |
+| `wait(f)` | `:every` |
+| `waitchild` | `for` waits its body by default; `fork` opts out |
+| `root(pos)` | an explicit frame: `(in-frame :world ((pose at) …))` |
+| `rootadjust` — root override compensating rv2 | nothing to compensate; positions compose explicitly |
+| `start b{…}` / `preloop` / `postloop` / `end` | `let` at the head / per-iteration bindings (`dotimes` seq bindings, fn params) / fold state (`loop`/`recur`) / `finally` |
+| `face(original\|velocity\|derot\|rotator)` | rendered facing follows the composed frame heading; `:facing` overrides (Tutorial 4) |
+| `times(n)` / `maxtimes(n)` | loop bounds and array lengths; `maxtimes` dissolves with `p` packing (Tutorial 8 table) |
+| `fortime(d)` — frame cap racing the count cap | `(race (wait d) (for [i n] …))` |
+| `frv2(fn-of-i)` — offset as a function of iteration | offsets *are* expressions of the index (BoWaP: `cards/translations/130_bowap.dmk`) |
+| `noop` | — |
+| `onlaser` | Tutorial 4 table |
+| `p` / parametrization | Tutorial 8 table |
+| `saoffset(SAAngle, θ, eq)` — summon along an equation | the offset is an expression; the `SAAngle` enum is where you place `rot`/`pose` in the tree — `banktangent` is a closed path's frame heading, free |
+| `sequential` — children in sequence instead of parallel | `seq` vs `par`, always explicit |
+| `sfx` / `sfxf` / `sfxif` | `(event :sfx …)`; index with `nth`, gate with `when` |
+| `target(mode, Lplayer)` / `sltarget` | `((aim $player) …)` at whichever tree level you mean; the six control modes are arithmetic on explicit offsets (laser grids: the grid helpers in `cards/translations/ph_boss2_spell2.dmk`) |
+| `timer` / `newtimer()` — shared, resettable clocks | capture an epoch and read the world clock live: `(let [t0 $tick] … m"(live($tick) - t0)/120" …)`; resettable = the epoch in a cell, reset by `set!` |
+| `timereset` + `st` (summoning time) | `st` is fixed at spawn — pass the emitting loop's elapsed time in as a binding; resetting is rebinding |
+
+Porting this table doubled as the §13.1 *ancestor clocks* audit, and
+closed it: a parent's clock is an ordinary value (`$tick` captured into
+a binding), children read `(live $tick)` against it, and phase-locking
+(ring-vs-spiral) is every bullet reading the same live clock instead of
+its own `t`. No engine operator is needed — sugar naming the idiom, if
+it ever feels heavy, is lib code. The one engine change the audit
+forced was a bugfix, not a feature: `(live …)` reads now count as
+time-dependence, so wall-clock-driven closed signals defer instead of
+silently constant-folding at spawn.
+
 ## Model-level notes
 
 - **Repeaters vs arrays.** DMK expresses multiplicity through repeater
