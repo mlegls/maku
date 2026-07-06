@@ -177,11 +177,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // that lets a template's default collider set fit a bigger sprite.
     let colliders: Rc<[DynCollider]> = match map_get(&meta, "colliders") {
         Some(v) => {
-            let items = source_arr(&SourceExpr::from_val(v)).ok_or("colliders: expected array")?;
-            let mut cs = Vec::new();
-            for it in items.iter() {
-                cs.push(as_collider_slot(it)?);
-            }
+            let mut cs = as_collider_list(&SourceExpr::from_val(v))?.to_vec();
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
                 let slot = first.slot();
                 let layer = match slot.shape {
@@ -197,14 +193,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         _ => Vec::new().into(),
     };
     let renderers: Rc<[DynRender]> = match map_get(&meta, "renderers") {
-        Some(v) => {
-            let items = source_arr(&SourceExpr::from_val(v)).ok_or("renderers: expected array")?;
-            items
-                .iter()
-                .map(as_render_slot)
-                .collect::<Result<Vec<_>, _>>()?
-                .into()
-        }
+        Some(v) => as_render_list(&SourceExpr::from_val(v))?,
         _ => Vec::new().into(),
     };
     // per-element column resolution: same axis rules as styles
@@ -460,6 +449,10 @@ fn source_arr(v: &SourceExpr) -> Option<Vec<SourceExpr>> {
     }
 }
 
+fn as_source_list(v: &SourceExpr, what: &str) -> Result<Vec<SourceExpr>, String> {
+    source_arr(v).ok_or_else(|| format!("{}: expected array", what))
+}
+
 fn source_expr_to_val(v: &SourceExpr) -> Result<Val, String> {
     if v.is_dynamic() {
         Ok(Val::SourceExpr(Rc::new(v.clone())))
@@ -583,7 +576,7 @@ fn as_shape_spec(v: &SourceExpr) -> Result<(Rc<str>, SourceExpr), String> {
     }
 }
 
-fn as_collider_slot(v: &SourceExpr) -> Result<DynCollider, String> {
+fn as_collider(v: &SourceExpr) -> Result<DynCollider, String> {
     if !matches!(v, SourceExpr::Map(_) | SourceExpr::Const(Val::Map(_))) {
         return Err("colliders: expected maps".into());
     }
@@ -612,7 +605,15 @@ fn as_collider_slot(v: &SourceExpr) -> Result<DynCollider, String> {
     }
 }
 
-fn as_render_slot(v: &SourceExpr) -> Result<DynRender, String> {
+fn as_collider_list(v: &SourceExpr) -> Result<Rc<[DynCollider]>, String> {
+    as_source_list(v, "colliders")?
+        .iter()
+        .map(as_collider)
+        .collect::<Result<Vec<_>, _>>()
+        .map(Into::into)
+}
+
+fn as_render(v: &SourceExpr) -> Result<DynRender, String> {
     if !matches!(v, SourceExpr::Map(_) | SourceExpr::Const(Val::Map(_))) {
         return Err("renderers: expected maps".into());
     }
@@ -628,6 +629,14 @@ fn as_render_slot(v: &SourceExpr) -> Result<DynRender, String> {
         })),
         _ => Err(format!("renderers: unknown shape :{}", shape)),
     }
+}
+
+fn as_render_list(v: &SourceExpr) -> Result<Rc<[DynRender]>, String> {
+    as_source_list(v, "renderers")?
+        .iter()
+        .map(as_render)
+        .collect::<Result<Vec<_>, _>>()
+        .map(Into::into)
 }
 
 pub(crate) fn kw_str(v: &Val) -> String {

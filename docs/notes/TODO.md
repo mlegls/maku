@@ -272,6 +272,12 @@ language.md.
       `as_*` schema checks at typed boundaries turn source structures into
       `Dyn<T>`-backed slots, while the structure itself remains ordinary
       source data.
+  2t. ~~Stage spawn slot checks by coercion family.~~ Done; first
+      `as_source_list` rejects non-list outer shapes, then
+      `as_collider_list` / `as_render_list` apply element schemas
+      (`as_collider` / `as_render`). The recursive list/map source-expression
+      lift is shared; collider and render schemas only run after the expected
+      list boundary is accepted.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with
