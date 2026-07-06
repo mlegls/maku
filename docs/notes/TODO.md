@@ -185,13 +185,12 @@ language.md.
   (specials are the IR, intrinsics are the builtins).
 - Tutorial ports (DMK Basic Tutorials t01–t09, tbosses, tstages → our
   tutorials, each with a runnable cards/tutorials/*.dmk companion swept by
-  tutorial_cards_run): 01–05 done (05 = channels/host boundary/rig;
-  native player binds T/Y/U/I → $rank). 06 = DMK's design-philosophy
-  manifesto, no constructs — concept-level mapping added to
-  docs/from-dmk.md instead of a port. 07 next (script structure/bosses;
-  the from-dmk mapping table exists from the phases work, the tutorial
-  doc + card don't). Then 08 (empty-guided fires) and 09 (the repeater-
-  modifier reference — big, likely a mapping appendix not a tutorial).
+  tutorial_cards_run): 01–06 done (06 = bosses/phases/script structure,
+  mapping DMK t07: bare `states`, the `phases` sugar table, spawn-boss,
+  phase-edge policy as finally code; DMK's own t06 is a philosophy
+  essay — concept mapping in docs/from-dmk.md instead of a port).
+  Next: DMK t08 (empty-guided fires), then t09 (the repeater-modifier
+  reference — big, likely a mapping appendix not a tutorial).
   Tutorials are standalone; DMK mappings live in docs/from-dmk.md.
 - `docs/host-api.md` — write alongside the first non-macroquad frontend.
 - Tutorials — after the first frontend, against a stable surface.

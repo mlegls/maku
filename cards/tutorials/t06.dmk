@@ -1,0 +1,91 @@
+;; Tutorial 6: bosses, phases, and script structure — the runnable
+;; companion to docs/tutorials/06-bosses.md. Press 1-9 to run each example.
+;;
+;;   cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t06.dmk
+
+(import "touhou")
+
+;; 1. the FSM primitive: (states (:label body…) …). A state ends by goto
+;; or by its body completing; work forked inside a state dies when the
+;; state exits. The "timeout" here is nothing special — a forked timer
+;; racing the body, bare (goto) = exit to the next state in order.
+(defpattern ex1-states []
+  (states
+    (:red
+      (fork (seq (wait 1.2) (goto)))
+      (for [i inf :every (ticks 20)]
+        (spawn-bullet ((rot m"17*i") (circle 8 (linear p[1.8 0]))) {:style {:family :circle :color :red :variant :w}})))
+    (:blue
+      (fork (seq (wait 1.2) (goto :red)))     ; loop back by label
+      (for [i inf :every (ticks 20)]
+        (spawn-bullet ((aim $player) (fan 5 10 (linear p[2.4 0]))) {:style {:family :arrow :color :blue :variant :w}})))))
+
+;; 2. labels are VALUES, evaluated at the goto — routing can be computed.
+;; Two attack moods walking a coin-flip Markov chain.
+(defpattern ex2-markov []
+  (states
+    (:calm
+      (fork (for [i inf :every (ticks 26)]
+              (spawn-bullet (circle 6 (linear p[1.2 0])) {:style {:family :circle :color :teal :variant :w}})))
+      (wait 0.9)
+      (goto (nth [:calm :burst] (rand-int 0 2))))
+    (:burst
+      (fork (for [i inf :every (ticks 9)]
+              (spawn-bullet ((rot m"25*i") (fan 7 6 (linear p[2.6 0]))) {:style {:family :star :color :orange :variant :w} :hitbox 0.09})))
+      (wait 0.9)
+      (goto (nth [:calm :burst] (rand-int 0 2))))))
+
+;; 3. the machine is not boss-shaped: a control FSM whose transitions
+;; read an input channel. Hold Shift ($focus-firing) to switch movesets;
+;; each state's forked spawner dies the tick the state exits.
+(defpattern ex3-control []
+  (states
+    (:loose
+      (fork (for [i inf :every (ticks 14)]
+              (spawn-bullet ((aim $player) (linear p[2 0])) {:style {:family :amulet :color :red}})))
+      (wait-for (> $focus-firing 0.5))
+      (goto :tight))
+    (:tight
+      (fork (for [i inf :every (ticks 7)]
+              (spawn-bullet ((aim $player) (fan 3 4 (linear p[3 0]))) {:style {:family :gem :color :blue} :hitbox 0.09})))
+      (wait-for (< $focus-firing 0.5))
+      (goto :loose))))
+
+;; 4. (phases …) — touhou's boss-shaped sugar over states. Clause opts
+;; desugar to exactly the body code of ex1: {:timeout d} is the forked
+;; timer, {:hp n}/{:until p} an (until …) gate. The (finally …) tail runs
+;; on EVERY exit path — timeout, gate, goto.
+(defpattern ex4-phases []
+  (phases
+    (:warmup {:timeout 1.2}
+      (for [i inf :every (ticks 15)]
+        (spawn-bullet (circle 10 (linear p[1.5 0])) {:style {:family :circle :color :pink :variant :w}}))
+      (finally (event :warmup-done)))
+    (:main
+      (for [i inf :every (ticks 20)]
+        (spawn-bullet ((rot m"9*i") (circle 14 (linear p[1.8 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})))))
+
+;; 5. the full stack: spawn-boss = an enemy WITH a phase machine. The
+;; macro publishes hp as $boss-hp, holds the machine until the boss
+;; registers, and binds `boss`. {:hp 0} gates the last phase on the
+;; health bar; the phase edge (field clear + mercy window) is the first
+;; clause's finally — card policy, not engine behavior. Shoot the boss
+;; down (in the sandbox the rig fires with the mouse).
+(defpattern ex5-boss []
+  (seq
+    (move 0.9 :out-sine c[0 2.6])
+    (spawn-boss (live $boss)
+                {:hp 40 :hitbox 0.45
+                 :style {:family :lstar :color :purple}
+                 :scale 2}
+      (phases
+        (:opening {:timeout 2 :root c[0 2.2]}
+          (for [vol inf :every (ticks 30)]
+            (spawn-bullet ((aim $player) (fan 3 14 (linear p[2.2 0]))) {:style {:family :arrow :color :red :variant :w}}))
+          (finally
+            (event :spell)
+            (cull)                          ; field clear at the phase edge
+            (invuln (nth boss 0) 1.0)))     ; transition mercy window
+        (:spell {:hp 0}
+          (for [vol inf :every (ticks 24)]
+            (spawn-bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) {:style {:family :circle :color :purple}})))))))
