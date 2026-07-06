@@ -1,6 +1,6 @@
 // Interactive browser host: card/tutorial picker, editable vfs source, wasm
 // simulation loop, canvas renderer, and the debug wire protocol.
-import init, { Maku, stdlibSource } from './pkg/maku.js';
+import initMaku, { createMaku } from '../../js/maku/dist/index.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
 
@@ -478,10 +478,9 @@ function installEvents() {
 
 async function boot() {
   renderLists();
-  await init();
+  await initMaku();
   await loadSources();
-  const rigSrc = stdlibSource('player-rig');
-  maku = new Maku(`${rigSrc}\n(player-rig)`);
+  maku = createMaku();
   registerVfs();
   installEvents();
   renderBindings();

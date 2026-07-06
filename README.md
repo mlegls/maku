@@ -18,6 +18,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `docs/notes/` | implementation notes, prototype-vs-spec gaps |
 | `proto/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
+| `proto/js/maku/` | publishable browser package wrapping the wasm host |
 | `cards/` | playable cards — start with `reimu_vs_mima.maku` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
 | `dmk-corpus/` | the upstream DMK scripts translated (MIT) |

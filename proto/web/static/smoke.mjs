@@ -3,15 +3,14 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import init, { Maku, stdlibSource } from './pkg/maku.js';
+import initMaku, { createMaku } from '../../js/maku/dist/index.js';
 import { CARD_FILES } from './manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
-await init({ module_or_path: readFileSync(join(here, 'pkg/maku_bg.wasm')) });
+await initMaku({ moduleOrPath: readFileSync(join(here, '../../js/maku/wasm/maku_bg.wasm')) });
 
-const rig = stdlibSource('player-rig');
-const maku = new Maku(rig + '\n(player-rig)');
+const maku = createMaku();
 for (const f of CARD_FILES) {
   maku.add_file(f, readFileSync(join(root, f), 'utf8'));
 }
