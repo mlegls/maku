@@ -209,6 +209,15 @@
     color: #d9deeb;
     tab-size: 2;
   }
+  .source-editor #source, .source-highlight,
+  .eval-editor #eval-code, .eval-highlight {
+    font: inherit;
+    line-height: 1.4;
+    letter-spacing: 0;
+    white-space: pre-wrap;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
   .source-highlight code {
     font: inherit;
   }
@@ -299,7 +308,7 @@
     background: transparent;
     color: transparent;
     caret-color: #dfe4ef;
-    border: 1px solid var(--line);
+    border: 0;
     border-radius: 6px;
     padding: 8px;
     position: relative;
@@ -310,6 +319,7 @@
     position: relative;
     min-height: 120px;
     background: #11131b;
+    border: 1px solid var(--line);
     border-radius: 6px;
   }
   .eval-editor #eval-code {
