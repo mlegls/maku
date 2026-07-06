@@ -89,12 +89,20 @@ language.md.
   ```
   General dyn typing rule:
   ```text
-  Dyn<T> accepts T, an expression with t in scope that returns T, or a
-  function f(t) -> T. m"..." is only the numeric shorthand for this.
+  Dyn<T> is the typed interpretation of any expression in a time-indexed
+  context. The coercion/lowering walks the target type: every leaf may be
+  static or dyn, and a fully static structure is just the degenerate
+  constant dyn. m"..." is only the numeric shorthand for one leaf; it does
+  not make maps/arrays special by itself.
   ```
-  Any typed dyn field follows this rule, so projector-specific dyn
-  constructors should not be necessary. A collider slot can be `(if (< t 2)
-  [:none] [:capsule-chain ...])`; a radius can be `m"0.1 + 0.02*t"`.
+  Any typed dyn field follows this same handler, so projector-specific dyn
+  constructors should not be necessary. If `Dyn<Collider>` is expected, both
+  `{:layer :hostile :shape [:circle {:radius 0.08}]}` and
+  `{:layer :hostile :shape [:circle {:radius m"0.08 + 0.02*t"}]}` go
+  through the same structural coercion; the first const-folds, the second
+  produces a dyn radius inside a preserved collider shape. A collider slot
+  can also be `(if (< t 2) :none [:capsule-chain ...])` when the whole
+  shape/list is dynamic.
   For implementation and compilation, the common/static-arity case can lower
   to stable slots:
   ```text
@@ -242,6 +250,12 @@ language.md.
       entity. The next step is to expose low-level slot construction so
       Touhou/library code can build those slots directly and the Rust
       `laser` bridge can disappear.
+  2r. ~~Expose static low-level collider/render slot specs through spawn
+      metadata.~~ Done; `:colliders` accepts explicit `:shape` maps for
+      `:circle` and `:capsule-chain`, while `:renderers` accepts explicit
+      `:polyline` specs. This is intentionally only the static-data bridge:
+      structural `Dyn<T>` coercion should replace parser-specific dynamic
+      field handling before low-level spawn becomes the final public form.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

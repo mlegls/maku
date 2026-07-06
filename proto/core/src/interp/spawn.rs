@@ -177,24 +177,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         Some(Val::Arr(items)) => {
             let mut cs = Vec::new();
             for it in items.iter() {
-                let Val::Map(kvs) = it else {
-                    return Err("colliders: expected maps".into());
-                };
-                let get = |name: &str| {
-                    kvs.iter().find_map(|(k, v)| match k {
-                        Val::Kw(kw) if &**kw == name => Some(v.clone()),
-                        _ => None,
-                    })
-                };
-                let layer = match get("layer") {
-                    Some(Val::Kw(k)) => k,
-                    _ => return Err("colliders: missing :layer".into()),
-                };
-                let r = match get("r") {
-                    Some(Val::Num(n)) => n,
-                    _ => return Err("colliders: missing :r".into()),
-                };
-                cs.push(DynCollider::collider_circle(layer, r));
+                cs.push(parse_collider_slot(it)?);
             }
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
                 let slot = first.slot();
@@ -208,6 +191,14 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
             cs.into()
         }
+        _ => Vec::new().into(),
+    };
+    let renderers: Rc<[DynRender]> = match map_get(&meta, "renderers") {
+        Some(Val::Arr(items)) => items
+            .iter()
+            .map(parse_render_slot)
+            .collect::<Result<Vec<_>, _>>()?
+            .into(),
         _ => Vec::new().into(),
     };
     // per-element column resolution: same axis rules as styles
@@ -237,7 +228,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         triggers,
         damage,
         colliders,
-        renderers: Vec::new().into(),
+        renderers,
         expose,
     })))
 }
@@ -453,6 +444,113 @@ pub(crate) fn map_get(m: &Val, key: &str) -> Option<Val> {
         }
     }
     None
+}
+
+fn map_num(m: &Val, key: &str, default: f64) -> Result<f64, String> {
+    match map_get(m, key) {
+        Some(v) => v.num(),
+        None => Ok(default),
+    }
+}
+
+fn map_num_any(m: &Val, keys: &[&str], default: f64) -> Result<f64, String> {
+    for key in keys {
+        if let Some(v) = map_get(m, key) {
+            return v.num();
+        }
+    }
+    Ok(default)
+}
+
+fn parse_sample_set(opts: &Val) -> Result<SampleSet, String> {
+    if let Some(Val::Arr(vals)) = map_get(opts, "samples") {
+        let mut out = Vec::with_capacity(vals.len());
+        for v in vals.iter() {
+            out.push(v.num()?);
+        }
+        return Ok(SampleSet::Values(out.into()));
+    }
+    Ok(SampleSet::Step {
+        resolution: map_num(opts, "resolution", 0.1)?,
+    })
+}
+
+fn parse_slot_activity(opts: &Val) -> Result<SlotActivity, String> {
+    Ok(SlotActivity {
+        warn: map_num(opts, "warn", 0.0)?,
+        active: map_num(opts, "active", f64::INFINITY)?,
+        // Full structural Dyn<T> coercion should replace this parser-level
+        // shortcut; for now explicit low-level spawn specs are static data.
+        hot_frac_sig: None,
+    })
+}
+
+fn parse_capsule_chain_slot(opts: &Val) -> Result<CapsuleChainSlot, String> {
+    Ok(CapsuleChainSlot {
+        sample_set: parse_sample_set(opts)?,
+        u_max_sig: None,
+        width: map_num(opts, "width", 1.0)?,
+        activity: parse_slot_activity(opts)?,
+    })
+}
+
+fn parse_shape_spec(v: &Val) -> Result<(Rc<str>, Val), String> {
+    match v {
+        Val::Arr(items) if items.len() == 2 => {
+            let Val::Kw(shape) = &items[0] else {
+                return Err("shape: expected keyword shape name".into());
+            };
+            Ok((shape.clone(), items[1].clone()))
+        }
+        Val::Kw(shape) => Ok((shape.clone(), Val::Map(Rc::new(Vec::new())))),
+        _ => Err("shape: expected [:shape opts]".into()),
+    }
+}
+
+fn parse_collider_slot(v: &Val) -> Result<DynCollider, String> {
+    let Val::Map(_) = v else {
+        return Err("colliders: expected maps".into());
+    };
+    let layer = match map_get(v, "layer") {
+        Some(Val::Kw(k)) => k,
+        _ => return Err("colliders: missing :layer".into()),
+    };
+    if let Some(shape_v) = map_get(v, "shape") {
+        let (shape, opts) = parse_shape_spec(&shape_v)?;
+        return match shape.as_ref() {
+            "circle" => Ok(DynCollider::collider_circle(
+                layer,
+                map_num_any(&opts, &["radius", "r"], 0.08)?,
+            )),
+            "capsule-chain" => Ok(DynCollider::collider_capsule_chain(
+                layer,
+                map_num_any(&opts, &["radius", "r"], 0.08)?,
+                parse_capsule_chain_slot(&opts)?,
+            )),
+            _ => Err(format!("colliders: unknown shape :{}", shape)),
+        };
+    }
+    match map_get(v, "r") {
+        Some(Val::Num(r)) => Ok(DynCollider::collider_circle(layer, r)),
+        _ => Err("colliders: missing :r or :shape".into()),
+    }
+}
+
+fn parse_render_slot(v: &Val) -> Result<DynRender, String> {
+    let Val::Map(_) = v else {
+        return Err("renderers: expected maps".into());
+    };
+    let shape_v = map_get(v, "shape").unwrap_or(Val::Kw("polyline".into()));
+    let (shape, opts) = parse_shape_spec(&shape_v)?;
+    match shape.as_ref() {
+        "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {
+            sample_set: parse_sample_set(&opts)?,
+            u_max_sig: None,
+            width: map_num(&opts, "width", 1.0)?,
+            activity: parse_slot_activity(&opts)?,
+        })),
+        _ => Err(format!("renderers: unknown shape :{}", shape)),
+    }
 }
 
 pub(crate) fn kw_str(v: &Val) -> String {

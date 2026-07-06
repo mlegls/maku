@@ -493,6 +493,32 @@
         assert_eq!(sim.channel_u64("graze"), 1, "beam grazed on the way in");
     }
 
+    #[test]
+    fn low_level_curve_slots() {
+        const CARD: &str = r#"
+(defcontact [:beam :body] (fn [a b] (event :hit)))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0])
+           {:colliders [{:layer :body :shape [:circle {:r 0.06}]}]})
+    (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+           {:colliders [{:layer :beam
+                         :shape [:capsule-chain {:r 0.06 :width 1 :resolution 0.1
+                                                  :warn 0 :active 2}]}]
+            :renderers [{:shape [:polyline {:resolution 0.1 :warn 0 :active 2}]}]})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(
+            sim.events_vec().iter().any(|e| &*e.name == "hit"),
+            "explicit capsule-chain collider hit the circle body"
+        );
+        assert!(
+            sim.render().iter().any(|r| matches!(r, RenderItem::Polyline { active: true, .. })),
+            "explicit polyline renderer produced a render item"
+        );
+    }
+
     /// The duel-card bug: aim inside an expression-level frame must aim
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → entities
