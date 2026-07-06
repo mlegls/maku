@@ -266,7 +266,7 @@ pub(crate) fn flatten_elems(
                     fill_sig,
                 } => {
                     (
-                        DynFigure::Curve { frame: l.anchor.clone(), curve: curve.clone() },
+                        DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
                         vec![DynCollider::CurveCompat(CurveColliderSlotCompat {
                                 sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
@@ -293,7 +293,7 @@ pub(crate) fn flatten_elems(
                     )
                 }
                 CurveBacking::Trace { window } => (
-                    DynFigure::Pose(l.anchor.clone()),
+                    DynFigure::pose(l.anchor.clone()),
                     Vec::new().into(),
                     Vec::new().into(),
                     EntityCachePolicy {
@@ -312,7 +312,7 @@ pub(crate) fn flatten_elems(
         }
         other => {
             out.push(SpawnElem {
-                dyn_figure: DynFigure::Pose(as_dyn(other)?),
+                dyn_figure: DynFigure::pose(as_dyn(other)?),
                 colliders: Vec::new().into(),
                 renderers: Vec::new().into(),
                 cache_policy: EntityCachePolicy::default(),
@@ -347,9 +347,9 @@ pub(crate) fn dyn_has_rand(d: &DynNode) -> bool {
 }
 
 pub(crate) fn dyn_figure_has_rand(d: &DynFigure) -> bool {
-    match d {
-        DynFigure::Pose(p) => dyn_has_rand(p),
-        DynFigure::Curve { frame, curve } => {
+    match d.repr() {
+        DynRepr::Pose(p) => dyn_has_rand(p),
+        DynRepr::FigureCurve { frame, curve } => {
             dyn_has_rand(frame)
                 || matches!(&curve.eval, CurveEval::Expr(shape) if dyn_has_rand(shape))
         }
@@ -418,20 +418,20 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
 }
 
 pub(crate) fn instantiate_rand_geometry(d: &DynFigure, world: &mut World) -> DynFigure {
-    match d {
-        DynFigure::Pose(p) => DynFigure::Pose(instantiate_rand(p, world)),
-        DynFigure::Curve { frame, curve } => {
+    match d.repr() {
+        DynRepr::Pose(p) => DynFigure::pose(instantiate_rand(p, world)),
+        DynRepr::FigureCurve { frame, curve } => {
             let eval = match &curve.eval {
                 CurveEval::Straight => CurveEval::Straight,
                 CurveEval::Expr(shape) => CurveEval::Expr(instantiate_rand(shape, world)),
             };
-            DynFigure::Curve {
-                frame: instantiate_rand(frame, world),
-                curve: ParametricCurve {
+            DynFigure::figure_curve(
+                instantiate_rand(frame, world),
+                ParametricCurve {
                     eval,
                     domain: curve.domain.clone(),
                 },
-            }
+            )
         }
     }
 }

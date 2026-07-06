@@ -313,15 +313,15 @@ impl Sim {
                 return true; // the player rides a channel; never field-culled
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            match &b.dyn_figure {
-                DynFigure::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
+            match b.dyn_figure.repr() {
+                DynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);
                         false
                     }
                 },
-                DynFigure::Curve { .. } => b
+                DynRepr::FigureCurve { .. } => b
                     .renderers
                     .iter()
                     .find_map(DynRender::curve_compat)

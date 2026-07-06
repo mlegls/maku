@@ -43,9 +43,10 @@ language.md.
   compiled core should store pose data compactly as `(x, y, theta)`. Unit
   vectors can be cached by optimized backends when useful, but the semantic
   pose representation is angular.
-  The Rust prototype currently represents the first slice of `Dyn<Figure>` as
-  `DynFigure`, which evaluates to the materialized `Figure` enum. Rename
-  this toward Figure vocabulary once the projection split starts.
+  The Rust prototype now represents the first slice as `Dyn<Figure>` through
+  the `DynFigure` type alias. Its backing is still a compatibility enum
+  (`DynRepr`) rather than the final typed expression IR, but figure-valued
+  dyns no longer have a separate ad hoc top-level type.
 
   The important layer boundary is:
   ```text
@@ -199,6 +200,9 @@ language.md.
       compatibility bridge: circle colliders are `DynCollider::Const`,
       curve capsule compatibility is `DynCollider::CurveCompat`, and curve
       rendering is `DynRender::CurveCompat`.
+  2i. ~~Make figure dyns use the shared `Dyn<T>` shell.~~ Done;
+      `DynFigure` is now `Dyn<Figure>`, backed by `DynRepr`. The remaining
+      work is to generalize `DynRepr`/evaluation beyond pose and figure.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

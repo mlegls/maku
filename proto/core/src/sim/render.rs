@@ -41,8 +41,8 @@ impl Sim {
                 continue;
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
-            match &b.dyn_figure {
-                DynFigure::Pose(_) => {
+            match b.dyn_figure.repr() {
+                DynRepr::Pose(_) => {
                     if b.cache_policy.trace.is_some() {
                         if b.trail.len() >= 2 {
                             out.push(RenderItem::Polyline {
@@ -66,7 +66,7 @@ impl Sim {
                         });
                     }
                 }
-                DynFigure::Curve { .. } => {
+                DynRepr::FigureCurve { .. } => {
                     let Some(projection) = b.renderers.iter().find_map(DynRender::curve_compat) else { continue };
                     let hot = hot_frac(&projection.activity, tau, sig);
                     let partly = tau >= projection.activity.warn && hot < 1.0;

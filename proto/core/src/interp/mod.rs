@@ -1261,10 +1261,10 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
-        (Val::Kw("kind".into()), Val::Kw(match &b.dyn_figure {
-            DynFigure::Pose(_) if b.cache_policy.trace.is_some() => "pather",
-            DynFigure::Pose(_) => "point",
-            DynFigure::Curve { .. } => "laser",
+        (Val::Kw("kind".into()), Val::Kw(match b.dyn_figure.repr() {
+            DynRepr::Pose(_) if b.cache_policy.trace.is_some() => "pather",
+            DynRepr::Pose(_) => "point",
+            DynRepr::FigureCurve { .. } => "laser",
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -1701,7 +1701,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let b = &mut world.entities[i];
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
-            b.dyn_figure = DynFigure::Pose(Rc::new(DynNode::Frame(
+            b.dyn_figure = DynFigure::pose(Rc::new(DynNode::Frame(
                 Rc::new(DynNode::Const(anchor)),
                 new_dyn,
             )));

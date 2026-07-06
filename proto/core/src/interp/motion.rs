@@ -3,6 +3,7 @@
 use super::*;
 use crate::edn::Form;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 pub const TICK_RATE: f64 = 120.0;
@@ -149,28 +150,44 @@ pub enum Figure {
     Curve(Curve),
 }
 
-/// Prototype representation of the semantic `Dyn<Figure>`:
-/// pose-valued entities carry one pose dyn; curve-valued entities carry a
-/// world-frame pose dyn plus a curve expression sampled in that frame.
-/// Evaluating one at a tick produces a materialized `Figure` value.
 #[derive(Debug, Clone)]
-pub enum DynFigure {
-    Pose(Rc<DynNode>),
-    Curve { frame: Rc<DynNode>, curve: ParametricCurve },
+pub struct Dyn<T> {
+    pub(crate) repr: DynRepr,
+    _marker: PhantomData<fn() -> T>,
 }
 
-impl DynFigure {
+#[derive(Debug, Clone)]
+pub enum DynRepr {
+    Pose(Rc<DynNode>),
+    FigureCurve { frame: Rc<DynNode>, curve: ParametricCurve },
+}
+
+pub type DynFigure = Dyn<Figure>;
+
+impl Dyn<Figure> {
+    pub fn pose(d: Rc<DynNode>) -> DynFigure {
+        Dyn { repr: DynRepr::Pose(d), _marker: PhantomData }
+    }
+
+    pub fn figure_curve(frame: Rc<DynNode>, curve: ParametricCurve) -> DynFigure {
+        Dyn { repr: DynRepr::FigureCurve { frame, curve }, _marker: PhantomData }
+    }
+
+    pub fn repr(&self) -> &DynRepr {
+        &self.repr
+    }
+
     pub fn pose_dyn(&self) -> &Rc<DynNode> {
-        match self {
-            DynFigure::Pose(d) => d,
-            DynFigure::Curve { frame, .. } => frame,
+        match &self.repr {
+            DynRepr::Pose(d) => d,
+            DynRepr::FigureCurve { frame, .. } => frame,
         }
     }
 
     pub fn curve(&self) -> Option<&ParametricCurve> {
-        match self {
-            DynFigure::Curve { curve, .. } => Some(curve),
-            DynFigure::Pose(_) => None,
+        match &self.repr {
+            DynRepr::FigureCurve { curve, .. } => Some(curve),
+            DynRepr::Pose(_) => None,
         }
     }
 
@@ -179,12 +196,11 @@ impl DynFigure {
             return self.clone();
         }
         let parent = Rc::new(DynNode::Const(frame));
-        match self {
-            DynFigure::Pose(d) => DynFigure::Pose(Rc::new(DynNode::Frame(parent, d.clone()))),
-            DynFigure::Curve { frame: child, curve } => DynFigure::Curve {
-                frame: Rc::new(DynNode::Frame(parent, child.clone())),
-                curve: curve.clone(),
-            },
+        match &self.repr {
+            DynRepr::Pose(d) => DynFigure::pose(Rc::new(DynNode::Frame(parent, d.clone()))),
+            DynRepr::FigureCurve { frame: child, curve } => {
+                DynFigure::figure_curve(Rc::new(DynNode::Frame(parent, child.clone())), curve.clone())
+            }
         }
     }
 }
@@ -304,9 +320,9 @@ pub fn eval_dyn_figure(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Figure, String> {
-    match d {
-        DynFigure::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
-        DynFigure::Curve { frame, curve } => Ok(Figure::Curve(Curve {
+    match d.repr() {
+        DynRepr::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
+        DynRepr::FigureCurve { frame, curve } => Ok(Figure::Curve(Curve {
             frame: dyn_pose(frame, tau, state, sig)?,
             spec: curve.clone(),
         })),
