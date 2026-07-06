@@ -496,7 +496,9 @@ fn source_kw(v: &SourceExpr) -> Option<Rc<str>> {
 
 fn as_dyn_num(v: &SourceExpr) -> Result<DynNum, String> {
     match v {
-        SourceExpr::Num(d) => Ok(d.clone()),
+        SourceExpr::Dyn(DynVal::Expr { form, env }) => {
+            Ok(DynNum::num_expr(form.clone(), env.clone()))
+        }
         SourceExpr::Const(Val::Num(n)) => Ok(DynNum::num(*n)),
         _ => Err(format!("expected number, got {:?}", v)),
     }
@@ -505,10 +507,7 @@ fn as_dyn_num(v: &SourceExpr) -> Result<DynNum, String> {
 fn as_static_num(v: &SourceExpr) -> Result<f64, String> {
     match v {
         SourceExpr::Const(Val::Num(n)) => Ok(*n),
-        SourceExpr::Num(d) => match d.repr() {
-            NumDynRepr::Const(n) => Ok(*n),
-            NumDynRepr::Expr { .. } => Err("expected static number".into()),
-        },
+        SourceExpr::Dyn(_) => Err("expected static number".into()),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }

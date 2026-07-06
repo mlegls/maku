@@ -263,10 +263,10 @@ language.md.
       structural `Dyn<T>` coercion should replace parser-specific dynamic
       field handling before low-level spawn becomes the final public form.
   2s. ~~Prototype structural dyn coercion for ordinary maps/vectors at the
-      spawn boundary.~~ Done; dynamic numeric leaves inside precomputed
-      collider structures now survive until `spawn` validates the expected
+      spawn boundary.~~ Done; dynamic leaves inside precomputed collider
+      structures now survive until `spawn` validates the expected
       collider/render schema. Current implementation covers static structure
-      shape plus dyn numeric leaves; whole-list/whole-shape dynamic
+      shape plus dyn expression leaves; whole-list/whole-shape dynamic
       expressions still need typed conditional/function lowering. The
       prototype carrier is named `SourceExpr` rather than `DynStruct`:
       `as_*` schema checks at typed boundaries turn source structures into
@@ -278,6 +278,12 @@ language.md.
       (`as_collider` / `as_render`). The recursive list/map source-expression
       lift is shared; collider and render schemas only run after the expected
       list boundary is accepted.
+  2u. ~~Generalize dynamic source leaves away from `DynNum`.~~ Done;
+      `SourceExpr` now carries untyped `DynVal::Expr { form, env }`.
+      Numeric interpretation happens only in numeric typed contexts such as
+      `as_dyn_num`, leaving room for `as_bool`, dynamic enum/shape choices,
+      and other `Dyn<T>` targets without treating numbers as the only
+      dynamic leaf kind.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

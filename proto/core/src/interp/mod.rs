@@ -107,16 +107,21 @@ pub enum Val {
 #[derive(Clone, Debug)]
 pub enum SourceExpr {
     Const(Val),
-    Num(DynNum),
+    Dyn(DynVal),
     Arr(Rc<[SourceExpr]>),
     Map(Rc<Vec<(Val, SourceExpr)>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum DynVal {
+    Expr { form: Form, env: Env },
 }
 
 impl SourceExpr {
     pub fn is_dynamic(&self) -> bool {
         match self {
             SourceExpr::Const(_) => false,
-            SourceExpr::Num(d) => !matches!(d.repr(), NumDynRepr::Const(_)),
+            SourceExpr::Dyn(_) => true,
             SourceExpr::Arr(items) => items.iter().any(SourceExpr::is_dynamic),
             SourceExpr::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
         }
@@ -125,7 +130,9 @@ impl SourceExpr {
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
         match self {
             SourceExpr::Const(v) => Ok(v.clone()),
-            SourceExpr::Num(d) => eval_dyn(d, tau, state, sig).map(Val::Num),
+            SourceExpr::Dyn(DynVal::Expr { form, env }) => {
+                eval_dyn(&DynNum::num_expr(form.clone(), env.clone()), tau, state, sig).map(Val::Num)
+            }
             SourceExpr::Arr(items) => items
                 .iter()
                 .map(|v| v.eval(tau, state, sig))
@@ -524,7 +531,10 @@ fn eval_source_expr_form(
             .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_source_expr_form(v, env, ctx, world)?)))
             .collect::<Result<Vec<_>, String>>()
             .map(|pairs| SourceExpr::Map(Rc::new(pairs))),
-        form if contains_t(form) => Ok(SourceExpr::Num(DynNum::num_expr(form.clone(), env.clone()))),
+        form if contains_t(form) => Ok(SourceExpr::Dyn(DynVal::Expr {
+            form: form.clone(),
+            env: env.clone(),
+        })),
         form => evaluate(form, env, ctx, world).map(SourceExpr::from_val),
     }
 }
