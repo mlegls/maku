@@ -13,7 +13,7 @@ pub fn sample_curve_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let Kind::Curve(curve) = &b.kind else {
+    let Geometry::Curve(curve) = &b.geometry else {
         return None;
     };
     let sampling = b.legacy.curve_sampling.as_ref()?;
@@ -118,14 +118,14 @@ impl Sim {
         // distance to the sampled polyline (capsule chain)
         let target_d2 = |b: &Entity, i: usize, to: (f64, f64)| -> Option<f64> {
             let (bx, by) = pos[i]?;
-            match &b.kind {
-                Kind::Point if b.legacy.trace.is_some() => {
+            match &b.geometry {
+                Geometry::Pose if b.legacy.trace.is_some() => {
                     let pts: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R).max(0.0).powi(2))
                 }
-                Kind::Point => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
-                Kind::Curve(_) => {
+                Geometry::Pose => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
+                Geometry::Curve(_) => {
                     let Some(lifecycle) = &b.legacy.curve_lifecycle else { return None };
                     let Some(stroke) = &b.legacy.curve_stroke else { return None };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;

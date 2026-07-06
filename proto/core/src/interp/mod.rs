@@ -133,7 +133,7 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub motion: Rc<DynNode>,
-    pub kind: Kind,
+    pub geometry: Geometry,
     pub legacy: LegacyComponents,
     pub path: Vec<(usize, usize)>,
 }
@@ -255,7 +255,7 @@ pub enum FrameSpec {
 #[derive(Debug)]
 pub struct SpawnMade {
     pub motion: Rc<DynNode>,
-    pub kind: Kind,
+    pub geometry: Geometry,
     pub legacy: LegacyComponents,
 }
 
@@ -880,7 +880,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
                 };
                 let b = &world.entities[i];
-                let Kind::Curve(curve) = &b.kind else {
+                let Geometry::Curve(curve) = &b.geometry else {
                     return Err("on-laser: not a laser".into());
                 };
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
@@ -1258,10 +1258,10 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
-        (Val::Kw("kind".into()), Val::Kw(match &b.kind {
-            Kind::Point if b.legacy.trace.is_some() => "pather",
-            Kind::Point => "point",
-            Kind::Curve(_) => "laser",
+        (Val::Kw("kind".into()), Val::Kw(match &b.geometry {
+            Geometry::Pose if b.legacy.trace.is_some() => "pather",
+            Geometry::Pose => "point",
+            Geometry::Curve(_) => "laser",
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -1618,7 +1618,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 world.entities.push(Entity {
                     id,
                     team: team.clone(),
-                    kind: d.kind.clone(),
+                    geometry: d.geometry.clone(),
                     legacy: d.legacy.clone(),
                     motion,
                     birth: world.tick,

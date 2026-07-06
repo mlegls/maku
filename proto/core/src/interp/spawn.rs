@@ -215,7 +215,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         .into_iter()
         .map(|e| SpawnMade {
             motion: e.motion,
-            kind: e.kind,
+            geometry: e.geometry,
             legacy: e.legacy,
         })
         .collect();
@@ -248,7 +248,7 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (kind, legacy) = match &l.backing {
+            let (geometry, legacy) = match &l.backing {
                 CurveBacking::Parametric {
                     curve,
                     u_max_sig,
@@ -259,7 +259,7 @@ pub(crate) fn flatten_elems(
                     fill_sig,
                 } => {
                     (
-                        Kind::Curve(curve.clone()),
+                        Geometry::Curve(curve.clone()),
                         LegacyComponents {
                             curve_sampling: Some(CurveSampling {
                                 u_max_sig: u_max_sig.clone(),
@@ -276,7 +276,7 @@ pub(crate) fn flatten_elems(
                     )
                 }
                 CurveBacking::Trace { window } => (
-                    Kind::Point,
+                    Geometry::Pose,
                     LegacyComponents {
                         trace: Some(TracePolicy { window: Some(*window) }),
                         ..LegacyComponents::default()
@@ -285,7 +285,7 @@ pub(crate) fn flatten_elems(
             };
             out.push(SpawnElem {
                 motion: l.anchor.clone(),
-                kind,
+                geometry,
                 legacy,
                 path: path.clone(),
             });
@@ -294,7 +294,7 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 motion: as_dyn(other)?,
-                kind: Kind::Point,
+                geometry: Geometry::Pose,
                 legacy: LegacyComponents::default(),
                 path: path.clone(),
             });

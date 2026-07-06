@@ -82,7 +82,7 @@ language.md.
      representation that `spawn` materializes.~~ Done as `CurveV` with
      parametric/traced backings.
   2a. ~~Carry `CurveDomain` into runtime curve sampling instead of flattening
-      it immediately to `u-max`.~~ Done for `Kind::Curve`; traced curves
+      it immediately to `u-max`.~~ Done for `Geometry::Curve`; traced curves
       use dynamic integer-indexed sample domains, with interpolation reserved
       for an explicit higher-level helper.
   3. Represent fill as a time-varying curve domain/mask rather than a

@@ -41,8 +41,8 @@ impl Sim {
                 continue;
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
-        match &b.kind {
-            Kind::Point => {
+        match &b.geometry {
+            Geometry::Pose => {
                     if b.legacy.trace.is_some() {
                         if b.trail.len() >= 2 {
                             out.push(RenderItem::Polyline {
@@ -66,7 +66,7 @@ impl Sim {
                         });
                     }
                 }
-                Kind::Curve(_) => {
+                Geometry::Curve(_) => {
                     let Some(lifecycle) = &b.legacy.curve_lifecycle else { continue };
                     let hot = hot_frac(b, tau, sig);
                     let partly = tau >= lifecycle.warn && hot < 1.0;

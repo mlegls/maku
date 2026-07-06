@@ -15,8 +15,8 @@ pub struct Style {
 }
 
 #[derive(Debug, Clone)]
-pub enum Kind {
-    Point,
+pub enum Geometry {
+    Pose,
     Curve(CurveSpec),
 }
 
@@ -89,7 +89,7 @@ pub struct Entity {
     /// queries over tagged entities). Collision ignores this; layer tags and
     /// contact rules define interactions.
     pub team: Option<Rc<str>>,
-    pub kind: Kind,
+    pub geometry: Geometry,
     pub legacy: LegacyComponents,
     pub motion: Rc<DynNode>,
     pub birth: u64,

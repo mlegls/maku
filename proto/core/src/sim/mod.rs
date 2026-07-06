@@ -313,15 +313,15 @@ impl Sim {
                 return true; // the player rides a channel; never field-culled
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            match &b.kind {
-                Kind::Point => match dyn_pose(&b.motion, tau, &b.state, &sig) {
+            match &b.geometry {
+                Geometry::Pose => match dyn_pose(&b.motion, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);
                         false
                     }
                 },
-                Kind::Curve(_) => b
+                Geometry::Curve(_) => b
                     .legacy
                     .curve_lifecycle
                     .as_ref()
