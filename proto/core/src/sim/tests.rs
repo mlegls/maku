@@ -1798,3 +1798,32 @@ fn defchannel_derives_per_tick() {
     // $nearest-enemy now derives from the stdlib defchannel
     assert!(matches!(sim.ctx.sig.channel("nearest-enemy"), Some(Val::Vec2 { .. })));
 }
+
+    /// Ancestor clocks are lib-expressible (§13.1 audit): a parent
+    /// captures $tick into an ordinary binding (eager, an ir constant)
+    /// and the child signal reads (live $tick) minus it — a
+    /// pattern-epoch clock with no engine operator. The (live …) read
+    /// alone must make the closed form defer (time-dependence is not
+    /// just syntactic t/u), or the signal silently constant-folds at
+    /// spawn to a frozen clock.
+    #[test]
+    fn clock_passing_is_lib() {
+        const CARD: &str = r#"
+(defpattern p []
+  (seq
+    (wait (ticks 30))
+    (let [t0 $tick]
+      (seq
+        (spawn (cart m"(live($tick) - t0)/120" 0))
+        (spawn (cart m"$tick/120" 1))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..91 {
+            sim.step().unwrap();
+        }
+        let x = |i: usize| sim.world.bullets[i].prev_pos.unwrap().0;
+        // pattern-epoch clock: spawned at tick 30, prev_pos as of tick 90
+        assert!((x(0) - 0.5).abs() < 0.02, "live clock minus epoch: {}", x(0));
+        // without live, the channel read snaps at spawn (the boundary)
+        assert!((x(1) - 0.25).abs() < 0.02, "bare read stays snapped: {}", x(1));
+    }

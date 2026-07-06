@@ -432,11 +432,21 @@ pub fn is_scanned(d: &DynNode) -> bool {
     }
 }
 
-/// Does a form reference the slot-bound parameters t/u? (F12)
+/// Is this form time-dependent — does it reference the slot-bound
+/// parameters t/u (F12), or contain a (live …) read? live means
+/// "re-read at eval time" (§3's snap boundary), so a wall-clock signal
+/// like (cart m"(live($tick) - t0)/120" 0) must defer exactly like a
+/// t-dependent one instead of constant-folding at spawn.
 pub(crate) fn contains_t(form: &Form) -> bool {
     match form {
         Form::Sym(s) => &**s == "t" || &**s == "u",
-        Form::List(items) | Form::Vector(items) => items.iter().any(contains_t),
+        Form::List(items) => {
+            if matches!(items.first(), Some(Form::Sym(s)) if &**s == "live") {
+                return true;
+            }
+            items.iter().any(contains_t)
+        }
+        Form::Vector(items) => items.iter().any(contains_t),
         Form::Map(kvs) => kvs.iter().any(|(k, v)| contains_t(k) || contains_t(v)),
         _ => false,
     }
