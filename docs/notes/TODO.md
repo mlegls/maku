@@ -212,6 +212,10 @@ language.md.
       and extended curve anchors now carry `DynPose`. `DynNode` remains the
       recursive prototype IR underneath, and raw node references still appear
       inside that IR and frame specs.
+  2l. ~~Split typed dyn backing reps.~~ Done; `Dyn<T>` now stores
+      `T::Repr`, with separate `NumDynRepr`, `PoseDynRepr`, and
+      `FigureDynRepr`. This removes the shared repr's runtime type guards
+      and lets figure curves keep `DynPose` frames and curve expressions.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

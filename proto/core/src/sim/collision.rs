@@ -142,13 +142,13 @@ impl Sim {
         let target_d2 = |b: &Entity, i: usize, to: (f64, f64)| -> Option<f64> {
             let (bx, by) = pos[i]?;
             match b.dyn_figure.repr() {
-                DynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
+                FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
                     let pts: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R).max(0.0).powi(2))
                 }
-                DynRepr::Pose(_) => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
-                DynRepr::FigureCurve { .. } => {
+                FigureDynRepr::Pose(_) => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
+                FigureDynRepr::Curve { .. } => {
                     let Some(projection) = b.colliders.iter().find_map(DynCollider::curve_compat) else { return None };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if tau < projection.activity.warn {
@@ -164,7 +164,6 @@ impl Sim {
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R * projection.width).max(0.0).powi(2))
                 }
-                _ => unreachable!("internal type error: expected Dyn<Figure>"),
             }
         };
 

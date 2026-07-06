@@ -266,7 +266,7 @@ pub(crate) fn flatten_elems(
                     fill_sig,
                 } => {
                     (
-                        DynFigure::figure_curve(l.anchor.node().clone(), curve.clone()),
+                        DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
                         vec![DynCollider::CurveCompat(CurveColliderSlotCompat {
                                 sample_set: sample_set.clone(),
                                 u_max_sig: u_max_sig.clone(),
@@ -348,12 +348,11 @@ pub(crate) fn dyn_has_rand(d: &DynNode) -> bool {
 
 pub(crate) fn dyn_figure_has_rand(d: &DynFigure) -> bool {
     match d.repr() {
-        DynRepr::Pose(p) => dyn_has_rand(p),
-        DynRepr::FigureCurve { frame, curve } => {
-            dyn_has_rand(frame)
-                || matches!(&curve.eval, CurveEval::Expr(shape) if dyn_has_rand(shape))
+        FigureDynRepr::Pose(p) => dyn_has_rand(p.node()),
+        FigureDynRepr::Curve { frame, curve } => {
+            dyn_has_rand(frame.node())
+                || matches!(&curve.eval, CurveEval::Expr(shape) if dyn_has_rand(shape.node()))
         }
-        _ => unreachable!("internal type error: expected Dyn<Figure>"),
     }
 }
 
@@ -420,21 +419,20 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
 
 pub(crate) fn instantiate_rand_geometry(d: &DynFigure, world: &mut World) -> DynFigure {
     match d.repr() {
-        DynRepr::Pose(p) => DynFigure::pose_node(instantiate_rand(p, world)),
-        DynRepr::FigureCurve { frame, curve } => {
+        FigureDynRepr::Pose(p) => DynFigure::pose_node(instantiate_rand(p.node(), world)),
+        FigureDynRepr::Curve { frame, curve } => {
             let eval = match &curve.eval {
                 CurveEval::Straight => CurveEval::Straight,
-                CurveEval::Expr(shape) => CurveEval::Expr(instantiate_rand(shape, world)),
+                CurveEval::Expr(shape) => CurveEval::Expr(DynPose::pose_node(instantiate_rand(shape.node(), world))),
             };
             DynFigure::figure_curve(
-                instantiate_rand(frame, world),
+                DynPose::pose_node(instantiate_rand(frame.node(), world)),
                 ParametricCurve {
                     eval,
                     domain: curve.domain.clone(),
                 },
             )
         }
-        _ => unreachable!("internal type error: expected Dyn<Figure>"),
     }
 }
 

@@ -314,14 +314,14 @@ impl Sim {
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
             match b.dyn_figure.repr() {
-                DynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
+                FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);
                         false
                     }
                 },
-                DynRepr::FigureCurve { .. } => b
+                FigureDynRepr::Curve { .. } => b
                     .renderers
                     .iter()
                     .find_map(DynRender::curve_compat)
@@ -333,7 +333,6 @@ impl Sim {
                             .map(|projection| tau <= projection.activity.warn + projection.activity.active)
                     })
                     .unwrap_or(true),
-                _ => unreachable!("internal type error: expected Dyn<Figure>"),
             }
         });
         match err {

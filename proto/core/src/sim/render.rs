@@ -42,7 +42,7 @@ impl Sim {
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
             match b.dyn_figure.repr() {
-                DynRepr::Pose(_) => {
+                FigureDynRepr::Pose(_) => {
                     if b.cache_policy.trace.is_some() {
                         if b.trail.len() >= 2 {
                             out.push(RenderItem::Polyline {
@@ -66,7 +66,7 @@ impl Sim {
                         });
                     }
                 }
-                DynRepr::FigureCurve { .. } => {
+                FigureDynRepr::Curve { .. } => {
                     let Some(projection) = b.renderers.iter().find_map(DynRender::curve_compat) else { continue };
                     let hot = hot_frac(&projection.activity, tau, sig);
                     let partly = tau >= projection.activity.warn && hot < 1.0;
@@ -94,7 +94,6 @@ impl Sim {
                         }
                     }
                 }
-                _ => unreachable!("internal type error: expected Dyn<Figure>"),
             }
         }
         out

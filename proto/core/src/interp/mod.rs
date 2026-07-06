@@ -1265,10 +1265,9 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("kind".into()), Val::Kw(match b.dyn_figure.repr() {
-            DynRepr::Pose(_) if b.cache_policy.trace.is_some() => "pather",
-            DynRepr::Pose(_) => "point",
-            DynRepr::FigureCurve { .. } => "laser",
-            _ => unreachable!("internal type error: expected Dyn<Figure>"),
+            FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => "pather",
+            FigureDynRepr::Pose(_) => "point",
+            FigureDynRepr::Curve { .. } => "laser",
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -2375,7 +2374,7 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         anchor: DynPose::pose_node(Rc::new(DynNode::Const(Pose::IDENTITY))),
         backing: CurveBacking::Parametric {
             curve: ParametricCurve {
-                eval: shape.map(|d| CurveEval::Expr(d.into_node())).unwrap_or(CurveEval::Straight),
+                eval: shape.map(CurveEval::Expr).unwrap_or(CurveEval::Straight),
                 domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
             },
             sample_set: SampleSet::Step { resolution: getf("resolution", 0.1) },
