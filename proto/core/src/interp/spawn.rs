@@ -213,7 +213,11 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         .collect();
     let dyns = elems
         .into_iter()
-        .map(|e| SpawnMade { motion: e.motion, kind: e.kind })
+        .map(|e| SpawnMade {
+            motion: e.motion,
+            kind: e.kind,
+            legacy: e.legacy,
+        })
         .collect();
     Ok(Val::Action(Rc::new(ActionV::Spawn {
         dyns,
@@ -244,10 +248,9 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let kind = match &l.backing {
+            let (kind, legacy) = match &l.backing {
                 CurveBacking::Parametric {
-                    shape,
-                    domain,
+                    curve,
                     u_max_sig,
                     resolution,
                     warn,
@@ -255,24 +258,46 @@ pub(crate) fn flatten_elems(
                     width,
                     fill_sig,
                 } => {
-                    Kind::Curve {
-                        shape: shape.clone(),
-                        warn: *warn,
-                        active: *active,
-                        domain: domain.clone(),
-                        u_max_sig: u_max_sig.clone(),
-                        resolution: *resolution,
-                        width: *width,
-                        fill_sig: fill_sig.clone(),
-                    }
+                    (
+                        Kind::Curve(curve.clone()),
+                        LegacyComponents {
+                            curve_sampling: Some(CurveSampling {
+                                u_max_sig: u_max_sig.clone(),
+                                resolution: *resolution,
+                            }),
+                            curve_lifecycle: Some(CurveLifecycle {
+                                warn: *warn,
+                                active: *active,
+                                hot_frac_sig: fill_sig.clone(),
+                            }),
+                            curve_stroke: Some(CurveStroke { width: *width }),
+                            ..LegacyComponents::default()
+                        },
+                    )
                 }
-                CurveBacking::Trace { window } => Kind::Trail { window: *window },
+                CurveBacking::Trace { window } => (
+                    Kind::Point,
+                    LegacyComponents {
+                        trace: Some(TracePolicy { window: Some(*window) }),
+                        ..LegacyComponents::default()
+                    },
+                ),
             };
-            out.push(SpawnElem { motion: l.anchor.clone(), kind, path: path.clone() });
+            out.push(SpawnElem {
+                motion: l.anchor.clone(),
+                kind,
+                legacy,
+                path: path.clone(),
+            });
             Ok(())
         }
         other => {
-            out.push(SpawnElem { motion: as_dyn(other)?, kind: Kind::Point, path: path.clone() });
+            out.push(SpawnElem {
+                motion: as_dyn(other)?,
+                kind: Kind::Point,
+                legacy: LegacyComponents::default(),
+                path: path.clone(),
+            });
             Ok(())
         }
     }

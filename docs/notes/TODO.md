@@ -44,21 +44,20 @@ language.md.
   `Curve` is pose-valued over `u` plus its domain and
   sampling/materialization hints:
   ```text
-  Curve = u -> Pose, with CurveDomain
+  CurveSpec = eval + CurveDomain
+  eval = u -> Pose
   CurveDomain = Range(min, max) | Values(Vec<u>)
   ```
   Normalized curves are just `Range(0, 1)`. Higher-level helpers can turn
   min/max/step descriptions into `Values`; step size is not a distinct core
-  domain. Traced/history curves are `TracedCurve { samples: Vec<Pose>,
-  domain: Range<uint> }`: only valid pose samples are stored, indexed from
-  entity-local sample 0, and before the history fills the domain is shorter.
-  The current domain can be derived from entity age and sample count rather
-  than stored separately. Facing is part of each pose sample; finite-difference
-  facing is only a possible helper/default, not the core representation.
-  Interpolation over those sample indices is an explicit higher-level helper,
-  not implicit core behavior. Parametric curves and traced/history curves
-  occupy the same semantic slot; the difference is backing and optimization,
-  not type. A filling laser is a `Dyn<Curve>` whose active domain/mask changes
+  domain. Traces are derived curves over an entity's dyn history, not a
+  separate geometry kind. The interpreter may cache recent pose samples for
+  integrated/scanned dyns; retention is a performance policy, and shortening
+  it should be indistinguishable from observing a younger trace. Facing is
+  part of each pose sample; finite-difference facing is only a possible
+  helper/default, not the core representation. Interpolation over trace
+  sample indices is an explicit higher-level helper, not implicit core
+  behavior. A filling laser is a `Dyn<Curve>` whose active domain/mask changes
   over `t` (warning render and hot collision may be separate host/collider
   interpretations of the same curve). Core exposes geometry, colliders,
   events, and opaque indexed meta/fields; hosts decide how meta renders.
@@ -88,7 +87,8 @@ language.md.
       for an explicit higher-level helper.
   3. Represent fill as a time-varying curve domain/mask rather than a
      laser-only lifecycle shortcut.
-  4. Recast trails/pathers as traced-curve backings of `Dyn<Curve>`.
+  4. Recast trails/pathers as derived curves over entity dyn history, with
+     any retained samples treated as cache/policy rather than geometry.
   5. Move render tags into ordinary signal-valued meta/fields; collider
      scale/radius should be explicit collider data, not borrowed from a
      render-specific `:scale`.

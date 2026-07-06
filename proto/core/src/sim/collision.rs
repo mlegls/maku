@@ -13,17 +13,18 @@ pub fn sample_curve_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let Kind::Curve { shape, domain, u_max_sig, resolution, .. } = &b.kind else {
+    let Kind::Curve(curve) = &b.kind else {
         return None;
     };
+    let sampling = b.legacy.curve_sampling.as_ref()?;
     if frac <= 0.0 {
         return None;
     }
     let anchor = dyn_pose(&b.motion, tau, &b.state, sig).ok()?;
-    let us: Vec<f64> = match domain {
+    let us: Vec<f64> = match &curve.domain {
         CurveDomain::Range { min, max } => {
             let min = *min;
-            let max = match u_max_sig {
+            let max = match &sampling.u_max_sig {
                 Some((f, e)) => eval_sig(f, e, sig, tau, 0.0, None, None)
                     .and_then(|v| v.num())
                     .unwrap_or(*max),
@@ -31,7 +32,7 @@ pub fn sample_curve_frac(
             };
             let end = min + (max - min) * frac.min(1.0);
             let span = (end - min).abs().max(0.01);
-            let steps = ((span / resolution).ceil() as usize).clamp(2, 400);
+            let steps = ((span / sampling.resolution).ceil() as usize).clamp(2, 400);
             (0..=steps).map(|k| min + (end - min) * k as f64 / steps as f64).collect()
         }
         CurveDomain::Values(vals) => {
@@ -44,10 +45,7 @@ pub fn sample_curve_frac(
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = match shape {
-            Some(sh) => dyn_pose_u(sh, tau, u, &b.state, sig).ok()?,
-            None => Pose { x: u, y: 0.0, th: 0.0 }, // straight along +x
-        };
+        let local = eval_curve_pose(&curve.eval, tau, u, &b.state, sig).ok()?;
         let w = anchor.compose(&local);
         pts.push((w.x, w.y));
     }
@@ -57,9 +55,9 @@ pub fn sample_curve_frac(
 /// A curve's hot fraction at age tau. Curves without :fill are hot in full
 /// the moment the warn ends. :fill itself is a fraction signal; helpers like
 /// fill-linear live in card/library code.
-pub(super) fn hot_frac(kind: &Kind, tau: f64, sig: &SigEnv) -> f64 {
-    let Kind::Curve { fill_sig, .. } = kind else { return 1.0 };
-    if let Some((f, e)) = fill_sig {
+pub(super) fn hot_frac(b: &Entity, tau: f64, sig: &SigEnv) -> f64 {
+    let Some(lifecycle) = &b.legacy.curve_lifecycle else { return 1.0 };
+    if let Some((f, e)) = &lifecycle.hot_frac_sig {
         return eval_sig(f, e, sig, tau, 0.0, None, None)
             .and_then(|v| v.num())
             .map(|x| x.clamp(0.0, 1.0))
@@ -90,7 +88,7 @@ fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
 
 impl Sim {
     /// Collision pass, detect-then-resolve over card-defined contact rules.
-    /// Checks are hot, shape-only data; contacts are rare callback code.
+    /// Checks are hot, geometry-only data; contacts are rare callback code.
     pub(super) fn collide(&mut self, _inputs: &Inputs) -> Result<(), String> {
         const CURVE_R: f64 = 0.08; // curve half-width for collision
 
@@ -121,23 +119,23 @@ impl Sim {
         let target_d2 = |b: &Entity, i: usize, to: (f64, f64)| -> Option<f64> {
             let (bx, by) = pos[i]?;
             match &b.kind {
-                Kind::Point => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
-                Kind::Curve { warn, width, .. } => {
-                    let tau = (tick - b.birth) as f64 / TICK_RATE;
-                    if tau < *warn {
-                        return None; // warn phase: no hitbox yet
-                    }
-                    // filled curves: only the swept-out prefix is hot
-                    let pts = sample_curve_frac(b, tau, &sig, hot_frac(&b.kind, tau, &sig))?;
-                    let d = dist_to_chain(to, &pts)?;
-                    Some((d - CURVE_R * width).max(0.0).powi(2))
-                }
-                // the trail IS the hitbox: a capsule chain over the
-                // recorded window
-                Kind::Trail { .. } => {
+                Kind::Point if b.legacy.trace.is_some() => {
                     let pts: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
                     let d = dist_to_chain(to, &pts)?;
                     Some((d - CURVE_R).max(0.0).powi(2))
+                }
+                Kind::Point => Some((bx - to.0).powi(2) + (by - to.1).powi(2)),
+                Kind::Curve(_) => {
+                    let Some(lifecycle) = &b.legacy.curve_lifecycle else { return None };
+                    let Some(stroke) = &b.legacy.curve_stroke else { return None };
+                    let tau = (tick - b.birth) as f64 / TICK_RATE;
+                    if tau < lifecycle.warn {
+                        return None; // warn phase: no hitbox yet
+                    }
+                    // filled curves: only the swept-out prefix is hot
+                    let pts = sample_curve_frac(b, tau, &sig, hot_frac(b, tau, &sig))?;
+                    let d = dist_to_chain(to, &pts)?;
+                    Some((d - CURVE_R * stroke.width).max(0.0).powi(2))
                 }
             }
         };

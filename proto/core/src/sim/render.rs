@@ -41,9 +41,19 @@ impl Sim {
                 continue;
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
-            match &b.kind {
-                Kind::Point => {
-                    if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, sig) {
+        match &b.kind {
+            Kind::Point => {
+                    if b.legacy.trace.is_some() {
+                        if b.trail.len() >= 2 {
+                            out.push(RenderItem::Polyline {
+                                pts: b.trail.iter().map(|p| (p.x, p.y)).collect(),
+                                style: b.style.clone(),
+                                active: true,
+                                hue: self.sample_hue(b, tau),
+                                alpha: self.sample_sig(&b.sigs.opacity, tau, 1.0),
+                            });
+                        }
+                    } else if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, sig) {
                         out.push(RenderItem::Dot {
                             x: p.x,
                             y: p.y,
@@ -56,27 +66,17 @@ impl Sim {
                         });
                     }
                 }
-                Kind::Trail { .. } => {
-                    if b.trail.len() >= 2 {
-                        out.push(RenderItem::Polyline {
-                            pts: b.trail.iter().map(|p| (p.x, p.y)).collect(),
-                            style: b.style.clone(),
-                            active: true,
-                            hue: self.sample_hue(b, tau),
-                            alpha: self.sample_sig(&b.sigs.opacity, tau, 1.0),
-                        });
-                    }
-                }
-                Kind::Curve { warn, .. } => {
-                    let hot = hot_frac(&b.kind, tau, sig);
-                    let partly = tau >= *warn && hot < 1.0;
+                Kind::Curve(_) => {
+                    let Some(lifecycle) = &b.legacy.curve_lifecycle else { continue };
+                    let hot = hot_frac(b, tau, sig);
+                    let partly = tau >= lifecycle.warn && hot < 1.0;
                     let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
                     if let Some(pts) = sample_curve(b, tau, sig) {
                         out.push(RenderItem::Polyline {
                             pts,
                             style: b.style.clone(),
                             // a filling curve's full path stays a telegraph
-                            active: tau >= *warn && !partly,
+                            active: tau >= lifecycle.warn && !partly,
                             hue: self.sample_hue(b, tau),
                             alpha,
                         });

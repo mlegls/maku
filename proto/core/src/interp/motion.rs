@@ -113,14 +113,40 @@ pub enum CurveDomain {
     Values(Rc<[f64]>),
 }
 
-/// Parametric and traced curves occupy one semantic slot; the backing says
-/// how this interpreter materializes the curve for spawn/collision/render.
+#[derive(Debug, Clone)]
+pub enum CurveEval {
+    /// Compatibility straight curve along the local +x axis.
+    Straight,
+    /// Interpreter representation of eval: (t, u) -> Pose. This is a
+    /// prototype lowering detail; the semantic type is still u -> Pose.
+    Expr(Rc<DynNode>),
+}
+
+#[derive(Debug, Clone)]
+pub struct CurveSpec {
+    pub eval: CurveEval,
+    pub domain: CurveDomain,
+}
+
+pub fn eval_curve_pose(
+    eval: &CurveEval,
+    tau: f64,
+    u: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Pose, String> {
+    match eval {
+        CurveEval::Straight => Ok(Pose { x: u, y: 0.0, th: 0.0 }),
+        CurveEval::Expr(d) => dyn_pose_u(d, tau, u, state, sig),
+    }
+}
+
+/// Compatibility extended values before spawn lowering.
 #[derive(Debug, Clone)]
 pub enum CurveBacking {
     /// Surface `laser` syntax currently lowers to this representation.
     Parametric {
-        shape: Option<Rc<DynNode>>, // None = straight along frame +x
-        domain: CurveDomain,
+        curve: CurveSpec,
         u_max_sig: Option<(Form, Env)>, // signal-valued :u-max (varLength)
         resolution: f64,
         warn: f64,
@@ -129,7 +155,8 @@ pub enum CurveBacking {
         /// Swept hot fraction as a function of curve age t.
         fill_sig: Option<(Form, Env)>,
     },
-    /// Surface `pather` syntax currently lowers to this representation.
+    /// Surface `pather` syntax currently lowers to a pose entity with a
+    /// legacy trace cache enabled.
     Trace { window: f64 },
 }
 

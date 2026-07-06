@@ -134,6 +134,7 @@ impl Val {
 pub struct SpawnElem {
     pub motion: Rc<DynNode>,
     pub kind: Kind,
+    pub legacy: LegacyComponents,
     pub path: Vec<(usize, usize)>,
 }
 
@@ -255,6 +256,7 @@ pub enum FrameSpec {
 pub struct SpawnMade {
     pub motion: Rc<DynNode>,
     pub kind: Kind,
+    pub legacy: LegacyComponents,
 }
 
 // ---------------------------------------------------------------------------
@@ -878,16 +880,13 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
                 };
                 let b = &world.entities[i];
-                let Kind::Curve { shape, .. } = &b.kind else {
+                let Kind::Curve(curve) = &b.kind else {
                     return Err("on-laser: not a laser".into());
                 };
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
                 let anchor = dyn_pose(&b.motion, tau, &b.state, &ctx.sig)?;
                 let at = |uu: f64| -> Result<Pose, String> {
-                    let local = match shape {
-                        Some(sh) => dyn_pose_u(sh, tau, uu, &b.state, &ctx.sig)?,
-                        None => Pose { x: uu, y: 0.0, th: 0.0 },
-                    };
+                    let local = eval_curve_pose(&curve.eval, tau, uu, &b.state, &ctx.sig)?;
                     Ok(anchor.compose(&local))
                 };
                 let p0 = at(u)?;
@@ -1260,9 +1259,9 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("kind".into()), Val::Kw(match &b.kind {
+            Kind::Point if b.legacy.trace.is_some() => "pather",
             Kind::Point => "point",
-            Kind::Curve { .. } => "laser",
-            Kind::Trail { .. } => "pather",
+            Kind::Curve(_) => "laser",
         }.into())),
         (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
@@ -1620,6 +1619,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     id,
                     team: team.clone(),
                     kind: d.kind.clone(),
+                    legacy: d.legacy.clone(),
                     motion,
                     birth: world.tick,
                     style: s.clone(),
@@ -2355,8 +2355,10 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     Ok(Val::CurveV(Rc::new(ExtCurve {
         anchor: Rc::new(DynNode::Const(Pose::IDENTITY)),
         backing: CurveBacking::Parametric {
-            shape,
-            domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
+            curve: CurveSpec {
+                eval: shape.map(CurveEval::Expr).unwrap_or(CurveEval::Straight),
+                domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
+            },
             u_max_sig,
             resolution: getf("resolution", 0.1),
             warn: getf("warn", 0.0),
@@ -2692,12 +2694,12 @@ mod tests {
         };
         assert_eq!(items.len(), 6);
         let Val::CurveV(l) = &items[0] else { panic!("expected laser") };
-        let CurveBacking::Parametric { shape, domain, .. } = &l.backing else {
+        let CurveBacking::Parametric { curve, .. } = &l.backing else {
             panic!("expected parametric curve")
         };
-        assert!(matches!(domain, CurveDomain::Range { min, max } if *min == 0.0 && *max == 3.5));
+        assert!(matches!(&curve.domain, CurveDomain::Range { min, max } if *min == 0.0 && *max == 3.5));
         // shape at t=1, u=1: r=2, θ=-14°
-        let p = dyn_pose_u(shape.as_ref().unwrap(), 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
+        let p = eval_curve_pose(&curve.eval, 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
         let ex = 2.0 * (-14f64).to_radians().cos();
         assert!((p.x - ex).abs() < 1e-9);
     }

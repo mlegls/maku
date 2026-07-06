@@ -17,22 +17,46 @@ pub struct Style {
 #[derive(Debug, Clone)]
 pub enum Kind {
     Point,
-    Curve {
-        shape: Option<Rc<DynNode>>,
-        warn: f64,
-        active: f64,
-        domain: CurveDomain,
-        u_max_sig: Option<(Form, Env)>,
-        resolution: f64,
-        /// Width multiplier: render thickness AND collision half-width.
-        width: f64,
-        /// Signal-valued :fill — the swept fraction, clamped to 0..1, as a
-        /// function of curve age t. Linear-over-duration is library code.
-        fill_sig: Option<(Form, Env)>,
-    },
-    /// A traced curve: positions are recorded per tick into Entity.trail.
-    /// Its domain is discrete values, not an interpolated range.
-    Trail { window: f64 },
+    Curve(CurveSpec),
+}
+
+#[derive(Debug, Clone)]
+pub struct CurveSampling {
+    /// Signal-valued compatibility override for the upper range bound
+    /// (:u-max varLength).
+    pub u_max_sig: Option<(Form, Env)>,
+    /// Sampling step for the interpreter's polyline approximation.
+    pub resolution: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CurveLifecycle {
+    pub warn: f64,
+    pub active: f64,
+    /// Signal-valued active-domain fraction, clamped to 0..1.
+    pub hot_frac_sig: Option<(Form, Env)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CurveStroke {
+    /// Width multiplier: render thickness AND collision half-width.
+    pub width: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TracePolicy {
+    /// Optional retained history in seconds. None means tracing disabled.
+    /// Shortening this only drops older samples, making the trace
+    /// indistinguishable from one produced by a younger entity.
+    pub window: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct LegacyComponents {
+    pub curve_sampling: Option<CurveSampling>,
+    pub curve_lifecycle: Option<CurveLifecycle>,
+    pub curve_stroke: Option<CurveStroke>,
+    pub trace: Option<TracePolicy>,
 }
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
@@ -66,6 +90,7 @@ pub struct Entity {
     /// contact rules define interactions.
     pub team: Option<Rc<str>>,
     pub kind: Kind,
+    pub legacy: LegacyComponents,
     pub motion: Rc<DynNode>,
     pub birth: u64,
     pub style: Style,

@@ -270,13 +270,14 @@ impl Sim {
                 step_motion(&b.motion, tau, dt, &mut b.state, &sig)?;
             }
         }
-        // record traced-curve trails: a dynamic integer sample domain over
-        // the remembrance window
+        // record traced curves: a dynamic integer sample domain over the
+        // retained history window
         {
             let tick = self.world.tick;
             let sig = self.ctx.sig.clone();
             for b in &mut self.world.entities {
-                if let Kind::Trail { window } = &b.kind {
+                if let Some(policy) = &b.legacy.trace {
+                    let Some(window) = policy.window else { continue };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if let Ok(p) = dyn_pose(&b.motion, tau, &b.state, &sig) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
@@ -301,7 +302,7 @@ impl Sim {
             self.world.log.borrow_mut().prune(cutoff);
         }
         self.world.tick += 1;
-        // cull: off-playfield points and trails; curves past their active window
+        // cull: off-playfield poses/traces; compatibility curves past their active window
         let tick = self.world.tick;
         let mut err = None;
         self.world.entities.retain(|b| {
@@ -320,14 +321,12 @@ impl Sim {
                         false
                     }
                 },
-                Kind::Curve { warn, active, .. } => tau <= warn + active,
-                Kind::Trail { .. } => match dyn_pose(&b.motion, tau, &b.state, &sig) {
-                    Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
-                    Err(e) => {
-                        err = Some(e);
-                        false
-                    }
-                },
+                Kind::Curve(_) => b
+                    .legacy
+                    .curve_lifecycle
+                    .as_ref()
+                    .map(|lifecycle| tau <= lifecycle.warn + lifecycle.active)
+                    .unwrap_or(true),
             }
         });
         match err {
