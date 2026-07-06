@@ -99,25 +99,49 @@ language.md.
     signal lifting over t/u) exist in no library anyway; libs only ever
     cover inner kernels, relevant again when the JIT's typed strided
     descriptors arrive.
+  * THE INTRINSIC CRITERION (settled in discussion): an operation is
+    intrinsic iff it is hard to implement well / asymptotically or
+    constant-factor better than the naive version AND generically
+    powerful. Everything else is lib match-recursion over seq views.
   * Generative-art vocabulary: bezier/curves are pure dyns over u (laser
     :shape already samples dyn_pose_u) — lib code first, intrinsify if
     hot; the easing family is the same species and already builtin.
     Smooth noise (perlin/simplex) is a PURE fn of coords+seed — hot-layer
     intrinsic, integer-hash based for bit determinism, replay-clean
-    (unlike the sequential-splitmix RNG). FFT sits at the determinism
-    boundary: audio-reactive cards want HOST-side analysis published as
-    channels riding the input tape; engine-side FFT deferred until a
-    procedural (spectral-synthesis) use case appears.
-  * Seq/dict verb set: steal k's adverb semantics (over/scan/each/
-    each-prior/each-left/each-right) as prelude match-recursion over seq
-    views — non-intrinsic. Keep cyclic broadcast (ours) over k's
-    equal-length-or-atom conformance. Dicts need one entries/keys/vals
-    intrinsic to be seq-able; dict verbs are then lib code. Optional
-    later: m"" grows postfix adverb SPELLING that expands to the same lib
-    fns at read time (zero IR growth; arity is syntactically visible
-    inside the macro, which is the monadic/dyadic disambiguation k
-    lacks). Distinct names in function space (fold/scan/each-prior), no
-    overloaded glyphs outside the reader macro.
+    (unlike the sequential-splitmix RNG).
+  * Bullet-field image processing — the MOTIVATING use case for the
+    matrix family (matrices enter as images of the world, not physics):
+    rasterize the bullet field to a density grid, transform in frequency
+    space, resample back to bullets. Intrinsics: fft/ifft (1D seqs, 2D
+    matrices; own/vendored impl, fixed summation order — native↔wasm
+    replay identity), rasterize (query → density grid; engine access),
+    resample (density → positions; deterministic low-discrepancy
+    sequence, not the RNG — order-independent). Lib: the artistic verbs
+    (lpf = elementwise multiply in freq space via broadcasting,
+    band-pass ring extraction, blur/convolution, morphology,
+    edge-detect-then-spawn). Pipeline shape is manip-like (query → grid
+    → transform → write back), control-layer, event-rate. Engines don't
+    do this because their bullet sets aren't VALUES; our queryable
+    immutable-snapshot world is what makes the field a legal operand.
+    Audio-reactive FFT stays host-side as channels on the input tape.
+  * Seq/dict verb set: steal k's non-string verbs + adverbs. Intrinsic
+    (the hash/sort family per the criterion): grade-up/grade-down (sort
+    as a PERMUTATION VALUE — composes with cyclic indexing), group
+    (indices-by-value → dict), distinct, find. Lib over match + views:
+    where, reverse, odometer (a formation generator), reshape,
+    replicate/weed (filter), fill, cut, window (sliding — generative),
+    encode/decode (mixed radix, pairs with odometer), amend @[x;y;f]
+    (functional array/dict update — THE missing verb for immutable
+    pipelines; intrinsify if hot), and the adverbs (over/scan/each/
+    each-prior/each-left/each-right). Dicts need one entries/keys/vals
+    intrinsic to be seq-able; dict verbs are then lib. Semantics to pin:
+    pervasive broadcast (k pervades nested structure; adopt pervasion
+    with OUR cyclic conformance at each depth). Distinct names per
+    overload in function space (where/group/grade-up/fill/amend);
+    glyph overloading returns only inside m"" where arity is
+    syntactically visible — postfix adverb spelling expanding to the
+    same lib fns at read time (zero IR growth), deferred until named
+    forms feel heavy in real cards.
 - A lib change is an engine rebuild (deliberate — not user-patchable);
   version the lib with the wire protocol when hosts start pinning.
 - Styles, under "the engine has no bullet-hell domain understanding":
