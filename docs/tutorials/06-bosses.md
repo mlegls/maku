@@ -63,9 +63,9 @@ two movesets whose transitions read an input channel (hold Shift to
 switch). States + channels is the general tool; bosses are one use.
 
 `goto` is scoped to the innermost lexical machine — an imported
-pattern's machine can't hijack yours — and labels survive editing in a
-way DMK's `shiftphaseto(2)` indices don't: insert a phase and every
-label still points where it did.
+pattern's machine can't hijack yours — and because targets are labels
+rather than indices, inserting a state never re-points an existing
+transition.
 
 ## The sugar: `phases`
 
@@ -125,21 +125,20 @@ actually registered, and binds `boss` (the spawn's handles) for the
 machine body. What it *doesn't* do is policy. Look at the `finally`
 block: clearing the field at a phase break and granting a mercy window
 are one `cull` and one `invuln` — card code, stated where it happens.
-DMK bakes the equivalents into the engine (capture rules, item-drop
-tables, auto-clear by phase type, `vulnerable(false)` — all keyed off
-`type(spell, …)` metadata in `Danmaku/Metadata.cs`); here the phase
-*type* is nothing but which cleanup you wrote. A capture bonus is a
-`wait`-vs-`$boss-hp` race you can express in three lines, and it drops
-whatever your game drops.
+There is no phase *type*; a phase is characterized by which gate and
+which cleanup you wrote. That keeps the genre conventions in reach of
+the card: a capture bonus is a `wait`-vs-`$boss-hp` race (did the
+health bar empty before the timer?) with an item drop in the winning
+branch — three lines, next to the phase they judge.
 
-Two DMK conventions dissolve entirely:
+Two structural notes:
 
-- **The zeroeth setup phase** (mandatory in DMK, "your scripts will not
-  work properly" without it) doesn't exist. Setup is code before the
-  machine — the `move` above, a `defvar`, whatever. For development
-  skipping, point a `goto` at the state under test, or just reorder.
-- **`shiftphaseto(N)`** is `(goto :label)`, and since routing defaults
-  to state order, most machines never write it at all.
+- **There is no setup phase.** Setup is code before the machine — the
+  `move` above, a `defvar`, whatever. While developing, point a `goto`
+  at the state under test, or just reorder the clauses.
+- **Explicit routing is rare.** Since a state's default successor is
+  the next state in order, a linear fight writes no `goto` at all;
+  labels are for skips, loops, and computed transitions.
 
 Run `ex5-boss` and shoot the boss down (the sandbox rig fires with the
 mouse): aimed fans until the timeout or your damage ends the opening,

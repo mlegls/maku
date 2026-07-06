@@ -6,21 +6,18 @@ Runnable companion: **`cards/tutorials/t07.dmk`**.
 cargo run --release --manifest-path proto/Cargo.toml -p danmaku-player -- cards/tutorials/t07.dmk
 ```
 
-DMK calls its version of this material "on the harder side" and
-"critical to a thorough understanding" of the engine. Here it's shorter,
-because both of its subsystems — the firing index and empty-guided
-fires — dissolve into things you already know: variables and frames.
-The payoff is the same: complex shapes that move *as shapes*.
+This tutorial builds up to one skill: making a *complex shape* of
+bullets — an arrow, a ring of rings, a carrier with escorts — move as a
+shape: turning together, staying rigid, pointing where it flies. On the
+way it settles two smaller questions that every pattern eventually
+asks: how does a bullet know which one it is, and where do formations
+come from?
 
 ## Indices are just variables
 
-DMK threads a "firing index" `p` through its repeaters — a single number
-you pack loop indices into (`p this`, `p add`, `p mod`) and unpack with
-`p1`/`p2`, with overflow rules and "awkward and easy to screw up"
-retrieval past two layers. The problem it solves is real: bullets need
-to know *which one they are*. The mechanism doesn't survive translation,
-because here multiplicity is expressed with ordinary binders — the index
-never leaves scope, so there's nothing to pack (`ex1-index`):
+Bullets in a volley usually differ by *index* — the third bullet is
+faster, the seventh is offset further. Whenever you create multiplicity
+with `map` over `iota`, the index is simply in scope (`ex1-index`):
 
 ```clojure
 (spawn-bullet ((aim $player)
@@ -31,18 +28,19 @@ never leaves scope, so there's nothing to pack (`ex1-index`):
 
 Ten bullets fanned at the player, each 0.2 faster than the last. `k` is
 a lambda parameter; nested formations nest lambdas, and every level's
-index has a name. The same job is done by seq bindings in `dotimes`
-(one value per *volley*) and by `:cols` (an index the bullet carries
-into later queries and contact callbacks) — three spellings of
-"which one am I", all ordinary.
+index has its own name — no numbering scheme to manage. Two other
+spellings cover the other lifetimes of "which one am I":
+
+- `dotimes` seq bindings — one value per *volley* (`[vol inf lr [1 -1]]`
+  alternates a sign every shot);
+- `:cols` — an index the bullet *carries*, readable later in queries
+  and contact callbacks.
 
 ## Formations are functions
 
-DMK maps indices to arrow-shape coordinates with `bindArrow`, an
-engine-bound helper exposing magic variables (`axd`, `ayd`, `aixd`,
-`aiyd` — "the best way to understand how they work is to play around
-with them"). A formation here is a function from indices to offset
-frames, and you write it yourself in four lines:
+A formation is nothing but a mapping from indices to offset frames, so
+it's a function you write once. Here is an arrowhead — a tip plus two
+staggered wings:
 
 ```clojure
 (defn arrow-at [k dx dy]
@@ -54,15 +52,16 @@ frames, and you write it yourself in four lines:
 ```
 
 `ex2-arrow` fires it moving straight: `((linear c[2 0]) (arrow 11 -0.2 0.1))`
-— eleven amulets in a chevron. `circle` and `fan` from the library are
-the same species, just pre-written.
+— eleven amulets in a chevron. The library's `circle` and `fan` are the
+same species, just pre-written; when a shape recurs across your cards,
+give it a `defn` next to them.
 
-## The turn, and why it breaks
+## The turn, and why the obvious attempt fails
 
-Now the tutorial's real problem. The arrow flies right; you want it to
-bank downward over a second, *staying an arrow that points where it
-flies*. The naive attempt gives every bullet the same turning velocity
-(`ex3-unguided`):
+Now the real problem. The arrow flies right; you want it to bank
+downward over a second, *staying an arrow that points where it flies*.
+The obvious attempt gives every bullet the same turning velocity, with
+the offsets applied around each bullet's spawn point (`ex3-unguided`):
 
 ```clojure
 (map (fn [k] ((pose (arrow-at k -0.2 0.1))
@@ -72,49 +71,45 @@ flies*. The naive attempt gives every bullet the same turning velocity
 
 Watch it: the formation translates rigidly — identical velocities keep
 the offsets identical — but it *never rotates*. After the turn the
-arrow still points right while flying down. The offsets were applied
-outside the moving frame, in world orientation, once.
-
-DMK solves this with dedicated machinery: spawn an invisible "empty"
-bullet to fly the center, record its location and direction every frame
-into a keyed public store (`guideempty2 p { ("eloc", code(loc)),
-("edir", code(dir)) }`), and have every child compute
-`load("eloc", p) + rotatev(load("edir", p), myOffset)` — with `p` as
-the unique key tying children to their guide, which is the actual
-reason the firing index exists.
+arrow still points right while flying down. The offsets were fixed in
+world orientation at spawn, and nothing ever revisits them.
 
 ## The guided turn: it's a frame
 
-Here the entire subsystem is one edit — move the offsets *inside* the
-turning frame (`ex4-guided`):
+The fix is one structural edit: move the offsets *inside* the turning
+frame (`ex4-guided`):
 
 ```clojure
 ((vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])
   ((pose c[0.6 0]) (arrow 11 -0.2 0.1)))
 ```
 
-Every frame's pose carries a heading (`linear`'s is its direction,
-`vel`'s the instantaneous velocity direction, a closed path's the
-tangent), and composition rotates child offsets by it. So the arrow
-turns as a shape, and the amulets' rendered facing follows the composed
-heading too — DMK's `dir2(load("edir", p))` option row simply
-disappears. The `(pose c[0.6 0])` shim is DMK's final refinement
-(`0.6 + -0.2 * aixd`): it shifts the pivot from the arrow's tip back
-toward its center, so the bank looks like a body rotating rather than a
-head dragging a tail.
+This works because every frame's pose carries a *heading* along with
+its position — `linear`'s is its direction of travel, `vel`'s the
+instantaneous velocity direction, a closed path's the tangent — and
+frame composition rotates child offsets by the parent's heading. The
+outer `vel` level is a *guide*: it renders nothing and collides with
+nothing (it's a level of the frame tree, not an entity), it just flies
+the turn, and the arrow rides it as a rigid body. The bullets' rendered
+facing follows the composed heading too, so the amulets point along the
+bank without further ado.
 
-Checklist of what didn't need to exist: no empty bullet (nothing
-spawns for the guide — it's a level of the frame tree), no per-frame
-recording, no keyed store, no unique identifier — the child-to-guide
-association is *lexical nesting*. The translation notes call this the
-largest structural win in the corpus; `cards/translations/200_cradle.dmk`
-is a production example (18 guides, 126 petals, zero guide entities).
+The `(pose c[0.6 0])` shim is worth pausing on. Without it the guide
+sits at the arrow's *tip*, and the turn reads as a head dragging a tail.
+Shifting every offset forward moves the pivot back toward the shape's
+center, and the bank looks like a body rotating. Tune the pivot the way
+you'd tune an easing — by eye.
+
+The pattern generalizes to any rigid ensemble: put the shared motion in
+one frame level, the shape below it, and nest further for shapes within
+shapes. `cards/translations/200_cradle.dmk` runs it at production scale
+— three volleys × six guides × seven petals, every level a frame.
 
 ## Sharing a guide
 
-One case remains: several *patterns* riding one trajectory — a visible
-carrier with a turret loop, say. Let-bind the guide; the binding is the
-shared instance (`ex5-rig`):
+One case remains: several *patterns* riding one trajectory — say a
+visible carrier with a turret loop. Let-bind the guide; the binding is
+the shared instance (`ex5-rig`):
 
 ```clojure
 (let [guide (vel p[(lerp 0.4 1.6 t 4 0) 45])]
@@ -127,10 +122,10 @@ shared instance (`ex5-rig`):
 ```
 
 The launcher decelerates along its 45° line; the star rides it visibly
-(`:team :scenery`, no colliders — bombs ignore it, like DMK's empties);
-the aimed fans fire from wherever it currently is. Expressing the guide
-as an entity is a *choice* — you spawn it when you want it seen, and
-only then. `cards/translations/ph_boss2_spell2.dmk` uses exactly this
+(`:team :scenery`, no colliders — field clears pass over it); the aimed
+fans fire from wherever it currently is. Spawning the guide as an
+entity is a choice you make *when you want it seen* — the mechanism
+never requires it. `cards/translations/ph_boss2_spell2.dmk` uses this
 rig at production scale.
 
 **Try it:** give `ex4`'s guide a `polar` path instead of the lerp and
@@ -141,6 +136,5 @@ of them; fork a second turret in `ex5`'s frame gated on
 ---
 
 *The topic sequence of this tutorial series follows the
-[Danmokou](https://dmk.bagoum.com/) engine's tutorials (MIT, © Bagoum);
-this chapter corresponds to DMK's t08.
+[Danmokou](https://dmk.bagoum.com/) engine's tutorials (MIT, © Bagoum).
 Coming from DMK/BDSL? See the [migration notes](../from-dmk.md).*

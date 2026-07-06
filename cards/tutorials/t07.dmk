@@ -6,9 +6,9 @@
 
 (import "touhou")
 
-;; 1. DMK's "firing index" p is just a variable here: map over iota and
-;; the index is in scope. Ten bullets spread toward the player, speed
-;; staggered by index — later bullets faster.
+;; 1. a bullet's index is just a variable: map over iota and it's in
+;; scope. Ten bullets spread toward the player, speed staggered by
+;; index — later bullets faster.
 (defpattern ex1-index []
   (for [vol inf :every 1]
     (spawn-bullet ((aim $player)
@@ -16,9 +16,9 @@
                             (linear p[(+ 2 (* 0.2 k)) 0])))
                   (iota 10))) {:style {:family :arrow :color :red :variant :w}})))
 
-;; A formation is a function from indices to offset frames — DMK's
-;; bindArrow (engine-bound autovars axd/ayd/aixd/aiyd) is four lines of
-;; card code. Wing w = 0 0 1 1 2 2 …, side s alternating.
+;; A formation is a function from indices to offset frames — write the
+;; shape once, fire it anywhere. Wing w = 0 0 1 1 2 2 …, side s
+;; alternating.
 (defn arrow-at [k dx dy]
   (let [w (quot (+ k 1) 2)
         s (- 1 (* 2 (mod k 2)))]
@@ -34,7 +34,7 @@
 ;; 3. the naive turn: give each bullet its own turning velocity, with the
 ;; offsets OUTSIDE the moving frame. The formation translates rigidly but
 ;; never rotates — after the turn the arrow points right while flying
-;; down. (This is the failure DMK's empty-guided fires exist to fix.)
+;; down: the offsets were fixed in world orientation at spawn.
 (defpattern ex3-unguided []
   (for [vol inf :every 1.5]
     (spawn-bullet (map (fn [k] ((pose (arrow-at k -0.2 0.1))
@@ -45,8 +45,8 @@
 ;; A frame's pose carries heading, and children compose with it — the
 ;; formation rotates with the guide's direction of motion and the
 ;; amulets' facing follows for free. The (pose c[0.6 0]) shim shifts the
-;; pivot from the arrow's tip toward its center (DMK's 0.6 + -0.2*aixd).
-;; No empty bullet is spawned: the guide is a LEVEL OF THE FRAME TREE.
+;; pivot from the arrow's tip toward its center, so the bank reads as a
+;; body rotating. The guide is a LEVEL OF THE FRAME TREE — not an entity.
 (defpattern ex4-guided []
   (for [vol inf :every 1.5]
     (spawn-bullet ((vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])
