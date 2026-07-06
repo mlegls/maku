@@ -3,3 +3,4 @@
 AGENTS.md
 proto/target/
 proto/web/static/pkg/
+node_modules/

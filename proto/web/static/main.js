@@ -3,13 +3,8 @@
 import initMaku, { createMaku } from '../../js/maku/dist/index.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
-import {
-  delimiterMarks,
-  formatMaku,
-  highlightCodeBlocks,
-  highlightMaku,
-  indentFor,
-} from './maku-highlight.js';
+import { highlightCodeBlocks } from './maku-highlight.js';
+import { createMakuEditor } from './maku-codemirror.js';
 
 const BOOT = 'cards/tutorials/t01.maku';
 const TICK_RATE = 120;
@@ -28,9 +23,7 @@ const els = {
   title: document.getElementById('current-title'),
   path: document.getElementById('current-path'),
   sourceName: document.getElementById('source-name'),
-  source: document.getElementById('source'),
-  sourceHighlight: document.querySelector('#source-highlight code'),
-  evalHighlight: document.querySelector('#eval-highlight code'),
+  sourceEditor: document.getElementById('source-editor'),
   apply: document.getElementById('apply-source'),
   reset: document.getElementById('reset-source'),
   formatSource: document.getElementById('format-source'),
@@ -46,7 +39,7 @@ const els = {
   patterns: document.getElementById('patterns'),
   hud: document.getElementById('hud'),
   status: document.getElementById('status'),
-  evalCode: document.getElementById('eval-code'),
+  evalEditor: document.getElementById('eval-editor'),
   formatEval: document.getElementById('format-eval'),
   bindingRows: document.getElementById('binding-rows'),
   constRows: document.getElementById('const-rows'),
@@ -71,6 +64,8 @@ let sourceDirty = false;
 let mouse = [0, -3];
 let bindings = defaultBindings();
 let capturing = null;
+let sourceEditor;
+let evalEditor;
 
 function defaultBindings() {
   return {
@@ -106,124 +101,8 @@ function keyLabel(code) {
   return code;
 }
 
-function updateSourceHighlight() {
-  els.sourceHighlight.innerHTML = highlightMaku(
-    els.source.value,
-    delimiterMarks(els.source.value, els.source.selectionStart),
-  );
-  syncSourceHighlightScroll();
-}
-
-function updateEvalHighlight() {
-  els.evalHighlight.innerHTML = highlightMaku(
-    els.evalCode.value,
-    delimiterMarks(els.evalCode.value, els.evalCode.selectionStart),
-  );
-  syncEvalHighlightScroll();
-}
-
-function syncHighlightScroll(textarea, code) {
-  const pre = code.parentElement;
-  pre.style.width = `${textarea.clientWidth}px`;
-  pre.style.height = `${textarea.clientHeight}px`;
-  pre.scrollTop = textarea.scrollTop;
-  pre.scrollLeft = textarea.scrollLeft;
-}
-
-function syncSourceHighlightScroll() {
-  syncHighlightScroll(els.source, els.sourceHighlight);
-}
-
-function syncEvalHighlightScroll() {
-  syncHighlightScroll(els.evalCode, els.evalHighlight);
-}
-
 function cleanChannel(s) {
   return s.trim().replace(/^\$/, '') || 'chan';
-}
-
-function lineBounds(textarea) {
-  const value = textarea.value;
-  const start = value.lastIndexOf('\n', textarea.selectionStart - 1) + 1;
-  let end = value.indexOf('\n', textarea.selectionEnd);
-  if (end === -1) end = value.length;
-  return { start, end };
-}
-
-function replaceEditorRange(textarea, start, end, text, selectMode = 'end') {
-  textarea.setRangeText(text, start, end, selectMode);
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-function indentSelection(textarea, delta) {
-  if (textarea.selectionStart === textarea.selectionEnd) {
-    if (delta > 0) {
-      replaceEditorRange(textarea, textarea.selectionStart, textarea.selectionEnd, '  ', 'end');
-    } else {
-      const pos = textarea.selectionStart;
-      const value = textarea.value;
-      const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
-      const before = value.slice(lineStart, pos);
-      const remove = before.endsWith('  ') ? 2 : before.endsWith(' ') ? 1 : 0;
-      if (remove) replaceEditorRange(textarea, pos - remove, pos, '', 'end');
-    }
-    return;
-  }
-  const value = textarea.value;
-  const { start, end } = lineBounds(textarea);
-  const before = textarea.selectionStart;
-  const block = value.slice(start, end);
-  const next = block.split('\n').map(line => {
-    if (delta > 0) return `  ${line}`;
-    if (line.startsWith('  ')) return line.slice(2);
-    if (line.startsWith(' ')) return line.slice(1);
-    return line;
-  }).join('\n');
-  replaceEditorRange(textarea, start, end, next, 'select');
-  if (textarea.selectionStart === textarea.selectionEnd) {
-    textarea.setSelectionRange(Math.max(start, before + delta * 2), Math.max(start, before + delta * 2));
-  }
-}
-
-function autoEnter(textarea) {
-  const pos = textarea.selectionStart;
-  const indent = indentFor(textarea.value, pos);
-  replaceEditorRange(textarea, textarea.selectionStart, textarea.selectionEnd, `\n${' '.repeat(indent)}`, 'end');
-}
-
-function maybeDedentCloser(textarea, closer) {
-  const pos = textarea.selectionStart;
-  const value = textarea.value;
-  const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
-  if (value.slice(lineStart, pos).trim() !== '') return false;
-  const indent = Math.max(0, indentFor(value, pos) - 2);
-  replaceEditorRange(textarea, lineStart, pos, ' '.repeat(indent), 'end');
-  replaceEditorRange(textarea, textarea.selectionStart, textarea.selectionEnd, closer, 'end');
-  return true;
-}
-
-function installEditorKeys(textarea, updateHighlight, formatButton, onFormat = () => {}) {
-  textarea.addEventListener('keydown', e => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      indentSelection(textarea, e.shiftKey ? -1 : 1);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      autoEnter(textarea);
-    } else if (')]}'.includes(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      if (maybeDedentCloser(textarea, e.key)) e.preventDefault();
-    }
-  });
-  textarea.addEventListener('keyup', updateHighlight);
-  textarea.addEventListener('click', updateHighlight);
-  textarea.addEventListener('select', updateHighlight);
-  formatButton.onclick = () => {
-    const oldStart = textarea.selectionStart;
-    textarea.value = formatMaku(textarea.value);
-    textarea.setSelectionRange(Math.min(oldStart, textarea.value.length), Math.min(oldStart, textarea.value.length));
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    onFormat();
-  };
 }
 
 function setConst(channel, value) {
@@ -312,7 +191,7 @@ function stripWireWrapper(body) {
 }
 
 function commandBody() {
-  return els.evalCode.value
+  return evalEditor.value
     .split('\n')
     .map(line => line.replace(/;.*$/, ''))
     .join(' ')
@@ -377,9 +256,7 @@ async function selectCard(card) {
   els.title.textContent = card.title;
   els.path.textContent = card.path;
   els.sourceName.textContent = card.path;
-  els.source.value = sourceFor(card);
-  updateSourceHighlight();
-  syncSourceHighlightScroll();
+  sourceEditor.setValue(sourceFor(card));
   setDirty(false);
   renderLists();
   bootSelected();
@@ -423,16 +300,14 @@ function closeDocs() {
 }
 
 function applySource() {
-  sources.set(selected.path, els.source.value);
-  maku.add_file(selected.path, els.source.value);
+  sources.set(selected.path, sourceEditor.value);
+  maku.add_file(selected.path, sourceEditor.value);
   bootSelected(selectedPattern());
   setDirty(false);
 }
 
 function resetSource() {
-  els.source.value = sourceFor(selected);
-  updateSourceHighlight();
-  syncSourceHighlightScroll();
+  sourceEditor.setValue(sourceFor(selected));
   setDirty(false);
 }
 
@@ -539,7 +414,7 @@ function installEvents() {
       e.preventDefault();
       return;
     }
-    if (editingTags.has(e.target?.tagName)) return;
+    if (editingTags.has(e.target?.tagName) || e.target?.closest?.('.cm-editor')) return;
     if (!keys.has(e.code)) pressed.add(e.code);
     keys.add(e.code);
     if (e.code === 'Space') {
@@ -581,16 +456,11 @@ function installEvents() {
   els.play.onclick = () => maku.toggle_pause();
   els.apply.onclick = applySource;
   els.reset.onclick = resetSource;
-  installEditorKeys(els.source, updateSourceHighlight, els.formatSource, () => setDirty(els.source.value !== sourceFor(selected)));
-  installEditorKeys(els.evalCode, updateEvalHighlight, els.formatEval);
-  els.source.addEventListener('input', () => {
-    updateSourceHighlight();
-    setDirty(els.source.value !== sourceFor(selected));
-  });
-  els.source.addEventListener('scroll', syncSourceHighlightScroll);
-  els.evalCode.addEventListener('input', updateEvalHighlight);
-  els.evalCode.addEventListener('scroll', syncEvalHighlightScroll);
-  updateEvalHighlight();
+  els.formatSource.onclick = () => {
+    sourceEditor.format();
+    setDirty(sourceEditor.value !== sourceFor(selected));
+  };
+  els.formatEval.onclick = () => evalEditor.format();
   els.docsToggle.onclick = openDocs;
   els.docsClose.onclick = closeDocs;
   els.resetBindings.onclick = () => {
@@ -623,6 +493,18 @@ async function boot() {
   await initMaku();
   await loadSources();
   maku = createMaku();
+  sourceEditor = createMakuEditor({
+    parent: els.sourceEditor,
+    value: '',
+    onChange: value => setDirty(value !== sourceFor(selected)),
+  });
+  evalEditor = createMakuEditor({
+    parent: els.evalEditor,
+    value: `(spawn ((rot m"20*t")
+  (circle 12 (linear p[2 0])))
+  {:style {:family :star :color :teal}})`,
+    compact: true,
+  });
   registerVfs();
   installEvents();
   renderBindings();

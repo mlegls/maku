@@ -7,6 +7,7 @@ cd "$(dirname "$0")"
 wasm-pack build ../core --target web --out-dir ../web/static/pkg --features web
 cp static/pkg/maku.js static/pkg/maku.d.ts static/pkg/maku_bg.wasm static/pkg/maku_bg.wasm.d.ts ../js/maku/wasm/
 (cd ../js/maku && bun run build)
+bun build editor-src/maku-codemirror.js --outfile static/maku-codemirror.js --target browser --format esm
 echo "built -> proto/web/static/pkg"
 if [ "$1" = "serve" ]; then
   PORT="${PORT:-8000}"

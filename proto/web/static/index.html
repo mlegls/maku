@@ -162,68 +162,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  #source {
-    position: relative;
-    z-index: 1;
-    flex: 1;
-    width: 100%;
-    min-height: 240px;
-    resize: none;
-    border: 0;
-    border-bottom: 1px solid var(--line);
-    outline: none;
-    padding: 12px;
-    background: #101219;
-    color: #e7e9f1;
-    tab-size: 2;
-  }
   .source-editor {
     position: relative;
     flex: 1;
     min-height: 240px;
     border-bottom: 1px solid var(--line);
     background: #101219;
-    overflow: hidden;
-  }
-  .source-editor #source {
-    height: 100%;
-    min-height: 0;
-    border-bottom: 0;
-    background: transparent;
-    color: transparent;
-    caret-color: #e7e9f1;
-    resize: none;
-  }
-  .source-editor #source::selection {
-    background: rgba(120, 214, 198, 0.22);
-  }
-  .source-highlight {
-    position: absolute;
-    inset: 0;
-    margin: 0;
-    padding: 12px;
     overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    pointer-events: none;
-    color: #d9deeb;
-    tab-size: 2;
-  }
-  .source-editor #source, .source-highlight,
-  .eval-editor #eval-code, .eval-highlight {
-    font: inherit;
-    line-height: 18px;
-    letter-spacing: 0;
-    white-space: pre-wrap;
-    overflow-wrap: break-word;
-    word-wrap: break-word;
-    word-break: normal;
-    font-variant-ligatures: none;
-    scrollbar-gutter: stable;
-  }
-  .source-highlight code {
-    display: block;
-    font: inherit;
   }
   .tok-comment { color: #6f778a; }
   .tok-string { color: #c3df8c; }
@@ -305,48 +250,13 @@
     color: var(--text);
     padding: 3px 6px;
   }
-  #eval-code {
-    width: 100%;
-    height: 120px;
-    resize: vertical;
-    background: transparent;
-    color: transparent;
-    caret-color: #dfe4ef;
-    border: 0;
-    border-radius: 6px;
-    padding: 8px;
-    position: relative;
-    z-index: 1;
-    outline: none;
-  }
   .eval-editor {
     position: relative;
     min-height: 120px;
     background: #11131b;
     border: 1px solid var(--line);
     border-radius: 6px;
-  }
-  .eval-editor #eval-code {
-    display: block;
-  }
-  .eval-editor #eval-code::selection {
-    background: rgba(120, 214, 198, 0.22);
-  }
-  .eval-highlight {
-    position: absolute;
-    inset: 0;
-    margin: 0;
-    padding: 8px;
     overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    pointer-events: none;
-    color: #dfe4ef;
-    tab-size: 2;
-  }
-  .eval-highlight code {
-    display: block;
-    font: inherit;
   }
   .eval-row { display: flex; gap: 6px; flex-wrap: wrap; }
   .docs-drawer {
@@ -485,18 +395,12 @@
         <button id="reset-source">Reset</button>
       </div>
     </div>
-    <div class="source-editor">
-      <pre id="source-highlight" class="source-highlight" aria-hidden="true"><code></code></pre>
-      <textarea id="source" spellcheck="false"></textarea>
-    </div>
+    <div id="source-editor" class="source-editor"></div>
     <div class="eval">
       <div class="panel-title">Eval</div>
-      <div class="eval-editor">
-        <pre id="eval-highlight" class="eval-highlight" aria-hidden="true"><code></code></pre>
-        <textarea id="eval-code" spellcheck="false">(spawn ((rot m"20*t")
+      <div id="eval-editor" class="eval-editor" data-initial="(spawn ((rot m&quot;20*t&quot;)
   (circle 12 (linear p[2 0])))
-  {:style {:family :star :color :teal}})</textarea>
-      </div>
+  {:style {:family :star :color :teal}})"></div>
       <div class="eval-row">
         <button id="run">run</button>
         <button id="swap">swap</button>
