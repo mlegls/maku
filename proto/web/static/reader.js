@@ -20,8 +20,15 @@ async function select(item) {
   selected = item;
   renderList();
   body.textContent = 'Loading...';
-  const md = await (await fetch(assetUrl(item.doc))).text();
-  body.innerHTML = markdownToHtml(md);
+  const htmlBase = globalThis.DANMAKU_DOC_HTML_BASE;
+  if (htmlBase) {
+    const slug = item.doc.split('/').pop().replace(/\.md$/, '');
+    const res = await fetch(new URL(`${slug}.html`, htmlBase).toString());
+    body.innerHTML = await res.text();
+  } else {
+    const md = await (await fetch(assetUrl(item.doc))).text();
+    body.innerHTML = markdownToHtml(md);
+  }
   history.replaceState(null, '', `#${item.doc.split('/').pop().replace(/\.md$/, '')}`);
 }
 

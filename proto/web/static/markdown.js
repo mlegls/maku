@@ -24,10 +24,17 @@ export function markdownToHtml(md) {
     if (inTable) out.push('</tbody></table>');
     inTable = false;
   };
+  const rewriteLink = href => {
+    if (/^(?:https?:|mailto:|#|\/)/.test(href)) return href;
+    const file = href.split('/').pop();
+    if (!file?.endsWith('.md')) return href;
+    if (file === 'from-dmk.md') return 'from-dmk.html';
+    return `tutorials.html#${file.replace(/\.md$/, '')}`;
+  };
   const inline = text => escapeHtml(text)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => `<a href="${rewriteLink(href)}">${label}</a>`);
   const tableRow = (line, tag) => {
     const cells = line.trim().replace(/^\||\|$/g, '').split('|');
     return `<tr>${cells.map(cell => `<${tag}>${inline(cell.trim())}</${tag}>`).join('')}</tr>`;
@@ -87,4 +94,3 @@ export function markdownToHtml(md) {
   closeTable();
   return out.join('\n');
 }
-

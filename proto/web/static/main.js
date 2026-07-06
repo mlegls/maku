@@ -266,6 +266,14 @@ async function loadDoc(card = selected) {
     els.docBody.textContent = 'This demo card does not have a tutorial article yet.';
     return;
   }
+  const htmlBase = globalThis.DANMAKU_DOC_HTML_BASE;
+  if (htmlBase) {
+    const slug = card.doc.split('/').pop().replace(/\.md$/, '');
+    const res = await fetch(new URL(`${slug}.html`, htmlBase).toString());
+    if (!res.ok) throw new Error(`${slug}.html: ${res.status}`);
+    els.docBody.innerHTML = await res.text();
+    return;
+  }
   if (!docs.has(card.doc)) {
     docs.set(card.doc, await fetchText(card.doc));
   }
