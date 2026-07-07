@@ -1009,7 +1009,7 @@
     (defvar probe 0)
     (export probe)
     (spawn (pose c[3 4]) {:style {:family :circle}})
-    (manipulate {:family :circle :where (fn [b] (> b.pos.y 1))}
+    (manipulate {:render.style.family :circle :where (fn [b] (> b.pos.y 1))}
       (fn [b] (set! probe b.pos.y)))))
 (defpattern gather []
   (spawn ((rot m"(30 * iota(12)).[iota(3)]") (linear c[1 0]))))
@@ -2005,7 +2005,7 @@ fn defchannel_derives_per_tick() {
 fn entity_sets_broadcast_keyword_accessors() {
     const CARD: &str = r#"
 (defchannel $enemy-hp-view (:hp (entities-where (matches :team :enemy))))
-(defchannel $enemy-pos-view (:pos (entities-where (matches :team :enemy :color :red))))
+(defchannel $enemy-pos-view (:pos (entities-where (matches :team :enemy :render.style.color :red))))
 (defpattern p []
   (seq
     (spawn (pose c[2 3]) {:team :enemy :hp 4 :style {:color :red}})
@@ -2035,7 +2035,7 @@ fn predicate_queries_drive_manipulate() {
   (seq
     (spawn (pose c[0 0]) {:team :enemy :hp 4 :style {:color :red}})
     (spawn (pose c[0 0]) {:team :enemy :hp 6 :style {:color :blue}})
-    (manipulate (matches :team :enemy :color :red)
+    (manipulate (matches :team :enemy :render.style.color :red)
       (fn [b] (set-col b :hp 1)))
     (wait (ticks 1))))
 "#;

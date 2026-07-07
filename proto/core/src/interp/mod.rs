@@ -1355,7 +1355,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             if matches!(arg, Val::Handle(_) | Val::EntitySet(_)) {
                 return entity_field_value(arg, &k, world, &ctx.sig);
             }
-            Ok(map_get(&arg, &k).unwrap_or(Val::Nothing))
+            Ok(map_path_get(&arg, &k).unwrap_or(Val::Nothing))
         }
         f @ (Val::Fn { .. } | Val::Builtin(_)) => {
             let args = items[1..]
@@ -1406,11 +1406,31 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 /// Apply a user fn or builtin. Ambient frames do not cross fn boundaries
 /// (F18). `exec_actions` is set only for manipulate callbacks, whose bodies
 /// run instantaneously; ordinary fns RETURN action values for composition.
+fn map_path_get(v: &Val, path: &str) -> Option<Val> {
+    let mut cur = v.clone();
+    for key in path.split('.') {
+        cur = map_get(&cur, key)?;
+    }
+    Some(cur)
+}
+
+fn render_style_map(style: &Style) -> Val {
+    Val::Map(Rc::new(vec![
+        (Val::Kw("family".into()), Val::Kw(style.family.as_str().into())),
+        (Val::Kw("color".into()), Val::Kw(style.color.as_str().into())),
+        (Val::Kw("variant".into()), Val::Kw(style.variant.as_str().into())),
+    ]))
+}
+
+fn render_view(b: &Entity) -> Val {
+    Val::Map(Rc::new(vec![(Val::Kw("style".into()), render_style_map(&b.render_projector.style))]))
+}
+
 /// Evaluate a manipulate query map against the world in canonical order:
-/// style axes / team match exactly (Kw) or any-of (Arr); :where is a pure
-/// fn over the entity view {:pos :vel :t :family :color :variant + cols}.
-/// The entity view: what predicates and field access see — current
-/// {:pos :vel :t :family} plus the entity's columns.
+/// compatibility style axes / team match exactly (Kw) or any-of (Arr);
+/// :where is a pure fn over the entity view.
+/// The entity view contains current kinematic fields, `:render` namespaced
+/// renderer compatibility data, legacy flat style aliases, and columns.
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
     let b = &world.entities[i];
     let tau = (world.tick - b.birth) as f64 / TICK_RATE;
@@ -1429,6 +1449,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "laser",
         }.into())),
+        (Val::Kw("render".into()), render_view(b)),
         (Val::Kw("family".into()), Val::Kw(b.render_projector.style.family.as_str().into())),
         (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
         (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
@@ -1512,6 +1533,7 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             _ => None,
         })
     };
+    let get_any = |names: &[&str]| names.iter().find_map(|name| get(name));
     let axis_ok = |sel: &Option<Val>, actual: &str| match sel {
         None => true,
         Some(Val::Kw(k)) => &**k == actual,
@@ -1519,7 +1541,12 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
         _ => false,
     };
     let (family, color, variant, team) =
-        (get("family"), get("color"), get("variant"), get("team"));
+        (
+            get_any(&["render.style.family", "family"]),
+            get_any(&["render.style.color", "color"]),
+            get_any(&["render.style.variant", "variant"]),
+            get("team"),
+        );
     let where_f = get("where");
     let sig = ctx.sig.clone();
     let mut candidates: Vec<usize> = Vec::new();

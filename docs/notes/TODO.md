@@ -569,6 +569,11 @@ language.md.
       The current host renderer's legacy `:style`, `:hue`, `:scale`,
       `:facing`, and `:opacity` data lives on `RenderProjector` until those
       tags are lowered into ordinary renderer spec records.
+  2v.11. ~~Namescape renderer compatibility fields in entity views.~~ Done;
+      entity views now expose nested `:render {:style ...}` data, keyword
+      access supports dotted map paths, and query maps accept
+      `:render.style.family` / `:render.style.color` / `:render.style.variant`
+      while flat style keys remain compatibility aliases.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
