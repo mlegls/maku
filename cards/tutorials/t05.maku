@@ -71,10 +71,10 @@
              ((pose c[0 -3])
                (vel c[(* (live $move-x) (- 4.5 (* 2.7 (live $focus-firing))))
                       (* (live $move-y) (- 4.5 (* 2.7 (live $focus-firing))))])))
+           (colliders {:layer :player-hurt :r 0.05})
            {:team :player-body
-            :colliders [{:layer :player-hurt :r 0.05}]
             :cols {:lives 3 :pilot 1 :iframes 1.0 :graze 0 :hits 0}
-              :triggers [{:col :lives :leq 0 :event :game-over}]
+            :triggers [{:col :lives :leq 0 :event :game-over}]
             :style {:family :circle :color :white :variant :w}})
     (in-frame (pose c[0 3])
       (for [vol inf :every (/ 1.2 $rank)]

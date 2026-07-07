@@ -449,9 +449,8 @@ language.md.
   2r. ~~Expose static low-level collider/render slot specs through spawn
       arguments.~~ Done; `(colliders ...)` accepts explicit `:shape` maps
       for `:circle` and `:capsule-chain`, while `(renderers ...)` accepts
-      explicit `:polyline` specs. The old `:colliders` / `:renderers` meta
-      keys remain as compatibility sugar while library code migrates, but
-      the typed boundary is now the operator argument.
+      explicit `:polyline` specs. The typed boundary is now the operator
+      argument; the old meta-key compatibility path was removed in 2v.5.
   2s. ~~Prototype structural dyn coercion for ordinary maps/vectors at the
       spawn boundary.~~ Done; dynamic leaves inside precomputed collider
       structures now survive until `spawn` validates the expected
@@ -478,7 +477,7 @@ language.md.
   2v. ~~Make collider/render args generic dyn-list boundaries.~~ Done;
       entities and spawn actions now store generic `DynLike` collider/render
       metadata collected from explicit `(colliders ...)` / `(renderers ...)`
-      arguments and compatibility meta keys. At collision/render time it is
+      arguments. At collision/render time it is
       realized to a concrete list and decoded through the typed schema; there
       is no special `DynColliderList` / `DynRenderList` semantic type.
   2v.1. ~~Collapse spawn actions to per-entity specs.~~ Done; `ActionV::Spawn`
@@ -513,6 +512,10 @@ language.md.
   2v.4. ~~Remove runtime primary-hitbox entity field.~~ Done; compatibility
       `:hitbox` now rewrites the first static circle collider spec during
       spawn lowering, so collision consumes only the entity's collider specs.
+  2v.5. ~~Remove `:colliders` / `:renderers` spawn meta compatibility.~~
+      Done; collider and render specs are explicit `(colliders ...)` /
+      `(renderers ...)` spawn arguments, and ordinary meta maps no longer
+      carry projection data.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

@@ -20,12 +20,13 @@
 
 (defn pilot-meta [k]
   {:team :player-body
-   :colliders [{:layer :player-hurt :r 0.05}]
    :cols {:lives 3 :pilot k :graze 0 :hits 0}
    :triggers [{:col :lives :leq 0 :event :game-over}]})
 
 (defpattern pilot-rig-1 []
-  (let [p (spawn (pilot-rig-motion 1) (pilot-meta 1))]
+  (let [p (spawn (pilot-rig-motion 1)
+                 (colliders {:layer :player-hurt :r 0.05})
+                 (pilot-meta 1))]
     (let [h (nth p 0)]
       (seq
         (bind-channel! $player-1 (:pos h))
@@ -33,7 +34,9 @@
         (bind-channel! $nearest-enemy-1 (nearest-entity {:team :enemy} $player-1))))))
 
 (defpattern pilot-rig-2 []
-  (let [p (spawn (pilot-rig-motion 2) (pilot-meta 2))]
+  (let [p (spawn (pilot-rig-motion 2)
+                 (colliders {:layer :player-hurt :r 0.05})
+                 (pilot-meta 2))]
     (let [h (nth p 0)]
       (seq
         (bind-channel! $player-2 (:pos h))

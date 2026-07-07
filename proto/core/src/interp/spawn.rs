@@ -16,27 +16,7 @@ const SIGNAL_TAGS: &[&str] = &[
     "facing",
     "opacity",
     "expose",
-    "colliders",
-    "renderers",
 ];
-
-fn raw_meta_dynlike(
-    metas: &[Form],
-    key: &str,
-    env: &Env,
-    ctx: &mut Ctx,
-    world: &mut World,
-) -> Result<Option<DynLike>, String> {
-    for meta in metas.iter().rev() {
-        let Form::Map(kvs) = meta else { continue };
-        for (k, v) in kvs.iter() {
-            if matches!(k, Form::Kw(kw) if &**kw == key) {
-                return eval_dynlike_form(v, env, ctx, world).map(Some);
-            }
-        }
-    }
-    Ok(None)
-}
 
 fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
     match items.len() {
@@ -252,32 +232,14 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // Parsed from the RAW form ($names here are channel designators, like
     // the keys of (with {$rank 0.5} …) — not reads).
     let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(&metas);
-    // collider set: archetype data, one Rc shared by every spawned element.
-    // No genre defaults — an entity with no :colliders is inert to the
-    // contact pass (scenery); what a "bullet" or "enemy" carries is the
-    // library's business (spawn-bullet/spawn-enemy in lib/touhou.maku).
+    // Collider/render sets are explicit spawn arguments. No genre defaults —
+    // an entity with no colliders is inert to the contact pass (scenery);
+    // what a "bullet" or "enemy" carries is the library's business
+    // (spawn-bullet/spawn-enemy in lib/touhou.maku).
     // :hitbox r resizes the PRIMARY (first) collider — the generic knob
     // that lets a template's default collider set fit a bigger sprite.
-    if let Some(v) = raw_meta_dynlike(&metas, "colliders", env, ctx, world)? {
-        explicit_colliders.push(as_collider_spec_list(&v)?);
-    } else {
-        let v = match map_get(&meta, "colliders") {
-            Some(v) => as_collider_spec_list(&DynLike::from_val(v))?,
-            _ => empty_spec_list(),
-        };
-        explicit_colliders.push(v);
-    }
     if explicit_colliders.is_empty() {
         explicit_colliders.push(empty_spec_list());
-    }
-    if let Some(v) = raw_meta_dynlike(&metas, "renderers", env, ctx, world)? {
-        explicit_renderers.push(as_render_spec_list(&v)?);
-    } else {
-        let v = match map_get(&meta, "renderers") {
-            Some(v) => as_render_spec_list(&DynLike::from_val(v))?,
-            _ => empty_spec_list(),
-        };
-        explicit_renderers.push(v);
     }
     if explicit_renderers.is_empty() {
         explicit_renderers.push(empty_spec_list());
