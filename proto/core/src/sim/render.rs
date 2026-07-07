@@ -1,9 +1,47 @@
 use super::*;
-use super::slots::eval_render_list;
+use super::slots::eval_render_list_into;
 
 pub enum RenderItem {
     Dot { x: f64, y: f64, th: f64, style: Style, hue: f64, scale: f64, alpha: f64 },
     Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64, alpha: f64 },
+}
+
+#[derive(Default)]
+struct RenderScratch {
+    rows: Vec<RenderData>,
+    ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl RenderScratch {
+    fn clear_for_entities(&mut self, len: usize) {
+        self.rows.clear();
+        self.ranges.clear();
+        if self.ranges.capacity() < len {
+            self.ranges.reserve_exact(len - self.ranges.capacity());
+        }
+    }
+
+    fn push_empty(&mut self) {
+        let at = self.rows.len();
+        self.ranges.push(at..at);
+    }
+
+    fn begin_row(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn finish_row(&mut self, start: usize) {
+        self.ranges.push(start..self.rows.len());
+    }
+
+    fn row(&self, entity_row: usize) -> &[RenderData] {
+        let range = self
+            .ranges
+            .get(entity_row)
+            .cloned()
+            .unwrap_or_else(|| self.rows.len()..self.rows.len());
+        &self.rows[range]
+    }
 }
 
 impl Sim {
@@ -36,15 +74,25 @@ impl Sim {
     pub fn render(&self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
+        let mut scratch = RenderScratch::default();
+        scratch.clear_for_entities(self.world.entities.len());
         for (i, _) in self.world.entities.iter().enumerate() {
             if !self.world.entities.is_alive(i) {
+                scratch.push_empty();
                 continue;
             }
-            let Some(render_projector) = self.world.entities.render_projector(i) else { continue };
-            let Some(dyn_figure) = self.world.entities.dyn_figure(i) else { continue };
+            let Some(render_projector) = self.world.entities.render_projector(i) else {
+                scratch.push_empty();
+                continue;
+            };
+            let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                scratch.push_empty();
+                continue;
+            };
             let tau = self.world.entities.tau(i, self.world.tick);
             match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
+                    scratch.push_empty();
                     if self.world.entities.is_traced(i) {
                         let trace = self.world.entities.trace_samples(i);
                         if trace.len() >= 2 {
@@ -75,13 +123,16 @@ impl Sim {
                 }
                 FigureDynRepr::Curve { .. } => {
                     let alpha = self.sample_sig(&render_projector.sigs.opacity, tau, 1.0);
-                    for data in eval_render_list(dyn_figure, render_projector, tau, sig) {
+                    let start = scratch.begin_row();
+                    eval_render_list_into(dyn_figure, render_projector, tau, sig, &mut scratch.rows);
+                    scratch.finish_row(start);
+                    for data in scratch.row(i) {
                         match data {
                             RenderData::None => {}
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
-                                pts: points,
+                                pts: points.clone(),
                                 style: render_projector.style.clone(),
-                                active,
+                                active: *active,
                                 hue: self.sample_hue(render_projector, tau),
                                 alpha,
                             }),

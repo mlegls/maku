@@ -220,17 +220,17 @@ pub fn eval_collider_slot(
     }
 }
 
-pub fn eval_render_slot(
+pub fn eval_render_slot_into(
     dyn_figure: &DynFigure,
     slot: &DynRender,
     tau: f64,
     sig: &SigEnv,
-) -> Vec<RenderData> {
+    out: &mut Vec<RenderData>,
+) {
     match slot.repr() {
         RenderDynRepr::Polyline(projection) => {
             let hot = hot_frac(&projection.activity, tau, sig);
             let partly = tau >= projection.activity.warn && hot < 1.0;
-            let mut out = Vec::new();
             match sample_curve_projection(dyn_figure, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig) {
                 Some(points) => out.push(RenderData::Polyline {
                     points,
@@ -245,21 +245,20 @@ pub fn eval_render_slot(
                     None => out.push(RenderData::None),
                 }
             }
-            out
         }
     }
 }
 
-pub fn eval_render_list(
+pub fn eval_render_list_into(
     dyn_figure: &DynFigure,
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
-) -> Vec<RenderData> {
+    out: &mut Vec<RenderData>,
+) {
     let state = MotionState::new();
     let slots = materialize_render_defs(projector, tau, &state, sig).unwrap_or_default();
-    slots
-        .iter()
-        .flat_map(|slot| eval_render_slot(dyn_figure, slot, tau, sig))
-        .collect()
+    for slot in &slots {
+        eval_render_slot_into(dyn_figure, slot, tau, sig, out);
+    }
 }
