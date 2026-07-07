@@ -655,6 +655,10 @@ language.md.
       Done; the zero-allocation notes now identify current `HashMap` state
       allocation sites and target dense `state_n2` / compatibility
       `state_dyn` slot tables for scanned dyn programs.
+  2v.24. ~~Introduce dense motion-state schema scaffolding.~~ Done;
+      `MotionStateSchema` now tracks numeric and compatibility dyn slots, and
+      a dyn-tree collector discovers node-level `Vel` / `Stages` state while
+      leaving expression-local scan sites for expression lowering.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

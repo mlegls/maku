@@ -57,6 +57,55 @@ pub enum Cell {
 }
 pub type MotionState = HashMap<usize, Cell>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MotionStateKey {
+    /// Bridge key: current interpreter state is keyed by DynNode pointer
+    /// identity. Lowering should replace this with stable node ids.
+    NodePtr(usize),
+    /// Expression-local stateful sites such as slew/smooth under a scanned
+    /// node. These are discovered by expression lowering, not by node walk.
+    ScanSite { base: usize, index: u32 },
+    /// Compatibility storage for lazy stage constructors while they remain
+    /// interpreted.
+    LazyStage { base: usize },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StateN2SlotId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StateDynSlotId(pub u32);
+
+#[derive(Clone, Debug, Default)]
+pub struct MotionStateSchema {
+    pub n2_slots: HashMap<MotionStateKey, StateN2SlotId>,
+    pub n2_keys: Vec<MotionStateKey>,
+    pub dyn_slots: HashMap<MotionStateKey, StateDynSlotId>,
+    pub dyn_keys: Vec<MotionStateKey>,
+}
+
+impl MotionStateSchema {
+    pub fn intern_n2(&mut self, key: MotionStateKey) -> StateN2SlotId {
+        if let Some(slot) = self.n2_slots.get(&key).copied() {
+            return slot;
+        }
+        let slot = StateN2SlotId(self.n2_keys.len() as u32);
+        self.n2_keys.push(key);
+        self.n2_slots.insert(key, slot);
+        slot
+    }
+
+    pub fn intern_dyn(&mut self, key: MotionStateKey) -> StateDynSlotId {
+        if let Some(slot) = self.dyn_slots.get(&key).copied() {
+            return slot;
+        }
+        let slot = StateDynSlotId(self.dyn_keys.len() as u32);
+        self.dyn_keys.push(key);
+        self.dyn_slots.insert(key, slot);
+        slot
+    }
+}
+
 /// Scan-context IO for stateful signal evaluation: carries the bullet's state
 /// cells plus a per-evaluation site counter (stable for a fixed expr tree).
 pub struct ScanIo {
@@ -318,6 +367,66 @@ impl Dyn<Figure> {
                 DynFigure::figure_curve(child.framed(parent), curve.clone())
             }
         }
+    }
+}
+
+pub fn collect_motion_state_schema(d: &DynFigure) -> MotionStateSchema {
+    let mut schema = MotionStateSchema::default();
+    collect_figure_state(d, &mut schema);
+    schema
+}
+
+pub fn collect_figure_state(d: &DynFigure, schema: &mut MotionStateSchema) {
+    match d.repr() {
+        FigureDynRepr::Pose(pose) => collect_pose_state(pose, schema),
+        FigureDynRepr::Curve { frame, curve } => {
+            collect_pose_state(frame, schema);
+            if let CurveEval::Expr(shape) = &curve.eval {
+                collect_pose_state(shape, schema);
+            }
+        }
+    }
+}
+
+pub fn collect_pose_state(d: &DynPose, schema: &mut MotionStateSchema) {
+    collect_node_state(d.node(), schema);
+}
+
+pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
+    let base = Rc::as_ptr(node) as usize;
+    match &**node {
+        DynNode::Vel { .. } => {
+            schema.intern_n2(MotionStateKey::NodePtr(base));
+        }
+        DynNode::RotExpr { .. } | DynNode::ClosedPt { .. } => {
+            // Stateful expression sites under this node are discovered by
+            // expression lowering as ScanSite keys. The node itself has no
+            // persistent cell in the current interpreter.
+        }
+        DynNode::Path { curve, .. } => {
+            // Progress expressions may have ScanSite cells; collect the curve
+            // node-level state here and leave expression sites to lowering.
+            collect_node_state(curve, schema);
+        }
+        DynNode::Stages { segs } => {
+            schema.intern_n2(MotionStateKey::NodePtr(base));
+            if segs.iter().any(|seg| matches!(seg.make, StageMake::Lazy(_))) {
+                schema.intern_dyn(MotionStateKey::LazyStage { base });
+            }
+            for seg in segs {
+                if let StageMake::Ready(d) = &seg.make {
+                    collect_pose_state(d, schema);
+                }
+            }
+        }
+        DynNode::Translate { child, .. } | DynNode::Clamp { child, .. } => {
+            collect_node_state(child, schema);
+        }
+        DynNode::Frame(a, b) => {
+            collect_node_state(a, schema);
+            collect_node_state(b, schema);
+        }
+        DynNode::Const(_) | DynNode::Linear { .. } | DynNode::Live { .. } => {}
     }
 }
 

@@ -3040,6 +3040,28 @@ mod tests {
     }
 
     #[test]
+    fn motion_state_schema_collects_node_slots() {
+        let Val::Dyn(d) = ev("(vel c[4 0])") else { panic!() };
+        let schema = collect_motion_state_schema(&DynFigure::pose(d));
+        assert_eq!(schema.n2_keys.len(), 1, "vel has one numeric state slot");
+        assert_eq!(schema.dyn_keys.len(), 0);
+    }
+
+    #[test]
+    fn motion_state_schema_collects_lazy_stage_slots() {
+        let ready = DynPose::pose_node(std::rc::Rc::new(DynNode::Linear { vx: 1.0, vy: 0.0 }));
+        let staged = DynPose::pose_node(std::rc::Rc::new(DynNode::Stages {
+            segs: vec![
+                StageSeg { term: StageTerm::Dur(1.0), make: StageMake::Ready(ready) },
+                StageSeg { term: StageTerm::Forever, make: StageMake::Lazy(Val::Nothing) },
+            ],
+        }));
+        let schema = collect_motion_state_schema(&DynFigure::pose(staged));
+        assert_eq!(schema.n2_keys.len(), 1, "stages has idx/epoch numeric state");
+        assert_eq!(schema.dyn_keys.len(), 1, "lazy segment keeps compatibility dyn state");
+    }
+
+    #[test]
     fn vel_with_trailing_child() {
         // 200's guide: (vel c[..] (circle 7 (polar ...)))
         let Val::Arr(items) = ev("(vel c[1 0] (circle 7 (linear c[1 0])))") else { panic!() };
