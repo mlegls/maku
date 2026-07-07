@@ -273,8 +273,12 @@ impl Sim {
         for i in 0..self.world.entities.len() {
             if self.world.entities.is_alive(i) && self.world.entities[i].scanned {
                 let tau = self.world.entities.tau(i, tick);
-                let b = &mut self.world.entities[i];
-                step_dyn_figure(&b.dyn_figure, tau, dt, &mut b.state, &sig)?;
+                let dyn_figure = self.world.entities[i].dyn_figure.clone();
+                let mut state = std::mem::take(&mut self.world.entities[i].state);
+                step_dyn_figure_with_dense(&dyn_figure, tau, dt, &mut state, &sig, &mut |key, value| {
+                    self.world.entities.set_state_n2(i, key, value);
+                })?;
+                self.world.entities[i].state = state;
             }
         }
         // record traced curves: a dynamic integer sample domain over the

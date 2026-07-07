@@ -666,6 +666,11 @@ language.md.
       now stores an `Rc<MotionStateSchema>` per row and refreshes it on
       spawn/reuse/remat, while the current `MotionState` map remains the
       execution bridge until dense state slots take over.
+  2v.27. ~~Introduce dense motion-state columns.~~ Done as a bridge;
+      `EntityStore` now owns slot-major `state_n2` and compatibility
+      `state_dyn` columns sized/reset from each row's `MotionStateSchema`,
+      and `Vel` integration mirrors its numeric state into dense row slots
+      while legacy `MotionState` remains the read path.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

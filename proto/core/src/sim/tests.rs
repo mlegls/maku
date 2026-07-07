@@ -2151,6 +2151,29 @@ fn spawned_entity_rows_carry_motion_schema() {
 }
 
 #[test]
+fn vel_motion_writes_dense_state_slot() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel c[3 0])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let key = sim
+        .world
+        .entities
+        .motion_schema(0)
+        .unwrap()
+        .n2_keys
+        .iter()
+        .copied()
+        .find(|key| matches!(key, MotionStateKey::NodePtr(_)))
+        .unwrap();
+    let [x, y] = sim.world.entities.state_n2(0, key).unwrap();
+    assert!((x - (3.0 / TICK_RATE)).abs() < 1e-9, "dense vel x: {x}");
+    assert_eq!(y, 0.0);
+}
+
+#[test]
 fn entity_capacity_is_explicit() {
     const CARD: &str = r#"
 (defpattern p [] (spawn (circle 2 (still))))

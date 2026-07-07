@@ -737,6 +737,17 @@ pub fn step_motion(
     state: &mut MotionState,
     sig: &SigEnv,
 ) -> Result<(), String> {
+    step_motion_with_dense(d, tau, dt, state, sig, &mut |_, _| {})
+}
+
+fn step_motion_with_dense(
+    d: &DynNode,
+    tau: f64,
+    dt: f64,
+    state: &mut MotionState,
+    sig: &SigEnv,
+    write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
+) -> Result<(), String> {
     match d {
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
@@ -747,7 +758,9 @@ pub fn step_motion(
             let (vx, vy) = advance_sites(state, key, dt, |scan| {
                 eval_pt(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)))
             })?;
-            state.insert(key, Cell::N([x + vx * dt, y + vy * dt]));
+            let next = [x + vx * dt, y + vy * dt];
+            state.insert(key, Cell::N(next));
+            write_n2(MotionStateKey::NodePtr(key), next);
             Ok(())
         }
         DynNode::RotExpr { form, env } => {
@@ -762,7 +775,7 @@ pub fn step_motion(
             advance_sites(state, key, dt, |scan| {
                 eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
             })?;
-            step_motion(curve, tau, dt, state, sig)
+            step_motion_with_dense(curve, tau, dt, state, sig, write_n2)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
@@ -813,15 +826,15 @@ pub fn step_motion(
             state.insert(key, Cell::N([idx, epoch]));
             let cur = stage_dyn(segs, idx as usize, state, key)?;
             // step the inner dyn on the segment-local clock
-            step_motion(cur.node(), tau - epoch, dt, state, sig)
+            step_motion_with_dense(cur.node(), tau - epoch, dt, state, sig, write_n2)
         }
-        DynNode::Translate { child, .. } => step_motion(child, tau, dt, state, sig),
+        DynNode::Translate { child, .. } => step_motion_with_dense(child, tau, dt, state, sig, write_n2),
         DynNode::Frame(a, b) => {
-            step_motion(a, tau, dt, state, sig)?;
-            step_motion(b, tau, dt, state, sig)
+            step_motion_with_dense(a, tau, dt, state, sig, write_n2)?;
+            step_motion_with_dense(b, tau, dt, state, sig, write_n2)
         }
         DynNode::Clamp { lo, hi, child } => {
-            step_motion(child, tau, dt, state, sig)?;
+            step_motion_with_dense(child, tau, dt, state, sig, write_n2)?;
             clamp_integrator(child, *lo, *hi, state);
             Ok(())
         }
@@ -836,10 +849,21 @@ pub fn step_dyn_figure(
     state: &mut MotionState,
     sig: &SigEnv,
 ) -> Result<(), String> {
-    step_motion(d.pose_dyn(), tau, dt, state, sig)?;
+    step_dyn_figure_with_dense(d, tau, dt, state, sig, &mut |_, _| {})
+}
+
+pub fn step_dyn_figure_with_dense(
+    d: &DynFigure,
+    tau: f64,
+    dt: f64,
+    state: &mut MotionState,
+    sig: &SigEnv,
+    write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
+) -> Result<(), String> {
+    step_motion_with_dense(d.pose_dyn(), tau, dt, state, sig, write_n2)?;
     if let Some(curve) = d.curve() {
         if let CurveEval::Expr(shape) = &curve.eval {
-            step_motion(shape.node(), tau, dt, state, sig)?;
+            step_motion_with_dense(shape.node(), tau, dt, state, sig, write_n2)?;
         }
     }
     Ok(())
