@@ -490,10 +490,13 @@ language.md.
       `entities-where` returns an ephemeral `EntitySet(Vec<usize>)`, and
       keyword application/dot syntax broadcasts flat field access over it.
       Entity sets are per-tick row-index views, not stable identity-keyed
-      vectors; stable per-entity control should keep handles or sort/key the
-      view explicitly. The current query-map form is compatibility syntax on
-      the way to predicate queries such as `(entities-where (matches :team
-      :enemy))`.
+      vectors. The current storage still compacts `world.entities` with
+      `retain`, so row numbers are only valid for the current realized view;
+      the stronger host contract ("stable while live, stale for at least one
+      tick before reuse") needs tombstones/free-list/generation storage.
+      Stable per-entity control should keep handles or sort/key the view
+      explicitly. Predicate queries such as `(entities-where (matches :team
+      :enemy))` are now supported; query maps remain compatibility syntax.
       Existing `entity-pos` / `entity-col` compatibility aliases,
       `count-entities`, `sum-entities`, `nearest-entity`, and `manipulate`
       now use index-vector query resolution internally while preserving

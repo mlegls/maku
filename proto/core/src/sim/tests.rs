@@ -1980,8 +1980,8 @@ fn defchannel_derives_per_tick() {
 #[test]
 fn entity_sets_broadcast_keyword_accessors() {
     const CARD: &str = r#"
-(defchannel $enemy-hp-view (:hp (entities-where {:team :enemy})))
-(defchannel $enemy-pos-view (:pos (entities-where {:team :enemy :color :red})))
+(defchannel $enemy-hp-view (:hp (entities-where (matches :team :enemy))))
+(defchannel $enemy-pos-view (:pos (entities-where (matches :team :enemy :color :red))))
 (defpattern p []
   (seq
     (spawn (pose c[2 3]) {:team :enemy :hp 4 :style {:color :red}})
@@ -2002,6 +2002,31 @@ fn entity_sets_broadcast_keyword_accessors() {
         panic!("expected single red enemy position")
     };
     assert!((p.x - 2.0).abs() < 1e-9 && (p.y - 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn predicate_queries_drive_manipulate() {
+    const CARD: &str = r#"
+(defpattern p []
+  (seq
+    (spawn (pose c[0 0]) {:team :enemy :hp 4 :style {:color :red}})
+    (spawn (pose c[0 0]) {:team :enemy :hp 6 :style {:color :blue}})
+    (manipulate (matches :team :enemy :color :red)
+      (fn [b] (set-col b :hp 1)))
+    (wait (ticks 1))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    let hp = sim
+        .world
+        .entities
+        .iter()
+        .enumerate()
+        .map(|(i, _)| sim.world.col_get_at(i, "hp").unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(hp, vec![1.0, 6.0]);
 }
 
     /// Ancestor clocks are lib-expressible (§13.1 audit): a parent

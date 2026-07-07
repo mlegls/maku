@@ -678,15 +678,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "spawn" => return sf_spawn(items, env, ctx, world),
             "colliders" => return sf_colliders(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),
+            "matches" => return sf_matches(items, env),
             // "manip" is the surface name; "manipulate" kept as an alias
             "manip" | "manipulate" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
                 let callback = evaluate(&items[2], env, ctx, world)?;
-                // a query map selects by style axes (Kw exact / Arr any-of)
-                // and :where (pure fn over the entity view) — queries cut
-                // across birth structures (§9); handles are the degenerate
-                // case
-                if matches!(target, Val::Map(_)) {
+                // Queries cut across birth structures (§9); handles are the
+                // degenerate case. Map queries are compatibility syntax;
+                // predicate functions and EntitySet row views are the target.
+                if is_query_value(&target) {
                     return Ok(Val::Action(Rc::new(ActionV::Manipulate {
                         targets: Vec::new(),
                         query: Some(target),
@@ -1133,9 +1133,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             // World queries over the manipulate query language (§9): the
-            // same {axes/:team/:where} maps, read-only, cheap enough for
-            // per-tick derived channels. These are what let the stdlib
-            // define $enemies / $nearest-enemy as (defchannel …) card code.
+            // target form is a predicate over entity views; compatibility
+            // {axes/:team/:where} maps are still accepted. These let the
+            // stdlib define $enemies / $nearest-enemy as card code.
             "count-entities" => {
                 let q = evaluate(&items[1], env, ctx, world)?;
                 let idxs = resolve_query(&q, ctx, world)?;
@@ -1453,7 +1453,69 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     Ok(Val::Map(Rc::new(view)))
 }
 
+fn is_query_value(v: &Val) -> bool {
+    matches!(v, Val::Map(_) | Val::Fn { .. } | Val::Builtin(_) | Val::EntitySet(_))
+}
+
+fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
+    if items.len() < 3 || items.len() % 2 == 0 {
+        return Err("matches: expected field/value pairs".into());
+    }
+    let row = Form::sym("x");
+    let mut tests = Vec::new();
+    for pair in items[1..].chunks(2) {
+        let Form::Kw(field) = &pair[0] else {
+            return Err("matches: expected keyword field".into());
+        };
+        tests.push(Form::list(vec![
+            Form::sym("="),
+            Form::list(vec![Form::Kw(field.clone()), row.clone()]),
+            pair[1].clone(),
+        ]));
+    }
+    let body = if tests.len() == 1 {
+        tests
+    } else {
+        let mut forms = vec![Form::sym("*")];
+        forms.extend(tests);
+        vec![Form::list(forms)]
+    };
+    Ok(Val::Fn {
+        params: vec!["x".into()].into(),
+        body: body.into(),
+        env: env.clone(),
+    })
+}
+
 fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
+    match q {
+        Val::Map(_) => resolve_map_query(q, ctx, world),
+        Val::Fn { .. } | Val::Builtin(_) => resolve_predicate_query(q, ctx, world),
+        Val::EntitySet(_) => entity_index_value(q.clone(), world)
+            .map(|idxs| idxs.into_iter().filter(|i| world.entities[*i].alive).collect()),
+        v => Err(format!("query: expected predicate, entity set, or map, got {:?}", v)),
+    }
+}
+
+fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
+    let sig = ctx.sig.clone();
+    let candidates = world
+        .entities
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.alive.then_some(i))
+        .collect::<Vec<_>>();
+    let mut out = Vec::new();
+    for i in candidates {
+        let view = entity_view(i, world, &sig)?;
+        if truthy(&apply_fn(q.clone(), &[view], ctx, world, false)?) {
+            out.push(i);
+        }
+    }
+    Ok(out)
+}
+
+fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
     let Val::Map(kvs) = q else { return Err("query: expected a map".into()) };
     let get = |name: &str| {
         kvs.iter().find_map(|(k, v)| match k {
