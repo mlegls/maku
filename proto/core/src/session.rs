@@ -22,6 +22,7 @@ pub const MAX_SNAPS: usize = 240;
 enum ProgCmd {
     Add(String),
     Swap(String),
+    ResizeEntities(usize),
 }
 
 pub struct Session {
@@ -104,6 +105,7 @@ impl Session {
                 match cmd {
                     ProgCmd::Add(src) => sim.add_forms(card_src, src)?,
                     ProgCmd::Swap(src) => sim.swap_forms(card_src, src)?,
+                    ProgCmd::ResizeEntities(max) => sim.resize_entity_capacity(*max)?,
                 }
             }
         }
@@ -191,6 +193,19 @@ impl Session {
         Ok(())
     }
 
+    /// Record an explicit host-side entity capacity change at the current tick.
+    pub fn record_resize_entities(&mut self, max_entities: usize) -> Result<(), String> {
+        if let Some(sim) = &self.sim {
+            let mut probe = sim.clone();
+            probe.resize_entity_capacity(max_entities)?;
+        } else {
+            return Err("nothing running".into());
+        }
+        let t = self.tick().ok_or("nothing running")?;
+        self.cmds.push((t, ProgCmd::ResizeEntities(max_entities)));
+        Ok(())
+    }
+
     /// Replace the program and replay the input tape through the NEW code up
     /// to the current tick — the pause/rewind/edit/re-run loop. The command
     /// tape restarts (old program mutations don't apply to the new program);
@@ -231,7 +246,7 @@ mod tests {
             .world
             .entities
             .iter()
-            .filter(|b| b.style.family == fam)
+            .filter(|b| b.alive && b.style.family == fam)
             .count()
     }
 
@@ -391,5 +406,23 @@ mod tests {
             sess.advance(CARD).unwrap();
         }
         assert_eq!(count(&sess, "y"), 0, "dropped layer stays dropped");
+    }
+
+    #[test]
+    fn resize_entities_replays() {
+        const TWO: &str = r#"
+(defpattern p [] (spawn (circle 2 (still)) {:style {:family :x}}))
+"#;
+        let mut sim = Sim::load(TWO, Some("p")).unwrap();
+        sim.resize_entity_capacity(1).unwrap();
+        let mut sess = Session::default();
+        sess.start(sim);
+        sess.record_resize_entities(2).unwrap();
+        sess.advance(TWO).unwrap();
+        assert_eq!(count(&sess, "x"), 2);
+        sess.seek(TWO, 0).unwrap();
+        assert_eq!(count(&sess, "x"), 0);
+        sess.advance(TWO).unwrap();
+        assert_eq!(count(&sess, "x"), 2, "resize command replayed at tick 0");
     }
 }

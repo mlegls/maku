@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 // World: entities + events. The control layer's mutable half.
 
+pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
+
 #[derive(Clone, Debug, Default)]
 pub struct Style {
     pub family: String,
@@ -351,11 +353,11 @@ pub struct SkipIf {
 #[derive(Clone)]
 pub enum SkipRhs { Tick, Num(f64) }
 
-#[derive(Clone)]
 pub struct World {
     pub tick: u64,
     pub next_id: u64,
     pub entities: Vec<Entity>,
+    pub max_entities: usize,
     pub free_entities: Vec<usize>,
     /// The event log is SHARED across snapshots (Rc): the log is monotonic,
     /// so a snapshot needs only `cursor` — restore truncates the shared
@@ -376,6 +378,27 @@ pub struct World {
     /// Card-defined contact rules, registered by defcontact. World data so
     /// hot-swaps and timeline restore carry the same collision semantics.
     pub contacts: Vec<ContactRule>,
+}
+
+impl Clone for World {
+    fn clone(&self) -> World {
+        let mut entities = Vec::with_capacity(self.max_entities);
+        entities.extend(self.entities.iter().cloned());
+        World {
+            tick: self.tick,
+            next_id: self.next_id,
+            entities,
+            max_entities: self.max_entities,
+            free_entities: self.free_entities.clone(),
+            log: self.log.clone(),
+            cursor: self.cursor,
+            rng: self.rng,
+            col_slots: self.col_slots.clone(),
+            col_names: self.col_names.clone(),
+            exposes: self.exposes.clone(),
+            contacts: self.contacts.clone(),
+        }
+    }
 }
 
 /// A gameplay event: emitted by collision or by the `(event :name)` action.
@@ -442,10 +465,17 @@ impl World {
 
 impl Default for World {
     fn default() -> Self {
+        World::with_entity_capacity(DEFAULT_ENTITY_CAPACITY)
+    }
+}
+
+impl World {
+    pub fn with_entity_capacity(max_entities: usize) -> World {
         World {
             tick: 0,
             next_id: 0,
-            entities: Vec::new(),
+            entities: Vec::with_capacity(max_entities),
+            max_entities,
             free_entities: Vec::new(),
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
             cursor: 0,
@@ -459,7 +489,30 @@ impl Default for World {
 }
 
 impl World {
-    pub fn install_entity(&mut self, mut entity: Entity) -> usize {
+    pub fn resize_entity_capacity(&mut self, max_entities: usize) -> Result<(), String> {
+        let live_past_new = self
+            .entities
+            .iter()
+            .enumerate()
+            .any(|(i, b)| i >= max_entities && b.alive);
+        if live_past_new {
+            return Err(format!(
+                "resize-entities: cannot shrink to {}; live rows would be dropped",
+                max_entities
+            ));
+        }
+        if max_entities < self.entities.len() {
+            self.entities.truncate(max_entities);
+            self.free_entities.retain(|i| *i < max_entities);
+        }
+        self.max_entities = max_entities;
+        if self.entities.capacity() < max_entities {
+            self.entities.reserve_exact(max_entities - self.entities.capacity());
+        }
+        Ok(())
+    }
+
+    pub fn install_entity(&mut self, mut entity: Entity) -> Result<usize, String> {
         if let Some(slot) = self
             .free_entities
             .iter()
@@ -469,11 +522,14 @@ impl World {
             entity.generation = self.entities[i].generation.wrapping_add(1);
             entity.freed_at = None;
             self.entities[i] = entity;
-            i
+            Ok(i)
         } else {
+            if self.entities.len() >= self.max_entities {
+                return Err(format!("spawn: entity capacity {} exhausted", self.max_entities));
+            }
             let i = self.entities.len();
             self.entities.push(entity);
-            i
+            Ok(i)
         }
     }
 

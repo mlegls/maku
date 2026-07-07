@@ -27,6 +27,8 @@
 //!                                    boundaries replay at their ticks
 //!   (snapshots N)                    snapshot cadence in ticks; 0 = off
 //!                                    (old snapshots auto-thin regardless)
+//!   (resize-entities N)              explicit host-side entity capacity
+//!                                    change, recorded on the command tape
 //!   (pause) (resume)
 
 use maku::host::Instance;

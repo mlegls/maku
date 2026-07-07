@@ -492,8 +492,9 @@ language.md.
       Entity sets are per-tick row-index views, not stable identity-keyed
       vectors. Tombstone/free-list/generation storage now keeps live rows
       from shifting when earlier rows die and prevents same-tick slot reuse.
-      The next storage step is making max entity capacity an explicit client
-      construction-time parameter instead of letting the backing vector grow.
+      Entity capacity is an explicit host/session setting with
+      `(resize-entities n)` recorded on the command tape; spawn errors
+      instead of implicitly growing past the current capacity.
       Stable per-entity control should keep handles or sort/key the view
       explicitly. Predicate queries such as `(entities-where (matches :team
       :enemy))` are now supported; query maps remain compatibility syntax.

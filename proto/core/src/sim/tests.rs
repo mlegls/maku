@@ -2073,6 +2073,21 @@ fn entity_rows_do_not_shift_after_cull() {
     assert!(sim.world.entities[1].alive);
 }
 
+#[test]
+fn entity_capacity_is_explicit() {
+    const CARD: &str = r#"
+(defpattern p [] (spawn (circle 2 (still))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.resize_entity_capacity(1).unwrap();
+    let err = sim.step().unwrap_err();
+    assert!(err.contains("entity capacity 1 exhausted"), "{err}");
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.resize_entity_capacity(2).unwrap();
+    sim.step().unwrap();
+    assert_eq!(live_count(&sim), 2);
+}
+
     /// Ancestor clocks are lib-expressible (§13.1 audit): a parent
     /// captures $tick into an ordinary binding (eager, an ir constant)
     /// and the child signal reads (live $tick) minus it — a

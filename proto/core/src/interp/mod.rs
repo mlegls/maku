@@ -1961,7 +1961,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     damage: spec.damage.clone(),
                     prev_pos: None,
                     trail: Vec::new(),
-                });
+                })?;
                 for (col, chan) in spec.expose.iter() {
                     world.exposes.push((chan.clone(), id, col.clone()));
                     // same-tick availability: the channel exists the moment

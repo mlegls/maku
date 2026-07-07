@@ -233,6 +233,10 @@ impl Sim {
         self.world.tick
     }
 
+    pub fn resize_entity_capacity(&mut self, max_entities: usize) -> Result<(), String> {
+        self.world.resize_entity_capacity(max_entities)
+    }
+
     pub(crate) fn channel_u64(&self, name: &str) -> u64 {
         self.ctx
             .sig

@@ -29,6 +29,7 @@ format. One form per line (clients strip `;` comments and join lines).
 | `(clear)` | stop the running pattern; card stays loaded |
 | `(seek N)` / `(step ±N)` | scrub the timeline (pauses) |
 | `(snapshots N)` | snapshot cadence in ticks; `0` disables (soak runs) |
+| `(resize-entities N)` | explicit host-side entity capacity change; recorded on the command tape |
 | `(pause)` / `(resume)` | resume after a rewind **branches** (truncates the future) |
 
 ## The session (core::session)

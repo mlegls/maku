@@ -296,6 +296,17 @@ impl Instance {
                     };
                 }
             }
+            "resize-entities" => {
+                if let Some(Form::Num(n)) = items.get(1) {
+                    let max_entities = (*n).max(0.0) as usize;
+                    match self.session.record_resize_entities(max_entities) {
+                        Ok(()) => self.status = format!("entity capacity -> {}", max_entities),
+                        Err(e) => self.status = format!("resize-entities error: {}", e),
+                    }
+                } else {
+                    self.status = "resize-entities: expected numeric capacity".into();
+                }
+            }
             "load" => {
                 // (load "path") = load only; (load "path" "pattern") = play
                 if let Some(p) = arg_str(1) {
@@ -383,7 +394,11 @@ impl Instance {
     }
 
     pub fn entity_count(&self) -> usize {
-        self.session.sim.as_ref().map(|s| s.world.entities.len()).unwrap_or(0)
+        self.session
+            .sim
+            .as_ref()
+            .map(|s| s.world.entities.iter().filter(|b| b.alive).count())
+            .unwrap_or(0)
     }
 
     pub fn graze(&self) -> u64 {

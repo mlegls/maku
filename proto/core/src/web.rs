@@ -39,7 +39,7 @@ impl Maku {
     }
 
     /// Wire protocol (docs/player.md): run/swap/add/load/pattern/restart/
-    /// clear/seek/step/snapshots/pause/resume.
+    /// clear/seek/step/snapshots/resize-entities/pause/resume.
     pub fn command(&mut self, line: &str) {
         self.inst.command_line(line);
     }
