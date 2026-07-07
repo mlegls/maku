@@ -234,12 +234,11 @@ impl Sim {
     pub(super) fn fire_triggers(&mut self) {
         let tick = self.world.tick;
         for i in 0..self.world.entities.len() {
-            let n_rules = self.world.entities[i].triggers.len();
-            for r in 0..n_rules {
+            let rules = self.world.entities.triggers(i);
+            for rule in rules.iter().cloned() {
                 if !self.world.entities.is_alive(i) {
                     break;
                 }
-                let rule = self.world.entities[i].triggers[r].clone();
                 let armed = self.world.col_get_sym_at(i, rule.latch).is_none();
                 let holds = self.world.col_get_sym_at(i, rule.col).map(|v| v <= rule.leq).unwrap_or(false);
                 if !(armed && holds) {

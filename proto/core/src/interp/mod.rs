@@ -1991,9 +1991,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                         dyn_figure,
                         collider_projector: spec.collider_projector.clone(),
                         render_projector: spec.render_projector.clone(),
-                        triggers: spec.triggers.clone(),
                     },
                     spec.cache_policy.clone(),
+                    spec.triggers.clone(),
                 )?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);
