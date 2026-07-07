@@ -270,6 +270,58 @@ impl EntityStore {
     pub fn max(&self) -> usize {
         self.max
     }
+
+    pub fn is_alive(&self, row: usize) -> bool {
+        self.rows.get(row).is_some_and(|entity| entity.alive)
+    }
+
+    pub fn generation(&self, row: usize) -> Option<u32> {
+        self.rows.get(row).map(|entity| entity.generation)
+    }
+
+    pub fn entity_ref(&self, row: usize) -> EntityRef {
+        EntityRef { row, generation: self.rows[row].generation }
+    }
+
+    pub fn find(&self, handle: EntityRef) -> Option<usize> {
+        self.rows
+            .get(handle.row)
+            .filter(|b| b.alive && b.generation == handle.generation)
+            .map(|_| handle.row)
+    }
+
+    pub fn reusable_free_row(&self, tick: u64) -> Option<(usize, usize)> {
+        self.free
+            .iter()
+            .position(|&i| self.rows[i].freed_at.is_some_and(|t| t < tick))
+            .map(|slot| (slot, self.free[slot]))
+    }
+
+    pub fn reuse_free_row(&mut self, slot: usize, mut entity: Entity) -> usize {
+        let i = self.free.swap_remove(slot);
+        entity.generation = self.rows[i].generation.wrapping_add(1);
+        entity.freed_at = None;
+        self.rows[i] = entity;
+        i
+    }
+
+    pub fn push_row(&mut self, entity: Entity) -> Result<usize, String> {
+        if self.rows.len() >= self.max {
+            return Err(format!("spawn: entity capacity {} exhausted", self.max));
+        }
+        let i = self.rows.len();
+        self.rows.push(entity);
+        Ok(i)
+    }
+
+    pub fn cull(&mut self, row: usize, tick: u64) {
+        let Some(entity) = self.rows.get_mut(row) else { return };
+        if entity.alive {
+            entity.alive = false;
+            entity.freed_at = Some(tick);
+            self.free.push(row);
+        }
+    }
 }
 
 impl Clone for EntityStore {
@@ -654,39 +706,21 @@ impl World {
     }
 
     pub fn install_entity(&mut self, mut entity: Entity) -> Result<usize, String> {
-        if let Some(slot) = self
-            .entities
-            .free
-            .iter()
-            .position(|&i| self.entities[i].freed_at.is_some_and(|t| t < self.tick))
-        {
-            let i = self.entities.free.swap_remove(slot);
-            entity.generation = self.entities[i].generation.wrapping_add(1);
+        if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             entity.freed_at = None;
             self.clear_num_fields_at(i);
-            self.entities[i] = entity;
-            Ok(i)
+            Ok(self.entities.reuse_free_row(slot, entity))
         } else {
-            if self.entities.len() >= self.entities.max {
-                return Err(format!("spawn: entity capacity {} exhausted", self.entities.max));
-            }
-            let i = self.entities.len();
-            self.entities.rows.push(entity);
-            Ok(i)
+            self.entities.push_row(entity)
         }
     }
 
     pub fn cull_at(&mut self, i: usize) {
-        let Some(entity) = self.entities.get_mut(i) else { return };
-        if entity.alive {
-            entity.alive = false;
-            entity.freed_at = Some(self.tick);
-            self.entities.free.push(i);
-        }
+        self.entities.cull(i, self.tick);
     }
 
     pub fn entity_ref(&self, row: usize) -> EntityRef {
-        EntityRef { row, generation: self.entities[row].generation }
+        self.entities.entity_ref(row)
     }
 
     /// Deterministic splitmix64-ish stream (counter-based enough for the
@@ -701,10 +735,7 @@ impl World {
     }
 
     pub fn find(&self, handle: EntityRef) -> Option<usize> {
-        self.entities
-            .get(handle.row)
-            .filter(|b| b.alive && b.generation == handle.generation)
-            .map(|_| handle.row)
+        self.entities.find(handle)
     }
 
     pub fn col_slot(&self, name: ColName) -> Option<usize> {

@@ -619,6 +619,10 @@ language.md.
       Done as a bridge; `World` now owns an `EntityStore` that contains rows,
       capacity, and the free-list/reuse policy, while `WorldFields` remains
       the finite user-field schema/matrix table.
+  2v.19. ~~Put lifecycle/reuse operations behind `EntityStore` APIs.~~ Done;
+      `EntityStore` now owns handle lookup, liveness, generation, cull, push,
+      and reusable-row selection helpers. `EntityStore` rows and
+      `WorldFields` matrices intentionally share one entity-row namespace.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
