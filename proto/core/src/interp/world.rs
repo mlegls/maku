@@ -138,7 +138,6 @@ pub struct RenderSigs {
 
 #[derive(Clone)]
 pub struct Entity {
-    pub id: u64,
     pub generation: u32,
     pub freed_at: Option<u64>,
     /// Gameplay team tag (F20: derived channels like $nearest-enemy are

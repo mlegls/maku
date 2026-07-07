@@ -496,7 +496,8 @@ language.md.
       `(resize-entities n)` recorded on the command tape; spawn errors
       instead of implicitly growing past the current capacity. Handles are
       now row+generation refs, so stale handles fail after slot reuse instead
-      of accidentally targeting the replacement entity.
+      of accidentally targeting the replacement entity; the old separate
+      entity id field has been removed.
       Stable per-entity control should keep handles or sort/key the view
       explicitly. Predicate queries such as `(entities-where (matches :team
       :enemy))` are now supported; query maps remain compatibility syntax.

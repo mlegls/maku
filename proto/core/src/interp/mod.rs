@@ -1928,8 +1928,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             for spec in entities {
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
                 let scanned = is_scanned_figure(&dyn_figure);
-                let id = world.next_id;
-                world.next_id += 1;
                 let mut col_slots = Vec::new();
                 for (name, val) in &spec.cols {
                     let slot = world.intern_col(name);
@@ -1939,7 +1937,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     col_slots[slot] = Some(*val);
                 }
                 let row = world.install_entity(Entity {
-                    id,
                     generation: 0,
                     freed_at: None,
                     team: spec.team.clone(),

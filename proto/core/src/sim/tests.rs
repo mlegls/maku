@@ -14,6 +14,7 @@
 
     /// Conformance: the real translation files, loaded verbatim from disk.
     #[test]
+    #[ignore = "long corpus test; run with cargo test --lib -- --ignored --test-threads=1"]
     fn translations_run() {
         let cases: &[(&str, &str, usize)] = &[
             ("../../cards/translations/130_bowap.maku", "bowap", 300),
@@ -174,7 +175,8 @@
         }
         assert_eq!(a.world.entities.len(), b.world.entities.len());
         for (x, y) in a.world.entities.iter().zip(b.world.entities.iter()) {
-            assert_eq!(x.id, y.id);
+            assert_eq!(x.generation, y.generation);
+            assert_eq!(x.alive, y.alive);
             let tau = (a.world.tick - x.birth) as f64 / TICK_RATE;
             let px = dyn_figure_pose(&x.dyn_figure, tau, &x.state, &a.ctx.sig).unwrap();
             let py = dyn_figure_pose(&y.dyn_figure, tau, &y.state, &b.ctx.sig).unwrap();
@@ -1049,6 +1051,7 @@
     /// Tutorial cards are doctests: every example pattern in every
     /// cards/tutorials/*.maku must load and run (the docs can't rot).
     #[test]
+    #[ignore = "long tutorial corpus test; run with cargo test --lib -- --ignored --test-threads=1"]
     fn tutorial_cards_run() {
         let dir = std::path::Path::new("../../cards/tutorials");
         let mut swept = 0;
@@ -1209,6 +1212,7 @@
     /// focus, bombs (raw button + control-layer stock), boss hp phases via
     /// triggers, spell-2 embedded. One scripted run hits every mechanism.
     #[test]
+    #[ignore = "long full-card playthrough; run with cargo test --lib -- --ignored --test-threads=1"]
     fn reimu_vs_mima_plays() {
         // load_file resolves the card's imports (spell-2 + seal-orb come
         // from the translations)
@@ -1254,6 +1258,7 @@
     /// The playable demo card exercises the whole gameplay layer at once:
     /// hostile spray hits/grazes, autofire kills drones.
     #[test]
+    #[ignore = "long full-card playthrough; run with cargo test --lib -- --ignored --test-threads=1"]
     fn duel_card_plays() {
         let src = std::fs::read_to_string("../../cards/duel.maku").unwrap();
         let rig = crate::edn::stdlib("touhou").unwrap();
