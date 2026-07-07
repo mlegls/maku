@@ -64,9 +64,48 @@ pub struct Sim {
     pub world: World,
     tasks: Vec<Task>,
     ctx: Ctx,
+    collider_scratch: ColliderScratch,
     /// (defchannel $name expr) rules from the loaded card (stdlib included),
     /// evaluated once per tick at the end of refresh_channels.
     card_channels: Vec<(Rc<str>, Form)>,
+}
+
+#[derive(Clone, Default)]
+struct ColliderScratch {
+    rows: Vec<ColliderData>,
+    ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl ColliderScratch {
+    fn clear_for_entities(&mut self, len: usize) {
+        self.rows.clear();
+        self.ranges.clear();
+        if self.ranges.capacity() < len {
+            self.ranges.reserve_exact(len - self.ranges.capacity());
+        }
+    }
+
+    fn push_empty(&mut self) {
+        let at = self.rows.len();
+        self.ranges.push(at..at);
+    }
+
+    fn begin_row(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn finish_row(&mut self, start: usize) {
+        self.ranges.push(start..self.rows.len());
+    }
+
+    fn row(&self, entity_row: usize) -> &[ColliderData] {
+        let range = self
+            .ranges
+            .get(entity_row)
+            .cloned()
+            .unwrap_or_else(|| self.rows.len()..self.rows.len());
+        &self.rows[range]
+    }
 }
 
 fn install_contacts(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
@@ -93,6 +132,7 @@ impl Clone for Sim {
             world: self.world.clone(),
             tasks: self.tasks.clone(),
             ctx,
+            collider_scratch: ColliderScratch::default(),
             card_channels: self.card_channels.clone(),
         }
     }
@@ -144,7 +184,13 @@ impl Sim {
         install_contacts(&card, &mut ctx, &mut world)?;
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
-        Ok(Sim { world, tasks: vec![task], ctx, card_channels: card.channels })
+        Ok(Sim {
+            world,
+            tasks: vec![task],
+            ctx,
+            collider_scratch: ColliderScratch::default(),
+            card_channels: card.channels,
+        })
     }
 
     /// Build a task for new program forms, updating defs. Shared by swap/add.
@@ -226,7 +272,13 @@ impl Sim {
             env = env.bind(pname.clone(), v);
         }
         let task = new_task(vec![TF::Seq { items: pat.body.clone(), idx: 0, env }]);
-        Ok(Sim { world, tasks: vec![task], ctx, card_channels: card.channels.clone() })
+        Ok(Sim {
+            world,
+            tasks: vec![task],
+            ctx,
+            collider_scratch: ColliderScratch::default(),
+            card_channels: card.channels.clone(),
+        })
     }
 
     pub fn tick(&self) -> u64 {

@@ -83,7 +83,7 @@ fn collider_overlap(a: &ColliderData, b: &ColliderData) -> bool {
     }
 }
 
-fn materialize_colliders(
+fn materialize_colliders_into(
     dyn_figure: &DynFigure,
     projector: &ColliderProjector,
     render_projector: &RenderProjector,
@@ -94,7 +94,8 @@ fn materialize_colliders(
     trace: &[Pose],
     traced: bool,
     symbols: &mut SymbolTable,
-) -> Result<Vec<ColliderData>, String> {
+    out: &mut Vec<ColliderData>,
+) -> Result<(), String> {
     let state = MotionState::new();
     let mut defs = materialize_collider_defs(projector, tau, &state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
@@ -109,11 +110,12 @@ fn materialize_colliders(
             defs = curve_capsule_slots(defs, &curve_slot);
         }
     }
-    let defs = defs
-        .into_iter()
-        .map(|slot| eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced))
-        .collect();
-    Ok(defs)
+    out.extend(
+        defs.into_iter().map(|slot| {
+            eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced)
+        }),
+    );
+    Ok(())
 }
 
 impl Sim {
@@ -126,14 +128,14 @@ impl Sim {
         // phase 0: materialized collider data + contact velocities
         let n = self.world.entities.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
-        let mut colliders: Vec<Vec<ColliderData>> = Vec::with_capacity(n);
+        self.collider_scratch.clear_for_entities(n);
         // :scale multiplies collider radii (a scaled sprite scales its
         // hitbox); sampled once per bullet per tick, 1.0 when absent
         for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
                 self.world.entities.set_sampled_pose(i, tick, None);
                 pos.push(None);
-                colliders.push(Vec::new());
+                self.collider_scratch.push_empty();
                 continue;
             }
             let tau = self.world.entities.tau(i, tick);
@@ -151,7 +153,7 @@ impl Sim {
             pos.push(Some((p.x, p.y)));
             let scale = {
                 let Some(render_projector) = self.world.entities.render_projector(i) else {
-                    colliders.push(Vec::new());
+                    self.collider_scratch.push_empty();
                     continue;
                 };
                 self.sample_sig(&render_projector.sigs.scale, tau, 1.0)
@@ -176,7 +178,8 @@ impl Sim {
                 .render_projector(i)
                 .ok_or_else(|| format!("colliders: missing render projector for row {i}"))?
                 .clone();
-            colliders.push(materialize_colliders(
+            let start = self.collider_scratch.begin_row();
+            materialize_colliders_into(
                 &dyn_figure,
                 &collider_projector,
                 &render_projector,
@@ -187,7 +190,9 @@ impl Sim {
                 trace,
                 traced,
                 &mut self.world.symbols,
-            )?);
+                &mut self.collider_scratch.rows,
+            )?;
+            self.collider_scratch.finish_row(start);
         }
 
         let rules = self.world.contacts.clone();
@@ -205,8 +210,18 @@ impl Sim {
                     if pos[j].is_none() {
                         continue;
                     }
-                    for ac in colliders[i].iter().filter(|c| c.layer() == Some(rule.a)) {
-                        for bc in colliders[j].iter().filter(|c| c.layer() == Some(rule.b)) {
+                    for ac in self
+                        .collider_scratch
+                        .row(i)
+                        .iter()
+                        .filter(|c| c.layer() == Some(rule.a))
+                    {
+                        for bc in self
+                            .collider_scratch
+                            .row(j)
+                            .iter()
+                            .filter(|c| c.layer() == Some(rule.b))
+                        {
                             if collider_overlap(ac, bc) {
                                 pairs.push((i, j));
                             }

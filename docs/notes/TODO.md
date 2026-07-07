@@ -47,8 +47,9 @@ work.
 - Generalize `Style` from hardcoded family/color/variant Rust fields to a
   small interned opaque map/record. Touhou/host config should own the visual
   vocabulary.
-- Materialize collider/render rows into per-tick scratch SoA buffers instead
-  of per-entity vectors/enums in hot loops.
+- Materialize render rows into per-tick scratch SoA buffers instead of
+  per-entity vectors/enums in hot loops. Collider rows already use flat
+  current-tick scratch storage.
 - Compile dyn evaluation to a flat program with fixed scratch storage. The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
