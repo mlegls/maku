@@ -277,8 +277,9 @@ pub enum DynNode {
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
     RotExpr { form: Form, env: Env },
-    /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state
-    /// and explicit exit handoff into Lazy segments.
+    /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state.
+    /// Lazy segments are an interpreted compatibility island: they instantiate
+    /// a segment dyn at the boundary and may extend dense motion state then.
     Stages { segs: Vec<StageSeg> },
 }
 
@@ -298,7 +299,9 @@ pub enum StageTerm {
 #[derive(Debug)]
 pub enum StageMake {
     Ready(DynPose),
-    Lazy(Val), // an (fn [exit] ...) closure, instantiated at the boundary
+    /// An `(fn [exit] ...)` closure instantiated at the boundary. This is the
+    /// only live path still allowed to extend an entity's motion schema.
+    Lazy(Val),
 }
 
 #[derive(Debug, Clone)]

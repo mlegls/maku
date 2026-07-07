@@ -424,15 +424,25 @@ impl EntityStore {
         self.reset_motion_state(row);
     }
 
-    pub fn extend_motion_schema_with_dyn(&mut self, row: usize, dyn_pose: &DynPose) -> Vec<(usize, MotionNodeId)> {
-        let Some(current) = self.motion_schema.get(row).cloned() else { return Vec::new() };
+    pub fn extend_motion_schema_for_lazy_stage(
+        &mut self,
+        row: usize,
+        key: MotionStateKey,
+        dyn_pose: &DynPose,
+    ) -> Result<Vec<(usize, MotionNodeId)>, String> {
+        if !matches!(key, MotionStateKey::LazyStage { .. } | MotionStateKey::LazyStagePtr { .. }) {
+            return Err(format!(
+                "motion schema extension is only supported for lazy stages, got {key:?}"
+            ));
+        }
+        let Some(current) = self.motion_schema.get(row).cloned() else { return Ok(Vec::new()) };
         let old_nodes = current.node_ptrs.len();
         let old_n2 = current.n2_keys.len();
         let old_dyn = current.dyn_keys.len();
         let mut next = (*current).clone();
         collect_pose_state(dyn_pose, &mut next);
         if next.n2_keys.len() == old_n2 && next.dyn_keys.len() == old_dyn {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let new_nodes = next.node_ptrs[old_nodes..]
             .iter()
@@ -452,7 +462,7 @@ impl EntityStore {
                 *cell = None;
             }
         }
-        new_nodes
+        Ok(new_nodes)
     }
 
     pub fn state_n2(&self, row: usize, key: MotionStateKey) -> Option<[f64; 2]> {
@@ -1333,5 +1343,17 @@ mod tests {
         cache.clear(0);
         assert!(cache.samples(0).is_empty());
         assert_eq!(cache.samples(1), &[p(10.0)]);
+    }
+
+    #[test]
+    fn runtime_schema_extension_is_lazy_stage_only() {
+        let mut store = EntityStore::with_capacity(1);
+        let dyn_pose = DynPose::pose_node(Rc::new(DynNode::Const(Pose::IDENTITY)));
+
+        let err = store
+            .extend_motion_schema_for_lazy_stage(0, MotionStateKey::Node(MotionNodeId(0)), &dyn_pose)
+            .unwrap_err();
+
+        assert!(err.contains("only supported for lazy stages"));
     }
 }

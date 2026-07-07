@@ -31,9 +31,9 @@ work.
 - Remove pointer-keyed compatibility fallback from legacy scratch motion
   evaluation. Live entity stepping now requires stable lowered node ids, while
   old direct evaluation and schema-remap bridges still accept pointer keys.
-- Lower lazy `stages` to a closed set of dyns at load time, or isolate it as
-  an explicitly interpreted compatibility path. It currently extends dense
-  schemas at runtime when a lazy segment is first constructed.
+- Lower lazy `stages` to a closed set of dyns at load time. Until then, it is
+  isolated as an interpreted compatibility path: only lazy-stage dyn writes may
+  extend dense schemas at runtime when a lazy segment is first constructed.
 - Move remaining gameplay-domain behavior out of core:
   - bare hostile `(cull)`;
   - Touhou concepts such as bullet/shot/enemy/player/boss/laser;

@@ -307,8 +307,8 @@ impl Sim {
                     write_dyn: &mut write_dyn,
                 };
                 step_dyn_figure_in(&dyn_figure, tau, dt, &mut motion)?;
-                for (_, value) in &dyn_writes {
-                    for (ptr, id) in self.world.entities.extend_motion_schema_with_dyn(i, value) {
+                for (key, value) in &dyn_writes {
+                    for (ptr, id) in self.world.entities.extend_motion_schema_for_lazy_stage(i, *key, value)? {
                         readers.node_ids.borrow_mut().insert(ptr, id);
                     }
                 }
