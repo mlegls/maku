@@ -525,6 +525,10 @@ language.md.
       layers.~~ Done; `World` now owns a `SymbolTable`, collider slots/data and
       contact layer pairs store `Symbol`, and string/keyword names are interned
       at collider spec decode / `defcontact` registration boundaries.
+  2v.8. ~~Intern event names in the retained log.~~ Done; explicit `(event
+      :name)` actions and trigger events store `Symbol` internally, while
+      `Sim::events_vec`, `Sim::with_events`, and host APIs resolve names back
+      to strings at the boundary.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

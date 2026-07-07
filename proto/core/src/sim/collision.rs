@@ -234,14 +234,13 @@ impl Sim {
                 if !(armed && holds) {
                     continue;
                 }
-                let (latch, name, cull) = (rule.latch.clone(), rule.name.clone(), rule.cull);
-                let name: Rc<str> = name;
+                let (latch, name, cull) = (rule.latch.clone(), rule.name, rule.cull);
                 let at = self.world.entities[i].prev_pos;
                 self.world.col_set_at(i, &latch, 1.0);
                 if cull {
                     self.world.cull_at(i);
                 }
-                self.world.push_event(Event { tick, name, pos: at });
+                self.world.push_event(StoredEvent { tick, name, pos: at });
             }
         }
     }

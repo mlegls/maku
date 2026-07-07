@@ -330,7 +330,7 @@ pub enum ActionV {
     SetVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, val: Val },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
-    Event { name: Rc<str>, pos: Option<(f64, f64)> },
+    Event { name: Symbol, pos: Option<(f64, f64)> },
     Nothing,
 }
 
@@ -655,7 +655,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "event" => {
                 let name = match evaluate(&items[1], env, ctx, world)? {
-                    Val::Kw(k) => k,
+                    Val::Kw(k) => world.symbols.intern(k.as_ref()),
                     v => return Err(format!("event: expected keyword symbol, got {:?}", v)),
                 };
                 let pos = if let Some(p) = items.get(2) {
@@ -1847,7 +1847,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
     match a {
         ActionV::Nothing => Ok(Val::Nothing),
         ActionV::Event { name, pos } => {
-            world.push_event(Event { tick: world.tick, name: name.as_ref().into(), pos: *pos });
+            world.push_event(StoredEvent { tick: world.tick, name: *name, pos: *pos });
             Ok(Val::Nothing)
         }
         ActionV::Export { scope, name } => {

@@ -211,14 +211,14 @@ pub struct EntityRef {
     pub generation: u32,
 }
 
-/// A standing rule over an entity's own columns: when `col ≤ leq` first
+/// A standing rule over an entity's own columns: when `col <= leq` first
 /// becomes true (edge-triggered; the latch is itself a column, so it
 /// snapshots and scrubs), emit the event and optionally cull. The same
 /// mechanism covers death, HP-gated boss phases, enrage thresholds, lives.
 #[derive(Clone, Debug)]
 pub struct TriggerRule {
     /// Event name; also keys the latch column.
-    pub name: Rc<str>,
+    pub name: Symbol,
     /// Precomputed latch column key.
     pub latch: Rc<str>,
     pub col: Rc<str>,
@@ -227,10 +227,10 @@ pub struct TriggerRule {
 }
 
 impl TriggerRule {
-    pub fn new(name: &str, col: &str, leq: f64, cull: bool) -> TriggerRule {
+    pub fn new(name: Symbol, latch_name: &str, col: &str, leq: f64, cull: bool) -> TriggerRule {
         TriggerRule {
-            name: name.into(),
-            latch: format!("{}#fired", name).into(),
+            name,
+            latch: format!("{}#fired", latch_name).into(),
             col: col.into(),
             leq,
             cull,
@@ -419,14 +419,20 @@ impl Clone for World {
     }
 }
 
-/// A gameplay event: emitted by collision or by the `(event :name)` action.
-/// `name` is a keyword symbol. `Rc<str>` is the bridge representation until
-/// keywords/events/layers/styles share one small-int symbol table; hosts
-/// convert the symbol back to their string/name boundary representation.
+/// A host-facing gameplay event: emitted by collision or by `(event :name)`.
 #[derive(Clone, Debug)]
 pub struct Event {
     pub tick: u64,
     pub name: Rc<str>,
+    pub pos: Option<(f64, f64)>,
+}
+
+/// Internal event log entry. Names are interned symbols; host/test APIs resolve
+/// them at the boundary.
+#[derive(Clone, Debug)]
+pub struct StoredEvent {
+    pub tick: u64,
+    pub name: Symbol,
     pub pos: Option<(f64, f64)>,
 }
 
@@ -436,7 +442,7 @@ pub struct Event {
 #[derive(Default)]
 pub struct EventLog {
     pub base: u64,
-    pub entries: std::collections::VecDeque<Event>,
+    pub entries: std::collections::VecDeque<StoredEvent>,
 }
 
 impl EventLog {
@@ -469,7 +475,7 @@ impl World {
     /// Emit an event. Invariant: only the sim at the shared log's tip may
     /// append; a clone stepped in parallel (diverged timeline) detects the
     /// mismatch and copy-on-writes its own fresh log.
-    pub fn push_event(&mut self, ev: Event) {
+    pub fn push_event(&mut self, ev: StoredEvent) {
         if self.log.borrow().tip() != self.cursor {
             self.log = Rc::new(std::cell::RefCell::new(EventLog {
                 base: self.cursor,
@@ -478,6 +484,14 @@ impl World {
         }
         self.log.borrow_mut().entries.push_back(ev);
         self.cursor += 1;
+    }
+
+    pub fn resolve_event(&self, ev: &StoredEvent) -> Event {
+        Event {
+            tick: ev.tick,
+            name: self.symbols.resolve(ev.name).unwrap_or("<unknown>").into(),
+            pos: ev.pos,
+        }
     }
 }
 

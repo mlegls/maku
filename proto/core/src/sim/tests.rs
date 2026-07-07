@@ -663,7 +663,7 @@
         };
         assert_eq!(hp(&sim), 10.0, "shots absorbed during the window");
         assert!(
-            sim.world.log.borrow().entries.iter().any(|e| &*e.name == "absorbed"),
+            sim.events_vec().iter().any(|e| &*e.name == "absorbed"),
             "absorption is observable"
         );
         for _ in 0..240 {
@@ -1491,7 +1491,7 @@
         let n = sim.world.entities.len();
         assert!((5..=8).contains(&n), "spawner ran ~0.1s then died: {}", n);
         assert!(
-            sim.world.log.borrow().entries.iter().any(|e| &*e.name == "after-until"),
+            sim.events_vec().iter().any(|e| &*e.name == "after-until"),
             "the task resumed after the cancelled scope"
         );
     }
@@ -1511,7 +1511,7 @@
             sim.step().unwrap();
         }
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         let a = names.iter().position(|n| n == "a");
         let cleanup = names.iter().position(|n| n == "cleanup");
         let after = names.iter().position(|n| n == "after");
@@ -1539,7 +1539,7 @@
             sim.step().unwrap();
         }
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         assert!(names.iter().any(|n| n == "body-start"));
         assert!(names.iter().any(|n| n == "cleanup"), "cleanup ran on cancellation");
         assert!(names.iter().any(|n| n == "after"), "outer seq resumed");
@@ -1566,7 +1566,7 @@
             sim.step().unwrap();
         }
         assert!(
-            sim.world.log.borrow().entries.iter().any(|e| &*e.name == "fork-cleanup"),
+            sim.events_vec().iter().any(|e| &*e.name == "fork-cleanup"),
             "fork cleanup ran after inherited guard killed the task"
         );
     }
@@ -1586,7 +1586,7 @@
             sim.step().unwrap();
         }
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         let fast = names.iter().position(|n| n == "fast");
         let after = names.iter().position(|n| n == "after");
         assert!(fast.is_some(), "fast arm won");
@@ -1609,7 +1609,7 @@
             sim.step().unwrap();
         }
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         assert!(names.iter().any(|n| n == "fast"), "fast arm won");
         assert!(names.iter().any(|n| n == "slow-cleanup"), "loser cleanup ran");
         assert!(!names.iter().any(|n| n == "slow"), "loser body did not finish");
@@ -1642,7 +1642,7 @@
         }
         assert_eq!(sim.world.entities.len(), 5, "the :b loop died at the timeout");
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         let b_done = names.iter().position(|n| n == "b-done");
         let m_done = names.iter().position(|n| n == "machine-done");
         assert!(b_done.is_some(), "finalizer ran on timeout exit");
@@ -1677,7 +1677,7 @@
         let n = sim.world.entities.len();
         assert!((3..=6).contains(&n), "spawner died at the goto: {}", n);
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         assert!(names.iter().any(|n| n == "spell-out"), "finalizer ran on goto exit");
         assert!(names.iter().any(|n| n == "post"), "re-entered at the target label");
     }
@@ -1701,7 +1701,7 @@
             sim.step().unwrap();
         }
         let names: Vec<String> =
-            sim.world.log.borrow().entries.iter().map(|e| e.name.to_string()).collect();
+            sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         let a = names.iter().filter(|n| *n == "in-a").count();
         let b = names.iter().filter(|n| *n == "in-b").count();
         assert!(a + b >= 40, "the chain kept walking: {} + {}", a, b);
@@ -1729,7 +1729,7 @@
         }
         assert_eq!(sim.world.entities.len(), 4, ":timeout ended the spell loop");
         let has = |sim: &Sim, n: &str| {
-            sim.world.log.borrow().entries.iter().any(|e| &*e.name == n)
+            sim.events_vec().iter().any(|e| &*e.name == n)
         };
         assert!(has(&sim, "spell-out"), "finalizer ran on the timeout path");
         assert!(has(&sim, "end"), "fell through to the next phase");
@@ -1916,7 +1916,7 @@ fn spawn_boss_owns_conventions() {
         sim.step().unwrap();
     }
     let has = |sim: &Sim, n: &str| {
-        sim.world.log.borrow().entries.iter().any(|e| &*e.name == n)
+        sim.events_vec().iter().any(|e| &*e.name == n)
     };
     assert!(has(&sim, "phase-one"), "machine started once local boss hp registered");
     assert!(!has(&sim, "phase-two"), "hp gate holds while hp > 1");

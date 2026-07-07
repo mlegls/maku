@@ -397,14 +397,20 @@ impl Sim {
         out
     }
 
-    /// Read the retained event window without cloning it.
-    pub fn with_events<R>(&self, f: impl FnOnce(&std::collections::VecDeque<Event>) -> R) -> R {
-        f(&self.world.log.borrow().entries)
+    /// Read the retained event window with event symbols resolved for host use.
+    pub fn with_events<R>(&self, f: impl FnOnce(Vec<Event>) -> R) -> R {
+        f(self.events_vec())
     }
 
     /// Retained events, cloned (tests, casual host use).
     pub fn events_vec(&self) -> Vec<Event> {
-        self.world.log.borrow().entries.iter().cloned().collect()
+        self.world
+            .log
+            .borrow()
+            .entries
+            .iter()
+            .map(|e| self.world.resolve_event(e))
+            .collect()
     }
 
     /// After restoring this sim as a snapshot: drop shared-log events its

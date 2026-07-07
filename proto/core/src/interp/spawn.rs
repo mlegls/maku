@@ -199,11 +199,12 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     _ => return Err("triggers: missing :leq".into()),
                 };
                 let event = match get("event") {
-                    Some(Val::Kw(k)) => k.to_string(),
+                    Some(Val::Kw(k)) => k,
                     _ => return Err("triggers: missing :event".into()),
                 };
                 let cull = matches!(get("cull"), Some(Val::Num(n)) if n != 0.0);
-                rules.push(TriggerRule::new(&event, &col, leq, cull));
+                let event_sym = world.symbols.intern(event.as_ref());
+                rules.push(TriggerRule::new(event_sym, event.as_ref(), &col, leq, cull));
             }
             rules.into()
         }
