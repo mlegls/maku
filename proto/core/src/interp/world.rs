@@ -203,13 +203,12 @@ pub struct Entity {
     pub collider_projector: ColliderProjector,
     /// Render projector — archetype data, Rc-shared across a spawn's elements.
     pub render_projector: RenderProjector,
-    /// User-defined numeric columns in World's dense column layout. hp is
-    /// not special — it is just another named source column assigned to a
-    /// slot by the world.
+    /// Bridge numeric fields in a per-entity dense slot vector. Target
+    /// storage is a world-owned numeric field matrix.
     pub cols: Vec<Option<f64>>,
-    /// Interned keyword-valued entity fields. This is a bridge toward finite
-    /// symbol-keyed metadata; `:team` lives here for compatibility.
-    pub kw_fields: Vec<(FieldName, Symbol)>,
+    /// Bridge symbol fields. Target storage is a world-owned symbol field
+    /// matrix; `:team` lives here for compatibility.
+    pub sym_fields: Vec<(FieldName, Symbol)>,
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
@@ -676,38 +675,38 @@ impl World {
         self.symbols.intern(name)
     }
 
-    pub fn kw_field_value(&self, entity: &Entity, field: FieldName) -> Option<Symbol> {
+    pub fn sym_field_value(&self, entity: &Entity, field: FieldName) -> Option<Symbol> {
         entity
-            .kw_fields
+            .sym_fields
             .iter()
             .find_map(|(k, v)| (*k == field).then_some(*v))
     }
 
-    pub fn kw_field_value_at(&self, i: usize, field: FieldName) -> Option<Symbol> {
-        self.entities.get(i).and_then(|entity| self.kw_field_value(entity, field))
+    pub fn sym_field_value_at(&self, i: usize, field: FieldName) -> Option<Symbol> {
+        self.entities.get(i).and_then(|entity| self.sym_field_value(entity, field))
     }
 
-    pub fn kw_field_resolved<'a>(&'a self, entity: &'a Entity, field: &str) -> Option<&'a str> {
+    pub fn sym_field_resolved<'a>(&'a self, entity: &'a Entity, field: &str) -> Option<&'a str> {
         let field = self.symbols.lookup(field)?;
-        let value = self.kw_field_value(entity, field)?;
+        let value = self.sym_field_value(entity, field)?;
         self.symbols.resolve(value)
     }
 
-    pub fn kw_field_resolved_at(&self, i: usize, field: &str) -> Option<&str> {
+    pub fn sym_field_resolved_at(&self, i: usize, field: &str) -> Option<&str> {
         let field = self.symbols.lookup(field)?;
-        let value = self.kw_field_value_at(i, field)?;
+        let value = self.sym_field_value_at(i, field)?;
         self.symbols.resolve(value)
     }
 
-    pub fn kw_field_matches(&self, entity: &Entity, field: &str, value: &str) -> bool {
+    pub fn sym_field_matches(&self, entity: &Entity, field: &str, value: &str) -> bool {
         let Some(field) = self.symbols.lookup(field) else { return false };
         let Some(value) = self.symbols.lookup(value) else { return false };
-        self.kw_field_value(entity, field) == Some(value)
+        self.sym_field_value(entity, field) == Some(value)
     }
 
-    pub fn kw_field_missing(&self, entity: &Entity, field: &str) -> bool {
+    pub fn sym_field_missing(&self, entity: &Entity, field: &str) -> bool {
         self.symbols
             .lookup(field)
-            .is_none_or(|field| self.kw_field_value(entity, field).is_none())
+            .is_none_or(|field| self.sym_field_value(entity, field).is_none())
     }
 }

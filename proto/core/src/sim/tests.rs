@@ -218,7 +218,7 @@
             sim.events_vec().into_iter().filter(|e| &*e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
-        assert_eq!(sim.world.entities.iter().filter(|b| b.alive && sim.world.kw_field_missing(b, "team")).count(), 1);
+        assert_eq!(sim.world.entities.iter().filter(|b| b.alive && sim.world.sym_field_missing(b, "team")).count(), 1);
         assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 2.0), "graze ring precedes the hitbox; iframes graze too");
         // the hit effect is a column write; $lives is a channel
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == 2.0));
@@ -419,7 +419,7 @@
         // the column keeps counting (what game-over MEANS is host policy)
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == -2.0));
         // non-culling: the player entity is still there (host decides)
-        assert!(sim.world.entities.iter().any(|b| b.alive && sim.world.kw_field_matches(b, "team", "player-body")));
+        assert!(sim.world.entities.iter().any(|b| b.alive && sim.world.sym_field_matches(b, "team", "player-body")));
     }
 
     /// Death is not special: :triggers replaces the synthesized default,
@@ -503,7 +503,7 @@
         }
         assert_eq!(sim.channel_u64("hits"), 1, "active beam hits");
         assert_eq!(
-            sim.world.entities.iter().filter(|b| b.alive && sim.world.kw_field_missing(b, "team")).count(),
+            sim.world.entities.iter().filter(|b| b.alive && sim.world.sym_field_missing(b, "team")).count(),
             1,
             "the beam persists through the hit"
         );
@@ -657,7 +657,7 @@
                 .entities
                 .iter()
                 .enumerate()
-                .find(|(_, b)| sim.world.kw_field_matches(b, "team", "enemy"))
+                .find(|(_, b)| sim.world.sym_field_matches(b, "team", "enemy"))
                 .and_then(|(i, _)| sim.world.col_get_at(i, "hp"))
                 .unwrap()
         };
@@ -1239,7 +1239,7 @@
                     .world
                     .entities
                     .iter()
-                    .any(|b| sim.world.kw_field_matches(b, "team", "player") && b.render_projector.style.family == "gem");
+                    .any(|b| sim.world.sym_field_matches(b, "team", "player") && b.render_projector.style.family == "gem");
             }
         }
         assert!(saw_needles, "focus switched the fire mode to needles");
@@ -1839,7 +1839,7 @@
         let b = &sim.world.entities[0];
         assert_eq!(sim.world.col_get_at(0, "hp"), Some(2.0), "later map wins per-key");
         assert_eq!(sim.world.col_get_at(0, "a"), Some(1.0), "earlier keys survive");
-        assert!(sim.world.kw_field_matches(b, "team", "enemy"));
+        assert!(sim.world.sym_field_matches(b, "team", "enemy"));
         assert_eq!(b.render_projector.style.family, "star", ":style replaces wholesale");
     }
 

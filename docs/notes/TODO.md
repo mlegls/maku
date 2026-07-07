@@ -384,6 +384,19 @@ language.md.
     per-entity lookup. This is what lets lib-level systems (damage:
     every entity with :hp and :team) compile to dense column scans with
     core knowing nothing about hp.
+  * Typed WorldFields: finite entity metadata is stored in separate
+    preallocated matrices by value type/size, not as per-entity maps:
+    ```text
+    nums    : NumFieldId    x entity_row -> f64
+    syms    : SymFieldId    x entity_row -> Symbol
+    handles : HandleFieldId x entity_row -> EntityRef
+    present : per-typed-field bitsets or typed sentinel policy
+    ```
+    Field names intern at load/lowering time into typed field ids. All
+    fields that can ever be used by the loaded card are known before runtime
+    spawn; unknown fields are load/reschema errors, not per-tick allocation.
+    The current `cols` / `sym_fields` bridge keeps the semantics moving in
+    that direction while dense SoA storage is still pending.
   * Determinism notes: interned ids are assigned by load order — either
     make load order canonical or keep ids out of anything observable
     (ordering, replay hashing). Query iteration order is shape-table
@@ -580,12 +593,12 @@ language.md.
       to dense slots, with string helpers retained at source/host/test
       boundaries.
   2v.13. ~~Move `:team` out of the entity struct.~~ Done as a bridge;
-      entities now carry interned keyword fields (`kw_fields`), and source
+      entities now carry interned symbol fields (`sym_fields`), and source
       `:team :enemy` lowers to a `FieldName` / keyword-symbol pair. Query,
       view, cull-hostile, player-body checks, and host iframe checks read
       through keyword-field helpers.
-  2v.14. ~~Generalize keyword-valued entity metadata.~~ Done as a bridge;
-      keyword-valued spawn metadata now lowers into `kw_fields` unless the
+  2v.14. ~~Generalize symbol-valued entity metadata.~~ Done as a bridge;
+      symbol-valued spawn metadata now lowers into `sym_fields` unless the
       key is reserved for spawn/render/control compatibility. Entity views,
       field access, `matches`, and map queries can use arbitrary keyword
       metadata such as `:role :boss`.

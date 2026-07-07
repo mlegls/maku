@@ -32,7 +32,7 @@ const RESERVED_KW_FIELD_KEYS: &[&str] = &[
     "opacity",
 ];
 
-fn is_reserved_kw_field_key(key: &str) -> bool {
+fn is_reserved_sym_field_key(key: &str) -> bool {
     RESERVED_KW_FIELD_KEYS.contains(&key)
 }
 
@@ -161,22 +161,22 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     }
     let styles = resolve_styles(&meta, &elems)?;
     let sigs = resolve_sigs(&metas, env, elems.len());
-    let mut kw_fields: Vec<(FieldName, Symbol)> = Vec::new();
+    let mut sym_fields: Vec<(FieldName, Symbol)> = Vec::new();
     if let Val::Map(kvs) = &meta {
         for (k, v) in kvs.iter() {
             let (Val::Kw(field), Val::Kw(value)) = (k, v) else {
                 continue;
             };
-            if is_reserved_kw_field_key(field.as_ref()) {
+            if is_reserved_sym_field_key(field.as_ref()) {
                 continue;
             }
             let field = world.field_sym(field.as_ref());
             let value = world.symbols.intern(value.as_ref());
-            kw_fields.retain(|(k, _)| *k != field);
-            kw_fields.push((field, value));
+            sym_fields.retain(|(k, _)| *k != field);
+            sym_fields.push((field, value));
         }
     }
-    let kw_fields: Rc<[(FieldName, Symbol)]> = kw_fields.into();
+    let sym_fields: Rc<[(FieldName, Symbol)]> = sym_fields.into();
     // columns: :hp n is sugar for a col (the contact layer reads the hp
     // column by name; what zero hp MEANS is a trigger's business, and the
     // default death trigger is library code, not engine). :cols {:armor 2
@@ -309,7 +309,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
-                kw_fields: kw_fields.clone(),
+                sym_fields: sym_fields.clone(),
                 cols,
                 triggers: triggers.clone(),
                 collider_projector: ColliderProjector { specs: collider_specs.into() },

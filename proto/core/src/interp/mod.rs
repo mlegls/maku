@@ -351,7 +351,7 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub kw_fields: Rc<[(FieldName, Symbol)]>,
+    pub sym_fields: Rc<[(FieldName, Symbol)]>,
     pub cols: Vec<(ColName, f64)>,
     pub triggers: Rc<[TriggerRule]>,
     pub collider_projector: ColliderProjector,
@@ -1454,7 +1454,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
         (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
     ];
-    for (field, value) in &b.kw_fields {
+    for (field, value) in &b.sym_fields {
         if let (Some(field), Some(value)) = (world.symbols.resolve(*field), world.symbols.resolve(*value)) {
             view.push((Val::Kw(field.into()), Val::Kw(value.into())));
         }
@@ -1580,10 +1580,10 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             || !axis_ok(&family, &b.render_projector.style.family)
             || !axis_ok(&color, &b.render_projector.style.color)
             || !axis_ok(&variant, &b.render_projector.style.variant)
-            || !axis_ok(&team, world.kw_field_resolved(b, "team").unwrap_or(""))
+            || !axis_ok(&team, world.sym_field_resolved(b, "team").unwrap_or(""))
             || kw_filters
                 .iter()
-                .any(|(field, sel)| !axis_ok(&Some(sel.clone()), world.kw_field_resolved(b, field).unwrap_or("")))
+                .any(|(field, sel)| !axis_ok(&Some(sel.clone()), world.sym_field_resolved(b, field).unwrap_or("")))
         {
             continue;
         }
@@ -1656,7 +1656,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
         "color" => Ok(Val::Kw(world.entities[i].render_projector.style.color.as_str().into())),
         "variant" => Ok(Val::Kw(world.entities[i].render_projector.style.variant.as_str().into())),
         field => {
-            if let Some(value) = world.kw_field_resolved_at(i, field) {
+            if let Some(value) = world.sym_field_resolved_at(i, field) {
                 return Ok(Val::Kw(value.into()));
             }
             Ok(world.col_get_at(i, field).map(Val::Num).unwrap_or(Val::Nothing))
@@ -1953,7 +1953,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 .iter()
                 .enumerate()
                 .filter_map(|(i, b)| {
-                    (b.alive && world.kw_field_missing(b, "team")).then_some(i)
+                    (b.alive && world.sym_field_missing(b, "team")).then_some(i)
                 })
                 .collect::<Vec<_>>();
             for i in targets {
@@ -1992,7 +1992,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
                     cols: col_slots,
-                    kw_fields: spec.kw_fields.to_vec(),
+                    sym_fields: spec.sym_fields.to_vec(),
                     triggers: spec.triggers.clone(),
                     prev_pos: None,
                     trail: Vec::new(),
