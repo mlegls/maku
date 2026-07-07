@@ -55,7 +55,8 @@ impl Sim {
                         }
                     } else {
                         let readers = self.motion_readers(i);
-                        if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, sig, &readers) {
+                        let state = MotionState::new();
+                        if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, sig, &readers) {
                             out.push(RenderItem::Dot {
                                 x: p.x,
                                 y: p.y,

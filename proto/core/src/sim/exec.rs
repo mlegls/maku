@@ -79,10 +79,16 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
 
 fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
     let key = Rc::as_ptr(node) as usize;
-    for (i, b) in world.entities.iter().enumerate() {
-        if world.entities.is_alive(i) && b.state.contains_key(&key) {
+    for (i, _) in world.entities.iter().enumerate() {
+        let carries_node = world
+            .entities
+            .motion_schema(i)
+            .is_some_and(|schema| schema.n2_slots.contains_key(&MotionStateKey::NodePtr(key)));
+        if world.entities.is_alive(i) && carries_node {
             let tau = world.entities.tau(i, world.tick);
-            if let Ok(p) = dyn_node_pose(node, tau, &b.state, sig) {
+            let state = MotionState::new();
+            let readers = crate::interp::entity_motion_readers(i, world);
+            if let Ok(p) = dyn_node_pose_u_with_dense(node, tau, 0.0, &state, sig, &readers) {
                 return p;
             }
         }

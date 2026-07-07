@@ -91,7 +91,8 @@ fn materialize_colliders(
     pose: Pose,
     symbols: &mut SymbolTable,
 ) -> Result<Vec<ColliderData>, String> {
-    let mut defs = materialize_collider_defs(&b.collider_projector, tau, &b.state, sig, symbols)
+    let state = MotionState::new();
+    let mut defs = materialize_collider_defs(&b.collider_projector, tau, &state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
     if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         if let Some(projection) = first_render_projection(b, tau, sig) {
@@ -135,7 +136,8 @@ impl Sim {
             let p = {
                 let b = &self.world.entities[i];
                 let readers = self.motion_readers(i);
-                dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers)?
+                let state = MotionState::new();
+                dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers)?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));

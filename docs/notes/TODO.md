@@ -694,6 +694,12 @@ language.md.
       entity state while legacy-only APIs still mirror for compatibility.
       Same-tick lazy stage dyns use a temporary local cell and are removed
       before the entity row is stored.
+  2v.33. ~~Remove row-local legacy `MotionState` storage.~~ Done; `Entity`
+      no longer owns a `MotionState` map. Sim stepping uses a fresh local
+      scratch map for same-tick interpreted recursion, live entity reads use
+      dense row readers, and lazy stage constructors extend the row's dense
+      motion schema with generated dyn internals instead of persisting an
+      entity-local compatibility map.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

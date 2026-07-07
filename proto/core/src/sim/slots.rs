@@ -20,7 +20,8 @@ pub fn sample_curve_frac(
 }
 
 pub(crate) fn first_render_projection(b: &Entity, tau: f64, sig: &SigEnv) -> Option<CurveRenderSlot> {
-    materialize_render_defs(&b.render_projector, tau, &b.state, sig)
+    let state = MotionState::new();
+    materialize_render_defs(&b.render_projector, tau, &state, sig)
         .ok()?
         .first()
         .cloned()
@@ -45,7 +46,8 @@ fn sample_curve_projection(
     sample_set: &SampleSet,
     u_max_sig: &Option<DynNum>,
 ) -> Option<Vec<(f64, f64)>> {
-    let Figure::Curve(curve) = eval_dyn_figure(&b.dyn_figure, tau, &b.state, sig).ok()? else {
+    let state = MotionState::new();
+    let Figure::Curve(curve) = eval_dyn_figure(&b.dyn_figure, tau, &state, sig).ok()? else {
         return None;
     };
     if frac <= 0.0 {
@@ -69,7 +71,7 @@ fn sample_curve_projection(
         (CurveDomain::Range { min, max }, SampleSet::Step { resolution }) => {
             let min = *min;
             let max = match u_max_sig {
-                Some(d) => eval_dyn(d, tau, &b.state, sig).unwrap_or(*max),
+                Some(d) => eval_dyn(d, tau, &state, sig).unwrap_or(*max),
                 None => *max,
             };
             let end = min + (max - min) * frac.min(1.0);
@@ -80,7 +82,7 @@ fn sample_curve_projection(
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = eval_curve_pose(&curve.spec.eval, tau, u, &b.state, sig).ok()?;
+        let local = eval_curve_pose(&curve.spec.eval, tau, u, &state, sig).ok()?;
         let w = curve.frame.compose(&local);
         pts.push((w.x, w.y));
     }
@@ -141,7 +143,8 @@ pub fn eval_collider_slot(
     match slot.repr() {
         ColliderDynRepr::Slot(projection) => match &projection.shape {
             ColliderSlotShape::Circle { radius } => {
-                let radius = eval_dyn(radius, tau, &b.state, sig).unwrap_or(0.0);
+                let state = MotionState::new();
+                let radius = eval_dyn(radius, tau, &state, sig).unwrap_or(0.0);
                 match b.dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
                         let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
@@ -164,7 +167,8 @@ pub fn eval_collider_slot(
                 }
             }
             ColliderSlotShape::CapsuleChain { radius, slot: curve_slot } => {
-                let radius = eval_dyn(radius, tau, &b.state, sig).unwrap_or(0.0);
+                let state = MotionState::new();
+                let radius = eval_dyn(radius, tau, &state, sig).unwrap_or(0.0);
                 if tau < curve_slot.activity.warn {
                     return ColliderData::None;
                 }
@@ -240,7 +244,8 @@ pub fn eval_render_list(
     tau: f64,
     sig: &SigEnv,
 ) -> Vec<RenderData> {
-    let slots = materialize_render_defs(projector, tau, &b.state, sig).unwrap_or_default();
+    let state = MotionState::new();
+    let slots = materialize_render_defs(projector, tau, &state, sig).unwrap_or_default();
     slots
         .iter()
         .flat_map(|slot| eval_render_slot(b, slot, tau, sig))

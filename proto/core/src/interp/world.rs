@@ -220,7 +220,6 @@ pub struct RenderSigs {
 pub struct Entity {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub state: MotionState,
     pub scanned: bool,
     /// Collider projector — archetype data, Rc-shared across a spawn's
     /// elements. Layers are opaque core routing keys; specs evaluate each
@@ -312,6 +311,31 @@ impl EntityStore {
             *slot = schema;
         }
         self.reset_motion_state(row);
+    }
+
+    pub fn extend_motion_schema_with_dyn(&mut self, row: usize, dyn_pose: &DynPose) {
+        let Some(current) = self.motion_schema.get(row).cloned() else { return };
+        let old_n2 = current.n2_keys.len();
+        let old_dyn = current.dyn_keys.len();
+        let mut next = (*current).clone();
+        collect_pose_state(dyn_pose, &mut next);
+        if next.n2_keys.len() == old_n2 && next.dyn_keys.len() == old_dyn {
+            return;
+        }
+        if let Some(slot) = self.motion_schema.get_mut(row) {
+            *slot = Rc::new(next.clone());
+        }
+        self.ensure_motion_state_shape(&next);
+        for slot in old_n2..next.n2_keys.len() {
+            if let Some(cell) = self.state_n2.get_mut(slot).and_then(|col| col.get_mut(row)) {
+                *cell = [0.0, 0.0];
+            }
+        }
+        for slot in old_dyn..next.dyn_keys.len() {
+            if let Some(cell) = self.state_dyn.get_mut(slot).and_then(|col| col.get_mut(row)) {
+                *cell = None;
+            }
+        }
     }
 
     pub fn state_n2(&self, row: usize, key: MotionStateKey) -> Option<[f64; 2]> {

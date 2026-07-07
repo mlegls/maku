@@ -83,7 +83,8 @@
         assert_eq!(sim.world.entities.birth(0), Some(0));
         assert_eq!(b.render_projector.style.family, "gem");
         assert_eq!(b.render_projector.style.color, "yellow");
-        let p = dyn_figure_pose(&b.dyn_figure, 1.0, &b.state, &sig).unwrap();
+        let state = MotionState::new();
+        let p = dyn_figure_pose(&b.dyn_figure, 1.0, &state, &sig).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
@@ -121,8 +122,9 @@
         let sig = SigEnv::default();
         for (i, (a, b)) in sa.world.entities.iter().zip(sb.world.entities.iter()).enumerate() {
             assert_eq!(sa.world.entities.birth(i), sb.world.entities.birth(i));
-            let pa = dyn_figure_pose(&a.dyn_figure, 0.7, &a.state, &sig).unwrap();
-            let pb = dyn_figure_pose(&b.dyn_figure, 0.7, &b.state, &sig).unwrap();
+            let state = MotionState::new();
+            let pa = dyn_figure_pose(&a.dyn_figure, 0.7, &state, &sig).unwrap();
+            let pb = dyn_figure_pose(&b.dyn_figure, 0.7, &state, &sig).unwrap();
             assert!(
                 (pa.x - pb.x).abs() < 1e-6 && (pa.y - pb.y).abs() < 1e-6,
                 "A/B diverged: {:?} vs {:?}",
@@ -161,7 +163,8 @@
         let sig = SigEnv::default();
         let ring: Vec<_> =
             sim.world.entities.iter().filter(|b| b.render_projector.style.family == "star").collect();
-        let p = dyn_figure_pose(&ring[0].dyn_figure, 0.0, &ring[0].state, &sig).unwrap();
+        let state = MotionState::new();
+        let p = dyn_figure_pose(&ring[0].dyn_figure, 0.0, &state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
     }
 
@@ -185,8 +188,11 @@
             assert_eq!(a.world.entities.generation(i), b.world.entities.generation(i));
             assert_eq!(a.world.entities.is_alive(i), b.world.entities.is_alive(i));
             let tau = a.world.entities.tau(i, a.world.tick);
-            let px = dyn_figure_pose(&x.dyn_figure, tau, &x.state, &a.ctx.sig).unwrap();
-            let py = dyn_figure_pose(&y.dyn_figure, tau, &y.state, &b.ctx.sig).unwrap();
+            let state = MotionState::new();
+            let ax = a.motion_readers(i);
+            let by = b.motion_readers(i);
+            let px = dyn_figure_pose_with_dense(&x.dyn_figure, tau, &state, &a.ctx.sig, &ax).unwrap();
+            let py = dyn_figure_pose_with_dense(&y.dyn_figure, tau, &state, &b.ctx.sig, &by).unwrap();
             assert!(
                 (px.x - py.x).abs() < 1e-12 && (px.y - py.y).abs() < 1e-12,
                 "diverged: {:?} vs {:?}",
@@ -765,7 +771,9 @@
         }
         let b = &sim.world.entities[0];
         let tau = sim.world.entities.tau(0, sim.world.tick);
-        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sim.ctx.sig).unwrap();
+        let state = MotionState::new();
+        let readers = sim.motion_readers(0);
+        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sim.ctx.sig, &readers).unwrap();
         let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
         assert!((p.x - mid).abs() < 0.03 && p.y.abs() < 1e-9, "mid-move pose: {:?}", p);
 
@@ -774,7 +782,9 @@
         }
         let b = &sim.world.entities[0];
         let tau = sim.world.entities.tau(0, sim.world.tick);
-        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sim.ctx.sig).unwrap();
+        let state = MotionState::new();
+        let readers = sim.motion_readers(0);
+        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sim.ctx.sig, &readers).unwrap();
         assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
     }
 
@@ -796,7 +806,8 @@
             }
             let b = &sim.world.entities[0];
             let sig = SigEnv::default();
-            let p = dyn_figure_pose(&b.dyn_figure, 0.5, &b.state, &sig).unwrap();
+            let state = MotionState::new();
+            let p = dyn_figure_pose(&b.dyn_figure, 0.5, &state, &sig).unwrap();
             assert!(
                 p.x.abs() < 1e-9 && (p.y - 2.0).abs() < 1e-9,
                 "{}: fired from (0,3) toward the player below: {:?}",
@@ -822,17 +833,18 @@
             b.step().unwrap();
         }
         let sig = SigEnv::default();
+        let state = MotionState::new();
         let pa = dyn_figure_pose(
             &a.world.entities[0].dyn_figure,
             0.5,
-            &a.world.entities[0].state,
+            &state,
             &sig,
         )
         .unwrap();
         let pb = dyn_figure_pose(
             &b.world.entities[0].dyn_figure,
             0.5,
-            &b.world.entities[0].state,
+            &state,
             &sig,
         )
         .unwrap();
@@ -1332,7 +1344,8 @@
         let sig = sim.ctx.sig.clone();
         let tau = sim.world.entities.tau(i, sim.world.tick);
         let readers = sim.motion_readers(i);
-        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers).unwrap();
+        let state = MotionState::new();
+        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
 
@@ -2215,14 +2228,13 @@ fn numeric_motion_reads_dense_state_before_legacy_map() {
         .copied()
         .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
         .unwrap();
-    sim.world.entities[0].state.clear();
     sim.step().unwrap();
     let [angle, _] = sim.world.entities.state_n2(0, key).unwrap();
     assert!((angle - 12.0).abs() < 1e-9, "dense slew angle after legacy clear: {angle}");
 }
 
 #[test]
-fn stages_read_dense_state_before_legacy_map() {
+fn lazy_stages_extend_dense_motion_schema() {
     const CARD: &str = r#"
 (defpattern p []
   (spawn (stages
@@ -2241,14 +2253,13 @@ fn stages_read_dense_state_before_legacy_map() {
         .dyn_keys
         .iter()
         .any(|key| matches!(key, MotionStateKey::LazyStage { .. })));
-    sim.world.entities[0].state.clear();
     sim.step().unwrap();
     let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
-    assert!((p.y - 1.0).abs() < 1e-9, "lazy stage dense y after legacy clear: {}", p.y);
+    assert!((p.y - 2.0).abs() < 1e-9, "lazy stage dense y after schema extension: {}", p.y);
 }
 
 #[test]
-fn entity_motion_does_not_mirror_numeric_state_to_legacy_map() {
+fn entity_motion_writes_dense_without_entity_state() {
     const CARD: &str = r#"
 (defpattern p []
   (spawn (vel p[3 (slew 720 0 90)])))
@@ -2257,7 +2268,6 @@ fn entity_motion_does_not_mirror_numeric_state_to_legacy_map() {
     for _ in 0..4 {
         sim.step().unwrap();
     }
-    assert!(sim.world.entities[0].state.is_empty(), "entity legacy motion state should stay empty");
     let schema = sim.world.entities.motion_schema(0).unwrap();
     for key in schema.n2_keys.iter().copied() {
         assert!(sim.world.entities.state_n2(0, key).is_some());

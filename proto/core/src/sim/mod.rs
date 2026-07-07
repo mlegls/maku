@@ -284,7 +284,7 @@ impl Sim {
                 let tau = self.world.entities.tau(i, tick);
                 let dyn_figure = self.world.entities[i].dyn_figure.clone();
                 let readers = self.motion_readers(i);
-                let mut state = std::mem::take(&mut self.world.entities[i].state);
+                let mut state = MotionState::new();
                 let mut n2_writes = Vec::new();
                 let mut dyn_writes = Vec::new();
                 step_dyn_figure_with_dense(
@@ -298,31 +298,15 @@ impl Sim {
                     &mut |key, value| n2_writes.push((key, value)),
                     &mut |key, value| dyn_writes.push((key, value)),
                 )?;
+                for (_, value) in &dyn_writes {
+                    self.world.entities.extend_motion_schema_with_dyn(i, value);
+                }
                 for (key, value) in n2_writes {
                     self.world.entities.set_state_n2(i, key, value);
                 }
                 for (key, value) in dyn_writes {
                     self.world.entities.set_state_dyn(i, key, value);
                 }
-                if let Some(schema) = self.world.entities.motion_schema(i) {
-                    for key in schema.n2_keys.iter().copied() {
-                        match key {
-                            MotionStateKey::NodePtr(raw) => {
-                                state.remove(&raw);
-                            }
-                            MotionStateKey::ScanSite { base, index } => {
-                                state.remove(&site_key(base, index as usize));
-                            }
-                            MotionStateKey::LazyStage { .. } => {}
-                        }
-                    }
-                    for key in schema.dyn_keys.iter().copied() {
-                        if let MotionStateKey::LazyStage { base } = key {
-                            state.remove(&(base + 1));
-                        }
-                    }
-                }
-                self.world.entities[i].state = state;
             }
         }
         // record traced curves: a dynamic integer sample domain over the
@@ -339,7 +323,8 @@ impl Sim {
                 let b = &mut self.world.entities[i];
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
-                    if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers) {
+                    let state = MotionState::new();
+                    if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         b.trail.push(p);
                         if b.trail.len() > cap {
@@ -376,15 +361,19 @@ impl Sim {
             let tau = self.world.entities.tau(i, tick);
             let readers = self.motion_readers(i);
             let keep = match b.dyn_figure.repr() {
-                FigureDynRepr::Pose(_) => match dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers) {
+                FigureDynRepr::Pose(_) => {
+                    let state = MotionState::new();
+                    match dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);
                         false
                     }
-                },
+                    }
+                }
                 FigureDynRepr::Curve { .. } => {
-                    let render_slots = materialize_render_defs(&b.render_projector, tau, &b.state, &sig)
+                    let state = MotionState::new();
+                    let render_slots = materialize_render_defs(&b.render_projector, tau, &state, &sig)
                         .ok()
                         .unwrap_or_default();
                     let render_live = render_slots
@@ -395,7 +384,7 @@ impl Sim {
                         let mut slots = materialize_collider_defs(
                             &b.collider_projector,
                             tau,
-                            &b.state,
+                            &state,
                             &sig,
                             &mut self.world.symbols,
                         )
