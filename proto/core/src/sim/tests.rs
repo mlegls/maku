@@ -451,17 +451,17 @@
         assert!(matches!(sim.channel_val("enemies"), Some(Val::Num(n)) if n == 0.0));
     }
 
-    /// :damage can be a pure function of both contact entities — here,
-    /// damage = |contact velocity| one-shots a 3hp enemy at speed 4.
+    /// DMK player() damage maps lower their :hit value to the ordinary
+    /// numeric :damage column used by Touhou contacts.
     #[test]
-    fn damage_fn_at_contact() {
+    fn damage_map_hit_lowers_to_column() {
         const CARD: &str = r#"
 (import "touhou")
 (defpattern duel []
   (seq
     (spawn-enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
     (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
-                {:damage (fn [self other] (mag (:vel self)))})))
+                {:damage {:hit 4 :graze 9}})))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -471,7 +471,7 @@
         assert_eq!(
             sim.events_vec().iter().filter(|e| &*e.name == "died").count(),
             1,
-            "vel-magnitude damage (≈4) beats hp 3 in one contact"
+            "hit damage 4 beats hp 3 in one contact"
         );
     }
 

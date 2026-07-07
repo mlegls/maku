@@ -209,20 +209,22 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         }
         _ => Vec::new().into(),
     };
-    // :damage n | {:hit n ...} (DMK player() map) | (fn [self other] n)
-    let damage = match map_get(&meta, "damage") {
-        Some(Val::Num(n)) => Val::Num(n),
-        Some(f @ (Val::Fn { .. } | Val::Builtin(_))) => f,
-        Some(Val::Map(kvs)) => Val::Num(
-            kvs.iter()
-                .find_map(|(k, v)| match (k, v) {
-                    (Val::Kw(kw), Val::Num(n)) if &**kw == "hit" => Some(*n),
+    // :damage n | {:hit n ...} (DMK player() map) lowers to an ordinary
+    // numeric column read by Touhou contact rules.
+    if let Some(v) = map_get(&meta, "damage") {
+        match v {
+            Val::Num(_) | Val::Arr(_) => cols.push(("damage".into(), v)),
+            Val::Map(kvs) => {
+                if let Some(hit) = kvs.iter().find_map(|(k, v)| match (k, v) {
+                    (Val::Kw(kw), Val::Num(_)) if &**kw == "hit" => Some(v.clone()),
                     _ => None,
-                })
-                .unwrap_or(1.0),
-        ),
-        _ => Val::Num(1.0),
-    };
+                }) {
+                    cols.push(("damage".into(), hit));
+                }
+            }
+            _ => {}
+        }
+    }
     let hitbox = match map_get(&meta, "hitbox") {
         Some(Val::Num(n)) => Some(n),
         _ => None,
@@ -275,7 +277,6 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 team: team.clone(),
                 cols,
                 triggers: triggers.clone(),
-                damage: damage.clone(),
                 colliders: colliders.into(),
                 renderers: renderers.into(),
                 expose: expose.clone(),

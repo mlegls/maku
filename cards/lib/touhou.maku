@@ -135,15 +135,14 @@
                 {:cols {:lives lives :bombs bombs}}))
 
 ;; shot damage: the shot dies either way (absorbed during the target's mercy
-;; window); :damage is a number or a pure (fn [self other] n) resolved here
+;; window); :damage is a numeric column, defaulting to 1.
 (defcontact [:shot :hurt]
   (fn [a b]
     (seq
       (cull a)
       (if (> (col-or (:iframe-until b) 0) (:tick b))
         (event :absorbed (:pos b))
-        (let [d (:damage a)
-              dmg (if (num? d) d (if (nothing? d) 1 (d a b)))]
+        (let [dmg (col-or (:damage a) 1)]
           (seq
             (set-col b :hp (- (col-or (:hp b) 1) dmg))
             (event :enemy-hit (:pos b))))))))

@@ -516,6 +516,11 @@ language.md.
       Done; collider and render specs are explicit `(colliders ...)` /
       `(renderers ...)` spawn arguments, and ordinary meta maps no longer
       carry projection data.
+  2v.6. ~~Remove runtime damage entity field.~~ Done; numeric `:damage` and
+      DMK `{:hit n}` damage maps now lower to the ordinary numeric `:damage`
+      column consumed by Touhou contact code. Function-valued `:damage` was
+      retired with the special field; richer dynamic contact metadata belongs
+      with the finite meta/field layout work.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
@@ -550,9 +555,8 @@ language.md.
   5. Move render tags into ordinary signal-valued meta/fields; collider
      scale/radius should be explicit collider data, not borrowed from a
      render-specific `:scale`.
-  6. Remove remaining gameplay-domain metadata from core (`team`, `damage`,
-     bare hostile `(cull)`) in favor of generic fields/tags and Touhou
-     helpers.
+  6. Remove remaining gameplay-domain metadata from core (`team`, bare
+     hostile `(cull)`) in favor of generic fields/tags and Touhou helpers.
 - ~~Pathers render as points; laser `:width` ignored by collision~~ done
   with tutorial 04: pathers record trails (rendered + capsule-chain
   hitbox, bounded by the window); `:width` scales laser collision.
@@ -601,9 +605,8 @@ language.md.
 - Candidates to move next, in expressibility order: `for`/`dotimes`
   (blocked: `:every`/inf/array-iteration are scheduler semantics, not a
   desugar — would need a lib-visible wait-loop primitive that performs
-  as well); the `{:hit n}` damage-map unwrap (DMK player() compat,
-  still in sf_spawn); family→hitbox-radius data (currently `:hitbox` by
-  hand at star/gem/lstar/gglcircle call sites); richer spellcard
+  as well); family→hitbox-radius data (currently `:hitbox` by hand at
+  star/gem/lstar/gglcircle call sites); richer spellcard
   templates (:name/:type/hp bars) over `states`.
 - Core `finally` now runs on fork task death through inherited guards; keep
   docs/examples using that instead of states-owned finalizers.

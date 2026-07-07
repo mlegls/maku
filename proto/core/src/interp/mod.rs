@@ -356,7 +356,6 @@ pub struct EntitySpec {
     pub team: Option<Rc<str>>,
     pub cols: Vec<(Rc<str>, f64)>,
     pub triggers: Rc<[TriggerRule]>,
-    pub damage: Val,
     pub colliders: Rc<[ColliderSpecList]>,
     pub renderers: Rc<[RenderSpecList]>,
     pub expose: Rc<[(Rc<str>, Rc<str>)]>,
@@ -1439,9 +1438,6 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     if let Some(t) = &b.team {
         view.push((Val::Kw("team".into()), Val::Kw(t.clone())));
     }
-    if !matches!(b.damage, Val::Nothing) {
-        view.push((Val::Kw("damage".into()), b.damage.clone()));
-    }
     for (k, v) in world.cols_for_view(b) {
         view.push((Val::Kw(k), Val::Num(v)));
     }
@@ -1611,7 +1607,6 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
         "family" => Ok(Val::Kw(world.entities[i].style.family.as_str().into())),
         "color" => Ok(Val::Kw(world.entities[i].style.color.as_str().into())),
         "variant" => Ok(Val::Kw(world.entities[i].style.variant.as_str().into())),
-        "damage" => Ok(world.entities[i].damage.clone()),
         col => Ok(world
             .col_get_at(i, col)
             .map(Val::Num)
@@ -1947,7 +1942,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     renderers: spec.renderers.clone(),
                     cols: col_slots,
                     triggers: spec.triggers.clone(),
-                    damage: spec.damage.clone(),
                     prev_pos: None,
                     trail: Vec::new(),
                 })?;

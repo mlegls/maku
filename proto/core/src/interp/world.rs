@@ -165,10 +165,6 @@ pub struct Entity {
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
-    /// Damage on contact (:damage meta): a number, a DMK player() map whose
-    /// :hit is taken, or a PURE FUNCTION (fn [self other] num) evaluated at
-    /// contact — contacts are rare, so interpreting there is free.
-    pub damage: Val,
     /// Last tick's position (collision pass) — contact velocity is the
     /// finite difference, uniform across Closed and Scanned motion.
     pub prev_pos: Option<(f64, f64)>,
