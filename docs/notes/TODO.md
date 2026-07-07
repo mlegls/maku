@@ -131,6 +131,32 @@ language.md.
   waves and array-mask expressions flow naturally into `Dyn<Predicate>`
   contexts without explicit conversion while preserving schema vocabulary.
 
+  Target number model (2026-07): the mask decision extends to
+  int-vs-float. There is ONE language-level `Number` type, APL-style;
+  representation is a storage property the runtime discovers, never a
+  declared type — dense vectors are kept in the narrowest rep that holds
+  the values (bitmask for 0/1 masks, i32, f32) and widen transparently.
+  `Mask`/`Count`/`Index` schemas are integrality CONTRACTS enforced at
+  typed boundaries, not types: an index/count position demands an
+  exactly integral value (2.5 is a checked error, never a truncation),
+  and NaN reaching a mask/conditional position is a checked error rather
+  than silently truthy under `x != 0`. Comparison/logic verbs emit
+  exactly 0/1. Scalar language values should be f64 (exact to 2^53;
+  f32's 2^24 is ~77 hours of $tick at 60fps — real for an attract mode),
+  while hot derived columns stay f32; mixed precision is replay-safe as
+  long as WHERE narrowing happens is deterministic.
+
+  The same uniformity-is-discovered principle settles vector/matrix
+  syntax: no `m[]`-style uniform-literal marker. Following k, a
+  homogeneous list silently IS a typed dense vector (auto-packed on
+  construction, boxed-list fallback when mixed); printing may reflect
+  the rep, the writer never annotates it. Typed boundaries (spawn slots,
+  schemas) are where non-uniformity is rejected, naming the offending
+  element. Forcing dense storage is a constructor's job, not grammar;
+  true matrix semantics (matmul vs list-of-rows), if ever wanted, is
+  rank/shape information in the VALUE (a shaped array), which bracket
+  flavor could not express anyway.
+
   Low-level collider/render specs are spawn arguments, not generally
   first-class functions. This keeps the primitive vocabulary small and lets
   each slot know the spawned `Dyn<Figure>` type at each tick:
@@ -184,6 +210,114 @@ language.md.
   data, and opaque indexed meta/fields; hosts decide how meta renders.
   Touhou names like bullet/shot/enemy/boss/player/laser are library
   constructors over this core.
+- Zero-allocation data model target (2026-07; steady-state zero alloc —
+  card load is the sanctioned allocation window):
+  * The organizing split is COLD SOURCES vs HOT DERIVED. Retained entity
+    state is cold: compiled dyn slots (mostly Rc into card data), curve
+    params, meta. Almost everything the hot loops touch is per-tick
+    derived output rebuilt from it.
+  * Not one big dense matrix: mixed types, variable-width data (capsule
+    chains, polylines), and passes touching disjoint column subsets all
+    fight it — and dyn slots are programs, not numbers, so they cannot
+    live in a matrix at all.
+  * Retained storage: a dense entity slab (swap-remove keeps it packed;
+    despawn is O(1) and alloc-free) addressed by GENERATIONAL HANDLES
+    with a sparse id→slot map. Handles are needed regardless of the
+    slab: guides, frame-tree parents, and (live boss)-style references
+    must survive slot reuse. Handles are opaque values, not language
+    numbers.
+  * Hot derived state: SoA f32 columns rebuilt each tick, grouped by
+    pass. Tick pipeline: (1) figure pass evaluates Dyn<Figure> down the
+    frame tree and writes dense x/y/th columns; (2) collision pass reads
+    those plus collider rows; (3) render extraction reads those plus
+    render rows. The pose columns are the one matrix-like thing, and
+    they are derived, not authoritative.
+  * Colliders stored per shape subtype as PER-TICK SCRATCH, not retained
+    state: since every DynCollider re-evaluates each tick anyway
+    (growing radius, :none while dormant), evaluation appends results
+    into per-shape scratch buffers (circles: cx/cy/r/layer/owner SoA;
+    capsule chains: radius/layer/owner plus offset+len into a shared
+    point buffer). Cleared to len=0 each tick with capacity retained —
+    zero alloc after warmup, and narrowphase iterates homogeneous arrays
+    with no per-element enum branch. The join is the OWNER SLOT INDEX
+    carried in each row — no key column, no hash. Render rows follow the
+    identical pattern, bucketed per render tag.
+  * Curves never enter hot storage; only their samples do. A parametric
+    curve is compiled eval + domain (cold) and materializes only when a
+    slot domain samples it, into a per-tick bump arena (preallocated,
+    reset each tick). Sampled curves from cards are Rc<[Pose]> built at
+    load time.
+  * Supporting rules: intern layer strings to small ints at spawn (the
+    collision pass never touches Rc<str>); broadphase buckets/grid
+    preallocated and reused; dyn evaluation uses a fixed scratch stack
+    with dyns compiled to a flat program at spawn (the SourceExpr work
+    already points there).
+- Render/meta boundary target (2026-07): keep Dyn<[Render]> and
+  Dyn<Meta> separate slots. They differ on every axis that matters:
+  render rows are typed things core can project from a Figure and are
+  hot (touched every frame); meta is engine-opaque, arbitrarily keyed,
+  queried by lib logic (team/damage are lib concepts precisely because
+  they live in meta), and mostly cold. Folding render into meta would
+  make extraction rummage an untyped map per entity per frame. The host
+  render boundary has two tiers:
+  * Tier 0 (host renders): the per-tick derived snapshot IS the
+    contract — per render tag, a packed array of fully RESOLVED rows
+    (owner handle, world pose, evaluated params, sample slices into the
+    frame arena). Dyns are already evaluated; the host consumes plain
+    data and never touches the language. Meta is reachable by owner
+    handle for lib conventions (team→sprite), but anything
+    per-frame-hot belongs in a render param, not meta.
+  * Tier 1 (engine meshes): a feature-gated tessellation module — or a
+    sibling crate built purely on the Tier 0 API, which doubles as
+    proof the boundary suffices: render row → vertices/indices written
+    into preallocated buffers, batched per tag so the host maps tags to
+    pipelines/materials and just draws. Keeps "core is a 2D graphing +
+    collision engine" honest.
+  * Convergence: the Tier 0 snapshot is the SAME per-tag scratch-buffer
+    structure the zero-alloc model wants for render rows; building the
+    data model correctly yields Tier 0 for free.
+- Meta as shape-interned tables target (2026-07): keywords are GLOBALLY
+  INTERNED to ints at card-load time (the sanctioned alloc window) — a
+  keyword compare or map lookup is an int compare, and "string-keyed
+  map vs int-indexed" is a false dichotomy once keys are keywords. Do
+  NOT erase names at compile time: cross-card agreement on :hp and host
+  inspection/serialization need the shared load-time table; keep the
+  reverse int→name table for debugging and the host boundary (never on
+  hot paths). Runtime string→keyword construction is confined to load
+  time. Interned enums (layers, tags, teams) fall out of the same
+  mechanism.
+  * Shape interning (hidden classes, spawn-shaped): a spawn site's meta
+    literal has a static key set; the sorted key set interns to a shape
+    id and entity meta is (shape_id, dense value slice). Reads compile
+    to a fixed offset where the shape is statically known, a small
+    shape-table lookup when polymorphic. RULE: meta keys are fixed at
+    spawn — values mutable, adding keys post-spawn is an error (declare
+    with an initial 0). That one rule keeps the implementation
+    table-shaped with no V8-style shape-transition machinery.
+  * Shape = archetype: same-shape metas share one columnar side table
+    per shape (value columns + an owner-slot column; swap-remove within
+    the table; the slab row stores (shape_id, row)). Deliberately NOT
+    full archetype ECS — the primary slab stays unified so frame-tree
+    eval order, generational handles, and swap-remove bookkeeping stay
+    simple. Same join-by-owner pattern as collider scratch, retained
+    instead of rebuilt.
+  * Queries match by KEY SUBSET, not exact shape: "everything with :hp"
+    hits every shape whose key set contains :hp, so accidental shape
+    collisions between unrelated cards are harmless (they were meant to
+    match) and shape fragmentation (:score added to one spawn site)
+    only adds a table to walk. Shapes are static after load, so
+    shape↔query membership is precomputed once; a runtime query is
+    "iterate my shape tables, scan dense columns" — no hashing, no
+    per-entity lookup. This is what lets lib-level systems (damage:
+    every entity with :hp and :team) compile to dense column scans with
+    core knowing nothing about hp.
+  * Determinism notes: interned ids are assigned by load order — either
+    make load order canonical or keep ids out of anything observable
+    (ordering, replay hashing). Query iteration order is shape-table
+    order then row order, which swap-remove perturbs: document as
+    unspecified or sort by owner slot where order matters, else it is a
+    replay-determinism leak of exactly the kind the tick-identical
+    smoke exists to catch.
 - Core vocabulary migration toward the "2D graphing + collision engine"
   boundary:
   1. ~~Rename runtime `Bullet`/`bullets` to `Entity`/`entities`, keeping
