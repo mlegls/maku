@@ -2762,9 +2762,9 @@ fn sf_stateful(
             let target = evaluate(target_form, env, ctx, world)?.num()?;
             let stored = {
                 let io = scan.borrow();
-                io.read_n2
+                io.readers
                     .as_ref()
-                    .and_then(|read| read(site))
+                    .and_then(|readers| (readers.n2)(site))
                     .or_else(|| match io.state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -2793,9 +2793,9 @@ fn sf_stateful(
             };
             let stored = {
                 let io = scan.borrow();
-                io.read_n2
+                io.readers
                     .as_ref()
-                    .and_then(|read| read(site))
+                    .and_then(|readers| (readers.n2)(site))
                     .or_else(|| match io.state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,

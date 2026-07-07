@@ -685,6 +685,10 @@ language.md.
       state before falling back to legacy `MotionState`, and sim stepping,
       collision sampling, rendering, trace recording, and culling pass
       row-local dense snapshots through that path.
+  2v.31. ~~Move `stages` state onto dense motion columns.~~ Done as a bridge;
+      `Stages` now reads/writes segment index/epoch through dense `N2` and
+      lazy segment dyns through dense `state_dyn`, with legacy map fallback
+      retained only for compatibility callers.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

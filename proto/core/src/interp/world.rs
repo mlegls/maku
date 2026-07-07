@@ -344,6 +344,36 @@ impl EntityStore {
         true
     }
 
+    pub fn state_dyn(&self, row: usize, key: MotionStateKey) -> Option<DynPose> {
+        let slot = self.motion_schema(row)?.dyn_slots.get(&key)?.0 as usize;
+        self.state_dyn.get(slot)?.get(row)?.clone()
+    }
+
+    pub fn state_dyn_snapshot(&self, row: usize) -> HashMap<MotionStateKey, DynPose> {
+        let Some(schema) = self.motion_schema(row) else { return HashMap::new() };
+        let mut out = HashMap::with_capacity(schema.dyn_keys.len());
+        for key in schema.dyn_keys.iter().copied() {
+            if let Some(value) = self.state_dyn(row, key) {
+                out.insert(key, value);
+            }
+        }
+        out
+    }
+
+    pub fn set_state_dyn(&mut self, row: usize, key: MotionStateKey, value: DynPose) -> bool {
+        let Some(slot) = self
+            .motion_schema(row)
+            .and_then(|schema| schema.dyn_slots.get(&key).copied())
+            .map(|slot| slot.0 as usize)
+        else {
+            return false;
+        };
+        let Some(col) = self.state_dyn.get_mut(slot) else { return false };
+        let Some(cell) = col.get_mut(row) else { return false };
+        *cell = Some(value);
+        true
+    }
+
     fn ensure_motion_state_shape(&mut self, schema: &MotionStateSchema) {
         let rows = self.rows.len();
         while self.state_n2.len() < schema.n2_keys.len() {

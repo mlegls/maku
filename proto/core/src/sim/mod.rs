@@ -237,6 +237,15 @@ impl Sim {
         self.world.resize_entity_capacity(max_entities)
     }
 
+    pub(crate) fn motion_readers(&self, row: usize) -> MotionReaders {
+        let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
+        let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
+        MotionReaders {
+            n2: Rc::new(move |key| dense_n2.get(&key).copied()),
+            dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
+        }
+    }
+
     pub(crate) fn channel_u64(&self, name: &str) -> u64 {
         self.ctx
             .sig
@@ -274,12 +283,26 @@ impl Sim {
             if self.world.entities.is_alive(i) && self.world.entities[i].scanned {
                 let tau = self.world.entities.tau(i, tick);
                 let dyn_figure = self.world.entities[i].dyn_figure.clone();
-                let dense = Rc::new(self.world.entities.state_n2_snapshot(i));
-                let read_n2: N2Reader = Rc::new(move |key| dense.get(&key).copied());
+                let readers = self.motion_readers(i);
                 let mut state = std::mem::take(&mut self.world.entities[i].state);
-                step_dyn_figure_with_dense(&dyn_figure, tau, dt, &mut state, &sig, read_n2, &mut |key, value| {
+                let mut n2_writes = Vec::new();
+                let mut dyn_writes = Vec::new();
+                step_dyn_figure_with_dense(
+                    &dyn_figure,
+                    tau,
+                    dt,
+                    &mut state,
+                    &sig,
+                    readers,
+                    &mut |key, value| n2_writes.push((key, value)),
+                    &mut |key, value| dyn_writes.push((key, value)),
+                )?;
+                for (key, value) in n2_writes {
                     self.world.entities.set_state_n2(i, key, value);
-                })?;
+                }
+                for (key, value) in dyn_writes {
+                    self.world.entities.set_state_dyn(i, key, value);
+                }
                 self.world.entities[i].state = state;
             }
         }
@@ -293,12 +316,11 @@ impl Sim {
                     continue;
                 }
                 let tau = self.world.entities.tau(i, tick);
-                let dense = Rc::new(self.world.entities.state_n2_snapshot(i));
-                let read_n2: N2Reader = Rc::new(move |key| dense.get(&key).copied());
+                let readers = self.motion_readers(i);
                 let b = &mut self.world.entities[i];
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
-                    if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &read_n2) {
+                    if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         b.trail.push(p);
                         if b.trail.len() > cap {
@@ -333,10 +355,9 @@ impl Sim {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = self.world.entities.tau(i, tick);
-            let dense = Rc::new(self.world.entities.state_n2_snapshot(i));
-            let read_n2: N2Reader = Rc::new(move |key| dense.get(&key).copied());
+            let readers = self.motion_readers(i);
             let keep = match b.dyn_figure.repr() {
-                FigureDynRepr::Pose(_) => match dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &read_n2) {
+                FigureDynRepr::Pose(_) => match dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);

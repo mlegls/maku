@@ -54,9 +54,8 @@ impl Sim {
                             });
                         }
                     } else {
-                        let dense = std::rc::Rc::new(self.world.entities.state_n2_snapshot(i));
-                        let read_n2: N2Reader = std::rc::Rc::new(move |key| dense.get(&key).copied());
-                        if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, sig, &read_n2) {
+                        let readers = self.motion_readers(i);
+                        if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, sig, &readers) {
                             out.push(RenderItem::Dot {
                                 x: p.x,
                                 y: p.y,

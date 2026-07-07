@@ -2221,6 +2221,32 @@ fn numeric_motion_reads_dense_state_before_legacy_map() {
 }
 
 #[test]
+fn stages_read_dense_state_before_legacy_map() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (stages
+           (stage (ticks 1) (vel c[120 0]))
+           (forever (fn [exit] (vel c[0 120]))))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    sim.step().unwrap();
+    let schema = sim.world.entities.motion_schema(0).unwrap();
+    assert!(schema
+        .n2_keys
+        .iter()
+        .any(|key| matches!(key, MotionStateKey::NodePtr(_))));
+    assert!(schema
+        .dyn_keys
+        .iter()
+        .any(|key| matches!(key, MotionStateKey::LazyStage { .. })));
+    sim.world.entities[0].state.clear();
+    sim.step().unwrap();
+    let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+    assert!((p.y - 1.0).abs() < 1e-9, "lazy stage dense y after legacy clear: {}", p.y);
+}
+
+#[test]
 fn entity_capacity_is_explicit() {
     const CARD: &str = r#"
 (defpattern p [] (spawn (circle 2 (still))))
