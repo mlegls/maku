@@ -475,7 +475,7 @@ impl Default for Ctx {
 pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     match form {
         Form::Num(n) => Ok(Val::Num(*n)),
-        Form::Bool(b) => Ok(Val::Bool(*b)),
+        Form::Bool(b) => Ok(Val::Num(if *b { 1.0 } else { 0.0 })),
         Form::Str(s) => Ok(Val::Str(s.clone())),
         Form::Kw(k) => Ok(Val::Kw(k.clone())),
         Form::Sym(s) => match &**s {
@@ -842,26 +842,29 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let genc = evaluate(&items[2], env, ctx, world)?.num()? as u64;
                 let expect = evaluate(&items[3], env, ctx, world)?.num()?;
                 let cells = ctx.sig.cells.borrow();
-                let req_set =
-                    matches!(cells.get(&req), Some((_, Val::Kw(_) | Val::Bool(true))));
+                let req_set = matches!(cells.get(&req), Some((_, Val::Kw(_))))
+                    || matches!(cells.get(&req), Some((_, Val::Num(n))) if *n != 0.0)
+                    || matches!(cells.get(&req), Some((_, Val::Bool(true))));
                 let g = match cells.get(&genc) {
                     Some((_, Val::Num(n))) => *n,
                     _ => expect,
                 };
-                return Ok(Val::Bool(req_set || g != expect));
+                return Ok(Val::Num(if req_set || g != expect { 1.0 } else { 0.0 }));
             }
             "race-done?" => {
                 // internal: race children and the waiting parent share this
                 // cell; true means one arm has completed.
                 let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
                 let cells = ctx.sig.cells.borrow();
-                return Ok(Val::Bool(matches!(cells.get(&cell), Some((_, Val::Bool(true))))));
+                let done = matches!(cells.get(&cell), Some((_, Val::Num(n))) if *n != 0.0)
+                    || matches!(cells.get(&cell), Some((_, Val::Bool(true))));
+                return Ok(Val::Num(if done { 1.0 } else { 0.0 }));
             }
             "race-won!" => {
                 // internal: first completion wins; later writes are
                 // idempotent because the cell stays true.
                 let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
-                ctx.sig.cells.borrow_mut().insert(cell, ("#race".to_string(), Val::Bool(true)));
+                ctx.sig.cells.borrow_mut().insert(cell, ("#race".to_string(), Val::Num(1.0)));
                 return Ok(Val::Nothing);
             }
             "cull" => {
@@ -1972,11 +1975,14 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Goto { cell, label } => {
             let mut cells = ctx.sig.cells.borrow_mut();
             // first request wins until the machine clears it (tree order);
-            // bare (goto) files Bool(true) = "default successor"
-            if !matches!(cells.get(cell), Some((_, Val::Kw(_) | Val::Bool(true)))) {
+            // bare (goto) files numeric true = "default successor"
+            let already_set = matches!(cells.get(cell), Some((_, Val::Kw(_))))
+                || matches!(cells.get(cell), Some((_, Val::Num(n))) if *n != 0.0)
+                || matches!(cells.get(cell), Some((_, Val::Bool(true))));
+            if !already_set {
                 let v = match label {
                     Some(l) => Val::Kw(l.clone()),
-                    None => Val::Bool(true),
+                    None => Val::Num(1.0),
                 };
                 cells.insert(*cell, ("#goto".to_string(), v));
             }
@@ -2077,7 +2083,12 @@ fn val_to_form(v: &Val) -> Result<Form, String> {
 }
 
 pub(crate) fn truthy(v: &Val) -> bool {
-    !matches!(v, Val::Bool(false) | Val::Nothing)
+    match v {
+        Val::Num(n) => *n != 0.0,
+        Val::Bool(b) => *b,
+        Val::Nothing => false,
+        _ => false,
+    }
 }
 
 fn as_action(v: Val) -> Result<Rc<ActionV>, String> {
@@ -2214,6 +2225,7 @@ fn literal_pattern_matches(pat: &Form, subject: &Val) -> bool {
         (Form::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
         (Form::Kw(a), Val::Kw(b)) | (Form::Str(a), Val::Str(b)) => a == b,
         (Form::Bool(a), Val::Bool(b)) => a == b,
+        (Form::Bool(a), Val::Num(b)) => (*a && *b != 0.0) || (!*a && *b == 0.0),
         (_, Val::FormV(f)) => form_literal_matches(pat, f),
         _ => false,
     }
@@ -2740,7 +2752,7 @@ mod tests {
         assert!(matches!(&*f, Form::List(_)));
         assert!(matches!(ev("(get `{:a 1} :b)"), Val::Nothing));
         assert!(matches!(ev("(get `(no map) :b)"), Val::Nothing));
-        assert!(matches!(ev("(nothing? (get `{:a 1} :b))"), Val::Bool(true)));
+        assert_eq!(ev("(nothing? (get `{:a 1} :b))").num().unwrap(), 1.0);
         // nth indexes form lists too (cyclic, like arrays)
         assert!(matches!(ev("(form-name (nth `(a b c) 1))"), Val::Str(s) if &*s == "b"));
         // filter over a form list keeps subform values

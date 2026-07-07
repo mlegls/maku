@@ -139,7 +139,8 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     Some(Val::Kw(k)) => k.to_string(),
                     _ => return Err("triggers: missing :event".into()),
                 };
-                let cull = matches!(get("cull"), Some(Val::Bool(true)));
+                let cull = matches!(get("cull"), Some(Val::Num(n)) if n != 0.0)
+                    || matches!(get("cull"), Some(Val::Bool(true)));
                 rules.push(TriggerRule::new(&event, &col, leq, cull));
             }
             rules.into()

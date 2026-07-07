@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 const BUILTINS: &[&str] = &[
     "+", "-", "*", "/", "mod", "pow", "inc", "dec", "=", "<", ">", "<=", ">=", "min", "max",
-    "abs", "quot", "ticks", "and", "or", "not", "sin", "cos", "sine", "lssht", "cart", "polar", "pose", "rot", "still",
+    "abs", "quot", "ticks", "not", "sin", "cos", "sine", "lssht", "cart", "polar", "pose", "rot", "still",
     "linear", "iota", "range", "nth", "without", "stutter", "lerp", "lerp3", "lerpsmooth",
     "angle-of", "mag", "einsine", "eoutsine", "eiosine",
     "count", "first", "rest", "drop", "take", "concat", "forms", "get",
@@ -14,6 +14,10 @@ const BUILTINS: &[&str] = &[
 
 pub(crate) fn is_builtin(name: &str) -> bool {
     BUILTINS.contains(&name)
+}
+
+fn mask(b: bool) -> Val {
+    Val::Num(if b { 1.0 } else { 0.0 })
 }
 
 /// Broadcast-aware numeric binop (§5: zips cycle; scalars lift).
@@ -179,15 +183,15 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "inc" => Ok(Val::Num(n(0)? + 1.0)),
         "dec" => Ok(Val::Num(n(0)? - 1.0)),
         "=" => match (&args[0], &args[1]) {
-            (Val::Kw(a), Val::Kw(b)) => Ok(Val::Bool(a == b)),
-            (Val::Str(a), Val::Str(b)) => Ok(Val::Bool(a == b)),
-            (Val::Map(a), Val::Map(b)) => Ok(Val::Bool(format!("{:?}", a) == format!("{:?}", b))),
-            _ => Ok(Val::Bool((n(0)? - n(1)?).abs() < 1e-9)),
+            (Val::Kw(a), Val::Kw(b)) => Ok(mask(a == b)),
+            (Val::Str(a), Val::Str(b)) => Ok(mask(a == b)),
+            (Val::Map(a), Val::Map(b)) => Ok(mask(format!("{:?}", a) == format!("{:?}", b))),
+            _ => Ok(mask((n(0)? - n(1)?).abs() < 1e-9)),
         },
-        "<" => Ok(Val::Bool(n(0)? < n(1)?)),
-        ">" => Ok(Val::Bool(n(0)? > n(1)?)),
-        "<=" => Ok(Val::Bool(n(0)? <= n(1)?)),
-        ">=" => Ok(Val::Bool(n(0)? >= n(1)?)),
+        "<" => Ok(mask(n(0)? < n(1)?)),
+        ">" => Ok(mask(n(0)? > n(1)?)),
+        "<=" => Ok(mask(n(0)? <= n(1)?)),
+        ">=" => Ok(mask(n(0)? >= n(1)?)),
         "min" => Ok(Val::Num(n(0)?.min(n(1)?))),
         "max" => Ok(Val::Num(n(0)?.max(n(1)?))),
         "abs" => Ok(Val::Num(n(0)?.abs())),
@@ -217,9 +221,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             v => Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: v.num()? })),
         },
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
-        "and" => Ok(Val::Bool(args.iter().all(truthy))),
-        "or" => Ok(Val::Bool(args.iter().any(truthy))),
-        "not" => Ok(Val::Bool(!truthy(&args[0]))),
+        "not" => Ok(mask(n(0)? == 0.0)),
         "linear" => match &args[0] {
             Val::Vec2 { x, y } => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Linear {
                 vx: *x,
@@ -428,8 +430,8 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             Val::Kw(s) | Val::Str(s) => s.clone(),
             _ => "".into(),
         })),
-        "nothing?" => Ok(Val::Bool(matches!(args[0], Val::Nothing))),
-        "num?" => Ok(Val::Bool(matches!(args[0], Val::Num(_)))),
+        "nothing?" => Ok(mask(matches!(args[0], Val::Nothing))),
+        "num?" => Ok(mask(matches!(args[0], Val::Num(_)))),
         _ => Err(format!("unknown function '{}'", name)),
     }
 }

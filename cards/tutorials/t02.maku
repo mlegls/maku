@@ -46,7 +46,7 @@
     (fork
       (for [i 480 :every (ticks 1)]      ; the control, for 4 seconds
         (manip {:family :circle
-                :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
+                :where (fn [b] (* (> b.pos.y 3) (> b.vel.y 0)))}
           (fn [b] (remat b (linear c[b.vel.x (- 0 b.vel.y)]))))))
     (for [vol inf :every (ticks 50)]
       (spawn-bullet (circle 24 (linear p[2.5 0])) {:style {:family :circle :color :red :variant :w}}))))

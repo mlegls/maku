@@ -126,10 +126,14 @@ language.md.
   truthiness for keywords, strings, lists, maps, poses, or geometry. Reader
   `true`/`false` may remain temporary compatibility sugar for `1`/`0`.
   Predicate schemas should be numeric subcontracts such as `Mask`, `Flag`,
-  `Count`, and `Index`; comparisons and logical forms should return numeric
-  `0`/`1`, and conditionals/guards should consume masks. This lets square
-  waves and array-mask expressions flow naturally into `Dyn<Predicate>`
-  contexts without explicit conversion while preserving schema vocabulary.
+  `Count`, and `Index`; comparisons and predicates should return numeric
+  `0`/`1`, and conditionals/guards should consume masks. There are no
+  runtime `and`/`or` logical folds; use arithmetic folds such as `*`, `+`,
+  `min`, or `max` depending on the intended mask/count semantics. `not`
+  is numeric: zero becomes `1`, and any nonzero number becomes `0`. This
+  lets square waves and array-mask expressions flow naturally into
+  `Dyn<Predicate>` contexts without explicit conversion while preserving
+  schema vocabulary.
 
   Target number model (2026-07): the mask decision extends to
   int-vs-float. There is ONE language-level `Number` type, APL-style;
@@ -443,6 +447,10 @@ language.md.
       temporary escape hatch while interpreter/control objects (`Action`,
       `Fn`, `Form`, `Cells`) and legacy data atoms (`Bool`, `Str`, `Vec2`,
       old pose conveniences) are migrated out of runtime data.
+  2x. ~~Switch predicates to numeric masks.~~ Done; comparisons and
+      predicate builtins return `0`/`1`, source booleans evaluate to `0`/`1`,
+      control guards consume numeric masks, `not` is numeric, and runtime
+      `and`/`or` builtins were removed in favor of explicit arithmetic folds.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

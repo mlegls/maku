@@ -115,7 +115,7 @@
     ;; control will catch it again: the pattern rebuilds itself), and
     ;; all beads cull. Control order in the par decides the ordering.
     (control (ticks 5)
-             {:family :gcircle :where (where (and (> b.t 3.2) (< b.k 0.5)))}
+             {:family :gcircle :where (where (* (> b.t 3.2) (< b.k 0.5)))}
              (fn [b]
                ((pose (pos b))
                  ((rot b.ang)
