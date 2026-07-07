@@ -25,10 +25,11 @@ work.
 ## Engine Refactor
 
 - Move remaining row-local `Entity` fields into final storage shapes:
-  - `trail` -> dense/ring-buffer trace cache storage.
   - `dyn_figure`, `collider_projector`, `render_projector`, `triggers`,
     `cache_policy`, and `scanned` -> shared spawn-site/program/archetype data
     where possible, leaving row storage mostly indices plus dense state.
+- Replace store-owned trace sample vectors with dense/ring-buffer trace cache
+  storage.
 - Replace `MotionStateKey::NodePtr(usize)` with stable lowered node ids.
   Pointer identity is the main remaining blocker for compiled dyn programs.
 - Flatten the private motion step arg-bundle helper into `MotionStepCtx`

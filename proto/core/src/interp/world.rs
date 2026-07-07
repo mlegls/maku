@@ -230,14 +230,6 @@ pub struct Entity {
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
-    /// Traced curve samples, capped at the remembrance window. Only valid
-    /// pose samples are stored; before the trace fills, the domain is
-    /// shorter and indexed from entity-local sample 0. Facing is part of the
-    /// sample data; finite-difference facing is only a possible
-    /// helper/default, not the core representation.
-    /// Interpolation over these samples should be an explicit higher-level
-    /// curve function, not implicit core behavior.
-    pub trail: Vec<Pose>,
 }
 
 pub struct EntityStore {
@@ -247,6 +239,7 @@ pub struct EntityStore {
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
     sampled_pose: [Vec<Option<Pose>>; 2],
+    trace_samples: Vec<Vec<Pose>>,
     motion_schema: Vec<Rc<MotionStateSchema>>,
     state_n2: Vec<Vec<[f64; 2]>>,
     state_dyn: Vec<Vec<Option<DynPose>>>,
@@ -263,6 +256,7 @@ impl EntityStore {
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
+            trace_samples: Vec::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
             state_n2: Vec::new(),
             state_dyn: Vec::new(),
@@ -468,6 +462,28 @@ impl EntityStore {
         }
     }
 
+    pub fn trace_samples(&self, row: usize) -> &[Pose] {
+        self.trace_samples.get(row).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    pub fn push_trace_sample(&mut self, row: usize, pose: Pose, cap: usize) {
+        if self.trace_samples.len() <= row {
+            self.trace_samples.resize_with(row + 1, Vec::new);
+        }
+        let samples = &mut self.trace_samples[row];
+        samples.push(pose);
+        if samples.len() > cap {
+            let drop = samples.len() - cap;
+            samples.drain(..drop);
+        }
+    }
+
+    pub fn clear_trace(&mut self, row: usize) {
+        if let Some(samples) = self.trace_samples.get_mut(row) {
+            samples.clear();
+        }
+    }
+
     pub fn entity_ref(&self, row: usize) -> EntityRef {
         EntityRef { row, generation: self.generation[row] }
     }
@@ -501,6 +517,7 @@ impl EntityStore {
         self.motion_schema[i] = motion_schema;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
+        self.clear_trace(i);
         self.rows[i] = entity;
         i
     }
@@ -522,6 +539,7 @@ impl EntityStore {
         self.birth.push(birth);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
+        self.trace_samples.push(Vec::new());
         self.motion_schema.push(motion_schema);
         for col in &mut self.state_n2 {
             col.push([0.0, 0.0]);
@@ -553,6 +571,7 @@ impl Clone for EntityStore {
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
             sampled_pose: self.sampled_pose.clone(),
+            trace_samples: self.trace_samples.clone(),
             motion_schema: self.motion_schema.clone(),
             state_n2: self.state_n2.clone(),
             state_dyn: self.state_dyn.clone(),
@@ -920,6 +939,7 @@ impl World {
             self.entities.birth.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
+            self.entities.trace_samples.truncate(max_entities);
             self.entities.motion_schema.truncate(max_entities);
             for col in &mut self.entities.state_n2 {
                 col.truncate(max_entities);
@@ -965,6 +985,9 @@ impl World {
             if poses.capacity() < max_entities {
                 poses.reserve_exact(max_entities - poses.capacity());
             }
+        }
+        if self.entities.trace_samples.capacity() < max_entities {
+            self.entities.trace_samples.reserve_exact(max_entities - self.entities.trace_samples.capacity());
         }
         if self.entities.motion_schema.capacity() < max_entities {
             self.entities.motion_schema.reserve_exact(max_entities - self.entities.motion_schema.capacity());

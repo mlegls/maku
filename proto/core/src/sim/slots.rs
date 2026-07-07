@@ -139,6 +139,7 @@ pub fn eval_collider_slot(
     sig: &SigEnv,
     scale: f64,
     pose: Pose,
+    trace: &[Pose],
 ) -> ColliderData {
     match slot.repr() {
         ColliderDynRepr::Slot(projection) => match &projection.shape {
@@ -147,7 +148,7 @@ pub fn eval_collider_slot(
                 let radius = eval_dyn(radius, tau, &state, sig).unwrap_or(0.0);
                 match b.dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
-                        let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
+                        let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
                         if points.len() < 2 {
                             ColliderData::None
                         } else {
@@ -174,7 +175,7 @@ pub fn eval_collider_slot(
                 }
                 match b.dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => {
-                        let points: Vec<(f64, f64)> = b.trail.iter().map(|p| (p.x, p.y)).collect();
+                        let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
                         if points.len() < 2 {
                             ColliderData::None
                         } else {

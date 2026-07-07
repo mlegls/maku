@@ -44,9 +44,10 @@ impl Sim {
             match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
                     if b.cache_policy.trace.is_some() {
-                        if b.trail.len() >= 2 {
+                        let trace = self.world.entities.trace_samples(i);
+                        if trace.len() >= 2 {
                             out.push(RenderItem::Polyline {
-                                pts: b.trail.iter().map(|p| (p.x, p.y)).collect(),
+                                pts: trace.iter().map(|p| (p.x, p.y)).collect(),
                                 style: b.render_projector.style.clone(),
                                 active: true,
                                 hue: self.sample_hue(b, tau),

@@ -1985,7 +1985,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
                     triggers: spec.triggers.clone(),
-                    trail: Vec::new(),
                 })?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);

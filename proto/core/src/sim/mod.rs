@@ -320,17 +320,13 @@ impl Sim {
                 }
                 let tau = self.world.entities.tau(i, tick);
                 let readers = self.motion_readers(i);
-                let b = &mut self.world.entities[i];
+                let b = &self.world.entities[i];
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
                     let state = MotionState::new();
                     if let Ok(p) = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
-                        b.trail.push(p);
-                        if b.trail.len() > cap {
-                            let drop = b.trail.len() - cap;
-                            b.trail.drain(..drop);
-                        }
+                        self.world.entities.push_trace_sample(i, p, cap);
                     }
                 }
             }

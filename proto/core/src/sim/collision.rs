@@ -89,6 +89,7 @@ fn materialize_colliders(
     sig: &SigEnv,
     scale: f64,
     pose: Pose,
+    trace: &[Pose],
     symbols: &mut SymbolTable,
 ) -> Result<Vec<ColliderData>, String> {
     let state = MotionState::new();
@@ -107,7 +108,7 @@ fn materialize_colliders(
     }
     let defs = defs
         .into_iter()
-        .map(|slot| eval_collider_slot(b, &slot, tau, sig, scale, pose))
+        .map(|slot| eval_collider_slot(b, &slot, tau, sig, scale, pose, trace))
         .collect();
     Ok(defs)
 }
@@ -146,7 +147,8 @@ impl Sim {
                 self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0)
             };
             let b = &self.world.entities[i];
-            colliders.push(materialize_colliders(b, tau, &sig, scale, p, &mut self.world.symbols)?);
+            let trace = self.world.entities.trace_samples(i);
+            colliders.push(materialize_colliders(b, tau, &sig, scale, p, trace, &mut self.world.symbols)?);
         }
 
         let rules = self.world.contacts.clone();
