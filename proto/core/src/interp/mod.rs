@@ -2036,15 +2036,19 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             };
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
-            world.entities.reset_birth(i, world.tick);
-            let b = &mut world.entities[i];
-            b.dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
+            let dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
                 Rc::new(DynNode::Const(anchor)),
                 new_dyn.into_node(),
             ))));
-            b.scanned = is_scanned_figure(&b.dyn_figure);
-            b.state = MotionState::new();
+            let scanned = is_scanned_figure(&dyn_figure);
+            let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
+            world.entities.reset_birth(i, world.tick);
+            world.entities.set_motion_schema(i, motion_schema);
             world.entities.set_sampled_pose(i, world.tick, Some(anchor));
+            let b = &mut world.entities[i];
+            b.dyn_figure = dyn_figure;
+            b.scanned = scanned;
+            b.state = MotionState::new();
             Ok(Val::Nothing)
         }
         ActionV::SetCol { target, col, val } => {

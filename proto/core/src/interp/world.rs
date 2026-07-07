@@ -252,6 +252,7 @@ pub struct EntityStore {
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
     sampled_pose: [Vec<Option<Pose>>; 2],
+    motion_schema: Vec<Rc<MotionStateSchema>>,
     max: usize,
     free: Vec<usize>,
 }
@@ -265,6 +266,7 @@ impl EntityStore {
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
+            motion_schema: Vec::with_capacity(max),
             max,
             free: Vec::new(),
         }
@@ -294,6 +296,16 @@ impl EntityStore {
     pub fn reset_birth(&mut self, row: usize, tick: u64) {
         if let Some(birth) = self.birth.get_mut(row) {
             *birth = tick;
+        }
+    }
+
+    pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {
+        self.motion_schema.get(row).map(|schema| schema.as_ref())
+    }
+
+    pub fn set_motion_schema(&mut self, row: usize, schema: Rc<MotionStateSchema>) {
+        if let Some(slot) = self.motion_schema.get_mut(row) {
+            *slot = schema;
         }
     }
 
@@ -354,18 +366,30 @@ impl EntityStore {
             .map(|slot| (slot, self.free[slot]))
     }
 
-    pub fn reuse_free_row(&mut self, slot: usize, entity: Entity, birth: u64) -> usize {
+    pub fn reuse_free_row(
+        &mut self,
+        slot: usize,
+        entity: Entity,
+        birth: u64,
+        motion_schema: Rc<MotionStateSchema>,
+    ) -> usize {
         let i = self.free.swap_remove(slot);
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.alive[i] = true;
         self.freed_at[i] = None;
         self.birth[i] = birth;
+        self.motion_schema[i] = motion_schema;
         self.clear_sampled_poses(i);
         self.rows[i] = entity;
         i
     }
 
-    pub fn push_row(&mut self, entity: Entity, birth: u64) -> Result<usize, String> {
+    pub fn push_row(
+        &mut self,
+        entity: Entity,
+        birth: u64,
+        motion_schema: Rc<MotionStateSchema>,
+    ) -> Result<usize, String> {
         if self.rows.len() >= self.max {
             return Err(format!("spawn: entity capacity {} exhausted", self.max));
         }
@@ -377,6 +401,7 @@ impl EntityStore {
         self.birth.push(birth);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
+        self.motion_schema.push(motion_schema);
         Ok(i)
     }
 
@@ -400,6 +425,7 @@ impl Clone for EntityStore {
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
             sampled_pose: self.sampled_pose.clone(),
+            motion_schema: self.motion_schema.clone(),
             max: self.max,
             free: self.free.clone(),
         }
@@ -764,6 +790,7 @@ impl World {
             self.entities.birth.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
+            self.entities.motion_schema.truncate(max_entities);
             self.entities.free.retain(|i| *i < max_entities);
         }
         for values in &mut self.fields.num_values {
@@ -795,15 +822,19 @@ impl World {
                 poses.reserve_exact(max_entities - poses.capacity());
             }
         }
+        if self.entities.motion_schema.capacity() < max_entities {
+            self.entities.motion_schema.reserve_exact(max_entities - self.entities.motion_schema.capacity());
+        }
         Ok(())
     }
 
     pub fn install_entity(&mut self, entity: Entity) -> Result<usize, String> {
+        let motion_schema = Rc::new(collect_motion_state_schema(&entity.dyn_figure));
         if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
-            Ok(self.entities.reuse_free_row(slot, entity, self.tick))
+            Ok(self.entities.reuse_free_row(slot, entity, self.tick, motion_schema))
         } else {
-            self.entities.push_row(entity, self.tick)
+            self.entities.push_row(entity, self.tick, motion_schema)
         }
     }
 

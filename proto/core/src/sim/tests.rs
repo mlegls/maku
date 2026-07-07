@@ -2138,6 +2138,19 @@ fn entity_rows_do_not_shift_after_cull() {
 }
 
 #[test]
+fn spawned_entity_rows_carry_motion_schema() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel p[3 (slew 720 0 90)])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let schema = sim.world.entities.motion_schema(0).unwrap();
+    assert_eq!(schema.n2_keys.len(), 2, "vel plus slew scan-site state");
+    assert_eq!(schema.dyn_keys.len(), 0);
+}
+
+#[test]
 fn entity_capacity_is_explicit() {
     const CARD: &str = r#"
 (defpattern p [] (spawn (circle 2 (still))))
