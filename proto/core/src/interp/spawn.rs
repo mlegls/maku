@@ -43,7 +43,7 @@ pub(crate) fn sf_colliders(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    as_collider_spec_list(&specs)?;
+    as_collider_spec_list(&specs, &mut world.symbols)?;
     Ok(Val::ColliderSpecs(Rc::new(specs)))
 }
 
@@ -751,12 +751,12 @@ fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
     }
 }
 
-pub(crate) fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
+pub(crate) fn as_collider(v: &DynLike, symbols: &mut SymbolTable) -> Result<DynCollider, String> {
     if !matches!(v, DynLike::Map(_)) {
         return Err("colliders: expected maps".into());
     }
     let layer = match dynlike_map_get(v, "layer").and_then(|v| dynlike_kw(&v)) {
-        Some(k) => k,
+        Some(k) => symbols.intern(k.as_ref()),
         _ => return Err("colliders: missing :layer".into()),
     };
     if let Some(shape_v) = dynlike_map_get(v, "shape") {
@@ -780,10 +780,10 @@ pub(crate) fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
     }
 }
 
-pub(crate) fn as_stable_collider_slots(v: &DynLike) -> Result<Vec<DynCollider>, String> {
+pub(crate) fn as_stable_collider_slots(v: &DynLike, symbols: &mut SymbolTable) -> Result<Vec<DynCollider>, String> {
     as_dynlike_list(v, "colliders")?
         .iter()
-        .map(as_collider)
+        .map(|v| as_collider(v, symbols))
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -791,9 +791,9 @@ pub(crate) fn empty_spec_list() -> DynLike {
     DynLike::List(Vec::new().into())
 }
 
-fn as_collider_spec_list(v: &DynLike) -> Result<ColliderSpecList, String> {
+fn as_collider_spec_list(v: &DynLike, symbols: &mut SymbolTable) -> Result<ColliderSpecList, String> {
     if !v.is_dynamic() {
-        as_stable_collider_slots(v)?;
+        as_stable_collider_slots(v, symbols)?;
     }
     Ok(v.clone())
 }

@@ -1716,8 +1716,10 @@ fn sf_defcontact(
         }
     }
     let callback = evaluate(&items[cb_idx], env, ctx, world)?;
-    let rule = ContactRule { a: pair.0.clone(), b: pair.1.clone(), once, skip_if, callback };
-    match world.contacts.iter_mut().find(|r| r.a == pair.0 && r.b == pair.1) {
+    let a = world.symbols.intern(pair.0.as_ref());
+    let b = world.symbols.intern(pair.1.as_ref());
+    let rule = ContactRule { a, b, once, skip_if, callback };
+    match world.contacts.iter_mut().find(|r| r.a == a && r.b == b) {
         Some(slot) => *slot = rule,
         None => world.contacts.push(rule),
     }

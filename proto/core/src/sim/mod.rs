@@ -340,7 +340,13 @@ impl Sim {
                         .map(DynRender::polyline)
                         .map(|projection| tau <= projection.activity.warn + projection.activity.active);
                     let collider_live = || {
-                        let mut slots = materialize_collider_defs(&b.colliders, tau, &b.state, &sig)
+                        let mut slots = materialize_collider_defs(
+                            &b.colliders,
+                            tau,
+                            &b.state,
+                            &sig,
+                            &mut self.world.symbols,
+                        )
                             .ok()?;
                         if let Some(projection) = first_render_projection(b, tau, &sig) {
                             let curve_slot = CapsuleChainSlot {

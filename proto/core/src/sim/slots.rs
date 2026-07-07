@@ -92,12 +92,13 @@ pub fn materialize_collider_defs(
     tau: f64,
     state: &MotionState,
     sig: &SigEnv,
+    symbols: &mut SymbolTable,
 ) -> Result<Vec<DynCollider>, String> {
     let mut out = Vec::new();
     for list in lists {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
-        out.extend(as_stable_collider_slots(&dynlike)?);
+        out.extend(as_stable_collider_slots(&dynlike, symbols)?);
     }
     Ok(out)
 }

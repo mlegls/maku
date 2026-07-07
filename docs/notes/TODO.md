@@ -221,7 +221,7 @@ language.md.
   as an opaque routing key:
   ```text
   Collider slot {
-    layer: Rc<str>,
+    layer: Symbol,
     shape: Circle | CapsuleChain | ...
   }
   ```
@@ -521,6 +521,10 @@ language.md.
       column consumed by Touhou contact code. Function-valued `:damage` was
       retired with the special field; richer dynamic contact metadata belongs
       with the finite meta/field layout work.
+  2v.7. ~~Introduce world-local keyword/symbol interning for hot collision
+      layers.~~ Done; `World` now owns a `SymbolTable`, collider slots/data and
+      contact layer pairs store `Symbol`, and string/keyword names are interned
+      at collider spec decode / `defcontact` registration boundaries.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

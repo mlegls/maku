@@ -9,6 +9,33 @@ use std::rc::Rc;
 
 pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Symbol(pub u32);
+
+#[derive(Clone, Debug, Default)]
+pub struct SymbolTable {
+    by_name: HashMap<Rc<str>, Symbol>,
+    names: Vec<Rc<str>>,
+}
+
+impl SymbolTable {
+    pub fn intern(&mut self, name: impl AsRef<str>) -> Symbol {
+        let name = name.as_ref();
+        if let Some(sym) = self.by_name.get(name) {
+            return *sym;
+        }
+        let sym = Symbol(self.names.len() as u32);
+        let name: Rc<str> = name.into();
+        self.names.push(name.clone());
+        self.by_name.insert(name, sym);
+        sym
+    }
+
+    pub fn resolve(&self, sym: Symbol) -> Option<&str> {
+        self.names.get(sym.0 as usize).map(|s| s.as_ref())
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Style {
     pub family: String,
@@ -65,16 +92,16 @@ pub struct EntityCachePolicy {
 #[derive(Clone, Debug)]
 pub enum ColliderData {
     None,
-    Circle { layer: Rc<str>, center: (f64, f64), radius: f64 },
-    CapsuleChain { layer: Rc<str>, points: Vec<(f64, f64)>, radius: f64 },
+    Circle { layer: Symbol, center: (f64, f64), radius: f64 },
+    CapsuleChain { layer: Symbol, points: Vec<(f64, f64)>, radius: f64 },
 }
 
 impl ColliderData {
-    pub fn layer(&self) -> Option<&str> {
+    pub fn layer(&self) -> Option<Symbol> {
         match self {
             ColliderData::None => None,
             ColliderData::Circle { layer, .. } | ColliderData::CapsuleChain { layer, .. } => {
-                Some(layer.as_ref())
+                Some(*layer)
             }
         }
     }
@@ -215,7 +242,7 @@ impl TriggerRule {
 /// shape-specific interpretation of the entity's current figure.
 #[derive(Clone, Debug)]
 pub struct ColliderSlot {
-    pub layer: Rc<str>,
+    pub layer: Symbol,
     pub shape: ColliderSlotShape,
 }
 
@@ -230,19 +257,19 @@ impl Dyn<ColliderData> {
         Dyn { repr: ColliderDynRepr::Slot(slot) }
     }
 
-    pub fn collider_circle(layer: Rc<str>, radius: DynNum) -> DynCollider {
+    pub fn collider_circle(layer: Symbol, radius: DynNum) -> DynCollider {
         DynCollider::collider(ColliderSlot {
             layer,
             shape: ColliderSlotShape::Circle { radius },
         })
     }
 
-    pub fn collider_circle_const(layer: Rc<str>, radius: f64) -> DynCollider {
+    pub fn collider_circle_const(layer: Symbol, radius: f64) -> DynCollider {
         DynCollider::collider_circle(layer, DynNum::num(radius))
     }
 
     pub fn collider_capsule_chain(
-        layer: Rc<str>,
+        layer: Symbol,
         radius: DynNum,
         slot: CapsuleChainSlot,
     ) -> DynCollider {
@@ -253,7 +280,7 @@ impl Dyn<ColliderData> {
     }
 
     pub fn collider_capsule_chain_const(
-        layer: Rc<str>,
+        layer: Symbol,
         radius: f64,
         slot: CapsuleChainSlot,
     ) -> DynCollider {
@@ -322,8 +349,8 @@ impl Dyn<RenderData> {
 /// A-entity ever), `skip_if` compares a column against a threshold.
 #[derive(Clone)]
 pub struct ContactRule {
-    pub a: Rc<str>,
-    pub b: Rc<str>,
+    pub a: Symbol,
+    pub b: Symbol,
     /// Column name latched to 1.0 on the A entity after the callback fires.
     pub once: Option<Rc<str>>,
     /// (side, col, op, rhs): skip the pair when `side.col op rhs` holds.
@@ -360,6 +387,7 @@ pub struct World {
     /// values; names live once in the world layout.
     pub col_slots: HashMap<Rc<str>, usize>,
     pub col_names: Vec<Rc<str>>,
+    pub symbols: SymbolTable,
     /// Column-expose rules from spawn meta :expose {$channel :col}:
     /// channel := that entity's column while alive, else 0. Registered at
     /// spawn, persists past the entity (death reads as 0, so hp gates fire).
@@ -384,6 +412,7 @@ impl Clone for World {
             rng: self.rng,
             col_slots: self.col_slots.clone(),
             col_names: self.col_names.clone(),
+            symbols: self.symbols.clone(),
             exposes: self.exposes.clone(),
             contacts: self.contacts.clone(),
         }
@@ -471,6 +500,7 @@ impl World {
             rng: 0x9e37_79b9_7f4a_7c15,
             col_slots: HashMap::new(),
             col_names: Vec::new(),
+            symbols: SymbolTable::default(),
             exposes: Vec::new(),
             contacts: Vec::new(),
         }

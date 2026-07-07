@@ -88,8 +88,9 @@ fn materialize_colliders(
     tau: f64,
     sig: &SigEnv,
     scale: f64,
+    symbols: &mut SymbolTable,
 ) -> Result<Vec<ColliderData>, String> {
-    let mut defs = materialize_collider_defs(&b.colliders, tau, &b.state, sig)
+    let mut defs = materialize_collider_defs(&b.colliders, tau, &b.state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
     if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         if let Some(projection) = first_render_projection(b, tau, sig) {
@@ -132,7 +133,7 @@ impl Sim {
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
             let scale = self.sample_sig(&b.sigs.scale, tau, 1.0);
-            colliders.push(materialize_colliders(b, tau, &sig, scale)?);
+            colliders.push(materialize_colliders(b, tau, &sig, scale, &mut self.world.symbols)?);
         }
 
         let rules = self.world.contacts.clone();
@@ -150,8 +151,8 @@ impl Sim {
                     if pos[j].is_none() {
                         continue;
                     }
-                    for ac in colliders[i].iter().filter(|c| c.layer() == Some(rule.a.as_ref())) {
-                        for bc in colliders[j].iter().filter(|c| c.layer() == Some(rule.b.as_ref())) {
+                    for ac in colliders[i].iter().filter(|c| c.layer() == Some(rule.a)) {
+                        for bc in colliders[j].iter().filter(|c| c.layer() == Some(rule.b)) {
                             if collider_overlap(ac, bc) {
                                 pairs.push((i, j));
                             }
