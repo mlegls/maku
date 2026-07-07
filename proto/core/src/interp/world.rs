@@ -252,6 +252,70 @@ pub struct Entity {
     pub trail: Vec<Pose>,
 }
 
+pub struct EntityStore {
+    rows: Vec<Entity>,
+    max: usize,
+    free: Vec<usize>,
+}
+
+impl EntityStore {
+    pub fn with_capacity(max: usize) -> EntityStore {
+        EntityStore {
+            rows: Vec::with_capacity(max),
+            max,
+            free: Vec::new(),
+        }
+    }
+
+    pub fn max(&self) -> usize {
+        self.max
+    }
+}
+
+impl Clone for EntityStore {
+    fn clone(&self) -> EntityStore {
+        let mut rows = Vec::with_capacity(self.max);
+        rows.extend(self.rows.iter().cloned());
+        EntityStore {
+            rows,
+            max: self.max,
+            free: self.free.clone(),
+        }
+    }
+}
+
+impl std::ops::Deref for EntityStore {
+    type Target = Vec<Entity>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+
+impl std::ops::DerefMut for EntityStore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.rows
+    }
+}
+
+impl<'a> IntoIterator for &'a EntityStore {
+    type Item = &'a Entity;
+    type IntoIter = std::slice::Iter<'a, Entity>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.rows.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut EntityStore {
+    type Item = &'a mut Entity;
+    type IntoIter = std::slice::IterMut<'a, Entity>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.rows.iter_mut()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EntityRef {
     pub row: usize,
@@ -419,9 +483,7 @@ pub enum SkipRhs { Tick, Num(f64) }
 pub struct World {
     pub tick: u64,
     pub next_id: u64,
-    pub entities: Vec<Entity>,
-    pub max_entities: usize,
-    pub free_entities: Vec<usize>,
+    pub entities: EntityStore,
     /// The event log is SHARED across snapshots (Rc): the log is monotonic,
     /// so a snapshot needs only `cursor` — restore truncates the shared
     /// tail and re-stepping re-emits deterministically. Snapshots carry
@@ -430,8 +492,8 @@ pub struct World {
     /// Global index one past the last event THIS timeline emitted.
     pub cursor: u64,
     pub rng: u64,
-    /// Typed field schema/layout. Numeric values still live on entities as a
-    /// bridge; target storage moves values into world-owned matrices here.
+    /// Typed finite user-field schema/layout. Intrinsic entity storage lives
+    /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
     pub symbols: SymbolTable,
     /// Column-expose rules from spawn meta :expose {$channel :col}:
@@ -445,14 +507,10 @@ pub struct World {
 
 impl Clone for World {
     fn clone(&self) -> World {
-        let mut entities = Vec::with_capacity(self.max_entities);
-        entities.extend(self.entities.iter().cloned());
         World {
             tick: self.tick,
             next_id: self.next_id,
-            entities,
-            max_entities: self.max_entities,
-            free_entities: self.free_entities.clone(),
+            entities: self.entities.clone(),
             log: self.log.clone(),
             cursor: self.cursor,
             rng: self.rng,
@@ -551,9 +609,7 @@ impl World {
         World {
             tick: 0,
             next_id: 0,
-            entities: Vec::with_capacity(max_entities),
-            max_entities,
-            free_entities: Vec::new(),
+            entities: EntityStore::with_capacity(max_entities),
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
             cursor: 0,
             rng: 0x9e37_79b9_7f4a_7c15,
@@ -579,8 +635,8 @@ impl World {
             ));
         }
         if max_entities < self.entities.len() {
-            self.entities.truncate(max_entities);
-            self.free_entities.retain(|i| *i < max_entities);
+            self.entities.rows.truncate(max_entities);
+            self.entities.free.retain(|i| *i < max_entities);
         }
         for values in &mut self.fields.num_values {
             if max_entities < values.len() {
@@ -590,31 +646,32 @@ impl World {
                 values.reserve_exact(max_entities - values.capacity());
             }
         }
-        self.max_entities = max_entities;
-        if self.entities.capacity() < max_entities {
-            self.entities.reserve_exact(max_entities - self.entities.capacity());
+        self.entities.max = max_entities;
+        if self.entities.rows.capacity() < max_entities {
+            self.entities.rows.reserve_exact(max_entities - self.entities.rows.capacity());
         }
         Ok(())
     }
 
     pub fn install_entity(&mut self, mut entity: Entity) -> Result<usize, String> {
         if let Some(slot) = self
-            .free_entities
+            .entities
+            .free
             .iter()
             .position(|&i| self.entities[i].freed_at.is_some_and(|t| t < self.tick))
         {
-            let i = self.free_entities.swap_remove(slot);
+            let i = self.entities.free.swap_remove(slot);
             entity.generation = self.entities[i].generation.wrapping_add(1);
             entity.freed_at = None;
             self.clear_num_fields_at(i);
             self.entities[i] = entity;
             Ok(i)
         } else {
-            if self.entities.len() >= self.max_entities {
-                return Err(format!("spawn: entity capacity {} exhausted", self.max_entities));
+            if self.entities.len() >= self.entities.max {
+                return Err(format!("spawn: entity capacity {} exhausted", self.entities.max));
             }
             let i = self.entities.len();
-            self.entities.push(entity);
+            self.entities.rows.push(entity);
             Ok(i)
         }
     }
@@ -624,7 +681,7 @@ impl World {
         if entity.alive {
             entity.alive = false;
             entity.freed_at = Some(self.tick);
-            self.free_entities.push(i);
+            self.entities.free.push(i);
         }
     }
 

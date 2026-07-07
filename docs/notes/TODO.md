@@ -615,6 +615,10 @@ language.md.
       on reuse. Culled rows remain invalid through `alive`, but numeric
       values survive until reuse so same-tick contact/trigger bookkeeping can
       observe writes made before culling.
+  2v.18. ~~Introduce `EntityStore` as the intrinsic entity storage boundary.~~
+      Done as a bridge; `World` now owns an `EntityStore` that contains rows,
+      capacity, and the free-list/reuse policy, while `WorldFields` remains
+      the finite user-field schema/matrix table.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
