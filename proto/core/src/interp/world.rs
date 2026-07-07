@@ -687,6 +687,12 @@ impl World {
         self.entities.get(i).and_then(|entity| self.kw_field_value(entity, field))
     }
 
+    pub fn kw_field_resolved<'a>(&'a self, entity: &'a Entity, field: &str) -> Option<&'a str> {
+        let field = self.symbols.lookup(field)?;
+        let value = self.kw_field_value(entity, field)?;
+        self.symbols.resolve(value)
+    }
+
     pub fn kw_field_resolved_at(&self, i: usize, field: &str) -> Option<&str> {
         let field = self.symbols.lookup(field)?;
         let value = self.kw_field_value_at(i, field)?;

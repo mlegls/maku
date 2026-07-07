@@ -584,6 +584,11 @@ language.md.
       `:team :enemy` lowers to a `FieldName` / keyword-symbol pair. Query,
       view, cull-hostile, player-body checks, and host iframe checks read
       through keyword-field helpers.
+  2v.14. ~~Generalize keyword-valued entity metadata.~~ Done as a bridge;
+      keyword-valued spawn metadata now lowers into `kw_fields` unless the
+      key is reserved for spawn/render/control compatibility. Entity views,
+      field access, `matches`, and map queries can use arbitrary keyword
+      metadata such as `:role :boss`.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

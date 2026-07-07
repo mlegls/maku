@@ -2054,6 +2054,29 @@ fn predicate_queries_drive_manipulate() {
 }
 
 #[test]
+fn keyword_metadata_fields_query_and_access() {
+    const CARD: &str = r#"
+(defchannel $boss-role (:role (entities-where (matches :role :boss))))
+(defchannel $elite-count (count-entities {:role :elite}))
+(defpattern p []
+  (seq
+    (spawn (pose c[0 0]) {:team :enemy :role :boss :hp 4})
+    (spawn (pose c[1 0]) {:team :enemy :role :elite :hp 6})
+    (manipulate (matches :role :boss)
+      (fn [b] (set-col b :hp 1)))
+    (wait (ticks 1))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    assert!(matches!(sim.ctx.sig.channel("boss-role"), Some(Val::Kw(k)) if &*k == "boss"));
+    assert!(matches!(sim.ctx.sig.channel("elite-count"), Some(Val::Num(n)) if n == 1.0));
+    assert_eq!(sim.world.col_get_at(0, "hp"), Some(1.0));
+    assert_eq!(sim.world.col_get_at(1, "hp"), Some(6.0));
+}
+
+#[test]
 fn entity_rows_do_not_shift_after_cull() {
     const CARD: &str = r#"
 (defchannel $enemy-rows (entities-where (matches :team :enemy)))

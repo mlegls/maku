@@ -1454,9 +1454,9 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
         (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
     ];
-    if let Some(t) = world.symbols.lookup("team").and_then(|field| world.kw_field_value(b, field)) {
-        if let Some(name) = world.symbols.resolve(t) {
-            view.push((Val::Kw("team".into()), Val::Kw(name.into())));
+    for (field, value) in &b.kw_fields {
+        if let (Some(field), Some(value)) = (world.symbols.resolve(*field), world.symbols.resolve(*value)) {
+            view.push((Val::Kw(field.into()), Val::Kw(value.into())));
         }
     }
     for (k, v) in world.cols_for_view(b) {
@@ -1536,13 +1536,25 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
         })
     };
     let get_any = |names: &[&str]| names.iter().find_map(|name| get(name));
+    let reserved_query_key = |name: &str| {
+        matches!(
+            name,
+            "where"
+                | "team"
+                | "family"
+                | "color"
+                | "variant"
+                | "render.style.family"
+                | "render.style.color"
+                | "render.style.variant"
+        )
+    };
     let axis_ok = |sel: &Option<Val>, actual: &str| match sel {
         None => true,
         Some(Val::Kw(k)) => &**k == actual,
         Some(Val::Arr(xs)) => xs.iter().any(|v| matches!(v, Val::Kw(k) if &**k == actual)),
         _ => false,
     };
-    let team_field = world.symbols.lookup("team");
     let (family, color, variant, team) =
         (
             get_any(&["render.style.family", "family"]),
@@ -1551,6 +1563,16 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             get("team"),
         );
     let where_f = get("where");
+    let kw_filters = kvs
+        .iter()
+        .filter_map(|(k, v)| {
+            let Val::Kw(field) = k else { return None };
+            if reserved_query_key(field.as_ref()) {
+                return None;
+            }
+            Some((field.clone(), v.clone()))
+        })
+        .collect::<Vec<_>>();
     let sig = ctx.sig.clone();
     let mut candidates: Vec<usize> = Vec::new();
     for (i, b) in world.entities.iter().enumerate() {
@@ -1558,13 +1580,10 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             || !axis_ok(&family, &b.render_projector.style.family)
             || !axis_ok(&color, &b.render_projector.style.color)
             || !axis_ok(&variant, &b.render_projector.style.variant)
-            || !axis_ok(
-                &team,
-                team_field
-                    .and_then(|field| world.kw_field_value(b, field))
-                    .and_then(|value| world.symbols.resolve(value))
-                    .unwrap_or(""),
-            )
+            || !axis_ok(&team, world.kw_field_resolved(b, "team").unwrap_or(""))
+            || kw_filters
+                .iter()
+                .any(|(field, sel)| !axis_ok(&Some(sel.clone()), world.kw_field_resolved(b, field).unwrap_or("")))
         {
             continue;
         }
@@ -1633,17 +1652,15 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             crate::interp::motion::FigureDynRepr::Curve { .. } => "curve",
         }
         .into())),
-        "team" => Ok(world
-            .kw_field_resolved_at(i, "team")
-            .map(|t| Val::Kw(t.into()))
-            .unwrap_or(Val::Nothing)),
         "family" => Ok(Val::Kw(world.entities[i].render_projector.style.family.as_str().into())),
         "color" => Ok(Val::Kw(world.entities[i].render_projector.style.color.as_str().into())),
         "variant" => Ok(Val::Kw(world.entities[i].render_projector.style.variant.as_str().into())),
-        col => Ok(world
-            .col_get_at(i, col)
-            .map(Val::Num)
-            .unwrap_or(Val::Nothing)),
+        field => {
+            if let Some(value) = world.kw_field_resolved_at(i, field) {
+                return Ok(Val::Kw(value.into()));
+            }
+            Ok(world.col_get_at(i, field).map(Val::Num).unwrap_or(Val::Nothing))
+        }
     }
 }
 

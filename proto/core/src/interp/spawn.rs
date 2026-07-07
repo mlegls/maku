@@ -18,6 +18,24 @@ const SIGNAL_TAGS: &[&str] = &[
     "expose",
 ];
 
+const RESERVED_KW_FIELD_KEYS: &[&str] = &[
+    "style",
+    "cols",
+    "triggers",
+    "hitbox",
+    "damage",
+    "hp",
+    "expose",
+    "hue",
+    "scale",
+    "facing",
+    "opacity",
+];
+
+fn is_reserved_kw_field_key(key: &str) -> bool {
+    RESERVED_KW_FIELD_KEYS.contains(&key)
+}
+
 fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
     match items.len() {
         0 => Ok(empty_spec_list()),
@@ -144,10 +162,19 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     let styles = resolve_styles(&meta, &elems)?;
     let sigs = resolve_sigs(&metas, env, elems.len());
     let mut kw_fields: Vec<(FieldName, Symbol)> = Vec::new();
-    if let Some(Val::Kw(k)) = map_get(&meta, "team") {
-        let field = world.field_sym("team");
-        let value = world.symbols.intern(k.as_ref());
-        kw_fields.push((field, value));
+    if let Val::Map(kvs) = &meta {
+        for (k, v) in kvs.iter() {
+            let (Val::Kw(field), Val::Kw(value)) = (k, v) else {
+                continue;
+            };
+            if is_reserved_kw_field_key(field.as_ref()) {
+                continue;
+            }
+            let field = world.field_sym(field.as_ref());
+            let value = world.symbols.intern(value.as_ref());
+            kw_fields.retain(|(k, _)| *k != field);
+            kw_fields.push((field, value));
+        }
     }
     let kw_fields: Rc<[(FieldName, Symbol)]> = kw_fields.into();
     // columns: :hp n is sugar for a col (the contact layer reads the hp
