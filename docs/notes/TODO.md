@@ -445,6 +445,11 @@ language.md.
       arguments and compatibility meta keys. At collision/render time it is
       realized to a concrete list and decoded through the typed schema; there
       is no special `DynColliderList` / `DynRenderList` semantic type.
+  2v.1. ~~Collapse spawn actions to per-entity specs.~~ Done; `ActionV::Spawn`
+      now carries `Vec<EntitySpec>` rather than a split payload of flattened
+      figures plus call-level metadata. Execution applies the ambient frame,
+      allocates ids, interns columns, and pushes entities; spawn evaluation
+      owns the per-element resolution.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

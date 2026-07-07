@@ -290,30 +290,37 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             cols.iter().map(|(k, v)| (k.clone(), axis_num(v, e, i))).collect()
         })
         .collect();
-    let dyns = elems
+    let shared_colliders: Rc<[ColliderSpecList]> = explicit_colliders.into();
+    let shared_renderers: Rc<[RenderSpecList]> = explicit_renderers.into();
+    let entities = elems
         .into_iter()
-        .map(|e| SpawnMade {
-            dyn_figure: e.dyn_figure,
-            colliders: e.colliders,
-            curve_collider: e.curve_collider,
-            renderers: e.renderers,
-            curve_renderer: e.curve_renderer,
-            cache_policy: e.cache_policy,
+        .zip(styles)
+        .zip(sigs)
+        .zip(cols)
+        .map(|(((e, style), sigs), cols)| {
+            let mut colliders = shared_colliders.iter().cloned().collect::<Vec<_>>();
+            colliders.push(e.colliders);
+            let mut renderers = shared_renderers.iter().cloned().collect::<Vec<_>>();
+            renderers.push(e.renderers);
+            EntitySpec {
+                dyn_figure: e.dyn_figure,
+                cache_policy: e.cache_policy,
+                style,
+                sigs,
+                team: team.clone(),
+                cols,
+                triggers: triggers.clone(),
+                damage: damage.clone(),
+                colliders: colliders.into(),
+                primary_hitbox: hitbox,
+                curve_collider: e.curve_collider,
+                renderers: renderers.into(),
+                curve_renderer: e.curve_renderer,
+                expose: expose.clone(),
+            }
         })
         .collect();
-    Ok(Val::Action(Rc::new(ActionV::Spawn {
-        dyns,
-        styles,
-        sigs,
-        team,
-        cols,
-        triggers,
-        damage,
-        colliders: explicit_colliders.into(),
-        hitbox,
-        renderers: explicit_renderers.into(),
-        expose,
-    })))
+    Ok(Val::Action(Rc::new(ActionV::Spawn { entities })))
 }
 
 pub(crate) fn flatten_elems(

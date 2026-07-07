@@ -275,20 +275,7 @@ pub enum ActionV {
     /// Bindings whose values are actions execute at scheduler reach-time
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
-    Spawn {
-        dyns: Vec<SpawnMade>,
-        styles: Vec<Style>,
-        sigs: Vec<RenderSigs>,
-        team: Option<Rc<str>>,
-        /// Per-element resolved columns (axis-bound at construction).
-        cols: Vec<Vec<(Rc<str>, f64)>>,
-        triggers: Rc<[TriggerRule]>,
-        damage: Val,
-        colliders: Rc<[ColliderSpecList]>,
-        hitbox: Option<f64>,
-        renderers: Rc<[RenderSpecList]>,
-        expose: Rc<[(Rc<str>, Rc<str>)]>,
-    },
+    Spawn { entities: Vec<EntitySpec> },
     Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
     Remat { target: u64, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
@@ -361,14 +348,22 @@ pub enum FrameSpec {
     World,
 }
 
-#[derive(Debug)]
-pub struct SpawnMade {
+#[derive(Debug, Clone)]
+pub struct EntitySpec {
     pub dyn_figure: DynFigure,
-    pub colliders: ColliderSpecList,
-    pub curve_collider: Option<CapsuleChainSlot>,
-    pub renderers: RenderSpecList,
-    pub curve_renderer: Option<CurveRenderSlot>,
     pub cache_policy: EntityCachePolicy,
+    pub style: Style,
+    pub sigs: RenderSigs,
+    pub team: Option<Rc<str>>,
+    pub cols: Vec<(Rc<str>, f64)>,
+    pub triggers: Rc<[TriggerRule]>,
+    pub damage: Val,
+    pub colliders: Rc<[ColliderSpecList]>,
+    pub primary_hitbox: Option<f64>,
+    pub curve_collider: Option<CapsuleChainSlot>,
+    pub renderers: Rc<[RenderSpecList]>,
+    pub curve_renderer: Option<CurveRenderSlot>,
+    pub expose: Rc<[(Rc<str>, Rc<str>)]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1763,15 +1758,15 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, hitbox, renderers, expose } => {
+        ActionV::Spawn { entities } => {
             let mut handles = Vec::new();
-            for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(sigs.iter()).enumerate() {
-                let dyn_figure = d.dyn_figure.framed(ctx.ambient);
+            for spec in entities {
+                let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
                 let scanned = is_scanned_figure(&dyn_figure);
                 let id = world.next_id;
                 world.next_id += 1;
                 let mut col_slots = Vec::new();
-                for (name, val) in cols.get(ei).into_iter().flatten() {
+                for (name, val) in &spec.cols {
                     let slot = world.intern_col(name);
                     if col_slots.len() <= slot {
                         col_slots.resize(slot + 1, None);
@@ -1780,35 +1775,27 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 }
                 world.entities.push(Entity {
                     id,
-                    team: team.clone(),
+                    team: spec.team.clone(),
                     dyn_figure,
-                    cache_policy: d.cache_policy.clone(),
+                    cache_policy: spec.cache_policy.clone(),
                     birth: world.tick,
-                    style: s.clone(),
+                    style: spec.style.clone(),
                     alive: true,
                     state: MotionState::new(),
                     scanned,
-                    sigs: h.clone(),
-                    colliders: {
-                        let mut sources = colliders.iter().cloned().collect::<Vec<_>>();
-                        sources.push(d.colliders.clone());
-                        sources.into()
-                    },
-                    primary_hitbox: *hitbox,
-                    curve_collider: d.curve_collider.clone(),
-                    renderers: {
-                        let mut sources = renderers.iter().cloned().collect::<Vec<_>>();
-                        sources.push(d.renderers.clone());
-                        sources.into()
-                    },
-                    curve_renderer: d.curve_renderer.clone(),
+                    sigs: spec.sigs.clone(),
+                    colliders: spec.colliders.clone(),
+                    primary_hitbox: spec.primary_hitbox,
+                    curve_collider: spec.curve_collider.clone(),
+                    renderers: spec.renderers.clone(),
+                    curve_renderer: spec.curve_renderer.clone(),
                     cols: col_slots,
-                    triggers: triggers.clone(),
-                    damage: damage.clone(),
+                    triggers: spec.triggers.clone(),
+                    damage: spec.damage.clone(),
                     prev_pos: None,
                     trail: Vec::new(),
                 });
-                for (col, chan) in expose.iter() {
+                for (col, chan) in spec.expose.iter() {
                     world.exposes.push((chan.clone(), id, col.clone()));
                     // same-tick availability: the channel exists the moment
                     // the entity does (gates may read it this very tick)
