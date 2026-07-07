@@ -77,6 +77,7 @@ pub enum Val {
     Figure(Figure),
     ColliderSpecs(Rc<DynLike>),
     RenderSpecs(Rc<DynLike>),
+    EntitySet(Rc<[usize]>),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     DynLike(Rc<DynLike>),
@@ -1137,8 +1138,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             // define $enemies / $nearest-enemy as (defchannel …) card code.
             "count-entities" => {
                 let q = evaluate(&items[1], env, ctx, world)?;
-                let ids = resolve_query(&q, ctx, world)?;
-                return Ok(Val::Num(ids.len() as f64));
+                let idxs = resolve_query(&q, ctx, world)?;
+                return Ok(Val::Num(idxs.len() as f64));
             }
             "sum-entities" => {
                 // (sum-entities query :col): the column summed over matches
@@ -1149,14 +1150,28 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
                     return Err("sum-entities: expected a keyword column".into());
                 };
-                let ids = resolve_query(&q, ctx, world)?;
+                let idxs = resolve_query(&q, ctx, world)?;
                 let mut total = 0.0;
-                for id in ids {
-                    if let Some(i) = world.find(id) {
-                        total += world.col_get_at(i, &col).unwrap_or(0.0);
-                    }
+                for i in idxs {
+                    total += world.col_get_at(i, &col).unwrap_or(0.0);
                 }
                 return Ok(Val::Num(total));
+            }
+            "entities-where" => {
+                let q = evaluate(&items[1], env, ctx, world)?;
+                let idxs = resolve_query(&q, ctx, world)?;
+                return Ok(Val::EntitySet(idxs.into()));
+            }
+            "entity-pos" => {
+                let target = evaluate(&items[1], env, ctx, world)?;
+                return entity_pos_value(target, world, &ctx.sig);
+            }
+            "entity-col" => {
+                let target = evaluate(&items[1], env, ctx, world)?;
+                let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
+                    return Err("entity-col: expected a keyword column".into());
+                };
+                return entity_col_value(target, &col, world);
             }
             "nearest-entity" => {
                 // (nearest-entity query to): position of the nearest match,
@@ -1167,11 +1182,10 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     Val::Pose(p) => (p.x, p.y),
                     v => return Err(format!("nearest-entity: expected a point, got {:?}", v)),
                 };
-                let ids = resolve_query(&q, ctx, world)?;
+                let idxs = resolve_query(&q, ctx, world)?;
                 let sig = ctx.sig.clone();
                 let mut best: Option<(f64, (f64, f64))> = None;
-                for id in ids {
-                    let Some(i) = world.find(id) else { continue };
+                for i in idxs {
                     let b = &world.entities[i];
                     let tau = (world.tick - b.birth) as f64 / TICK_RATE;
                     let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) else { continue };
@@ -1444,7 +1458,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     Ok(Val::Map(Rc::new(view)))
 }
 
-fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, String> {
+fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
     let Val::Map(kvs) = q else { return Err("query: expected a map".into()) };
     let get = |name: &str| {
         kvs.iter().find_map(|(k, v)| match k {
@@ -1462,8 +1476,8 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
         (get("family"), get("color"), get("variant"), get("team"));
     let where_f = get("where");
     let sig = ctx.sig.clone();
-    let mut candidates: Vec<u64> = Vec::new();
-    for b in &world.entities {
+    let mut candidates: Vec<usize> = Vec::new();
+    for (i, b) in world.entities.iter().enumerate() {
         if !b.alive
             || !axis_ok(&family, &b.style.family)
             || !axis_ok(&color, &b.style.color)
@@ -1472,25 +1486,62 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<u64>, 
         {
             continue;
         }
-        candidates.push(b.id);
+        candidates.push(i);
     }
     let mut out = Vec::new();
-    for id in candidates {
+    for i in candidates {
         let keep = match &where_f {
             Some(f) => {
-                let view = match world.find(id) {
-                    Some(i) => entity_view(i, world, &sig)?,
-                    None => continue,
-                };
+                let view = entity_view(i, world, &sig)?;
                 truthy(&apply_fn(f.clone(), &[view], ctx, world, false)?)
             }
             None => true,
         };
         if keep {
-            out.push(id);
+            out.push(i);
         }
     }
     Ok(out)
+}
+
+fn entity_index_value(v: Val, world: &World) -> Result<Vec<usize>, String> {
+    match v {
+        Val::EntitySet(idxs) => Ok(idxs.iter().copied().filter(|i| *i < world.entities.len()).collect()),
+        Val::Handle(id) => world
+            .find(id)
+            .map(|i| vec![i])
+            .ok_or_else(|| format!("dead entity handle {}", id)),
+        v => Err(format!("expected entity set or handle, got {:?}", v)),
+    }
+}
+
+fn entity_pos_value(v: Val, world: &World, sig: &SigEnv) -> Result<Val, String> {
+    let idxs = entity_index_value(v, world)?;
+    let mut poses = Vec::with_capacity(idxs.len());
+    for i in idxs {
+        let b = &world.entities[i];
+        let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
+        poses.push(Val::Pose(Pose::point(p.x, p.y)));
+    }
+    if poses.len() == 1 {
+        Ok(poses.remove(0))
+    } else {
+        Ok(Val::arr(poses))
+    }
+}
+
+fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
+    let idxs = entity_index_value(v, world)?;
+    let mut vals = idxs
+        .into_iter()
+        .map(|i| Val::Num(world.col_get_at(i, col).unwrap_or(0.0)))
+        .collect::<Vec<_>>();
+    if vals.len() == 1 {
+        Ok(vals.remove(0))
+    } else {
+        Ok(Val::arr(vals))
+    }
 }
 
 fn sf_defcontact(
@@ -1815,7 +1866,10 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::Manipulate { targets, query, callback } => {
             let ids: Vec<u64> = match query {
-                Some(q) => resolve_query(q, ctx, world)?,
+                Some(q) => resolve_query(q, ctx, world)?
+                    .into_iter()
+                    .filter_map(|i| world.entities.get(i).map(|b| b.id))
+                    .collect(),
                 None => targets.clone(),
             };
             for id in ids {

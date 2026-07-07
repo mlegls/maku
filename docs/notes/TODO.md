@@ -128,6 +128,24 @@ language.md.
   truthiness for keywords, strings, lists, maps, poses, or geometry. Reader
   `true`/`false` may remain temporary compatibility sugar for `1`/`0`.
   Predicate schemas should be numeric subcontracts such as `Mask`, `Flag`,
+
+  Target entity/query model:
+  ```text
+  Entity indices are ephemeral row indices into the current world arrays.
+  Handles are stable cross-time references.
+  Query = mask/filter over entity rows -> EntitySet(Vec<usize>)
+  Manipulate = map/action over an EntitySet
+  Aggregations = ordinary array/library code over EntitySet accessors
+  ```
+  Core should expose `entities-where` and row accessors such as
+  `entity-pos` / `entity-col`; helpers like `count-entities`,
+  `sum-entities`, and `nearest-entity` are compatibility/library functions
+  over those primitives. Long-term, style/team/damage/kind should drift
+  toward interned columns or meta columns so filters are masked comparisons
+  over SoA arrays. Contact resolution should likewise materialize collider
+  rows, bucket them by layer, and iterate layer-index vectors rather than
+  nested entity scans. `entity_view` maps remain a debug/callback bridge, not
+  the hot data model.
   `Count`, and `Index`; comparisons and predicates should return numeric
   `0`/`1`, and conditionals/guards should consume masks. There are no
   runtime `and`/`or` logical folds; use arithmetic folds such as `*`, `+`,
@@ -450,6 +468,12 @@ language.md.
       figures plus call-level metadata. Execution applies the ambient frame,
       allocates ids, interns columns, and pushes entities; spawn evaluation
       owns the per-element resolution.
+  2v.2. ~~Introduce entity index-vector queries.~~ Done as a bridge:
+      `entities-where` returns an ephemeral `EntitySet(Vec<usize>)`, and
+      `entity-pos` / `entity-col` broadcast over it. Existing
+      `count-entities`, `sum-entities`, `nearest-entity`, and `manipulate`
+      now use index-vector query resolution internally while preserving
+      compatibility behavior.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

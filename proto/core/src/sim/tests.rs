@@ -1977,6 +1977,32 @@ fn defchannel_derives_per_tick() {
     assert!(matches!(sim.ctx.sig.channel("nearest-enemy"), Some(Val::Pose(_))));
 }
 
+#[test]
+fn entity_sets_expose_index_vector_accessors() {
+    const CARD: &str = r#"
+(defchannel $enemy-hp (entity-col (entities-where {:team :enemy}) :hp))
+(defchannel $enemy-pos (entity-pos (entities-where {:team :enemy :color :red})))
+(defpattern p []
+  (seq
+    (spawn (pose c[2 3]) {:team :enemy :hp 4 :style {:color :red}})
+    (spawn (pose c[-1 0]) {:team :enemy :hp 6 :style {:color :blue}})
+    (wait (ticks 1))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    let Some(Val::Arr(hp)) = sim.ctx.sig.channel("enemy-hp") else {
+        panic!("expected hp array")
+    };
+    assert_eq!(hp.len(), 2);
+    assert!(matches!((&hp[0], &hp[1]), (Val::Num(a), Val::Num(b)) if *a == 4.0 && *b == 6.0));
+    let Some(Val::Pose(p)) = sim.ctx.sig.channel("enemy-pos") else {
+        panic!("expected single red enemy position")
+    };
+    assert!((p.x - 2.0).abs() < 1e-9 && (p.y - 3.0).abs() < 1e-9);
+}
+
     /// Ancestor clocks are lib-expressible (§13.1 audit): a parent
     /// captures $tick into an ordinary binding (eager, an ir constant)
     /// and the child signal reads (live $tick) minus it — a
