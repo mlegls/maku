@@ -175,9 +175,9 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // library's business (spawn-bullet/spawn-enemy in lib/touhou.maku).
     // :hitbox r resizes the PRIMARY (first) collider — the generic knob
     // that lets a template's default collider set fit a bigger sprite.
-    let colliders: Rc<[DynCollider]> = match map_get(&meta, "colliders") {
+    let colliders: DynColliderList = match map_get(&meta, "colliders") {
         Some(v) => {
-            let mut cs = as_collider_list(&DynLike::from_val(v))?.to_vec();
+            let mut cs = as_dyn_collider_list(&DynLike::from_val(v))?.to_vec();
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
                 let slot = first.slot();
                 let layer = match slot.shape {
@@ -188,13 +188,13 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     *first = DynCollider::collider_circle_const(layer, r);
                 }
             }
-            cs.into()
+            DynColliderList::stable(cs.into())
         }
-        _ => Vec::new().into(),
+        _ => DynColliderList::empty(),
     };
-    let renderers: Rc<[DynRender]> = match map_get(&meta, "renderers") {
-        Some(v) => as_render_list(&DynLike::from_val(v))?,
-        _ => Vec::new().into(),
+    let renderers: DynRenderList = match map_get(&meta, "renderers") {
+        Some(v) => as_dyn_render_list(&DynLike::from_val(v))?,
+        _ => DynRenderList::empty(),
     };
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(Rc<str>, f64)>> = elems
@@ -256,7 +256,7 @@ pub(crate) fn flatten_elems(
                 } => {
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
-                        Vec::new().into(),
+                        DynColliderList::empty(),
                         Some(CapsuleChainSlot {
                             sample_set: sample_set.clone(),
                             u_max_sig: u_max_sig.clone(),
@@ -267,7 +267,7 @@ pub(crate) fn flatten_elems(
                                 hot_frac_sig: fill_sig.clone(),
                             },
                         }),
-                        vec![DynRender::render_polyline(CurveRenderSlot {
+                        DynRenderList::stable(vec![DynRender::render_polyline(CurveRenderSlot {
                             sample_set: sample_set.clone(),
                             u_max_sig: u_max_sig.clone(),
                             width: *width,
@@ -277,15 +277,15 @@ pub(crate) fn flatten_elems(
                                 hot_frac_sig: fill_sig.clone(),
                             },
                         })]
-                        .into(),
+                        .into()),
                         EntityCachePolicy::default(),
                     )
                 }
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
-                    Vec::new().into(),
+                    DynColliderList::empty(),
                     None,
-                    Vec::new().into(),
+                    DynRenderList::empty(),
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },
@@ -304,9 +304,9 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: DynFigure::pose(as_dyn(other)?),
-                colliders: Vec::new().into(),
+                colliders: DynColliderList::empty(),
                 curve_collider: None,
-                renderers: Vec::new().into(),
+                renderers: DynRenderList::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });
@@ -604,12 +604,12 @@ fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
     }
 }
 
-fn as_collider_list(v: &DynLike) -> Result<Rc<[DynCollider]>, String> {
+fn as_dyn_collider_list(v: &DynLike) -> Result<DynColliderList, String> {
     as_dynlike_list(v, "colliders")?
         .iter()
         .map(as_collider)
         .collect::<Result<Vec<_>, _>>()
-        .map(Into::into)
+        .map(|slots| DynColliderList::stable(slots.into()))
 }
 
 fn as_render(v: &DynLike) -> Result<DynRender, String> {
@@ -630,12 +630,12 @@ fn as_render(v: &DynLike) -> Result<DynRender, String> {
     }
 }
 
-fn as_render_list(v: &DynLike) -> Result<Rc<[DynRender]>, String> {
+fn as_dyn_render_list(v: &DynLike) -> Result<DynRenderList, String> {
     as_dynlike_list(v, "renderers")?
         .iter()
         .map(as_render)
         .collect::<Result<Vec<_>, _>>()
-        .map(Into::into)
+        .map(|slots| DynRenderList::stable(slots.into()))
 }
 
 pub(crate) fn kw_str(v: &Val) -> String {

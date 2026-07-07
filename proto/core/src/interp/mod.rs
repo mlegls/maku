@@ -198,9 +198,9 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
-    pub colliders: Rc<[DynCollider]>,
+    pub colliders: DynColliderList,
     pub curve_collider: Option<CapsuleChainSlot>,
-    pub renderers: Rc<[DynRender]>,
+    pub renderers: DynRenderList,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
 }
@@ -244,8 +244,8 @@ pub enum ActionV {
         cols: Vec<Vec<(Rc<str>, f64)>>,
         triggers: Rc<[TriggerRule]>,
         damage: Val,
-        colliders: Rc<[DynCollider]>,
-        renderers: Rc<[DynRender]>,
+        colliders: DynColliderList,
+        renderers: DynRenderList,
         expose: Rc<[(Rc<str>, Rc<str>)]>,
     },
     Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
@@ -323,9 +323,9 @@ pub enum FrameSpec {
 #[derive(Debug)]
 pub struct SpawnMade {
     pub dyn_figure: DynFigure,
-    pub colliders: Rc<[DynCollider]>,
+    pub colliders: DynColliderList,
     pub curve_collider: Option<CapsuleChainSlot>,
-    pub renderers: Rc<[DynRender]>,
+    pub renderers: DynRenderList,
     pub cache_policy: EntityCachePolicy,
 }
 
@@ -1755,13 +1755,13 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                             slots.extend(colliders.iter().cloned());
                         }
                         slots.extend(d.colliders.iter().cloned());
-                        slots.into()
+                        DynColliderList::stable(slots.into())
                     },
                     renderers: {
                         let mut slots = Vec::with_capacity(renderers.len() + d.renderers.len());
                         slots.extend(renderers.iter().cloned());
                         slots.extend(d.renderers.iter().cloned());
-                        slots.into()
+                        DynRenderList::stable(slots.into())
                     },
                     cols: col_slots,
                     triggers: triggers.clone(),

@@ -421,7 +421,7 @@ language.md.
       ordinary values unless an expected dyn type asks for lifting.
   2t. ~~Stage spawn slot checks by coercion family.~~ Done; first
       `as_dynlike_list` rejects non-list outer shapes, then
-      `as_collider_list` / `as_render_list` apply element schemas
+      `as_dyn_collider_list` / `as_dyn_render_list` apply element schemas
       (`as_collider` / `as_render`). The recursive list/map dyn-like lift is
       shared; collider and render schemas only run after the expected list
       boundary is accepted.
@@ -431,6 +431,11 @@ language.md.
       `as_dyn_num`, leaving room for numeric masks, dynamic enum/shape
       choices, and other `Dyn<T>` targets without treating numbers as the
       only dynamic leaf kind.
+  2v. ~~Make collider/render lists semantic dyn boundaries.~~ Done;
+      entities and spawn actions now store `DynColliderList` and
+      `DynRenderList`, whose current `Stable` variant preserves the old
+      `Rc<[DynCollider]>` / `Rc<[DynRender]>` lowering. Dynamic whole-list
+      variants can be added here without changing `Entity` again.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with
