@@ -246,7 +246,7 @@ mod tests {
             .world
             .entities
             .iter()
-            .filter(|b| b.alive && b.style.family == fam)
+            .filter(|b| b.alive && b.render_projector.style.family == fam)
             .count()
     }
 
@@ -273,7 +273,7 @@ mod tests {
             .world
             .entities
             .iter()
-            .filter(|b| b.style.family == "y")
+            .filter(|b| b.render_projector.style.family == "y")
             .map(|b| b.birth)
             .collect();
 
@@ -293,7 +293,7 @@ mod tests {
             .world
             .entities
             .iter()
-            .filter(|b| b.style.family == "y")
+            .filter(|b| b.render_projector.style.family == "y")
             .map(|b| b.birth)
             .collect();
         assert_eq!(y_births, y_births_after, "identical birth ticks (130)");

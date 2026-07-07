@@ -95,7 +95,7 @@ pub fn materialize_collider_defs(
     symbols: &mut SymbolTable,
 ) -> Result<Vec<DynCollider>, String> {
     let mut out = Vec::new();
-    for list in projector.iter() {
+    for list in projector.specs.iter() {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
         out.extend(as_stable_collider_slots(&dynlike, symbols)?);
@@ -110,7 +110,7 @@ pub fn materialize_render_defs(
     sig: &SigEnv,
 ) -> Result<Vec<DynRender>, String> {
     let mut out = Vec::new();
-    for list in projector.iter() {
+    for list in projector.specs.iter() {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
         out.extend(as_stable_render_slots(&dynlike)?);

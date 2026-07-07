@@ -561,10 +561,14 @@ language.md.
       to strings at the boundary.
   2v.9. ~~Rename entity collider/render storage as projectors.~~ Done as a
       bridge; entities now carry `collider_projector` and `render_projector`
-      fields (`Rc<[ColliderSpecList]>` / `Rc<[RenderSpecList]>` aliases)
-      while per-element spawn fragments are named `collider_specs` /
-      `render_specs`. Realized `ColliderData` / `RenderData` remain
-      boundary rows.
+      fields (bridge structs around spec lists), while per-element spawn
+      fragments are named `collider_specs` / `render_specs`. Realized
+      `ColliderData` / `RenderData` remain boundary rows.
+  2v.10. ~~Move compatibility style/signals under the render projector.~~
+      Done as a bridge; `Entity` no longer owns `style` or `RenderSigs`.
+      The current host renderer's legacy `:style`, `:hue`, `:scale`,
+      `:facing`, and `:opacity` data lives on `RenderProjector` until those
+      tags are lowered into ordinary renderer spec records.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

@@ -132,7 +132,7 @@ impl Sim {
             let tau = (tick - b.birth) as f64 / TICK_RATE;
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
-            let scale = self.sample_sig(&b.sigs.scale, tau, 1.0);
+            let scale = self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0);
             colliders.push(materialize_colliders(b, tau, &sig, scale, &mut self.world.symbols)?);
         }
 

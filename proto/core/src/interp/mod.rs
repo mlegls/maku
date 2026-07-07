@@ -351,8 +351,6 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub style: Style,
-    pub sigs: RenderSigs,
     pub team: Option<Rc<str>>,
     pub cols: Vec<(Rc<str>, f64)>,
     pub triggers: Rc<[TriggerRule]>,
@@ -1431,9 +1429,9 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "laser",
         }.into())),
-        (Val::Kw("family".into()), Val::Kw(b.style.family.as_str().into())),
-        (Val::Kw("color".into()), Val::Kw(b.style.color.as_str().into())),
-        (Val::Kw("variant".into()), Val::Kw(b.style.variant.as_str().into())),
+        (Val::Kw("family".into()), Val::Kw(b.render_projector.style.family.as_str().into())),
+        (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
+        (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
     ];
     if let Some(t) = &b.team {
         view.push((Val::Kw("team".into()), Val::Kw(t.clone())));
@@ -1527,9 +1525,9 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
     let mut candidates: Vec<usize> = Vec::new();
     for (i, b) in world.entities.iter().enumerate() {
         if !b.alive
-            || !axis_ok(&family, &b.style.family)
-            || !axis_ok(&color, &b.style.color)
-            || !axis_ok(&variant, &b.style.variant)
+            || !axis_ok(&family, &b.render_projector.style.family)
+            || !axis_ok(&color, &b.render_projector.style.color)
+            || !axis_ok(&variant, &b.render_projector.style.variant)
             || !axis_ok(&team, b.team.as_deref().unwrap_or(""))
         {
             continue;
@@ -1604,9 +1602,9 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             .as_ref()
             .map(|t| Val::Kw(t.clone()))
             .unwrap_or(Val::Nothing)),
-        "family" => Ok(Val::Kw(world.entities[i].style.family.as_str().into())),
-        "color" => Ok(Val::Kw(world.entities[i].style.color.as_str().into())),
-        "variant" => Ok(Val::Kw(world.entities[i].style.variant.as_str().into())),
+        "family" => Ok(Val::Kw(world.entities[i].render_projector.style.family.as_str().into())),
+        "color" => Ok(Val::Kw(world.entities[i].render_projector.style.color.as_str().into())),
+        "variant" => Ok(Val::Kw(world.entities[i].render_projector.style.variant.as_str().into())),
         col => Ok(world
             .col_get_at(i, col)
             .map(Val::Num)
@@ -1935,11 +1933,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     dyn_figure,
                     cache_policy: spec.cache_policy.clone(),
                     birth: world.tick,
-                    style: spec.style.clone(),
                     alive: true,
                     state: MotionState::new(),
                     scanned,
-                    sigs: spec.sigs.clone(),
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
                     cols: col_slots,
@@ -2027,7 +2023,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::SetStyle { target, style } => {
             if let Some(i) = world.find(*target) {
-                let mut st = world.entities[i].style.clone();
+                let mut st = world.entities[i].render_projector.style.clone();
                 if let Val::Map(kvs) = style {
                     for (k, v) in kvs.iter() {
                         if let Val::Kw(k) = k {
@@ -2041,7 +2037,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                         }
                     }
                 }
-                world.entities[i].style = st;
+                world.entities[i].render_projector.style = st;
             }
             Ok(Val::Nothing)
         }

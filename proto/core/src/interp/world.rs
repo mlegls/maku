@@ -141,10 +141,21 @@ pub type ColliderSpecList = DynLike;
 pub type RenderSpecList = DynLike;
 /// Bridge representation of a collider projector: source-level spec lists
 /// that lower against the entity's current figure into realized collider rows.
-pub type ColliderProjector = Rc<[ColliderSpecList]>;
+#[derive(Clone, Debug)]
+pub struct ColliderProjector {
+    pub specs: Rc<[ColliderSpecList]>,
+}
 /// Bridge representation of a render projector: source-level spec lists
 /// that lower against the entity's current figure into realized render rows.
-pub type RenderProjector = Rc<[RenderSpecList]>;
+#[derive(Clone, Debug)]
+pub struct RenderProjector {
+    pub specs: Rc<[RenderSpecList]>,
+    /// Compatibility host style. This belongs to the current default renderer,
+    /// not to entity semantics.
+    pub style: Style,
+    /// Compatibility render/collider modifier signals from legacy meta tags.
+    pub sigs: RenderSigs,
+}
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
 #[derive(Debug, Clone)]
@@ -180,11 +191,9 @@ pub struct Entity {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
     pub birth: u64,
-    pub style: Style,
     pub alive: bool,
     pub state: MotionState,
     pub scanned: bool,
-    pub sigs: RenderSigs,
     /// Collider projector — archetype data, Rc-shared across a spawn's
     /// elements. Layers are opaque core routing keys; specs evaluate each
     /// tick against the current figure into collision rows or nothing.

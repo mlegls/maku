@@ -273,13 +273,15 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
-                style,
-                sigs,
                 team: team.clone(),
                 cols,
                 triggers: triggers.clone(),
-                collider_projector: collider_specs.into(),
-                render_projector: render_specs.into(),
+                collider_projector: ColliderProjector { specs: collider_specs.into() },
+                render_projector: RenderProjector {
+                    specs: render_specs.into(),
+                    style,
+                    sigs,
+                },
                 expose: expose.clone(),
             }
         })
