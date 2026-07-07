@@ -170,6 +170,14 @@ impl<'a> MotionEvalCtx<'a> {
     pub fn new(state: &'a MotionState, sig: &'a SigEnv, readers: &'a MotionReaders) -> MotionEvalCtx<'a> {
         MotionEvalCtx { state, sig, readers }
     }
+
+    pub fn node_key(&self, ptr: usize) -> MotionStateKey {
+        state_key_for_node(ptr, self.readers)
+    }
+
+    pub fn lazy_key(&self, ptr: usize) -> MotionStateKey {
+        lazy_state_key_for_node(ptr, self.readers)
+    }
 }
 
 pub struct MotionStepCtx<'a> {
@@ -179,6 +187,16 @@ pub struct MotionStepCtx<'a> {
     pub mirror_legacy: bool,
     pub write_n2: &'a mut dyn FnMut(MotionStateKey, [f64; 2]),
     pub write_dyn: &'a mut dyn FnMut(MotionStateKey, DynPose),
+}
+
+impl<'a> MotionStepCtx<'a> {
+    pub fn node_key(&self, ptr: usize) -> MotionStateKey {
+        state_key_for_node(ptr, self.readers)
+    }
+
+    pub fn lazy_key(&self, ptr: usize) -> MotionStateKey {
+        lazy_state_key_for_node(ptr, self.readers)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -824,7 +842,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let dense_key = state_key_for_node(key, readers);
+            let dense_key = ctx.node_key(key);
             let [x, y] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&key) {
                     Some(Cell::N(v)) => Some(*v),
@@ -868,7 +886,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
-            let dense_key = state_key_for_node(key, readers);
+            let dense_key = ctx.node_key(key);
             let [idx, epoch] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&key) {
                     Some(Cell::N(v)) => Some(*v),
@@ -954,13 +972,13 @@ pub fn step_motion_in(
 ) -> Result<(), String> {
     match d {
         DynNode::Vel { a, b, polar, env } => {
+            let key = d as *const DynNode as usize;
+            let dense_key = ctx.node_key(key);
             let state = &mut *ctx.state;
             let sig = ctx.sig;
             let readers = ctx.readers;
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
-            let key = d as *const DynNode as usize;
-            let dense_key = state_key_for_node(key, readers);
             let [x, y] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&key) {
                     Some(Cell::N(v)) => Some(*v),
@@ -1013,13 +1031,13 @@ pub fn step_motion_in(
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
             let (cur, epoch, local_lazy_key, mirror_legacy) = {
+                let dense_key = ctx.node_key(key);
                 let state = &mut *ctx.state;
                 let sig = ctx.sig;
                 let readers = ctx.readers;
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
                 let write_dyn = &mut *ctx.write_dyn;
-                let dense_key = state_key_for_node(key, readers);
                 let [mut idx, mut epoch] = (readers.n2)(dense_key)
                     .or_else(|| match state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
