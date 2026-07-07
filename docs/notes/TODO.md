@@ -689,6 +689,11 @@ language.md.
       `Stages` now reads/writes segment index/epoch through dense `N2` and
       lazy segment dyns through dense `state_dyn`, with legacy map fallback
       retained only for compatibility callers.
+  2v.32. ~~Stop mirroring entity numeric motion state to legacy maps.~~ Done;
+      sim stepping disables legacy `MotionState` writes for dense-backed
+      entity state while legacy-only APIs still mirror for compatibility.
+      Same-tick lazy stage dyns use a temporary local cell and are removed
+      before the entity row is stored.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

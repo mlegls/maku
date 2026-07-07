@@ -294,6 +294,7 @@ impl Sim {
                     &mut state,
                     &sig,
                     readers,
+                    false,
                     &mut |key, value| n2_writes.push((key, value)),
                     &mut |key, value| dyn_writes.push((key, value)),
                 )?;
@@ -302,6 +303,24 @@ impl Sim {
                 }
                 for (key, value) in dyn_writes {
                     self.world.entities.set_state_dyn(i, key, value);
+                }
+                if let Some(schema) = self.world.entities.motion_schema(i) {
+                    for key in schema.n2_keys.iter().copied() {
+                        match key {
+                            MotionStateKey::NodePtr(raw) => {
+                                state.remove(&raw);
+                            }
+                            MotionStateKey::ScanSite { base, index } => {
+                                state.remove(&site_key(base, index as usize));
+                            }
+                            MotionStateKey::LazyStage { .. } => {}
+                        }
+                    }
+                    for key in schema.dyn_keys.iter().copied() {
+                        if let MotionStateKey::LazyStage { base } = key {
+                            state.remove(&(base + 1));
+                        }
+                    }
                 }
                 self.world.entities[i].state = state;
             }

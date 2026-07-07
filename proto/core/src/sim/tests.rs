@@ -1331,7 +1331,8 @@
             .unwrap();
         let sig = sim.ctx.sig.clone();
         let tau = sim.world.entities.tau(i, sim.world.tick);
-        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig).unwrap();
+        let readers = sim.motion_readers(i);
+        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
 
@@ -2244,6 +2245,24 @@ fn stages_read_dense_state_before_legacy_map() {
     sim.step().unwrap();
     let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
     assert!((p.y - 1.0).abs() < 1e-9, "lazy stage dense y after legacy clear: {}", p.y);
+}
+
+#[test]
+fn entity_motion_does_not_mirror_numeric_state_to_legacy_map() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel p[3 (slew 720 0 90)])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..4 {
+        sim.step().unwrap();
+    }
+    assert!(sim.world.entities[0].state.is_empty(), "entity legacy motion state should stay empty");
+    let schema = sim.world.entities.motion_schema(0).unwrap();
+    for key in schema.n2_keys.iter().copied() {
+        assert!(sim.world.entities.state_n2(0, key).is_some());
+    }
+    assert!(schema.dyn_keys.is_empty());
 }
 
 #[test]

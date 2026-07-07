@@ -136,6 +136,7 @@ pub fn eval_collider_slot(
     tau: f64,
     sig: &SigEnv,
     scale: f64,
+    pose: Pose,
 ) -> ColliderData {
     match slot.repr() {
         ColliderDynRepr::Slot(projection) => match &projection.shape {
@@ -154,13 +155,10 @@ pub fn eval_collider_slot(
                             }
                         }
                     }
-                    FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
-                        Ok(p) => ColliderData::Circle {
-                            layer: projection.layer.clone(),
-                            center: (p.x, p.y),
-                            radius: radius * scale,
-                        },
-                        Err(_) => ColliderData::None,
+                    FigureDynRepr::Pose(_) => ColliderData::Circle {
+                        layer: projection.layer.clone(),
+                        center: (pose.x, pose.y),
+                        radius: radius * scale,
                     },
                     FigureDynRepr::Curve { .. } => ColliderData::None,
                 }

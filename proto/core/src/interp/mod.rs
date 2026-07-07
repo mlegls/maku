@@ -878,7 +878,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 };
                 let b = &world.entities[i];
                 let tau = world.entities.tau(i, world.tick);
-                let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
+                let readers = entity_motion_readers(i, world);
+                let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &ctx.sig, &readers)?;
                 return Ok(Val::Pose(Pose::point(p.x, p.y)));
             }
             "in-frame" => {
@@ -1038,7 +1039,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     return Err("on-laser: not a laser".into());
                 };
                 let tau = world.entities.tau(i, world.tick);
-                let anchor = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
+                let readers = entity_motion_readers(i, world);
+                let anchor = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &ctx.sig, &readers)?;
                 let at = |uu: f64| -> Result<Pose, String> {
                     let local = eval_curve_pose(&curve.eval, tau, uu, &b.state, &ctx.sig)?;
                     Ok(anchor.compose(&local))
@@ -1180,7 +1182,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 for i in idxs {
                     let b = &world.entities[i];
                     let tau = world.entities.tau(i, world.tick);
-                    let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) else { continue };
+                    let readers = entity_motion_readers(i, world);
+                    let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &readers) else { continue };
                     let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
                     if best.map(|(bd, _)| d2 < bd).unwrap_or(true) {
                         best = Some((d2, (p.x, p.y)));
@@ -1431,10 +1434,20 @@ fn render_view(b: &Entity) -> Val {
 /// :where is a pure fn over the entity view.
 /// The entity view contains current kinematic fields, `:render` namespaced
 /// renderer compatibility data, legacy flat style aliases, and columns.
+pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
+    let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
+    let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
+    MotionReaders {
+        n2: Rc::new(move |key| dense_n2.get(&key).copied()),
+        dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
+    }
+}
+
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
     let b = &world.entities[i];
     let tau = world.entities.tau(i, world.tick);
-    let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
+    let readers = entity_motion_readers(i, world);
+    let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, sig, &readers)?;
     let vel = world.entities.velocity_from_samples(i, world.tick);
     let mut view = vec![
         (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
@@ -1630,7 +1643,8 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
         "pos" => {
             let b = &world.entities[i];
             let tau = world.entities.tau(i, world.tick);
-            let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
+            let readers = entity_motion_readers(i, world);
+            let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, sig, &readers)?;
             Ok(Val::Pose(Pose::point(p.x, p.y)))
         }
         "vel" => {
@@ -2014,7 +2028,8 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let (exit, anchor) = {
                 let b = &world.entities[i];
                 let tau = world.entities.tau(i, world.tick);
-                let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
+                let readers = entity_motion_readers(i, world);
+                let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &ctx.sig, &readers)?;
                 let vel = world.entities.velocity_from_samples(i, world.tick);
                 let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
                     p.angle_or(0.0)
@@ -2777,7 +2792,9 @@ fn sf_stateful(
                 cur += d.clamp(-rate * dt, rate * dt);
                 let next = [cur, 0.0];
                 let mut io = scan.borrow_mut();
-                io.state.insert(key, Cell::N(next));
+                if io.mirror_legacy {
+                    io.state.insert(key, Cell::N(next));
+                }
                 io.n2_writes.push((site, next));
             }
             Ok(Val::Num(cur))
@@ -2807,7 +2824,9 @@ fn sf_stateful(
                 y += k * (ty - y);
                 let next = [x, y];
                 let mut io = scan.borrow_mut();
-                io.state.insert(key, Cell::N(next));
+                if io.mirror_legacy {
+                    io.state.insert(key, Cell::N(next));
+                }
                 io.n2_writes.push((site, next));
             }
             Ok(Val::Pose(Pose::point(x, y)))
