@@ -358,7 +358,6 @@ pub struct EntitySpec {
     pub triggers: Rc<[TriggerRule]>,
     pub damage: Val,
     pub colliders: Rc<[ColliderSpecList]>,
-    pub primary_hitbox: Option<f64>,
     pub renderers: Rc<[RenderSpecList]>,
     pub expose: Rc<[(Rc<str>, Rc<str>)]>,
 }
@@ -1945,7 +1944,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     sigs: spec.sigs.clone(),
                     colliders: spec.colliders.clone(),
-                    primary_hitbox: spec.primary_hitbox,
                     renderers: spec.renderers.clone(),
                     cols: col_slots,
                     triggers: spec.triggers.clone(),

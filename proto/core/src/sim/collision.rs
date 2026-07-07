@@ -91,9 +91,6 @@ fn materialize_colliders(
 ) -> Result<Vec<ColliderData>, String> {
     let mut defs = materialize_collider_defs(&b.colliders, tau, &b.state, sig)
         .map_err(|e| format!("colliders: {}", e))?;
-    if let Some(radius) = b.primary_hitbox {
-        replace_primary_hitbox(&mut defs, radius);
-    }
     if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         if let Some(projection) = first_render_projection(b, tau, sig) {
             let curve_slot = CapsuleChainSlot {

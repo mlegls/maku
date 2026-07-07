@@ -156,7 +156,6 @@ pub struct Entity {
     /// elements. Layers are opaque core routing keys; slots evaluate each
     /// tick into collision data or nothing.
     pub colliders: Rc<[ColliderSpecList]>,
-    pub primary_hitbox: Option<f64>,
     /// Render slots — archetype data, Rc-shared across a spawn's elements.
     pub renderers: Rc<[RenderSpecList]>,
     /// User-defined numeric columns in World's dense column layout. hp is
@@ -280,15 +279,6 @@ impl Dyn<ColliderData> {
         match &slot.shape {
             ColliderSlotShape::CapsuleChain { radius, slot: shape } => Some((slot, shape, radius)),
             ColliderSlotShape::Circle { .. } => None,
-        }
-    }
-}
-
-pub(crate) fn replace_primary_hitbox(slots: &mut [DynCollider], radius: f64) {
-    if let Some(first) = slots.first_mut() {
-        let slot = first.slot();
-        if let ColliderSlotShape::Circle { .. } = &slot.shape {
-            *first = DynCollider::collider_circle_const(slot.layer.clone(), radius);
         }
     }
 }

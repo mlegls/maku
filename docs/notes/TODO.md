@@ -510,6 +510,9 @@ language.md.
       collision derives capsule-chain conversion from the materialized render
       projection instead of carrying `curve_collider` / `curve_renderer`
       side-channel fields on every entity.
+  2v.4. ~~Remove runtime primary-hitbox entity field.~~ Done; compatibility
+      `:hitbox` now rewrites the first static circle collider spec during
+      spawn lowering, so collision consumes only the entity's collider specs.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

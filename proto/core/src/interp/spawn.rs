@@ -300,6 +300,9 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         .map(|(((e, style), sigs), cols)| {
             let mut colliders = shared_colliders.iter().cloned().collect::<Vec<_>>();
             colliders.push(e.colliders);
+            if let Some(radius) = hitbox {
+                apply_primary_hitbox(&mut colliders, radius);
+            }
             let mut renderers = shared_renderers.iter().cloned().collect::<Vec<_>>();
             renderers.push(e.renderers);
             EntitySpec {
@@ -312,7 +315,6 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 triggers: triggers.clone(),
                 damage: damage.clone(),
                 colliders: colliders.into(),
-                primary_hitbox: hitbox,
                 renderers: renderers.into(),
                 expose: expose.clone(),
             }
@@ -379,6 +381,80 @@ fn curve_projection_spec(
         "shape",
         DynLike::List(vec![dynlike_kw_atom("polyline"), dynlike_map(opts)].into()),
     )])
+}
+
+fn data_kw_is(k: &DataAtom, name: &str) -> bool {
+    matches!(k, DataAtom::Kw(kw) if &**kw == name)
+}
+
+fn dynlike_map_set(m: &DynLike, key: &str, val: DynLike) -> DynLike {
+    let DynLike::Map(kvs) = m else {
+        return m.clone();
+    };
+    let mut out = Vec::with_capacity(kvs.len() + 1);
+    let mut replaced = false;
+    for (k, v) in kvs.iter() {
+        if !replaced && data_kw_is(k, key) {
+            out.push((k.clone(), val.clone()));
+            replaced = true;
+        } else {
+            out.push((k.clone(), v.clone()));
+        }
+    }
+    if !replaced {
+        out.push((DataAtom::Kw(key.into()), val));
+    }
+    DynLike::Map(Rc::new(out))
+}
+
+fn replace_circle_spec_radius(spec: &DynLike, radius: f64) -> Option<DynLike> {
+    if !matches!(spec, DynLike::Map(_)) {
+        return None;
+    }
+    let radius = dynlike_num(radius);
+    if let Some(shape_v) = dynlike_map_get(spec, "shape") {
+        let Ok((shape, opts)) = as_shape_spec(&shape_v) else {
+            return None;
+        };
+        if shape.as_ref() != "circle" {
+            return None;
+        }
+        let opts = dynlike_map_set(&opts, "r", radius);
+        let shape = DynLike::List(vec![dynlike_kw_atom("circle"), opts].into());
+        return Some(dynlike_map_set(spec, "shape", shape));
+    }
+    if dynlike_map_get(spec, "r").is_some() {
+        return Some(dynlike_map_set(spec, "r", radius));
+    }
+    None
+}
+
+fn replace_primary_hitbox_spec(list: &DynLike, radius: f64) -> Option<DynLike> {
+    let DynLike::List(items) = list else {
+        return None;
+    };
+    let mut out = Vec::with_capacity(items.len());
+    let mut replaced = false;
+    for item in items.iter() {
+        if !replaced {
+            if let Some(next) = replace_circle_spec_radius(item, radius) {
+                out.push(next);
+                replaced = true;
+                continue;
+            }
+        }
+        out.push(item.clone());
+    }
+    replaced.then(|| DynLike::List(out.into()))
+}
+
+fn apply_primary_hitbox(lists: &mut [ColliderSpecList], radius: f64) {
+    for list in lists.iter_mut() {
+        if let Some(next) = replace_primary_hitbox_spec(list, radius) {
+            *list = next;
+            break;
+        }
+    }
 }
 
 pub(crate) fn flatten_elems(
