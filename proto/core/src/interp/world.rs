@@ -186,6 +186,12 @@ pub struct Entity {
     pub trail: Vec<Pose>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EntityRef {
+    pub row: usize,
+    pub generation: u32,
+}
+
 /// A standing rule over an entity's own columns: when `col ≤ leq` first
 /// becomes true (edge-triggered; the latch is itself a column, so it
 /// snapshots and scrubs), emit the event and optionally cull. The same
@@ -374,7 +380,7 @@ pub struct World {
     /// Column-expose rules from spawn meta :expose {$channel :col}:
     /// channel := that entity's column while alive, else 0. Registered at
     /// spawn, persists past the entity (death reads as 0, so hp gates fire).
-    pub exposes: Vec<(Rc<str>, u64, Rc<str>)>,
+    pub exposes: Vec<(Rc<str>, EntityRef, Rc<str>)>,
     /// Card-defined contact rules, registered by defcontact. World data so
     /// hot-swaps and timeline restore carry the same collision semantics.
     pub contacts: Vec<ContactRule>,
@@ -542,6 +548,10 @@ impl World {
         }
     }
 
+    pub fn entity_ref(&self, row: usize) -> EntityRef {
+        EntityRef { row, generation: self.entities[row].generation }
+    }
+
     /// Deterministic splitmix64-ish stream (counter-based enough for the
     /// prototype: same run order → same stream → replays agree).
     pub fn next_rand(&mut self) -> f64 {
@@ -553,8 +563,11 @@ impl World {
         (z >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    pub fn find(&self, id: u64) -> Option<usize> {
-        self.entities.iter().position(|b| b.id == id && b.alive)
+    pub fn find(&self, handle: EntityRef) -> Option<usize> {
+        self.entities
+            .get(handle.row)
+            .filter(|b| b.alive && b.generation == handle.generation)
+            .map(|_| handle.row)
     }
 
     pub fn col_slot(&self, name: &str) -> Option<usize> {

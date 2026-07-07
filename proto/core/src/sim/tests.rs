@@ -2088,6 +2088,32 @@ fn entity_capacity_is_explicit() {
     assert_eq!(live_count(&sim), 2);
 }
 
+#[test]
+fn stale_handles_do_not_target_reused_rows() {
+    const CARD: &str = r#"
+(defchannel $enemy-hp (:hp (entities-where (matches :team :enemy))))
+(defpattern p []
+  (seq
+    (let [old (spawn (pose c[0 0]) {:team :enemy :hp 1})]
+      (seq
+        (wait (ticks 1))
+        (cull (first old))
+        (wait (ticks 1))
+        (spawn (pose c[1 0]) {:team :enemy :hp 2})
+        (set-col (first old) :hp 99)
+        (wait (ticks 1))))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.resize_entity_capacity(1).unwrap();
+    for _ in 0..5 {
+        sim.step().unwrap();
+    }
+    assert_eq!(sim.world.entities.len(), 1);
+    assert!(sim.world.entities[0].alive);
+    assert_eq!(sim.world.entities[0].generation, 1);
+    assert!(matches!(sim.ctx.sig.channel("enemy-hp"), Some(Val::Num(n)) if n == 2.0));
+}
+
     /// Ancestor clocks are lib-expressible (§13.1 audit): a parent
     /// captures $tick into an ordinary binding (eager, an ir constant)
     /// and the child signal reads (live $tick) minus it — a

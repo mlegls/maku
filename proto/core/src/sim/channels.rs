@@ -26,14 +26,11 @@ impl Sim {
         // :expose rules — entity columns published as channels; a dead or
         // absent entity reads 0, so hp gates fire (cards declare these:
         // {:expose {$some-hp :hp}})
-        for (chan, id, col) in &self.world.exposes {
+        for (chan, handle, col) in &self.world.exposes {
             let v = self
                 .world
-                .entities
-                .iter()
-                .enumerate()
-                .find(|(_, b)| b.alive && b.id == *id)
-                .and_then(|(i, _)| self.world.col_get_at(i, col))
+                .find(*handle)
+                .and_then(|i| self.world.col_get_at(i, col))
                 .unwrap_or(0.0);
             ch.insert(chan.to_string(), Val::Num(v));
         }

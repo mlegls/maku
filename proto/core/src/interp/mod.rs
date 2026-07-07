@@ -88,7 +88,7 @@ pub enum Val {
     Action(Rc<ActionV>),
     Fn { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     Builtin(Rc<str>),
-    Handle(u64),
+    Handle(EntityRef),
     /// A deferred signal expression (shared stateful instance, §5): forced
     /// when referenced inside a scan context.
     Thunk(Rc<(Form, Env)>),
@@ -109,7 +109,7 @@ pub enum DataAtom {
     Num(f64),
     Kw(Rc<str>),
     Figure(Figure),
-    Handle(u64),
+    Handle(EntityRef),
     Nothing,
     Legacy(Val),
 }
@@ -277,12 +277,12 @@ pub enum ActionV {
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
     Spawn { entities: Vec<EntitySpec> },
-    Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
-    Remat { target: u64, f: Val },
+    Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
+    Remat { target: EntityRef, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
-    SetCol { target: u64, col: Rc<str>, val: f64 },
-    SetStyle { target: u64, style: Val },
-    Cull { target: u64 },
+    SetCol { target: EntityRef, col: Rc<str>, val: f64 },
+    SetStyle { target: EntityRef, style: Val },
+    Cull { target: EntityRef },
     /// (export cell): publish a pattern cell as a read-only channel of the
     /// same name — the pattern-level export surface (host renders it; the
     /// pattern stays the single writer).
@@ -1567,7 +1567,7 @@ fn entity_index_value(v: Val, world: &World) -> Result<Vec<usize>, String> {
         Val::Handle(id) => world
             .find(id)
             .map(|i| vec![i])
-            .ok_or_else(|| format!("dead entity handle {}", id)),
+            .ok_or_else(|| format!("dead entity handle {:?}", id)),
         v => Err(format!("expected entity set or handle, got {:?}", v)),
     }
 }
@@ -1638,8 +1638,8 @@ fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
 
 fn entity_field_value(v: Val, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
     if let Val::Handle(id) = v {
-        return match world.entities.iter().position(|b| b.id == id) {
-            Some(i) => entity_field_at(i, field, world, sig),
+        return match world.entities.get(id.row).filter(|b| b.generation == id.generation) {
+            Some(_) => entity_field_at(id.row, field, world, sig),
             None => Ok(Val::Nothing),
         };
     }
@@ -1962,8 +1962,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     prev_pos: None,
                     trail: Vec::new(),
                 })?;
+                let handle = world.entity_ref(row);
                 for (col, chan) in spec.expose.iter() {
-                    world.exposes.push((chan.clone(), id, col.clone()));
+                    world.exposes.push((chan.clone(), handle, col.clone()));
                     // same-tick availability: the channel exists the moment
                     // the entity does (gates may read it this very tick)
                     let v = world
@@ -1973,21 +1974,21 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     m.insert(chan.to_string(), Val::Num(v));
                     ctx.sig.channels = Rc::new(m);
                 }
-                handles.push(Val::Handle(id));
+                handles.push(Val::Handle(handle));
             }
             Ok(Val::arr(handles))
         }
         ActionV::Manipulate { targets, query, callback } => {
-            let ids: Vec<u64> = match query {
+            let handles: Vec<EntityRef> = match query {
                 Some(q) => resolve_query(q, ctx, world)?
                     .into_iter()
-                    .filter_map(|i| world.entities.get(i).map(|b| b.id))
+                    .map(|i| world.entity_ref(i))
                     .collect(),
                 None => targets.clone(),
             };
-            for id in ids {
-                if world.find(id).is_some() {
-                    apply_fn(callback.clone(), &[Val::Handle(id)], ctx, world, true)?;
+            for handle in handles {
+                if world.find(handle).is_some() {
+                    apply_fn(callback.clone(), &[Val::Handle(handle)], ctx, world, true)?;
                 }
             }
             Ok(Val::Nothing)
@@ -2132,7 +2133,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
     }
 }
 
-fn collect_handles(v: &Val, out: &mut Vec<u64>) -> Result<(), String> {
+fn collect_handles(v: &Val, out: &mut Vec<EntityRef>) -> Result<(), String> {
     match v {
         Val::Handle(id) => {
             out.push(*id);

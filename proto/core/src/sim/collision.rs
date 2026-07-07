@@ -178,11 +178,11 @@ impl Sim {
                         continue;
                     }
                 }
-                let a_id = self.world.entities[i].id;
-                let b_id = self.world.entities[j].id;
+                let a_ref = self.world.entity_ref(i);
+                let b_ref = self.world.entity_ref(j);
                 apply_fn(
                     rule.callback.clone(),
-                    &[Val::Handle(a_id), Val::Handle(b_id)],
+                    &[Val::Handle(a_ref), Val::Handle(b_ref)],
                     &mut self.ctx,
                     &mut self.world,
                     true,
@@ -190,7 +190,13 @@ impl Sim {
                 if let Some(col) = &rule.once {
                     // dead-inclusive: the callback may have culled A, and the
                     // latch must still stick (find() only sees live entities)
-                    if let Some(bi) = self.world.entities.iter().position(|b| b.id == a_id) {
+                    if self
+                        .world
+                        .entities
+                        .get(a_ref.row)
+                        .is_some_and(|b| b.generation == a_ref.generation)
+                    {
+                        let bi = a_ref.row;
                         self.world.col_set_at(bi, col, 1.0);
                     }
                 }
