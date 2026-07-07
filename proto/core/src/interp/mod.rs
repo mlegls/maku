@@ -1429,8 +1429,8 @@ fn render_style_map(style: &Style) -> Val {
     ]))
 }
 
-fn render_view(b: &Entity) -> Val {
-    Val::Map(Rc::new(vec![(Val::Kw("style".into()), render_style_map(&b.render_projector.style))]))
+fn render_view(projector: &RenderProjector) -> Val {
+    Val::Map(Rc::new(vec![(Val::Kw("style".into()), render_style_map(&projector.style))]))
 }
 
 /// Evaluate a manipulate query map against the world in canonical order:
@@ -1458,6 +1458,10 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
 
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
     let b = &world.entities[i];
+    let render_projector = world
+        .entities
+        .render_projector(i)
+        .ok_or_else(|| format!("entity view: missing render projector for row {i}"))?;
     let tau = world.entities.tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::new();
@@ -1473,10 +1477,10 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "laser",
         }.into())),
-        (Val::Kw("render".into()), render_view(b)),
-        (Val::Kw("family".into()), Val::Kw(b.render_projector.style.family.as_str().into())),
-        (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
-        (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
+        (Val::Kw("render".into()), render_view(render_projector)),
+        (Val::Kw("family".into()), Val::Kw(render_projector.style.family.as_str().into())),
+        (Val::Kw("color".into()), Val::Kw(render_projector.style.color.as_str().into())),
+        (Val::Kw("variant".into()), Val::Kw(render_projector.style.variant.as_str().into())),
     ];
     for (field, value) in world.sym_fields_for_view(i) {
         view.push((Val::Kw(field), Val::Kw(value)));
@@ -1597,11 +1601,12 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
         .collect::<Vec<_>>();
     let sig = ctx.sig.clone();
     let mut candidates: Vec<usize> = Vec::new();
-    for (i, b) in world.entities.iter().enumerate() {
+    for (i, _) in world.entities.iter().enumerate() {
+        let Some(render_projector) = world.entities.render_projector(i) else { continue };
         if !world.entities.is_alive(i)
-            || !axis_ok(&family, &b.render_projector.style.family)
-            || !axis_ok(&color, &b.render_projector.style.color)
-            || !axis_ok(&variant, &b.render_projector.style.variant)
+            || !axis_ok(&family, &render_projector.style.family)
+            || !axis_ok(&color, &render_projector.style.color)
+            || !axis_ok(&variant, &render_projector.style.variant)
             || !axis_ok(&team, world.sym_field_resolved_at(i, "team").unwrap_or(""))
             || kw_filters
                 .iter()
@@ -1669,9 +1674,30 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             crate::interp::motion::FigureDynRepr::Curve { .. } => "curve",
         }
         .into())),
-        "family" => Ok(Val::Kw(world.entities[i].render_projector.style.family.as_str().into())),
-        "color" => Ok(Val::Kw(world.entities[i].render_projector.style.color.as_str().into())),
-        "variant" => Ok(Val::Kw(world.entities[i].render_projector.style.variant.as_str().into())),
+        "family" => Ok(Val::Kw(world
+            .entities
+            .render_projector(i)
+            .ok_or_else(|| format!("field: missing render projector for row {i}"))?
+            .style
+            .family
+            .as_str()
+            .into())),
+        "color" => Ok(Val::Kw(world
+            .entities
+            .render_projector(i)
+            .ok_or_else(|| format!("field: missing render projector for row {i}"))?
+            .style
+            .color
+            .as_str()
+            .into())),
+        "variant" => Ok(Val::Kw(world
+            .entities
+            .render_projector(i)
+            .ok_or_else(|| format!("field: missing render projector for row {i}"))?
+            .style
+            .variant
+            .as_str()
+            .into())),
         field => {
             if let Some(value) = world.sym_field_resolved_at(i, field) {
                 return Ok(Val::Kw(value.into()));
@@ -1989,11 +2015,11 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let row = world.install_entity(
                     Entity {
                         dyn_figure,
-                        render_projector: spec.render_projector.clone(),
                     },
                     spec.cache_policy.clone(),
                     spec.triggers.clone(),
                     spec.collider_projector.clone(),
+                    spec.render_projector.clone(),
                 )?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);
@@ -2083,7 +2109,10 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::SetStyle { target, style } => {
             if let Some(i) = world.find(*target) {
-                let mut st = world.entities[i].render_projector.style.clone();
+                let Some(projector) = world.entities.render_projector(i) else {
+                    return Ok(Val::Nothing);
+                };
+                let mut st = projector.style.clone();
                 if let Val::Map(kvs) = style {
                     for (k, v) in kvs.iter() {
                         if let Val::Kw(k) = k {
@@ -2097,7 +2126,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                         }
                     }
                 }
-                world.entities[i].render_projector.style = st;
+                if let Some(projector) = world.entities.render_projector_mut(i) {
+                    projector.style = st;
+                }
             }
             Ok(Val::Nothing)
         }

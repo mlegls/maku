@@ -14,10 +14,19 @@
             .entities
             .iter()
             .enumerate()
-            .filter(|(i, b)| {
-                sim.world.entities.is_alive(*i) && b.render_projector.style.family == family
+            .filter(|(i, _)| {
+                sim.world.entities.is_alive(*i)
+                    && sim
+                        .world
+                        .entities
+                        .render_projector(*i)
+                        .is_some_and(|projector| projector.style.family == family)
             })
             .count()
+    }
+
+    fn style(sim: &Sim, row: usize) -> &Style {
+        &sim.world.entities.render_projector(row).unwrap().style
     }
 
     /// Conformance: the real translation files, loaded verbatim from disk.
@@ -81,16 +90,16 @@
         let sig = SigEnv::default();
         let b = &sim.world.entities[0];
         assert_eq!(sim.world.entities.birth(0), Some(0));
-        assert_eq!(b.render_projector.style.family, "gem");
-        assert_eq!(b.render_projector.style.color, "yellow");
+        assert_eq!(style(&sim, 0).family, "gem");
+        assert_eq!(style(&sim, 0).color, "yellow");
         let state = MotionState::new();
         let p = dyn_figure_pose(&b.dyn_figure, 1.0, &state, &sig).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
 
-        assert_eq!(sim.world.entities[1].render_projector.style.color, "orange");
-        assert_eq!(sim.world.entities[4].render_projector.style.color, "purple");
+        assert_eq!(style(&sim, 1).color, "orange");
+        assert_eq!(style(&sim, 4).color, "purple");
 
         assert_eq!(sim.world.entities.birth(5), Some(8));
     }
@@ -161,8 +170,14 @@
         // ring anchored at the culled star's position at t≈0.5 (x = 0.5 from
         // anchor (0,1)); fn bodies drop the ambient frame, so no double anchor
         let sig = SigEnv::default();
-        let ring: Vec<_> =
-            sim.world.entities.iter().filter(|b| b.render_projector.style.family == "star").collect();
+        let ring: Vec<_> = sim
+            .world
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| style(&sim, *i).family == "star")
+            .map(|(_, b)| b)
+            .collect();
         let state = MotionState::new();
         let p = dyn_figure_pose(&ring[0].dyn_figure, 0.0, &state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
@@ -1070,7 +1085,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let col = |g: usize, i: usize| sim.world.entities[g * 3 + i].render_projector.style.color.clone();
+        let col = |g: usize, i: usize| style(&sim, g * 3 + i).color.clone();
         assert_eq!(
             (col(0, 0), col(0, 1), col(0, 2)),
             ("red".into(), "blue".into(), "red".into()),
@@ -1268,7 +1283,7 @@
                     .entities
                     .iter()
                     .enumerate()
-                    .any(|(i, b)| sim.world.sym_field_matches_at(i, "team", "player") && b.render_projector.style.family == "gem");
+                    .any(|(i, _)| sim.world.sym_field_matches_at(i, "team", "player") && style(&sim, i).family == "gem");
             }
         }
         assert!(saw_needles, "focus switched the fire mode to needles");
@@ -1340,7 +1355,7 @@
             .entities
             .iter()
             .enumerate()
-            .find(|(_, b)| b.render_projector.style.family == "amulet")
+            .find(|(i, _)| style(&sim, *i).family == "amulet")
             .unwrap();
         let sig = sim.ctx.sig.clone();
         let tau = sim.world.entities.tau(i, sim.world.tick);
@@ -1393,7 +1408,7 @@
             .entities
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.render_projector.style.family == "y")
+            .filter(|(i, _)| style(&sim, *i).family == "y")
             .collect();
         assert_eq!(ys.len(), 3);
         assert_eq!(sim.world.entities.birth(ys[0].0), Some(130), "b's clock anchored at the add tick");
@@ -1452,7 +1467,7 @@
         let mut sim = Sim::load(CARD, Some("axes")).unwrap();
         sim.step().unwrap();
         assert_eq!(sim.world.entities.len(), 18);
-        let b = |k: usize| &sim.world.entities[k].render_projector.style;
+        let b = |k: usize| style(&sim, k);
         assert_eq!(b(0).variant, "b");
         assert_eq!(b(6).variant, "c");
         assert_eq!(b(12).variant, "w");
@@ -1824,8 +1839,8 @@
             sim.step_with(&inp).unwrap();
         }
         let count = |sim: &Sim, fam: &str| {
-            sim.world.entities.iter().enumerate().filter(|(i, b)| {
-                sim.world.entities.is_alive(*i) && b.render_projector.style.family == fam
+            sim.world.entities.iter().enumerate().filter(|(i, _)| {
+                sim.world.entities.is_alive(*i) && style(&sim, *i).family == fam
             }).count()
         };
         let g1 = count(&sim, "circle");
@@ -1880,11 +1895,10 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let b = &sim.world.entities[0];
         assert_eq!(sim.world.col_get_at(0, "hp"), Some(2.0), "later map wins per-key");
         assert_eq!(sim.world.col_get_at(0, "a"), Some(1.0), "earlier keys survive");
         assert!(sim.world.sym_field_matches_at(0, "team", "enemy"));
-        assert_eq!(b.render_projector.style.family, "star", ":style replaces wholesale");
+        assert_eq!(style(&sim, 0).family, "star", ":style replaces wholesale");
     }
 
     /// $tick: the world clock as a channel — what lets deadline columns

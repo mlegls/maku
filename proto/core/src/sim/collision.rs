@@ -86,6 +86,7 @@ fn collider_overlap(a: &ColliderData, b: &ColliderData) -> bool {
 fn materialize_colliders(
     b: &Entity,
     projector: &ColliderProjector,
+    render_projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
     scale: f64,
@@ -98,7 +99,7 @@ fn materialize_colliders(
     let mut defs = materialize_collider_defs(projector, tau, &state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
     if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
-        if let Some(projection) = first_render_projection(b, tau, sig) {
+        if let Some(projection) = first_render_projection(render_projector, tau, sig) {
             let curve_slot = CapsuleChainSlot {
                 sample_set: projection.sample_set,
                 u_max_sig: projection.u_max_sig,
@@ -145,21 +146,31 @@ impl Sim {
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
             let scale = {
-                let b = &self.world.entities[i];
-                self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0)
+                let Some(render_projector) = self.world.entities.render_projector(i) else {
+                    colliders.push(Vec::new());
+                    continue;
+                };
+                self.sample_sig(&render_projector.sigs.scale, tau, 1.0)
             };
             let b = &self.world.entities[i];
             let trace = self.world.entities.trace_samples(i);
             let traced = self.world.entities.is_traced(i);
-            let projector = self
+            let collider_projector = self
                 .world
                 .entities
                 .collider_projector(i)
                 .ok_or_else(|| format!("colliders: missing projector for row {i}"))?
                 .clone();
+            let render_projector = self
+                .world
+                .entities
+                .render_projector(i)
+                .ok_or_else(|| format!("colliders: missing render projector for row {i}"))?
+                .clone();
             colliders.push(materialize_colliders(
                 b,
-                &projector,
+                &collider_projector,
+                &render_projector,
                 tau,
                 &sig,
                 scale,

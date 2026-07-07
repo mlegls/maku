@@ -245,7 +245,13 @@ mod tests {
             .entities
             .iter()
             .enumerate()
-            .filter(|(i, b)| world.entities.is_alive(*i) && b.render_projector.style.family == fam)
+            .filter(|(i, _)| {
+                world.entities.is_alive(*i)
+                    && world
+                        .entities
+                        .render_projector(*i)
+                        .is_some_and(|projector| projector.style.family == fam)
+            })
             .count()
     }
 
@@ -273,7 +279,15 @@ mod tests {
             .entities
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.render_projector.style.family == "y")
+            .filter(|(i, _)| {
+                sess.sim
+                    .as_ref()
+                    .unwrap()
+                    .world
+                    .entities
+                    .render_projector(*i)
+                    .is_some_and(|projector| projector.style.family == "y")
+            })
             .filter_map(|(i, _)| sess.sim.as_ref().unwrap().world.entities.birth(i))
             .collect();
 
@@ -294,7 +308,15 @@ mod tests {
             .entities
             .iter()
             .enumerate()
-            .filter(|(_, b)| b.render_projector.style.family == "y")
+            .filter(|(i, _)| {
+                sess.sim
+                    .as_ref()
+                    .unwrap()
+                    .world
+                    .entities
+                    .render_projector(*i)
+                    .is_some_and(|projector| projector.style.family == "y")
+            })
             .filter_map(|(i, _)| sess.sim.as_ref().unwrap().world.entities.birth(i))
             .collect();
         assert_eq!(y_births, y_births_after, "identical birth ticks (130)");

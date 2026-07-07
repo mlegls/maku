@@ -3,25 +3,35 @@ use super::*;
 const CURVE_R: f64 = 0.08; // compatibility curve half-width for collision
 
 /// Sample a world-space curve at `tau` (shared by render and collision).
-pub fn sample_curve(b: &Entity, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)>> {
-    let projection = first_render_projection(b, tau, sig)?;
+pub fn sample_curve(
+    b: &Entity,
+    projector: &RenderProjector,
+    tau: f64,
+    sig: &SigEnv,
+) -> Option<Vec<(f64, f64)>> {
+    let projection = first_render_projection(projector, tau, sig)?;
     sample_curve_projection(b, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig)
 }
 
 /// Sample the curve up to `frac` of its length. frac 1.0 = the whole path.
 pub fn sample_curve_frac(
     b: &Entity,
+    projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let projection = first_render_projection(b, tau, sig)?;
+    let projection = first_render_projection(projector, tau, sig)?;
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
-pub(crate) fn first_render_projection(b: &Entity, tau: f64, sig: &SigEnv) -> Option<CurveRenderSlot> {
+pub(crate) fn first_render_projection(
+    projector: &RenderProjector,
+    tau: f64,
+    sig: &SigEnv,
+) -> Option<CurveRenderSlot> {
     let state = MotionState::new();
-    materialize_render_defs(&b.render_projector, tau, &state, sig)
+    materialize_render_defs(projector, tau, &state, sig)
         .ok()?
         .first()
         .cloned()

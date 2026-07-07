@@ -29,8 +29,8 @@ impl Sim {
         }
     }
 
-    fn sample_hue(&self, b: &Entity, tau: f64) -> f64 {
-        self.sample_sig(&b.render_projector.sigs.hue, tau, 0.0)
+    fn sample_hue(&self, projector: &RenderProjector, tau: f64) -> f64 {
+        self.sample_sig(&projector.sigs.hue, tau, 0.0)
     }
 
     pub fn render(&self) -> Vec<RenderItem> {
@@ -40,6 +40,7 @@ impl Sim {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
+            let Some(render_projector) = self.world.entities.render_projector(i) else { continue };
             let tau = self.world.entities.tau(i, self.world.tick);
             match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
@@ -48,10 +49,10 @@ impl Sim {
                         if trace.len() >= 2 {
                             out.push(RenderItem::Polyline {
                                 pts: trace.iter().map(|p| (p.x, p.y)).collect(),
-                                style: b.render_projector.style.clone(),
+                                style: render_projector.style.clone(),
                                 active: true,
-                                hue: self.sample_hue(b, tau),
-                                alpha: self.sample_sig(&b.render_projector.sigs.opacity, tau, 1.0),
+                                hue: self.sample_hue(render_projector, tau),
+                                alpha: self.sample_sig(&render_projector.sigs.opacity, tau, 1.0),
                             });
                         }
                     } else {
@@ -62,25 +63,25 @@ impl Sim {
                                 x: p.x,
                                 y: p.y,
                                 // :facing overrides the motion direction
-                                th: self.sample_sig(&b.render_projector.sigs.facing, tau, p.angle_or(0.0)),
-                                style: b.render_projector.style.clone(),
-                                hue: self.sample_hue(b, tau),
-                                scale: self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0),
-                                alpha: self.sample_sig(&b.render_projector.sigs.opacity, tau, 1.0),
+                                th: self.sample_sig(&render_projector.sigs.facing, tau, p.angle_or(0.0)),
+                                style: render_projector.style.clone(),
+                                hue: self.sample_hue(render_projector, tau),
+                                scale: self.sample_sig(&render_projector.sigs.scale, tau, 1.0),
+                                alpha: self.sample_sig(&render_projector.sigs.opacity, tau, 1.0),
                             });
                         }
                     }
                 }
                 FigureDynRepr::Curve { .. } => {
-                    let alpha = self.sample_sig(&b.render_projector.sigs.opacity, tau, 1.0);
-                    for data in eval_render_list(b, &b.render_projector, tau, sig) {
+                    let alpha = self.sample_sig(&render_projector.sigs.opacity, tau, 1.0);
+                    for data in eval_render_list(b, render_projector, tau, sig) {
                         match data {
                             RenderData::None => {}
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
                                 pts: points,
-                                style: b.render_projector.style.clone(),
+                                style: render_projector.style.clone(),
                                 active,
-                                hue: self.sample_hue(b, tau),
+                                hue: self.sample_hue(render_projector, tau),
                                 alpha,
                             }),
                         }

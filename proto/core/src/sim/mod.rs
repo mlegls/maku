@@ -379,14 +379,20 @@ impl Sim {
                 }
                 FigureDynRepr::Curve { .. } => {
                     let state = MotionState::new();
-                    let render_slots = materialize_render_defs(&b.render_projector, tau, &state, &sig)
-                        .ok()
+                    let render_slots = self
+                        .world
+                        .entities
+                        .render_projector(i)
+                        .and_then(|projector| materialize_render_defs(projector, tau, &state, &sig).ok())
                         .unwrap_or_default();
                     let render_live = render_slots
                         .first()
                         .map(DynRender::polyline)
                         .map(|projection| tau <= projection.activity.warn + projection.activity.active);
                     let collider_live = || {
+                        let Some(render_projector) = self.world.entities.render_projector(i).cloned() else {
+                            return None;
+                        };
                         let Some(projector) = self.world.entities.collider_projector(i).cloned() else {
                             return None;
                         };
@@ -398,7 +404,7 @@ impl Sim {
                             &mut self.world.symbols,
                         )
                             .ok()?;
-                        if let Some(projection) = first_render_projection(b, tau, &sig) {
+                        if let Some(projection) = first_render_projection(&render_projector, tau, &sig) {
                             let curve_slot = CapsuleChainSlot {
                                 sample_set: projection.sample_set,
                                 u_max_sig: projection.u_max_sig,
