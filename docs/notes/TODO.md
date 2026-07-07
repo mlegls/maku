@@ -38,6 +38,7 @@ language.md.
   ColliderProjector = Figure, t -> [Collider]
   RenderProjector = Figure, t -> [Render]
   Entity = Dyn<Figure> * ColliderProjector * RenderProjector * Meta
+  ColliderSpec / RenderSpec = source-level data that lowers to a projector
   ```
   A pose carries position plus orientation, which is why current point-like
   figures can drive facing and subfire semantics. Interpreter `DynNode`s are
@@ -59,6 +60,12 @@ language.md.
   Render:    per-tick renderable records/meshes derived from the current figure
   Meta:      opaque library/host data
   ```
+  `Collider` and `Render` are realized rows at the engine/host boundary, not
+  the normal authoring representation. Card/library code should usually
+  construct specs/projectors, not raw rows with baked world positions. A later
+  internal escape hatch may expose raw row constructors for custom projectors
+  or backend tests, but they should not be the ordinary `spawn` surface.
+
   The abstract figure should not be locked to one sampled/renderable form.
   A parametric curve may render as a sampled polyline today, a mesh tomorrow,
   and collide through a sampled capsule chain today or an analytic distance
@@ -112,9 +119,9 @@ language.md.
   normal `List<T>` unless an expected `Dyn<List<T>>` context asks the
   coercer to lift the whole structure. The same source value can therefore
   flow through ordinary code as a structure and only be schema-checked/lifted
-  when a typed boundary such as `spawn` expects `Dyn<[Collider]>`.
+  when a typed boundary such as `spawn` expects `Dyn<[ColliderSpec]>`.
   Any typed dyn field follows this same handler, so projector-specific dyn
-  constructors should not be necessary. If `Dyn<Collider>` is expected, both
+  constructors should not be necessary. If `Dyn<ColliderSpec>` is expected, both
   `{:layer :hostile :shape [:circle {:radius 0.08}]}` and
   `{:layer :hostile :shape [:circle {:radius m"0.08 + 0.02*t"}]}` go
   through the same structural coercion; the first const-folds, the second
@@ -221,8 +228,12 @@ language.md.
       {:domain render-domain :stroke w}]]
     meta)
   ```
-  The lists above are syntax/coercion input. After lowering, the meaning is
-  `collider(figure(t), t) -> [Collider]` and
+  The lists above are syntax/coercion input:
+  ```text
+  Dyn<[ColliderSpec]> -> ColliderProjector -> [Collider]
+  Dyn<[RenderSpec]>   -> RenderProjector   -> [Render]
+  ```
+  After lowering, the meaning is `collider(figure(t), t) -> [Collider]` and
   `renderer(figure(t), t) -> [Render]`. A spec's domain is applied to the
   current figure. For a parametric curve it supplies `u` values/ranges; for a
   polyline it can be omitted (`:full`) or used as an index/subrange selector.
@@ -239,6 +250,8 @@ language.md.
     shape: Circle | CapsuleChain | ...
   }
   ```
+  That syntax does not directly construct a raw `Collider`; it describes how
+  to derive raw collider rows from the current figure.
   The third spawn argument is an array of render specs that composes into one
   render projector:
   ```text
@@ -246,6 +259,8 @@ language.md.
     shape: Point | Polyline | Mesh...
   }
   ```
+  Likewise, render specs describe projection. Raw render rows are the
+  per-frame output consumed by the host or an optional renderer backend.
   The prototype now stores user collider/render arguments as generic
   dyn-like metadata. Each tick realizes those structures to lists, then
   decodes the concrete list entries through the collider/render schemas.
