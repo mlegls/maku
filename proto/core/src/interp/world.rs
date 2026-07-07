@@ -12,6 +12,8 @@ pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Symbol(pub u32);
 
+pub type ColName = Symbol;
+
 #[derive(Clone, Debug, Default)]
 pub struct SymbolTable {
     by_name: HashMap<Rc<str>, Symbol>,
@@ -235,18 +237,18 @@ pub struct TriggerRule {
     /// Event name; also keys the latch column.
     pub name: Symbol,
     /// Precomputed latch column key.
-    pub latch: Rc<str>,
-    pub col: Rc<str>,
+    pub latch: ColName,
+    pub col: ColName,
     pub leq: f64,
     pub cull: bool,
 }
 
 impl TriggerRule {
-    pub fn new(name: Symbol, latch_name: &str, col: &str, leq: f64, cull: bool) -> TriggerRule {
+    pub fn new(name: Symbol, latch: ColName, col: ColName, leq: f64, cull: bool) -> TriggerRule {
         TriggerRule {
             name,
-            latch: format!("{}#fired", latch_name).into(),
-            col: col.into(),
+            latch,
+            col,
             leq,
             cull,
         }
@@ -367,7 +369,7 @@ pub struct ContactRule {
     pub a: Symbol,
     pub b: Symbol,
     /// Column name latched to 1.0 on the A entity after the callback fires.
-    pub once: Option<Rc<str>>,
+    pub once: Option<ColName>,
     /// (side, col, op, rhs): skip the pair when `side.col op rhs` holds.
     pub skip_if: Option<SkipIf>,
     pub callback: Val,
@@ -376,7 +378,7 @@ pub struct ContactRule {
 #[derive(Clone)]
 pub struct SkipIf {
     pub on_b: bool,          // :a or :b
-    pub col: Rc<str>,
+    pub col: ColName,
     pub gt: bool,            // :gt or :lt (missing col reads 0.0)
     pub rhs: SkipRhs,
 }
@@ -398,15 +400,15 @@ pub struct World {
     /// Global index one past the last event THIS timeline emitted.
     pub cursor: u64,
     pub rng: u64,
-    /// Source column name → dense numeric slot. Entities store only slot
-    /// values; names live once in the world layout.
-    pub col_slots: HashMap<Rc<str>, usize>,
-    pub col_names: Vec<Rc<str>>,
+    /// Interned source column symbol → dense numeric slot. Entities store
+    /// only slot values; names resolve through the world symbol table.
+    pub col_slots: HashMap<ColName, usize>,
+    pub col_names: Vec<ColName>,
     pub symbols: SymbolTable,
     /// Column-expose rules from spawn meta :expose {$channel :col}:
     /// channel := that entity's column while alive, else 0. Registered at
     /// spawn, persists past the entity (death reads as 0, so hp gates fire).
-    pub exposes: Vec<(Rc<str>, EntityRef, Rc<str>)>,
+    pub exposes: Vec<(Rc<str>, EntityRef, ColName)>,
     /// Card-defined contact rules, registered by defcontact. World data so
     /// hot-swaps and timeline restore carry the same collision semantics.
     pub contacts: Vec<ContactRule>,
@@ -612,32 +614,46 @@ impl World {
             .map(|_| handle.row)
     }
 
-    pub fn col_slot(&self, name: &str) -> Option<usize> {
-        self.col_slots.get(name).copied()
+    pub fn col_slot(&self, name: ColName) -> Option<usize> {
+        self.col_slots.get(&name).copied()
     }
 
-    pub fn intern_col(&mut self, name: &Rc<str>) -> usize {
-        if let Some(slot) = self.col_slots.get(name).copied() {
+    pub fn intern_col(&mut self, name: impl AsRef<str>) -> ColName {
+        self.symbols.intern(name)
+    }
+
+    pub fn intern_col_slot(&mut self, name: ColName) -> usize {
+        if let Some(slot) = self.col_slots.get(&name).copied() {
             return slot;
         }
         let slot = self.col_names.len();
-        self.col_names.push(name.clone());
-        self.col_slots.insert(name.clone(), slot);
+        self.col_names.push(name);
+        self.col_slots.insert(name, slot);
         slot
     }
 
-    pub fn col_get_at(&self, bullet_idx: usize, name: &str) -> Option<f64> {
+    pub fn col_get_sym_at(&self, bullet_idx: usize, name: ColName) -> Option<f64> {
         let slot = self.col_slot(name)?;
         self.entities.get(bullet_idx)?.cols.get(slot).copied().flatten()
     }
 
-    pub fn col_set_at(&mut self, bullet_idx: usize, name: &Rc<str>, v: f64) {
-        let slot = self.intern_col(name);
+    pub fn col_get_at(&self, bullet_idx: usize, name: &str) -> Option<f64> {
+        let sym = self.symbols.by_name.get(name).copied()?;
+        self.col_get_sym_at(bullet_idx, sym)
+    }
+
+    pub fn col_set_sym_at(&mut self, bullet_idx: usize, name: ColName, v: f64) {
+        let slot = self.intern_col_slot(name);
         let Some(b) = self.entities.get_mut(bullet_idx) else { return };
         if b.cols.len() <= slot {
             b.cols.resize(slot + 1, None);
         }
         b.cols[slot] = Some(v);
+    }
+
+    pub fn col_set_at(&mut self, bullet_idx: usize, name: &Rc<str>, v: f64) {
+        let sym = self.intern_col(name.as_ref());
+        self.col_set_sym_at(bullet_idx, sym, v);
     }
 
     pub fn cols_for_view(&self, b: &Entity) -> Vec<(Rc<str>, f64)> {
@@ -646,8 +662,8 @@ impl World {
             .enumerate()
             .filter_map(|(slot, v)| {
                 let v = (*v)?;
-                let name = self.col_names.get(slot)?;
-                Some((name.clone(), v))
+                let name = self.symbols.resolve(*self.col_names.get(slot)?)?;
+                Some((name.into(), v))
             })
             .collect()
     }

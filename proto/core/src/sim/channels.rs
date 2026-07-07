@@ -30,7 +30,7 @@ impl Sim {
             let v = self
                 .world
                 .find(*handle)
-                .and_then(|i| self.world.col_get_at(i, col))
+                .and_then(|i| self.world.col_get_sym_at(i, *col))
                 .unwrap_or(0.0);
             ch.insert(chan.to_string(), Val::Num(v));
         }

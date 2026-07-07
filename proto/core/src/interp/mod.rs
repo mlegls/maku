@@ -278,7 +278,7 @@ pub enum ActionV {
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
     Remat { target: EntityRef, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
-    SetCol { target: EntityRef, col: Rc<str>, val: f64 },
+    SetCol { target: EntityRef, col: ColName, val: f64 },
     SetStyle { target: EntityRef, style: Val },
     Cull { target: EntityRef },
     /// (export cell): publish a pattern cell as a read-only channel of the
@@ -352,11 +352,11 @@ pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
     pub team: Option<Rc<str>>,
-    pub cols: Vec<(Rc<str>, f64)>,
+    pub cols: Vec<(ColName, f64)>,
     pub triggers: Rc<[TriggerRule]>,
     pub collider_projector: ColliderProjector,
     pub render_projector: RenderProjector,
-    pub expose: Rc<[(Rc<str>, Rc<str>)]>,
+    pub expose: Rc<[(ColName, Rc<str>)]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -718,7 +718,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let val = evaluate(&items[3], env, ctx, world)?.num()?;
                 return Ok(Val::Action(Rc::new(ActionV::SetCol {
                     target: id,
-                    col: col.as_ref().into(),
+                    col: world.intern_col(col.as_ref()),
                     val,
                 })));
             }
@@ -1700,13 +1700,13 @@ fn sf_defcontact(
     let Val::Map(kvs) = opts else {
         return Err("defcontact: opts must be a map".into());
     };
-    let mut once: Option<Rc<str>> = None;
+    let mut once: Option<ColName> = None;
     let mut skip_if: Option<SkipIf> = None;
     for (k, v) in kvs.iter() {
         let Val::Kw(key) = k else { return Err("defcontact: opts keys must be keywords".into()) };
         match &**key {
             "once" => match v {
-                Val::Kw(c) => once = Some(c.clone()),
+                Val::Kw(c) => once = Some(world.intern_col(c.as_ref())),
                 _ => return Err("defcontact: :once expects a keyword column".into()),
             },
             "skip-if" => {
@@ -1722,7 +1722,7 @@ fn sf_defcontact(
                     _ => return Err("defcontact: :skip-if side must be :a or :b".into()),
                 };
                 let col = match &xs[1] {
-                    Val::Kw(s) => s.clone(),
+                    Val::Kw(s) => world.intern_col(s.as_ref()),
                     _ => return Err("defcontact: :skip-if column must be keyword".into()),
                 };
                 let gt = match &xs[2] {
@@ -1947,7 +1947,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let scanned = is_scanned_figure(&dyn_figure);
                 let mut col_slots = Vec::new();
                 for (name, val) in &spec.cols {
-                    let slot = world.intern_col(name);
+                    let slot = world.intern_col_slot(*name);
                     if col_slots.len() <= slot {
                         col_slots.resize(slot + 1, None);
                     }
@@ -1976,7 +1976,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     // same-tick availability: the channel exists the moment
                     // the entity does (gates may read it this very tick)
                     let v = world
-                        .col_get_at(row, col)
+                        .col_get_sym_at(row, *col)
                         .unwrap_or(0.0);
                     let mut m = (*ctx.sig.channels).clone();
                     m.insert(chan.to_string(), Val::Num(v));
@@ -2044,7 +2044,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::SetCol { target, col, val } => {
             if let Some(i) = world.find(*target) {
-                world.col_set_at(i, col, *val);
+                world.col_set_sym_at(i, *col, *val);
             }
             Ok(Val::Nothing)
         }

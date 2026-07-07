@@ -169,13 +169,13 @@ impl Sim {
                     continue;
                 }
                 if let Some(col) = &rule.once {
-                    if self.world.col_get_at(i, col).is_some() {
+                    if self.world.col_get_sym_at(i, *col).is_some() {
                         continue;
                     }
                 }
                 if let Some(skip) = &rule.skip_if {
                     let side = if skip.on_b { j } else { i };
-                    let lhs = self.world.col_get_at(side, &skip.col).unwrap_or(0.0);
+                    let lhs = self.world.col_get_sym_at(side, skip.col).unwrap_or(0.0);
                     let rhs = match &skip.rhs {
                         SkipRhs::Tick => tick as f64,
                         SkipRhs::Num(n) => *n,
@@ -203,7 +203,7 @@ impl Sim {
                         .is_some_and(|b| b.generation == a_ref.generation)
                     {
                         let bi = a_ref.row;
-                        self.world.col_set_at(bi, col, 1.0);
+                        self.world.col_set_sym_at(bi, *col, 1.0);
                     }
                 }
             }
@@ -229,14 +229,14 @@ impl Sim {
                     break;
                 }
                 let rule = self.world.entities[i].triggers[r].clone();
-                let armed = self.world.col_get_at(i, &rule.latch).is_none();
-                let holds = self.world.col_get_at(i, &rule.col).map(|v| v <= rule.leq).unwrap_or(false);
+                let armed = self.world.col_get_sym_at(i, rule.latch).is_none();
+                let holds = self.world.col_get_sym_at(i, rule.col).map(|v| v <= rule.leq).unwrap_or(false);
                 if !(armed && holds) {
                     continue;
                 }
-                let (latch, name, cull) = (rule.latch.clone(), rule.name, rule.cull);
+                let (latch, name, cull) = (rule.latch, rule.name, rule.cull);
                 let at = self.world.entities[i].prev_pos;
-                self.world.col_set_at(i, &latch, 1.0);
+                self.world.col_set_sym_at(i, latch, 1.0);
                 if cull {
                     self.world.cull_at(i);
                 }

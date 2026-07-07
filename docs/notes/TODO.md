@@ -574,6 +574,11 @@ language.md.
       access supports dotted map paths, and query maps accept
       `:render.style.family` / `:render.style.color` / `:render.style.variant`
       while flat style keys remain compatibility aliases.
+  2v.12. ~~Intern entity column names internally.~~ Done; `TriggerRule`,
+      contact `once` / `skip-if`, `set-col`, spawn column specs, and expose
+      rules now store `ColName` symbols. `World` column layout maps symbols
+      to dense slots, with string helpers retained at source/host/test
+      boundaries.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

@@ -191,7 +191,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     })
                 };
                 let col = match get("col") {
-                    Some(Val::Kw(k)) => k.to_string(),
+                    Some(Val::Kw(k)) => k,
                     _ => return Err("triggers: missing :col".into()),
                 };
                 let leq = match get("leq") {
@@ -204,7 +204,9 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 };
                 let cull = matches!(get("cull"), Some(Val::Num(n)) if n != 0.0);
                 let event_sym = world.symbols.intern(event.as_ref());
-                rules.push(TriggerRule::new(event_sym, event.as_ref(), &col, leq, cull));
+                let latch = world.intern_col(format!("{}#fired", event.as_ref()));
+                let col = world.intern_col(col.as_ref());
+                rules.push(TriggerRule::new(event_sym, latch, col, leq, cull));
             }
             rules.into()
         }
@@ -234,7 +236,11 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
     // the keys of (with {$rank 0.5} …) — not reads).
-    let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(&metas);
+    let expose: Rc<[(ColName, Rc<str>)]> = parse_expose(&metas)
+        .iter()
+        .map(|(col, chan)| (world.intern_col(col.as_ref()), chan.clone()))
+        .collect::<Vec<_>>()
+        .into();
     // Collider/render sets are explicit spawn arguments. No genre defaults —
     // an entity with no colliders is inert to the contact pass (scenery);
     // what a "bullet" or "enemy" carries is the library's business
@@ -248,11 +254,11 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         explicit_renderers.push(empty_spec_list());
     }
     // per-element column resolution: same axis rules as styles
-    let cols: Vec<Vec<(Rc<str>, f64)>> = elems
+    let cols: Vec<Vec<(ColName, f64)>> = elems
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            cols.iter().map(|(k, v)| (k.clone(), axis_num(v, e, i))).collect()
+            cols.iter().map(|(k, v)| (world.intern_col(k.as_ref()), axis_num(v, e, i))).collect()
         })
         .collect();
     let shared_collider_specs: Rc<[ColliderSpecList]> = explicit_colliders.into();
