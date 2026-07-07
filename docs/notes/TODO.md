@@ -28,7 +28,7 @@ work.
   spawn-site/program/archetype storage where possible.
 - Remove pointer-keyed compatibility fallback from legacy scratch motion
   evaluation. Live entity stepping now requires stable lowered node ids, while
-  old direct evaluation and schema-remap bridges still accept pointer keys.
+  old direct evaluation still accepts pointer keys.
 - Lower lazy `stages` to a closed set of dyns at load time. Until then, it is
   isolated as an interpreted compatibility path: only lazy-stage dyn writes may
   extend dense schemas at runtime when a lazy segment is first constructed.

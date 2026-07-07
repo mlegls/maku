@@ -422,24 +422,6 @@ impl TraceCache {
     }
 }
 
-fn remap_motion_state_key(schema: &MotionStateSchema, key: MotionStateKey) -> MotionStateKey {
-    match key {
-        MotionStateKey::NodePtr(ptr) => schema
-            .node_ids
-            .get(&ptr)
-            .copied()
-            .map(MotionStateKey::Node)
-            .unwrap_or(key),
-        MotionStateKey::LazyStagePtr { base } => schema
-            .node_ids
-            .get(&base)
-            .copied()
-            .map(|base| MotionStateKey::LazyStage { base })
-            .unwrap_or(key),
-        other => other,
-    }
-}
-
 impl EntityStore {
     pub fn with_capacity(max: usize) -> EntityStore {
         EntityStore {
@@ -562,7 +544,7 @@ impl EntityStore {
         key: MotionStateKey,
         dyn_pose: &DynPose,
     ) -> Result<Vec<(usize, MotionNodeId)>, String> {
-        if !matches!(key, MotionStateKey::LazyStage { .. } | MotionStateKey::LazyStagePtr { .. }) {
+        if !matches!(key, MotionStateKey::LazyStage { .. }) {
             return Err(format!(
                 "motion schema extension is only supported for lazy stages, got {key:?}"
             ));
@@ -599,7 +581,6 @@ impl EntityStore {
 
     pub fn state_n2(&self, row: usize, key: MotionStateKey) -> Option<[f64; 2]> {
         let schema = self.motion_schema(row)?;
-        let key = remap_motion_state_key(schema, key);
         let slot = schema.n2_slots.get(&key)?.0 as usize;
         self.state_n2.get(slot)?.get(row).copied()
     }
@@ -618,7 +599,7 @@ impl EntityStore {
     pub fn set_state_n2(&mut self, row: usize, key: MotionStateKey, value: [f64; 2]) -> bool {
         let Some(slot) = self
             .motion_schema(row)
-            .and_then(|schema| schema.n2_slots.get(&remap_motion_state_key(schema, key)).copied())
+            .and_then(|schema| schema.n2_slots.get(&key).copied())
             .map(|slot| slot.0 as usize)
         else {
             return false;
@@ -631,7 +612,6 @@ impl EntityStore {
 
     pub fn state_dyn(&self, row: usize, key: MotionStateKey) -> Option<DynPose> {
         let schema = self.motion_schema(row)?;
-        let key = remap_motion_state_key(schema, key);
         let slot = schema.dyn_slots.get(&key)?.0 as usize;
         self.state_dyn.get(slot)?.get(row)?.clone()
     }
@@ -650,7 +630,7 @@ impl EntityStore {
     pub fn set_state_dyn(&mut self, row: usize, key: MotionStateKey, value: DynPose) -> bool {
         let Some(slot) = self
             .motion_schema(row)
-            .and_then(|schema| schema.dyn_slots.get(&remap_motion_state_key(schema, key)).copied())
+            .and_then(|schema| schema.dyn_slots.get(&key).copied())
             .map(|slot| slot.0 as usize)
         else {
             return false;
@@ -1499,6 +1479,12 @@ mod tests {
 
         let err = store
             .extend_motion_schema_for_lazy_stage(0, MotionStateKey::Node(MotionNodeId(0)), &dyn_pose)
+            .unwrap_err();
+
+        assert!(err.contains("only supported for lazy stages"));
+
+        let err = store
+            .extend_motion_schema_for_lazy_stage(0, MotionStateKey::LazyStagePtr { base: 0 }, &dyn_pose)
             .unwrap_err();
 
         assert!(err.contains("only supported for lazy stages"));
