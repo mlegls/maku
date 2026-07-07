@@ -1164,7 +1164,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "entity-pos" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
-                return entity_pos_value(target, world, &ctx.sig);
+                return entity_field_value(target, "pos", world, &ctx.sig);
             }
             "entity-col" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
@@ -1351,22 +1351,17 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
         Val::Kw(k) => {
             // keyword application: map access, e.g. (:vel exit); on
-            // Pose, :x/:y/:th read components; on an entity Handle,
-            // fields of the live entity view (b.pos.y just works in
-            // callbacks and :where alike)
+            // Pose, :x/:y/:th read components; on entity handles/sets,
+            // the same keyword reads a flat entity field.
             let arg = evaluate(&items[1], env, ctx, world)?;
-            if let Val::Handle(id) = &arg {
-                if let Some(i) = world.entities.iter().position(|b| b.id == *id) {
-                    let view = entity_view(i, world, &ctx.sig.clone())?;
-                    return Ok(map_get(&view, &k).unwrap_or(Val::Nothing));
-                }
-                return Ok(Val::Nothing);
-            }
             match (&*k, &arg) {
                 ("x", Val::Pose(p)) => return Ok(Val::Num(p.x)),
                 ("y", Val::Pose(p)) => return Ok(Val::Num(p.y)),
                 ("th", Val::Pose(p)) => return Ok(Val::Num(p.angle_or(0.0))),
                 _ => {}
+            }
+            if matches!(arg, Val::Handle(_) | Val::EntitySet(_)) {
+                return entity_field_value(arg, &k, world, &ctx.sig);
             }
             Ok(map_get(&arg, &k).unwrap_or(Val::Nothing))
         }
@@ -1515,33 +1510,86 @@ fn entity_index_value(v: Val, world: &World) -> Result<Vec<usize>, String> {
     }
 }
 
-fn entity_pos_value(v: Val, world: &World, sig: &SigEnv) -> Result<Val, String> {
-    let idxs = entity_index_value(v, world)?;
-    let mut poses = Vec::with_capacity(idxs.len());
-    for i in idxs {
-        let b = &world.entities[i];
-        let tau = (world.tick - b.birth) as f64 / TICK_RATE;
-        let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
-        poses.push(Val::Pose(Pose::point(p.x, p.y)));
-    }
-    if poses.len() == 1 {
-        Ok(poses.remove(0))
+fn singleton_or_array(mut vals: Vec<Val>) -> Val {
+    if vals.len() == 1 {
+        vals.remove(0)
     } else {
-        Ok(Val::arr(poses))
+        Val::arr(vals)
+    }
+}
+
+fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
+    match field {
+        "pos" => {
+            let b = &world.entities[i];
+            let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+            let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
+            Ok(Val::Pose(Pose::point(p.x, p.y)))
+        }
+        "vel" => {
+            let b = &world.entities[i];
+            let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+            let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
+            let vel = match b.prev_pos {
+                Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
+                None => (0.0, 0.0),
+            };
+            Ok(Val::Pose(Pose::point(vel.0, vel.1)))
+        }
+        "t" => {
+            let b = &world.entities[i];
+            Ok(Val::Num((world.tick - b.birth) as f64 / TICK_RATE))
+        }
+        "tick" => Ok(Val::Num(world.tick as f64)),
+        "kind" => Ok(Val::Kw(match world.entities[i].dyn_figure.repr() {
+            crate::interp::motion::FigureDynRepr::Pose(_) => "point",
+            crate::interp::motion::FigureDynRepr::Curve { .. } => "curve",
+        }
+        .into())),
+        "team" => Ok(world.entities[i]
+            .team
+            .as_ref()
+            .map(|t| Val::Kw(t.clone()))
+            .unwrap_or(Val::Nothing)),
+        "family" => Ok(Val::Kw(world.entities[i].style.family.as_str().into())),
+        "color" => Ok(Val::Kw(world.entities[i].style.color.as_str().into())),
+        "variant" => Ok(Val::Kw(world.entities[i].style.variant.as_str().into())),
+        "damage" => Ok(world.entities[i].damage.clone()),
+        col => Ok(world
+            .col_get_at(i, col)
+            .map(Val::Num)
+            .unwrap_or(Val::Nothing)),
     }
 }
 
 fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
     let idxs = entity_index_value(v, world)?;
-    let mut vals = idxs
-        .into_iter()
-        .map(|i| Val::Num(world.col_get_at(i, col).unwrap_or(0.0)))
-        .collect::<Vec<_>>();
-    if vals.len() == 1 {
-        Ok(vals.remove(0))
-    } else {
-        Ok(Val::arr(vals))
+    let mut vals = Vec::with_capacity(idxs.len());
+    for i in idxs {
+        let b = &world.entities[i];
+        if b.alive {
+            vals.push(Val::Num(world.col_get_at(i, col).unwrap_or(0.0)));
+        }
     }
+    Ok(singleton_or_array(vals))
+}
+
+fn entity_field_value(v: Val, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
+    if let Val::Handle(id) = v {
+        return match world.entities.iter().position(|b| b.id == id) {
+            Some(i) => entity_field_at(i, field, world, sig),
+            None => Ok(Val::Nothing),
+        };
+    }
+    let idxs = entity_index_value(v, world)?;
+    let mut vals = Vec::with_capacity(idxs.len());
+    for i in idxs {
+        let b = &world.entities[i];
+        if b.alive {
+            vals.push(entity_field_at(i, field, world, sig)?);
+        }
+    }
+    Ok(singleton_or_array(vals))
 }
 
 fn sf_defcontact(
@@ -2739,6 +2787,8 @@ mod tests {
         assert_eq!(ev("(+ 1 2 3)").num().unwrap(), 6.0);
         assert_eq!(ev("(- 10 1 2)").num().unwrap(), 7.0);
         assert_eq!(ev("(- 4)").num().unwrap(), -4.0);
+        assert_eq!(ev("(= :point :curve)").num().unwrap(), 0.0);
+        assert_eq!(ev("(= :point :point)").num().unwrap(), 1.0);
     }
 
     #[test]

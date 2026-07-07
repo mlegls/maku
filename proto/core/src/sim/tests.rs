@@ -1978,10 +1978,10 @@ fn defchannel_derives_per_tick() {
 }
 
 #[test]
-fn entity_sets_expose_index_vector_accessors() {
+fn entity_sets_broadcast_keyword_accessors() {
     const CARD: &str = r#"
-(defchannel $enemy-hp (entity-col (entities-where {:team :enemy}) :hp))
-(defchannel $enemy-pos (entity-pos (entities-where {:team :enemy :color :red})))
+(defchannel $enemy-hp-view (:hp (entities-where {:team :enemy})))
+(defchannel $enemy-pos-view (:pos (entities-where {:team :enemy :color :red})))
 (defpattern p []
   (seq
     (spawn (pose c[2 3]) {:team :enemy :hp 4 :style {:color :red}})
@@ -1992,12 +1992,13 @@ fn entity_sets_expose_index_vector_accessors() {
     for _ in 0..2 {
         sim.step().unwrap();
     }
-    let Some(Val::Arr(hp)) = sim.ctx.sig.channel("enemy-hp") else {
+    // Entity sets are ephemeral row-index views, not stable per-entity tables.
+    let Some(Val::Arr(hp)) = sim.ctx.sig.channel("enemy-hp-view") else {
         panic!("expected hp array")
     };
     assert_eq!(hp.len(), 2);
     assert!(matches!((&hp[0], &hp[1]), (Val::Num(a), Val::Num(b)) if *a == 4.0 && *b == 6.0));
-    let Some(Val::Pose(p)) = sim.ctx.sig.channel("enemy-pos") else {
+    let Some(Val::Pose(p)) = sim.ctx.sig.channel("enemy-pos-view") else {
         panic!("expected single red enemy position")
     };
     assert!((p.x - 2.0).abs() < 1e-9 && (p.y - 3.0).abs() < 1e-9);

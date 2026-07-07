@@ -128,24 +128,6 @@ language.md.
   truthiness for keywords, strings, lists, maps, poses, or geometry. Reader
   `true`/`false` may remain temporary compatibility sugar for `1`/`0`.
   Predicate schemas should be numeric subcontracts such as `Mask`, `Flag`,
-
-  Target entity/query model:
-  ```text
-  Entity indices are ephemeral row indices into the current world arrays.
-  Handles are stable cross-time references.
-  Query = mask/filter over entity rows -> EntitySet(Vec<usize>)
-  Manipulate = map/action over an EntitySet
-  Aggregations = ordinary array/library code over EntitySet accessors
-  ```
-  Core should expose `entities-where` and row accessors such as
-  `entity-pos` / `entity-col`; helpers like `count-entities`,
-  `sum-entities`, and `nearest-entity` are compatibility/library functions
-  over those primitives. Long-term, style/team/damage/kind should drift
-  toward interned columns or meta columns so filters are masked comparisons
-  over SoA arrays. Contact resolution should likewise materialize collider
-  rows, bucket them by layer, and iterate layer-index vectors rather than
-  nested entity scans. `entity_view` maps remain a debug/callback bridge, not
-  the hot data model.
   `Count`, and `Index`; comparisons and predicates should return numeric
   `0`/`1`, and conditionals/guards should consume masks. There are no
   runtime `and`/`or` logical folds; use arithmetic folds such as `*`, `+`,
@@ -154,6 +136,42 @@ language.md.
   lets square waves and array-mask expressions flow naturally into
   `Dyn<Predicate>` contexts without explicit conversion while preserving
   schema vocabulary.
+
+  Target entity/query model:
+  ```text
+  Entity indices are ephemeral row indices into the current world arrays.
+  Handles are stable cross-time references.
+  Query = predicate/filter over entity rows -> EntitySet(Vec<usize>)
+  Manipulate = map/action over an EntitySet
+  Aggregations = ordinary array/library code over EntitySet accessors
+  ```
+  Core should expose `entities-where` over predicate functions, e.g.
+  `(entities-where (matches :team :enemy))` where `matches` expands to a row
+  predicate like `(fn [x] (= x.team :enemy))`. Flat row access is keyword
+  application/dot syntax, such as `(:pos entities)` and `b.pos`; helpers like
+  `count-entities`, `sum-entities`, and `nearest-entity` are
+  compatibility/library functions over those primitives. Language-level
+  entity fields are unified and flat. Storage may distinguish builtin
+  position/state from user fields, but there should not be separate
+  arbitrary `cols` and `meta` concepts in source. Fields are finite but
+  large: load/init determines an interned field layout with bounded dense
+  slots suitable for hot queries and manipulation. Long-term,
+  style/team/damage/kind should drift into that field layout so filters are
+  masked comparisons over SoA arrays. Contact resolution should likewise
+  materialize collider rows, bucket them by layer, and iterate layer-index
+  vectors rather than nested entity scans. `entity_view` maps remain a
+  debug/callback bridge, not the hot data model.
+
+  Array/adverb model:
+  K's adverb family is the north star for control-flow-like array code, but
+  the builtin set is intentionally profiling-driven. Initial core candidates
+  are `map`/each, `filter`, `fold`, `scan`, `each-prior`, `window`,
+  `sort-by`, `best-by`, `count`, and the existing sequence basics
+  (`nth`/`take`/`drop`/`concat`). `match` remains the OCaml-like basis for
+  unstructured list/form manipulation and macro code. More specialized
+  adverbs such as binsearch, case, join/split, encode/decode, converge, and
+  while-style adverbs can start in the prelude/library unless profiling
+  shows they need builtin lowering.
 
   Target number model (2026-07): the mask decision extends to
   int-vs-float. There is ONE language-level `Number` type, APL-style;
@@ -470,7 +488,13 @@ language.md.
       owns the per-element resolution.
   2v.2. ~~Introduce entity index-vector queries.~~ Done as a bridge:
       `entities-where` returns an ephemeral `EntitySet(Vec<usize>)`, and
-      `entity-pos` / `entity-col` broadcast over it. Existing
+      keyword application/dot syntax broadcasts flat field access over it.
+      Entity sets are per-tick row-index views, not stable identity-keyed
+      vectors; stable per-entity control should keep handles or sort/key the
+      view explicitly. The current query-map form is compatibility syntax on
+      the way to predicate queries such as `(entities-where (matches :team
+      :enemy))`.
+      Existing `entity-pos` / `entity-col` compatibility aliases,
       `count-entities`, `sum-entities`, `nearest-entity`, and `manipulate`
       now use index-vector query resolution internally while preserving
       compatibility behavior.

@@ -135,6 +135,34 @@ fn map_key_matches(key: &Val, candidate: &Val) -> bool {
     }
 }
 
+fn val_eq(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
+        (Val::Kw(a), Val::Kw(b)) => a == b,
+        (Val::Nothing, Val::Nothing) => true,
+        (Val::Pose(a), Val::Pose(b)) => {
+            (a.x - b.x).abs() < 1e-9
+                && (a.y - b.y).abs() < 1e-9
+                && match (a.theta, b.theta) {
+                    (Some(a), Some(b)) => (a - b).abs() < 1e-9,
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        (Val::Handle(a), Val::Handle(b)) => a == b,
+        (Val::Arr(a), Val::Arr(b)) => {
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| val_eq(a, b))
+        }
+        (Val::Map(a), Val::Map(b)) => {
+            a.len() == b.len()
+                && a.iter().zip(b.iter()).all(|((ak, av), (bk, bv))| {
+                    val_eq(ak, bk) && val_eq(av, bv)
+                })
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn ease(name: &str, r: f64) -> f64 {
     use std::f64::consts::FRAC_PI_2;
     let r = r.clamp(0.0, 1.0);
@@ -195,11 +223,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "pow" => Ok(Val::Num(n(0)?.powf(n(1)?))),
         "inc" => Ok(Val::Num(n(0)? + 1.0)),
         "dec" => Ok(Val::Num(n(0)? - 1.0)),
-        "=" => match (&args[0], &args[1]) {
-            (Val::Kw(a), Val::Kw(b)) => Ok(mask(a == b)),
-            (Val::Map(a), Val::Map(b)) => Ok(mask(format!("{:?}", a) == format!("{:?}", b))),
-            _ => Ok(mask((n(0)? - n(1)?).abs() < 1e-9)),
-        },
+        "=" => Ok(mask(val_eq(&args[0], &args[1]))),
         "<" => Ok(mask(n(0)? < n(1)?)),
         ">" => Ok(mask(n(0)? > n(1)?)),
         "<=" => Ok(mask(n(0)? <= n(1)?)),
