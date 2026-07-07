@@ -325,6 +325,23 @@ language.md.
     preallocated and reused; dyn evaluation uses a fixed scratch stack
     with dyns compiled to a flat program at spawn (the DynLike work
     already points there).
+  * Motion state uses the same "finite schema at load, dense row storage at
+    runtime" rule as entity fields. The current interpreter stores scanned
+    state in `MotionState = HashMap<usize, Cell>`, keyed by `DynNode` pointer
+    identities plus `site_key(base, counter)` for expression-local scan sites
+    such as `slew`/`smooth`; this can allocate during tick execution. Target
+    lowering discovers stateful sites in each retained dyn program and assigns
+    dense slots:
+    ```text
+    state_n2 : StateN2SlotId x entity_row -> [f64; 2]
+    state_dyn: StateDynSlotId x entity_row -> DynPose   // only while lazy stages remain interpreted
+    ```
+    `Vel`, `RotExpr`, `Path`, `Stages` bookkeeping, `slew`, and `smooth`
+    become slot reads/writes. Lazy `Stages` segment construction is the
+    outlier: either lower it to a closed set of segment dyns at load time or
+    isolate it as an interpreted/allocating compatibility path. A compiled
+    form should not hash by node pointer or grow per-entity maps in steady
+    state.
 - Render/meta boundary target (2026-07): keep the render projector output and
   entity meta separate even if both use symbol-keyed records as their value
   format. They differ on every axis that matters: render rows are typed
@@ -634,6 +651,10 @@ language.md.
       previous collision-pass poses now live in double-buffered
       `EntityStore` columns, and velocity/host/entity views read through
       sampled-pose helpers.
+  2v.23. ~~Specify dense motion-state storage before moving `MotionState`.~~
+      Done; the zero-allocation notes now identify current `HashMap` state
+      allocation sites and target dense `state_n2` / compatibility
+      `state_dyn` slot tables for scanned dyn programs.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
