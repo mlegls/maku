@@ -703,8 +703,13 @@ language.md.
   2v.34. ~~Make dense motion readers an explicit eval context.~~ Done as a
       bridge; `MotionEvalCtx` now carries scratch state, signal environment,
       and dense readers through pose evaluation. Live entity reads use the
-      context-native helpers, while legacy `*_with_dense` and state/sig
-      wrappers remain as compatibility shims.
+      context-native helpers; state/sig pose wrappers remain only as legacy
+      shims.
+  2v.35. ~~Make dense motion stepping an explicit step context.~~ Done as a
+      bridge; live sim stepping now calls `step_dyn_figure_in` with
+      `MotionStepCtx` carrying scratch state, signal environment, dense
+      readers, legacy-mirroring policy, and dense write sinks. The remaining
+      arg-bundle step helper is private implementation detail.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

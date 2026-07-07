@@ -287,17 +287,17 @@ impl Sim {
                 let mut state = MotionState::new();
                 let mut n2_writes = Vec::new();
                 let mut dyn_writes = Vec::new();
-                step_dyn_figure_with_dense(
-                    &dyn_figure,
-                    tau,
-                    dt,
-                    &mut state,
-                    &sig,
-                    readers,
-                    false,
-                    &mut |key, value| n2_writes.push((key, value)),
-                    &mut |key, value| dyn_writes.push((key, value)),
-                )?;
+                let mut write_n2 = |key, value| n2_writes.push((key, value));
+                let mut write_dyn = |key, value| dyn_writes.push((key, value));
+                let mut motion = MotionStepCtx {
+                    state: &mut state,
+                    sig: &sig,
+                    readers: &readers,
+                    mirror_legacy: false,
+                    write_n2: &mut write_n2,
+                    write_dyn: &mut write_dyn,
+                };
+                step_dyn_figure_in(&dyn_figure, tau, dt, &mut motion)?;
                 for (_, value) in &dyn_writes {
                     self.world.entities.extend_motion_schema_with_dyn(i, value);
                 }

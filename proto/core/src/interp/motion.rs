@@ -150,6 +150,15 @@ impl<'a> MotionEvalCtx<'a> {
     }
 }
 
+pub struct MotionStepCtx<'a> {
+    pub state: &'a mut MotionState,
+    pub sig: &'a SigEnv,
+    pub readers: &'a MotionReaders,
+    pub mirror_legacy: bool,
+    pub write_n2: &'a mut dyn FnMut(MotionStateKey, [f64; 2]),
+    pub write_dyn: &'a mut dyn FnMut(MotionStateKey, DynPose),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanStateShape {
     N2,
@@ -650,10 +659,10 @@ pub(crate) fn eval_pt(
 
 /// Read-only scan context over a clone of the bullet's state.
 pub(crate) fn read_scan(state: &MotionState, base: usize) -> ScanShared {
-    read_scan_with_dense(state, base, None)
+    read_scan_in(state, base, None)
 }
 
-pub(crate) fn read_scan_with_dense(
+pub(crate) fn read_scan_in(
     state: &MotionState,
     base: usize,
     readers: Option<MotionReaders>,
@@ -688,17 +697,6 @@ pub fn dyn_figure_pose(
 ) -> Result<Pose, String> {
     let readers = MotionReaders::legacy();
     let ctx = MotionEvalCtx::new(state, sig, &readers);
-    dyn_figure_pose_in(d, tau, ctx)
-}
-
-pub fn dyn_figure_pose_with_dense(
-    d: &DynFigure,
-    tau: f64,
-    state: &MotionState,
-    sig: &SigEnv,
-    readers: &MotionReaders,
-) -> Result<Pose, String> {
-    let ctx = MotionEvalCtx::new(state, sig, readers);
     dyn_figure_pose_in(d, tau, ctx)
 }
 
@@ -741,18 +739,6 @@ pub fn dyn_node_pose_u(
     dyn_node_pose_u_in(d, tau, u, ctx)
 }
 
-pub fn dyn_node_pose_u_with_dense(
-    d: &DynNode,
-    tau: f64,
-    u: f64,
-    state: &MotionState,
-    sig: &SigEnv,
-    readers: &MotionReaders,
-) -> Result<Pose, String> {
-    let ctx = MotionEvalCtx::new(state, sig, readers);
-    dyn_node_pose_u_in(d, tau, u, ctx)
-}
-
 pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
     let state = ctx.state;
     let sig = ctx.sig;
@@ -774,7 +760,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 sig,
                 tau,
                 u,
-                Some(read_scan_with_dense(state, key, Some(readers.clone()))),
+                Some(read_scan_in(state, key, Some(readers.clone()))),
                 None,
             )?;
             let eps = 1.0 / TICK_RATE;
@@ -786,7 +772,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 sig,
                 tau + eps,
                 u,
-                Some(read_scan_with_dense(state, key, Some(readers.clone()))),
+                Some(read_scan_in(state, key, Some(readers.clone()))),
                 None,
             )?;
             Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
@@ -807,7 +793,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 sig,
                 tau,
                 u,
-                Some(read_scan_with_dense(state, key, Some(readers.clone()))),
+                Some(read_scan_in(state, key, Some(readers.clone()))),
                 Some((x, y)),
             )?;
             Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()))
@@ -828,7 +814,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 sig,
                 tau,
                 u,
-                Some(read_scan_with_dense(state, key, Some(readers.clone()))),
+                Some(read_scan_in(state, key, Some(readers.clone()))),
                 Some((0.0, 0.0)),
             )?
             .num()?;
@@ -842,7 +828,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                     _ => None,
                 })
                 .unwrap_or([0.0, 0.0]);
-            let cur = stage_dyn_with_dense(segs, idx as usize, state, key, readers)?;
+            let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
             dyn_node_pose_u_in(cur.node(), tau - epoch, u, ctx)
         }
         DynNode::Translate { dx, dy, child } => {
@@ -857,7 +843,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 sig,
                 tau,
                 0.0,
-                Some(read_scan_with_dense(state, key, Some(readers.clone()))),
+                Some(read_scan_in(state, key, Some(readers.clone()))),
                 None,
             )?
             .num()?;
@@ -872,7 +858,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
 }
 
 /// The dyn for the current segment of a Stages node.
-pub(crate) fn stage_dyn_with_dense(
+pub(crate) fn stage_dyn_in(
     segs: &[StageSeg],
     idx: usize,
     state: &MotionState,
@@ -900,10 +886,39 @@ pub fn step_motion(
     sig: &SigEnv,
 ) -> Result<(), String> {
     let readers = MotionReaders::legacy();
-    step_motion_with_dense(d, tau, dt, state, sig, &readers, true, &mut |_, _| {}, &mut |_, _| {})
+    let mut ignore_n2 = |_, _| {};
+    let mut ignore_dyn = |_, _| {};
+    let mut ctx = MotionStepCtx {
+        state,
+        sig,
+        readers: &readers,
+        mirror_legacy: true,
+        write_n2: &mut ignore_n2,
+        write_dyn: &mut ignore_dyn,
+    };
+    step_motion_in(d, tau, dt, &mut ctx)
 }
 
-fn step_motion_with_dense(
+pub fn step_motion_in(
+    d: &DynNode,
+    tau: f64,
+    dt: f64,
+    ctx: &mut MotionStepCtx<'_>,
+) -> Result<(), String> {
+    step_motion_args(
+        d,
+        tau,
+        dt,
+        ctx.state,
+        ctx.sig,
+        ctx.readers,
+        ctx.mirror_legacy,
+        ctx.write_n2,
+        ctx.write_dyn,
+    )
+}
+
+fn step_motion_args(
     d: &DynNode,
     tau: f64,
     dt: f64,
@@ -952,7 +967,7 @@ fn step_motion_with_dense(
             for (key, value) in writes {
                 write_n2(key, value);
             }
-            step_motion_with_dense(curve, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
+            step_motion_args(curve, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
@@ -968,7 +983,7 @@ fn step_motion_with_dense(
             let done = match &seg.term {
                 StageTerm::Dur(dsec) => local >= *dsec,
                 StageTerm::Until(pred, penv) => {
-                    let scan = read_scan_with_dense(state, key, Some(readers.clone()));
+                    let scan = read_scan_in(state, key, Some(readers.clone()));
                     truthy(&eval_sig(pred, penv, sig, local, 0.0, Some(scan), None)?)
                 }
                 StageTerm::Forever => false,
@@ -976,7 +991,7 @@ fn step_motion_with_dense(
             let mut local_lazy_key = None;
             if done && (idx as usize) + 1 < segs.len() {
                 // exit snapshot from the finishing segment
-                let cur = stage_dyn_with_dense(segs, idx as usize, state, key, readers)?;
+                let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
                 let ctx = MotionEvalCtx::new(state, sig, readers);
                 let p1 = dyn_node_pose_u_in(cur.node(), local, 0.0, ctx)?;
                 let p0 = dyn_node_pose_u_in(cur.node(), (local - dt).max(0.0), 0.0, ctx)?;
@@ -1012,9 +1027,9 @@ fn step_motion_with_dense(
                 state.insert(key, Cell::N(next));
             }
             write_n2(MotionStateKey::NodePtr(key), next);
-            let cur = stage_dyn_with_dense(segs, idx as usize, state, key, readers)?;
+            let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
             // step the inner dyn on the segment-local clock
-            let result = step_motion_with_dense(cur.node(), tau - epoch, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn);
+            let result = step_motion_args(cur.node(), tau - epoch, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn);
             if !mirror_legacy {
                 if let Some(key) = local_lazy_key {
                     state.remove(&key);
@@ -1023,14 +1038,14 @@ fn step_motion_with_dense(
             result
         }
         DynNode::Translate { child, .. } => {
-            step_motion_with_dense(child, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
+            step_motion_args(child, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
         }
         DynNode::Frame(a, b) => {
-            step_motion_with_dense(a, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)?;
-            step_motion_with_dense(b, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
+            step_motion_args(a, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)?;
+            step_motion_args(b, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
         }
         DynNode::Clamp { lo, hi, child } => {
-            step_motion_with_dense(child, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)?;
+            step_motion_args(child, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)?;
             clamp_integrator(child, *lo, *hi, state, readers, mirror_legacy, write_n2);
             Ok(())
         }
@@ -1046,24 +1061,29 @@ pub fn step_dyn_figure(
     sig: &SigEnv,
 ) -> Result<(), String> {
     let readers = MotionReaders::legacy();
-    step_dyn_figure_with_dense(d, tau, dt, state, sig, readers, true, &mut |_, _| {}, &mut |_, _| {})
+    let mut ignore_n2 = |_, _| {};
+    let mut ignore_dyn = |_, _| {};
+    let mut ctx = MotionStepCtx {
+        state,
+        sig,
+        readers: &readers,
+        mirror_legacy: true,
+        write_n2: &mut ignore_n2,
+        write_dyn: &mut ignore_dyn,
+    };
+    step_dyn_figure_in(d, tau, dt, &mut ctx)
 }
 
-pub fn step_dyn_figure_with_dense(
+pub fn step_dyn_figure_in(
     d: &DynFigure,
     tau: f64,
     dt: f64,
-    state: &mut MotionState,
-    sig: &SigEnv,
-    readers: MotionReaders,
-    mirror_legacy: bool,
-    write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
-    write_dyn: &mut dyn FnMut(MotionStateKey, DynPose),
+    ctx: &mut MotionStepCtx<'_>,
 ) -> Result<(), String> {
-    step_motion_with_dense(d.pose_dyn(), tau, dt, state, sig, &readers, mirror_legacy, write_n2, write_dyn)?;
+    step_motion_in(d.pose_dyn(), tau, dt, ctx)?;
     if let Some(curve) = d.curve() {
         if let CurveEval::Expr(shape) = &curve.eval {
-            step_motion_with_dense(shape.node(), tau, dt, state, sig, &readers, mirror_legacy, write_n2, write_dyn)?;
+            step_motion_in(shape.node(), tau, dt, ctx)?;
         }
     }
     Ok(())
