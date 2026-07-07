@@ -700,7 +700,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let (x, y) = sim.world.entities[0].prev_pos.unwrap_or((f64::NAN, f64::NAN));
+        let (x, y) = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap_or((f64::NAN, f64::NAN));
         assert!((x - 2.0).abs() < 1e-6 && y.abs() < 1e-6, "point at u=1 on a straight radial curve: ({}, {})", x, y);
     }
 
@@ -2200,8 +2200,8 @@ fn stale_handles_do_not_target_reused_rows() {
         for _ in 0..91 {
             sim.step().unwrap();
         }
-        let x = |i: usize| sim.world.entities[i].prev_pos.unwrap().0;
-        // pattern-epoch clock: spawned at tick 30, prev_pos as of tick 90
+        let x = |i: usize| sim.world.entities.sampled_pos(i, sim.world.tick - 1).unwrap().0;
+        // pattern-epoch clock: spawned at tick 30, sampled pos as of tick 90
         assert!((x(0) - 0.5).abs() < 0.02, "live clock minus epoch: {}", x(0));
         // without live, the channel read snaps at spawn (the boundary)
         assert!((x(1) - 0.25).abs() < 0.02, "bare read stays snapped: {}", x(1));

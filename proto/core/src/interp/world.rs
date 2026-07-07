@@ -235,9 +235,6 @@ pub struct Entity {
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
-    /// Last tick's position (collision pass) — contact velocity is the
-    /// finite difference, uniform across Closed and Scanned motion.
-    pub prev_pos: Option<(f64, f64)>,
     /// Traced curve samples, capped at the remembrance window. Only valid
     /// pose samples are stored; before the trace fills, the domain is
     /// shorter and indexed from entity-local sample 0. Facing is part of the
@@ -254,6 +251,7 @@ pub struct EntityStore {
     alive: Vec<bool>,
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
+    sampled_pose: [Vec<Option<Pose>>; 2],
     max: usize,
     free: Vec<usize>,
 }
@@ -266,6 +264,7 @@ impl EntityStore {
             alive: Vec::with_capacity(max),
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
+            sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
             max,
             free: Vec::new(),
         }
@@ -298,6 +297,45 @@ impl EntityStore {
         }
     }
 
+    fn pose_slot(tick: u64) -> usize {
+        (tick as usize) & 1
+    }
+
+    pub fn sampled_pose(&self, row: usize, tick: u64) -> Option<Pose> {
+        self.sampled_pose[Self::pose_slot(tick)].get(row).copied().flatten()
+    }
+
+    pub fn previous_sampled_pose(&self, row: usize, tick: u64) -> Option<Pose> {
+        self.sampled_pose[1 - Self::pose_slot(tick)].get(row).copied().flatten()
+    }
+
+    pub fn sampled_pos(&self, row: usize, tick: u64) -> Option<(f64, f64)> {
+        self.sampled_pose(row, tick).map(|p| (p.x, p.y))
+    }
+
+    pub fn velocity_from_samples(&self, row: usize, tick: u64) -> (f64, f64) {
+        match (self.sampled_pose(row, tick), self.previous_sampled_pose(row, tick)) {
+            (Some(p), Some(prev)) => ((p.x - prev.x) * TICK_RATE, (p.y - prev.y) * TICK_RATE),
+            _ => (0.0, 0.0),
+        }
+    }
+
+    pub fn set_sampled_pose(&mut self, row: usize, tick: u64, pose: Option<Pose>) {
+        let slot = Self::pose_slot(tick);
+        if self.sampled_pose[slot].len() <= row {
+            self.sampled_pose[slot].resize(row + 1, None);
+        }
+        self.sampled_pose[slot][row] = pose;
+    }
+
+    pub fn clear_sampled_poses(&mut self, row: usize) {
+        for poses in &mut self.sampled_pose {
+            if let Some(pose) = poses.get_mut(row) {
+                *pose = None;
+            }
+        }
+    }
+
     pub fn entity_ref(&self, row: usize) -> EntityRef {
         EntityRef { row, generation: self.generation[row] }
     }
@@ -322,6 +360,7 @@ impl EntityStore {
         self.alive[i] = true;
         self.freed_at[i] = None;
         self.birth[i] = birth;
+        self.clear_sampled_poses(i);
         self.rows[i] = entity;
         i
     }
@@ -336,6 +375,8 @@ impl EntityStore {
         self.alive.push(true);
         self.freed_at.push(None);
         self.birth.push(birth);
+        self.sampled_pose[0].push(None);
+        self.sampled_pose[1].push(None);
         Ok(i)
     }
 
@@ -358,6 +399,7 @@ impl Clone for EntityStore {
             alive: self.alive.clone(),
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
+            sampled_pose: self.sampled_pose.clone(),
             max: self.max,
             free: self.free.clone(),
         }
@@ -720,6 +762,8 @@ impl World {
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
             self.entities.birth.truncate(max_entities);
+            self.entities.sampled_pose[0].truncate(max_entities);
+            self.entities.sampled_pose[1].truncate(max_entities);
             self.entities.free.retain(|i| *i < max_entities);
         }
         for values in &mut self.fields.num_values {
@@ -745,6 +789,11 @@ impl World {
         }
         if self.entities.birth.capacity() < max_entities {
             self.entities.birth.reserve_exact(max_entities - self.entities.birth.capacity());
+        }
+        for poses in &mut self.entities.sampled_pose {
+            if poses.capacity() < max_entities {
+                poses.reserve_exact(max_entities - poses.capacity());
+            }
         }
         Ok(())
     }

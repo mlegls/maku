@@ -123,16 +123,25 @@ impl Sim {
         let mut colliders: Vec<Vec<ColliderData>> = Vec::with_capacity(n);
         // :scale multiplies collider radii (a scaled sprite scales its
         // hitbox); sampled once per bullet per tick, 1.0 when absent
-        for (i, b) in self.world.entities.iter().enumerate() {
+        for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
+                self.world.entities.set_sampled_pose(i, tick, None);
                 pos.push(None);
                 colliders.push(Vec::new());
                 continue;
             }
             let tau = self.world.entities.tau(i, tick);
-            let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
+            let p = {
+                let b = &self.world.entities[i];
+                dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?
+            };
+            self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
-            let scale = self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0);
+            let scale = {
+                let b = &self.world.entities[i];
+                self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0)
+            };
+            let b = &self.world.entities[i];
             colliders.push(materialize_colliders(b, tau, &sig, scale, &mut self.world.symbols)?);
         }
 
@@ -208,12 +217,6 @@ impl Sim {
                 }
             }
         }
-        // Contact callbacks read :vel through entity views, which finite-
-        // difference against prev_pos. Updating prev_pos before resolution
-        // would zero every contact velocity.
-        for (b, p) in self.world.entities.iter_mut().zip(pos.iter()) {
-            b.prev_pos = *p;
-        }
         Ok(())
     }
 
@@ -235,7 +238,7 @@ impl Sim {
                     continue;
                 }
                 let (latch, name, cull) = (rule.latch, rule.name, rule.cull);
-                let at = self.world.entities[i].prev_pos;
+                let at = self.world.entities.sampled_pos(i, tick);
                 self.world.col_set_sym_at(i, latch, 1.0);
                 if cull {
                     self.world.cull_at(i);

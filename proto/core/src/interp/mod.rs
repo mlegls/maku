@@ -1435,10 +1435,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     let b = &world.entities[i];
     let tau = world.entities.tau(i, world.tick);
     let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
-    let vel = match b.prev_pos {
-        Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
-        None => (0.0, 0.0),
-    };
+    let vel = world.entities.velocity_from_samples(i, world.tick);
     let mut view = vec![
         (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
         (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
@@ -1637,13 +1634,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             Ok(Val::Pose(Pose::point(p.x, p.y)))
         }
         "vel" => {
-            let b = &world.entities[i];
-            let tau = world.entities.tau(i, world.tick);
-            let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
-            let vel = match b.prev_pos {
-                Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
-                None => (0.0, 0.0),
-            };
+            let vel = world.entities.velocity_from_samples(i, world.tick);
             Ok(Val::Pose(Pose::point(vel.0, vel.1)))
         }
         "t" => {
@@ -1982,7 +1973,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     render_projector: spec.render_projector.clone(),
                     sym_fields: spec.sym_fields.clone(),
                     triggers: spec.triggers.clone(),
-                    prev_pos: None,
                     trail: Vec::new(),
                 })?;
                 for (name, val) in &spec.cols {
@@ -2025,10 +2015,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let b = &world.entities[i];
                 let tau = world.entities.tau(i, world.tick);
                 let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
-                let vel = match b.prev_pos {
-                    Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
-                    None => (0.0, 0.0),
-                };
+                let vel = world.entities.velocity_from_samples(i, world.tick);
                 let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
                     p.angle_or(0.0)
                 } else {
@@ -2057,7 +2044,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             ))));
             b.scanned = is_scanned_figure(&b.dyn_figure);
             b.state = MotionState::new();
-            b.prev_pos = Some((anchor.x, anchor.y));
+            world.entities.set_sampled_pose(i, world.tick, Some(anchor));
             Ok(Val::Nothing)
         }
         ActionV::SetCol { target, col, val } => {

@@ -391,7 +391,7 @@ impl Instance {
             .filter(|(i, _)| {
                 sim.world.entities.is_alive(*i) && sim.world.col_get_at(*i, col).is_some()
             })
-            .filter_map(|(_, b)| b.prev_pos)
+            .filter_map(|(i, _)| sim.world.entities.sampled_pos(i, sim.world.tick))
             .collect()
     }
 

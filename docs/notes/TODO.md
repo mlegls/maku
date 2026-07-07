@@ -630,6 +630,10 @@ language.md.
   2v.21. ~~Move birth ticks into `EntityStore`.~~ Done; entity birth ticks
       now live in a side vector with `birth`, `tau`, and `reset_birth`
       helpers, and remat/spawn update timing through the store.
+  2v.22. ~~Replace `prev_pos` with sampled pose buffers.~~ Done; current and
+      previous collision-pass poses now live in double-buffered
+      `EntityStore` columns, and velocity/host/entity views read through
+      sampled-pose helpers.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
