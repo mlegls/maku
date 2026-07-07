@@ -671,6 +671,11 @@ language.md.
       `state_dyn` columns sized/reset from each row's `MotionStateSchema`,
       and `Vel` integration mirrors its numeric state into dense row slots
       while legacy `MotionState` remains the read path.
+  2v.28. ~~Represent scan-state builtin layout as data.~~ Done as a bridge;
+      `scan_builtin_spec` now declares each stateful scan function's storage
+      shape (`N2` for current `slew`/`smooth`), and both scan-site schema
+      collection and scan-context dispatch consult that spec instead of
+      keeping independent hardcoded name lists.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

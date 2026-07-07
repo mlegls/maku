@@ -1095,7 +1095,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     None => Ok(Val::Nothing),
                 };
             }
-            "slew" | "smooth" => {
+            name if scan_builtin_spec(name).is_some() => {
                 if ctx.scan.is_none() {
                     // deferred shared instance (§5): forced in scan contexts
                     return Ok(Val::Thunk(Rc::new((
@@ -1103,7 +1103,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                         env.clone(),
                     ))));
                 }
-                return sf_stateful(&**s, items, env, ctx, world);
+                return sf_stateful(name, items, env, ctx, world);
             }
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_t(&items[1]) => {
@@ -2733,8 +2733,8 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     })))
 }
 
-/// slew/smooth: stateful expression sites. State keyed by (base, site index);
-/// the site counter is stable for a fixed expression tree.
+/// Stateful scan expression sites. State keyed by (base, site index); the
+/// site counter is stable for a fixed expression tree.
 fn sf_stateful(
     which: &str,
     items: &[Form],

@@ -49,7 +49,7 @@ impl Pose {
 }
 
 /// Per-bullet scanned state: keyed by dyn-node identity (Rc pointer) or, for
-/// stateful expression sites (slew/smooth), a hash of (base node, site index).
+/// stateful expression sites, a hash of (base node, site index).
 #[derive(Debug, Clone)]
 pub enum Cell {
     N([f64; 2]),
@@ -62,8 +62,8 @@ pub enum MotionStateKey {
     /// Bridge key: current interpreter state is keyed by DynNode pointer
     /// identity. Lowering should replace this with stable node ids.
     NodePtr(usize),
-    /// Expression-local stateful sites such as slew/smooth under a scanned
-    /// node. These are discovered by expression lowering, not by node walk.
+    /// Expression-local stateful sites under a scanned node. These are
+    /// discovered from scan builtin specs during expression lowering.
     ScanSite { base: usize, index: u32 },
     /// Compatibility storage for lazy stage constructors while they remain
     /// interpreted.
@@ -116,6 +116,23 @@ pub struct ScanIo {
     pub dt: f64,
 }
 pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanStateShape {
+    N2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanBuiltinSpec {
+    pub state: ScanStateShape,
+}
+
+pub fn scan_builtin_spec(name: &str) -> Option<ScanBuiltinSpec> {
+    match name {
+        "slew" | "smooth" => Some(ScanBuiltinSpec { state: ScanStateShape::N2 }),
+        _ => None,
+    }
+}
 
 pub(crate) fn site_key(base: usize, counter: usize) -> usize {
     base ^ (0x9e37_79b9_usize.wrapping_mul(counter + 1))
@@ -445,9 +462,15 @@ pub fn collect_scan_sites(
     match form {
         Form::List(items) => {
             let mut index = start_index;
-            if matches!(items.first(), Some(Form::Sym(s)) if &**s == "slew" || &**s == "smooth") {
-                schema.intern_n2(MotionStateKey::ScanSite { base, index });
-                index += 1;
+            if let Some(Form::Sym(s)) = items.first() {
+                if let Some(spec) = scan_builtin_spec(s) {
+                    match spec.state {
+                        ScanStateShape::N2 => {
+                            schema.intern_n2(MotionStateKey::ScanSite { base, index });
+                        }
+                    }
+                    index += 1;
+                }
             }
             for item in items.iter() {
                 index = collect_scan_sites(item, base, index, schema);
