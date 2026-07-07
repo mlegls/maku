@@ -73,7 +73,6 @@ impl Deref for Seq {
 pub enum Val {
     Num(f64),
     Kw(Rc<str>),
-    Str(Rc<str>),
     Vec2 { x: f64, y: f64 },
     Pose(Pose),
     Figure(Figure),
@@ -475,7 +474,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     match form {
         Form::Num(n) => Ok(Val::Num(*n)),
         Form::Bool(b) => Ok(Val::Num(if *b { 1.0 } else { 0.0 })),
-        Form::Str(s) => Ok(Val::Str(s.clone())),
+        Form::Str(s) => Ok(Val::Kw(s.clone())),
         Form::Kw(k) => Ok(Val::Kw(k.clone())),
         Form::Sym(s) => match &**s {
             "inf" => Ok(Val::Num(f64::INFINITY)),
@@ -2065,7 +2064,6 @@ fn val_to_form(v: &Val) -> Result<Form, String> {
     Ok(match v {
         Val::FormV(f) => (**f).clone(),
         Val::Num(n) => Form::Num(*n),
-        Val::Str(s) => Form::Str(s.clone()),
         Val::Kw(k) => Form::Kw(k.clone()),
         Val::Arr(xs) => Form::Vector(
             xs.iter().map(val_to_form).collect::<Result<Vec<_>, _>>()?.into(),
@@ -2217,7 +2215,7 @@ fn match_pattern(
 fn literal_pattern_matches(pat: &Form, subject: &Val) -> bool {
     match (pat, subject) {
         (Form::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
-        (Form::Kw(a), Val::Kw(b)) | (Form::Str(a), Val::Str(b)) => a == b,
+        (Form::Kw(a), Val::Kw(b)) | (Form::Str(a), Val::Kw(b)) => a == b,
         (Form::Bool(a), Val::Num(b)) => (*a && *b != 0.0) || (!*a && *b == 0.0),
         (_, Val::FormV(f)) => form_literal_matches(pat, f),
         _ => false,
@@ -2316,7 +2314,7 @@ fn match_map_pattern(
 fn map_pattern_key(k: &Form) -> Result<Val, String> {
     match k {
         Form::Kw(k) => Ok(Val::Kw(k.clone())),
-        Form::Str(s) => Ok(Val::Str(s.clone())),
+        Form::Str(s) => Ok(Val::Kw(s.clone())),
         Form::Num(n) => Ok(Val::Num(*n)),
         _ => Err(format!("match: unsupported map pattern key {}", k)),
     }
@@ -2735,7 +2733,7 @@ mod tests {
         // seq ops see a form list as a sequence of subforms
         assert_eq!(ev("(count `(:a {:x 1} b))").num().unwrap(), 3.0);
         assert!(matches!(ev("(form-type (first `(:a b)))"), Val::Kw(k) if &*k == "kw"));
-        assert!(matches!(ev("(form-name (first `(:a b)))"), Val::Str(s) if &*s == "a"));
+        assert!(matches!(ev("(form-name (first `(:a b)))"), Val::Kw(s) if &*s == "a"));
         assert_eq!(ev("(count (rest `(:a b c)))").num().unwrap(), 2.0);
         assert_eq!(ev("(count (drop 2 `(a b c)))").num().unwrap(), 1.0);
         assert_eq!(ev("(count (take 2 [1 2 3]))").num().unwrap(), 2.0);
@@ -2747,7 +2745,7 @@ mod tests {
         assert!(matches!(ev("(get `(no map) :b)"), Val::Nothing));
         assert_eq!(ev("(nothing? (get `{:a 1} :b))").num().unwrap(), 1.0);
         // nth indexes form lists too (cyclic, like arrays)
-        assert!(matches!(ev("(form-name (nth `(a b c) 1))"), Val::Str(s) if &*s == "b"));
+        assert!(matches!(ev("(form-name (nth `(a b c) 1))"), Val::Kw(s) if &*s == "b"));
         // filter over a form list keeps subform values
         assert_eq!(
             ev("(count (filter (fn [f] (= (form-type f) :map)) `(a {:x 1} b)))")

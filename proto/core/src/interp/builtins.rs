@@ -112,7 +112,7 @@ pub(crate) fn get_in(subject: &Val, key: &Val) -> Option<Val> {
                 .iter()
                 .find(|(k, _)| match (key, k) {
                     (Val::Kw(a), Form::Kw(b)) => a == b,
-                    (Val::Str(a), Form::Str(b)) => a == b,
+                    (Val::Kw(a), Form::Str(b)) => a == b,
                     (Val::Num(a), Form::Num(b)) => (a - b).abs() < 1e-9,
                     _ => false,
                 })
@@ -125,7 +125,7 @@ pub(crate) fn get_in(subject: &Val, key: &Val) -> Option<Val> {
 
 fn map_key_matches(key: &Val, candidate: &Val) -> bool {
     match (key, candidate) {
-        (Val::Kw(a), Val::Kw(b)) | (Val::Str(a), Val::Str(b)) => a == b,
+        (Val::Kw(a), Val::Kw(b)) => a == b,
         (Val::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
         _ => false,
     }
@@ -184,7 +184,6 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "dec" => Ok(Val::Num(n(0)? - 1.0)),
         "=" => match (&args[0], &args[1]) {
             (Val::Kw(a), Val::Kw(b)) => Ok(mask(a == b)),
-            (Val::Str(a), Val::Str(b)) => Ok(mask(a == b)),
             (Val::Map(a), Val::Map(b)) => Ok(mask(format!("{:?}", a) == format!("{:?}", b))),
             _ => Ok(mask((n(0)? - n(1)?).abs() < 1e-9)),
         },
@@ -411,7 +410,6 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                     Form::Map(_) => "map",
                 },
                 Val::Num(_) => "num",
-                Val::Str(_) => "str",
                 Val::Kw(_) => "kw",
                 Val::Arr(_) => "arr",
                 Val::Map(_) => "map",
@@ -420,13 +418,13 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             }
             .into(),
         )),
-        // name of a sym/kw (form or value); "" otherwise — total on purpose
-        "form-name" => Ok(Val::Str(match &args[0] {
+        // name of a sym/kw (form or value); : otherwise — total on purpose
+        "form-name" => Ok(Val::Kw(match &args[0] {
             Val::FormV(f) => match &**f {
                 Form::Sym(s) | Form::Kw(s) | Form::Str(s) => s.clone(),
                 _ => "".into(),
             },
-            Val::Kw(s) | Val::Str(s) => s.clone(),
+            Val::Kw(s) => s.clone(),
             _ => "".into(),
         })),
         "nothing?" => Ok(mask(matches!(args[0], Val::Nothing))),

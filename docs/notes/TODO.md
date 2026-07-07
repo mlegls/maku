@@ -445,7 +445,7 @@ language.md.
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
       `Figure`, handles, and nothing. `DataAtom::Legacy(Val)` remains as a
       temporary escape hatch while interpreter/control objects (`Action`,
-      `Fn`, `Form`, `Cells`) and legacy data atoms (`Str`, `Vec2`, old pose
+      `Fn`, `Form`, `Cells`) and legacy data atoms (`Vec2`, old pose
       conveniences) are migrated out of runtime data.
   2x. ~~Switch predicates to numeric masks.~~ Done; comparisons and
       predicate builtins return `0`/`1`, source booleans evaluate to `0`/`1`,
@@ -454,6 +454,10 @@ language.md.
   2y. ~~Remove runtime bool values.~~ Done; `Val` no longer has a bool
       variant. `Form::Bool` remains syntax/quoted-form data, but evaluated
       booleans are numeric masks.
+  2z. ~~Remove runtime string values.~~ Done; `Val` no longer has a string
+      variant. `Form::Str` remains syntax/quoted-form data for imports,
+      `m"..."`, and macro/form inspection; evaluated strings become
+      keywords, and `form-name` returns keywords.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

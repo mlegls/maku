@@ -638,7 +638,6 @@ fn as_dyn_render_list(v: &DynLike) -> Result<DynRenderList, String> {
 pub(crate) fn kw_str(v: &Val) -> String {
     match v {
         Val::Kw(k) => k.to_string(),
-        Val::Str(s) => s.to_string(),
         _ => String::new(),
     }
 }
