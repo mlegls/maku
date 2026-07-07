@@ -18,7 +18,7 @@ pub use render::RenderItem;
 pub use slots::{sample_curve, sample_curve_frac};
 
 use exec::{new_task, step_task, Task, TF};
-use slots::{materialize_collider_defs, materialize_render_defs};
+use slots::{first_render_projection, materialize_collider_defs, materialize_render_defs};
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
 
@@ -332,12 +332,9 @@ impl Sim {
                     }
                 },
                 FigureDynRepr::Curve { .. } => {
-                    let mut render_slots = materialize_render_defs(&b.renderers, tau, &b.state, &sig)
+                    let render_slots = materialize_render_defs(&b.renderers, tau, &b.state, &sig)
                         .ok()
                         .unwrap_or_default();
-                    if let Some(slot) = &b.curve_renderer {
-                        render_slots.push(DynRender::render_polyline(slot.clone()));
-                    }
                     let render_live = render_slots
                         .first()
                         .map(DynRender::polyline)
@@ -345,8 +342,14 @@ impl Sim {
                     let collider_live = || {
                         let mut slots = materialize_collider_defs(&b.colliders, tau, &b.state, &sig)
                             .ok()?;
-                        if let Some(curve_slot) = &b.curve_collider {
-                            slots = curve_capsule_slots(slots, curve_slot);
+                        if let Some(projection) = first_render_projection(b, tau, &sig) {
+                            let curve_slot = CapsuleChainSlot {
+                                sample_set: projection.sample_set,
+                                u_max_sig: projection.u_max_sig,
+                                width: projection.width,
+                                activity: projection.activity,
+                            };
+                            slots = curve_capsule_slots(slots, &curve_slot);
                         }
                         slots.iter().find_map(DynCollider::capsule_chain).map(
                             |(_, projection, _)| {

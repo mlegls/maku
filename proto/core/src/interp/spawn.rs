@@ -313,14 +313,72 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 damage: damage.clone(),
                 colliders: colliders.into(),
                 primary_hitbox: hitbox,
-                curve_collider: e.curve_collider,
                 renderers: renderers.into(),
-                curve_renderer: e.curve_renderer,
                 expose: expose.clone(),
             }
         })
         .collect();
     Ok(Val::Action(Rc::new(ActionV::Spawn { entities })))
+}
+
+fn dynlike_num_from_dyn(d: &DynNum) -> DynLike {
+    match d.repr() {
+        NumDynRepr::Const(n) => DynLike::Atom(DataAtom::Num(*n)),
+        NumDynRepr::Expr { form, env } => {
+            DynLike::Dyn(DynVal::Expr { form: form.clone(), env: env.clone() })
+        }
+    }
+}
+
+fn dynlike_kw_atom(name: &str) -> DynLike {
+    DynLike::Atom(DataAtom::Kw(name.into()))
+}
+
+fn dynlike_num(n: f64) -> DynLike {
+    DynLike::Atom(DataAtom::Num(n))
+}
+
+fn dynlike_map(pairs: Vec<(&str, DynLike)>) -> DynLike {
+    DynLike::Map(Rc::new(
+        pairs
+            .into_iter()
+            .map(|(k, v)| (DataAtom::Kw(k.into()), v))
+            .collect(),
+    ))
+}
+
+fn sample_set_pairs(sample_set: &SampleSet) -> Vec<(&'static str, DynLike)> {
+    match sample_set {
+        SampleSet::Values(vals) => vec![(
+            "samples",
+            DynLike::List(vals.iter().copied().map(dynlike_num).collect::<Vec<_>>().into()),
+        )],
+        SampleSet::Step { resolution } => vec![("resolution", dynlike_num(*resolution))],
+    }
+}
+
+fn curve_projection_spec(
+    sample_set: &SampleSet,
+    u_max_sig: Option<&DynNum>,
+    width: f64,
+    warn: f64,
+    active: f64,
+    fill_sig: Option<&DynNum>,
+) -> DynLike {
+    let mut opts = sample_set_pairs(sample_set);
+    if let Some(u_max) = u_max_sig {
+        opts.push(("u-max", dynlike_num_from_dyn(u_max)));
+    }
+    opts.push(("width", dynlike_num(width)));
+    opts.push(("warn", dynlike_num(warn)));
+    opts.push(("active", dynlike_num(active)));
+    if let Some(fill) = fill_sig {
+        opts.push(("fill", dynlike_num_from_dyn(fill)));
+    }
+    dynlike_map(vec![(
+        "shape",
+        DynLike::List(vec![dynlike_kw_atom("polyline"), dynlike_map(opts)].into()),
+    )])
 }
 
 pub(crate) fn flatten_elems(
@@ -339,7 +397,7 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (dyn_figure, colliders, curve_collider, renderers, curve_renderer, cache_policy) = match &l.backing {
+            let (dyn_figure, colliders, renderers, cache_policy) = match &l.backing {
                 CurveBacking::Parametric {
                     curve,
                     sample_set,
@@ -349,39 +407,25 @@ pub(crate) fn flatten_elems(
                     width,
                     fill_sig,
                 } => {
+                    let projection = curve_projection_spec(
+                        sample_set,
+                        u_max_sig.as_ref(),
+                        *width,
+                        *warn,
+                        *active,
+                        fill_sig.as_ref(),
+                    );
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
                         empty_spec_list(),
-                        Some(CapsuleChainSlot {
-                            sample_set: sample_set.clone(),
-                            u_max_sig: u_max_sig.clone(),
-                            width: *width,
-                            activity: SlotActivity {
-                                warn: *warn,
-                                active: *active,
-                                hot_frac_sig: fill_sig.clone(),
-                            },
-                        }),
-                        empty_spec_list(),
-                        Some(CurveRenderSlot {
-                            sample_set: sample_set.clone(),
-                            u_max_sig: u_max_sig.clone(),
-                            width: *width,
-                            activity: SlotActivity {
-                                warn: *warn,
-                                active: *active,
-                                hot_frac_sig: fill_sig.clone(),
-                            },
-                        }),
+                        DynLike::List(vec![projection].into()),
                         EntityCachePolicy::default(),
                     )
                 }
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
                     empty_spec_list(),
-                    None,
                     empty_spec_list(),
-                    None,
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },
@@ -390,9 +434,7 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure,
                 colliders,
-                curve_collider,
                 renderers,
-                curve_renderer,
                 cache_policy,
                 path: path.clone(),
             });
@@ -402,9 +444,7 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure: DynFigure::pose(as_dyn(other)?),
                 colliders: empty_spec_list(),
-                curve_collider: None,
                 renderers: empty_spec_list(),
-                curve_renderer: None,
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });
@@ -640,16 +680,18 @@ fn as_slot_activity(opts: &DynLike) -> Result<SlotActivity, String> {
     Ok(SlotActivity {
         warn: dynlike_map_as_static_num(opts, "warn", 0.0)?,
         active: dynlike_map_as_static_num(opts, "active", f64::INFINITY)?,
-        // Full structural Dyn<T> coercion should replace this parser-level
-        // shortcut; for now explicit low-level spawn specs are static data.
-        hot_frac_sig: None,
+        hot_frac_sig: dynlike_map_get(opts, "fill")
+            .map(|v| as_dyn_num(&v))
+            .transpose()?,
     })
 }
 
 fn as_capsule_chain_slot(opts: &DynLike) -> Result<CapsuleChainSlot, String> {
     Ok(CapsuleChainSlot {
         sample_set: as_sample_set(opts)?,
-        u_max_sig: None,
+        u_max_sig: dynlike_map_get(opts, "u-max")
+            .map(|v| as_dyn_num(&v))
+            .transpose()?,
         width: dynlike_map_as_static_num(opts, "width", 1.0)?,
         activity: as_slot_activity(opts)?,
     })
@@ -727,7 +769,9 @@ pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
     match shape.as_ref() {
         "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {
             sample_set: as_sample_set(&opts)?,
-            u_max_sig: None,
+            u_max_sig: dynlike_map_get(&opts, "u-max")
+                .map(|v| as_dyn_num(&v))
+                .transpose()?,
             width: dynlike_map_as_static_num(&opts, "width", 1.0)?,
             activity: as_slot_activity(&opts)?,
         })),

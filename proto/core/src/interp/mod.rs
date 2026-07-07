@@ -239,9 +239,7 @@ impl Val {
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
     pub colliders: ColliderSpecList,
-    pub curve_collider: Option<CapsuleChainSlot>,
     pub renderers: RenderSpecList,
-    pub curve_renderer: Option<CurveRenderSlot>,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
 }
@@ -361,9 +359,7 @@ pub struct EntitySpec {
     pub damage: Val,
     pub colliders: Rc<[ColliderSpecList]>,
     pub primary_hitbox: Option<f64>,
-    pub curve_collider: Option<CapsuleChainSlot>,
     pub renderers: Rc<[RenderSpecList]>,
-    pub curve_renderer: Option<CurveRenderSlot>,
     pub expose: Rc<[(Rc<str>, Rc<str>)]>,
 }
 
@@ -1950,9 +1946,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     sigs: spec.sigs.clone(),
                     colliders: spec.colliders.clone(),
                     primary_hitbox: spec.primary_hitbox,
-                    curve_collider: spec.curve_collider.clone(),
                     renderers: spec.renderers.clone(),
-                    curve_renderer: spec.curve_renderer.clone(),
                     cols: col_slots,
                     triggers: spec.triggers.clone(),
                     damage: spec.damage.clone(),

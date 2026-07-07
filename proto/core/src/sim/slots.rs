@@ -19,13 +19,12 @@ pub fn sample_curve_frac(
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
-fn first_render_projection(b: &Entity, tau: f64, sig: &SigEnv) -> Option<CurveRenderSlot> {
+pub(crate) fn first_render_projection(b: &Entity, tau: f64, sig: &SigEnv) -> Option<CurveRenderSlot> {
     materialize_render_defs(&b.renderers, tau, &b.state, sig)
         .ok()?
         .first()
         .cloned()
         .map(|r| r.polyline().clone())
-        .or_else(|| b.curve_renderer.clone())
 }
 
 fn sample_curve_collider_frac(
@@ -242,10 +241,7 @@ pub fn eval_render_list(
     tau: f64,
     sig: &SigEnv,
 ) -> Vec<RenderData> {
-    let mut slots = materialize_render_defs(lists, tau, &b.state, sig).unwrap_or_default();
-    if let Some(slot) = &b.curve_renderer {
-        slots.push(DynRender::render_polyline(slot.clone()));
-    }
+    let slots = materialize_render_defs(lists, tau, &b.state, sig).unwrap_or_default();
     slots
         .iter()
         .flat_map(|slot| eval_render_slot(b, slot, tau, sig))

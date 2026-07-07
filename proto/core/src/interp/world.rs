@@ -157,10 +157,8 @@ pub struct Entity {
     /// tick into collision data or nothing.
     pub colliders: Rc<[ColliderSpecList]>,
     pub primary_hitbox: Option<f64>,
-    pub curve_collider: Option<CapsuleChainSlot>,
     /// Render slots — archetype data, Rc-shared across a spawn's elements.
     pub renderers: Rc<[RenderSpecList]>,
-    pub curve_renderer: Option<CurveRenderSlot>,
     /// User-defined numeric columns in World's dense column layout. hp is
     /// not special — it is just another named source column assigned to a
     /// slot by the world.

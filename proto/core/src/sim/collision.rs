@@ -1,5 +1,5 @@
 use super::*;
-use super::slots::{eval_collider_slot, materialize_collider_defs};
+use super::slots::{eval_collider_slot, first_render_projection, materialize_collider_defs};
 
 /// Distance from a point to a polyline (capsule-chain narrow phase).
 fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
@@ -94,8 +94,16 @@ fn materialize_colliders(
     if let Some(radius) = b.primary_hitbox {
         replace_primary_hitbox(&mut defs, radius);
     }
-    if let Some(curve_slot) = &b.curve_collider {
-        defs = curve_capsule_slots(defs, curve_slot);
+    if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
+        if let Some(projection) = first_render_projection(b, tau, sig) {
+            let curve_slot = CapsuleChainSlot {
+                sample_set: projection.sample_set,
+                u_max_sig: projection.u_max_sig,
+                width: projection.width,
+                activity: projection.activity,
+            };
+            defs = curve_capsule_slots(defs, &curve_slot);
+        }
     }
     let defs = defs
         .into_iter()

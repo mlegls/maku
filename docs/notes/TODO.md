@@ -484,7 +484,7 @@ language.md.
   2v.1. ~~Collapse spawn actions to per-entity specs.~~ Done; `ActionV::Spawn`
       now carries `Vec<EntitySpec>` rather than a split payload of flattened
       figures plus call-level metadata. Execution applies the ambient frame,
-      allocates ids, interns columns, and pushes entities; spawn evaluation
+      installs rows, interns columns, and pushes entities; spawn evaluation
       owns the per-element resolution.
   2v.2. ~~Introduce entity index-vector queries.~~ Done as a bridge:
       `entities-where` returns an ephemeral `EntitySet(Vec<usize>)`, and
@@ -505,6 +505,11 @@ language.md.
       `count-entities`, `sum-entities`, `nearest-entity`, and `manipulate`
       now use index-vector query resolution internally while preserving
       compatibility behavior.
+  2v.3. ~~Remove curve-specific projection fields from entities.~~ Done;
+      `CurveV` flattening now emits ordinary render spec data, and curve
+      collision derives capsule-chain conversion from the materialized render
+      projection instead of carrying `curve_collider` / `curve_renderer`
+      side-channel fields on every entity.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
