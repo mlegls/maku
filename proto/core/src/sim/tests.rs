@@ -2181,7 +2181,7 @@ fn vel_motion_writes_dense_state_slot() {
         .n2_keys
         .iter()
         .copied()
-        .find(|key| matches!(key, MotionStateKey::NodePtr(_)))
+        .find(|key| matches!(key, MotionStateKey::Node(_)))
         .unwrap();
     let [x, y] = sim.world.entities.state_n2(0, key).unwrap();
     assert!((x - (3.0 / TICK_RATE)).abs() < 1e-9, "dense vel x: {x}");
@@ -2249,7 +2249,7 @@ fn lazy_stages_extend_dense_motion_schema() {
     assert!(schema
         .n2_keys
         .iter()
-        .any(|key| matches!(key, MotionStateKey::NodePtr(_))));
+        .any(|key| matches!(key, MotionStateKey::Node(_))));
     assert!(schema
         .dyn_keys
         .iter()

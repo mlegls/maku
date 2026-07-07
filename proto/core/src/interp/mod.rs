@@ -1441,9 +1441,17 @@ fn render_view(b: &Entity) -> Val {
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
     let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
+    let node_ids = Rc::new(
+        world
+            .entities
+            .motion_schema(i)
+            .map(|schema| schema.node_ids.clone())
+            .unwrap_or_default(),
+    );
     MotionReaders {
         n2: Rc::new(move |key| dense_n2.get(&key).copied()),
         dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
+        node_ids,
     }
 }
 
@@ -2760,7 +2768,9 @@ fn sf_stateful(
     let scan = ctx.scan.clone().unwrap();
     let (key, site, advance, dt) = {
         let mut io = scan.borrow_mut();
-        let site = MotionStateKey::ScanSite { base: io.base, index: io.counter as u32 };
+        let site = io
+            .dense_base
+            .map(|base| MotionStateKey::ScanSite { base, index: io.counter as u32 });
         let k = site_key(io.base, io.counter);
         io.counter += 1;
         (k, site, io.advance, io.dt)
@@ -2779,7 +2789,7 @@ fn sf_stateful(
                 let io = scan.borrow();
                 io.readers
                     .as_ref()
-                    .and_then(|readers| (readers.n2)(site))
+                    .and_then(|readers| site.and_then(|site| (readers.n2)(site)))
                     .or_else(|| match io.state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -2795,7 +2805,9 @@ fn sf_stateful(
                 if io.mirror_legacy {
                     io.state.insert(key, Cell::N(next));
                 }
-                io.n2_writes.push((site, next));
+                if let Some(site) = site {
+                    io.n2_writes.push((site, next));
+                }
             }
             Ok(Val::Num(cur))
         }
@@ -2812,7 +2824,7 @@ fn sf_stateful(
                 let io = scan.borrow();
                 io.readers
                     .as_ref()
-                    .and_then(|readers| (readers.n2)(site))
+                    .and_then(|readers| site.and_then(|site| (readers.n2)(site)))
                     .or_else(|| match io.state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -2827,7 +2839,9 @@ fn sf_stateful(
                 if io.mirror_legacy {
                     io.state.insert(key, Cell::N(next));
                 }
-                io.n2_writes.push((site, next));
+                if let Some(site) = site {
+                    io.n2_writes.push((site, next));
+                }
             }
             Ok(Val::Pose(Pose::point(x, y)))
         }

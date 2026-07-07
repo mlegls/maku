@@ -240,9 +240,17 @@ impl Sim {
     pub(crate) fn motion_readers(&self, row: usize) -> MotionReaders {
         let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
         let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
+        let node_ids = Rc::new(
+            self.world
+                .entities
+                .motion_schema(row)
+                .map(|schema| schema.node_ids.clone())
+                .unwrap_or_default(),
+        );
         MotionReaders {
             n2: Rc::new(move |key| dense_n2.get(&key).copied()),
             dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
+            node_ids,
         }
     }
 

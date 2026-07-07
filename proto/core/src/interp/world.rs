@@ -247,6 +247,24 @@ pub struct EntityStore {
     free: Vec<usize>,
 }
 
+fn remap_motion_state_key(schema: &MotionStateSchema, key: MotionStateKey) -> MotionStateKey {
+    match key {
+        MotionStateKey::NodePtr(ptr) => schema
+            .node_ids
+            .get(&ptr)
+            .copied()
+            .map(MotionStateKey::Node)
+            .unwrap_or(key),
+        MotionStateKey::LazyStagePtr { base } => schema
+            .node_ids
+            .get(&base)
+            .copied()
+            .map(|base| MotionStateKey::LazyStage { base })
+            .unwrap_or(key),
+        other => other,
+    }
+}
+
 impl EntityStore {
     pub fn with_capacity(max: usize) -> EntityStore {
         EntityStore {
@@ -329,7 +347,9 @@ impl EntityStore {
     }
 
     pub fn state_n2(&self, row: usize, key: MotionStateKey) -> Option<[f64; 2]> {
-        let slot = self.motion_schema(row)?.n2_slots.get(&key)?.0 as usize;
+        let schema = self.motion_schema(row)?;
+        let key = remap_motion_state_key(schema, key);
+        let slot = schema.n2_slots.get(&key)?.0 as usize;
         self.state_n2.get(slot)?.get(row).copied()
     }
 
@@ -347,7 +367,7 @@ impl EntityStore {
     pub fn set_state_n2(&mut self, row: usize, key: MotionStateKey, value: [f64; 2]) -> bool {
         let Some(slot) = self
             .motion_schema(row)
-            .and_then(|schema| schema.n2_slots.get(&key).copied())
+            .and_then(|schema| schema.n2_slots.get(&remap_motion_state_key(schema, key)).copied())
             .map(|slot| slot.0 as usize)
         else {
             return false;
@@ -359,7 +379,9 @@ impl EntityStore {
     }
 
     pub fn state_dyn(&self, row: usize, key: MotionStateKey) -> Option<DynPose> {
-        let slot = self.motion_schema(row)?.dyn_slots.get(&key)?.0 as usize;
+        let schema = self.motion_schema(row)?;
+        let key = remap_motion_state_key(schema, key);
+        let slot = schema.dyn_slots.get(&key)?.0 as usize;
         self.state_dyn.get(slot)?.get(row)?.clone()
     }
 
@@ -377,7 +399,7 @@ impl EntityStore {
     pub fn set_state_dyn(&mut self, row: usize, key: MotionStateKey, value: DynPose) -> bool {
         let Some(slot) = self
             .motion_schema(row)
-            .and_then(|schema| schema.dyn_slots.get(&key).copied())
+            .and_then(|schema| schema.dyn_slots.get(&remap_motion_state_key(schema, key)).copied())
             .map(|slot| slot.0 as usize)
         else {
             return false;

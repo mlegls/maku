@@ -83,7 +83,7 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
         let carries_node = world
             .entities
             .motion_schema(i)
-            .is_some_and(|schema| schema.n2_slots.contains_key(&MotionStateKey::NodePtr(key)));
+            .is_some_and(|schema| schema.node_ids.contains_key(&key));
         if world.entities.is_alive(i) && carries_node {
             let tau = world.entities.tau(i, world.tick);
             let state = MotionState::new();

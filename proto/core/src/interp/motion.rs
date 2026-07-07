@@ -58,16 +58,23 @@ pub enum Cell {
 pub type MotionState = HashMap<usize, Cell>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MotionNodeId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MotionStateKey {
-    /// Bridge key: current interpreter state is keyed by DynNode pointer
-    /// identity. Lowering should replace this with stable node ids.
+    /// Stable lowered node id for dense entity state.
+    Node(MotionNodeId),
+    /// Compatibility key: legacy scratch state is keyed by DynNode pointer
+    /// identity while the interpreter still runs DynNode trees directly.
     NodePtr(usize),
     /// Expression-local stateful sites under a scanned node. These are
     /// discovered from scan builtin specs during expression lowering.
-    ScanSite { base: usize, index: u32 },
+    ScanSite { base: MotionNodeId, index: u32 },
     /// Compatibility storage for lazy stage constructors while they remain
     /// interpreted.
-    LazyStage { base: usize },
+    LazyStage { base: MotionNodeId },
+    /// Compatibility storage for legacy pointer-keyed lazy stage constructors.
+    LazyStagePtr { base: usize },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -82,9 +89,21 @@ pub struct MotionStateSchema {
     pub n2_keys: Vec<MotionStateKey>,
     pub dyn_slots: HashMap<MotionStateKey, StateDynSlotId>,
     pub dyn_keys: Vec<MotionStateKey>,
+    pub node_ids: HashMap<usize, MotionNodeId>,
+    pub node_ptrs: Vec<usize>,
 }
 
 impl MotionStateSchema {
+    pub fn intern_node(&mut self, ptr: usize) -> MotionNodeId {
+        if let Some(id) = self.node_ids.get(&ptr).copied() {
+            return id;
+        }
+        let id = MotionNodeId(self.node_ptrs.len() as u32);
+        self.node_ptrs.push(ptr);
+        self.node_ids.insert(ptr, id);
+        id
+    }
+
     pub fn intern_n2(&mut self, key: MotionStateKey) -> StateN2SlotId {
         if let Some(slot) = self.n2_slots.get(&key).copied() {
             return slot;
@@ -111,6 +130,7 @@ impl MotionStateSchema {
 pub struct ScanIo {
     pub state: MotionState,
     pub base: usize,
+    pub dense_base: Option<MotionNodeId>,
     pub counter: usize,
     pub advance: bool,
     pub dt: f64,
@@ -126,6 +146,7 @@ pub type DynReader = Rc<dyn Fn(MotionStateKey) -> Option<DynPose>>;
 pub struct MotionReaders {
     pub n2: N2Reader,
     pub dyns: DynReader,
+    pub node_ids: Rc<HashMap<usize, MotionNodeId>>,
 }
 
 impl MotionReaders {
@@ -133,6 +154,7 @@ impl MotionReaders {
         MotionReaders {
             n2: Rc::new(|_| None),
             dyns: Rc::new(|_| None),
+            node_ids: Rc::new(HashMap::new()),
         }
     }
 }
@@ -178,6 +200,24 @@ pub fn scan_builtin_spec(name: &str) -> Option<ScanBuiltinSpec> {
 
 pub(crate) fn site_key(base: usize, counter: usize) -> usize {
     base ^ (0x9e37_79b9_usize.wrapping_mul(counter + 1))
+}
+
+pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
+    readers
+        .node_ids
+        .get(&ptr)
+        .copied()
+        .map(MotionStateKey::Node)
+        .unwrap_or(MotionStateKey::NodePtr(ptr))
+}
+
+pub(crate) fn lazy_state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
+    readers
+        .node_ids
+        .get(&ptr)
+        .copied()
+        .map(|base| MotionStateKey::LazyStage { base })
+        .unwrap_or(MotionStateKey::LazyStagePtr { base: ptr })
 }
 
 pub(crate) fn shortest_arc(from: f64, to: f64) -> f64 {
@@ -453,31 +493,32 @@ pub fn collect_pose_state(d: &DynPose, schema: &mut MotionStateSchema) {
 
 pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
     let base = Rc::as_ptr(node) as usize;
+    let node_id = schema.intern_node(base);
     match &**node {
         DynNode::Vel { a, b, .. } => {
-            schema.intern_n2(MotionStateKey::NodePtr(base));
-            let index = collect_scan_sites(a, base, 0, schema);
-            collect_scan_sites(b, base, index, schema);
+            schema.intern_n2(MotionStateKey::Node(node_id));
+            let index = collect_scan_sites(a, node_id, 0, schema);
+            collect_scan_sites(b, node_id, index, schema);
         }
         DynNode::ClosedPt { a, b, .. } => {
-            let index = collect_scan_sites(a, base, 0, schema);
-            collect_scan_sites(b, base, index, schema);
+            let index = collect_scan_sites(a, node_id, 0, schema);
+            collect_scan_sites(b, node_id, index, schema);
         }
         DynNode::RotExpr { form, .. } => {
-            collect_scan_sites(form, base, 0, schema);
+            collect_scan_sites(form, node_id, 0, schema);
         }
         DynNode::Path { curve, progress, .. } => {
-            collect_scan_sites(progress, base, 0, schema);
+            collect_scan_sites(progress, node_id, 0, schema);
             collect_node_state(curve, schema);
         }
         DynNode::Stages { segs } => {
-            schema.intern_n2(MotionStateKey::NodePtr(base));
+            schema.intern_n2(MotionStateKey::Node(node_id));
             if segs.iter().any(|seg| matches!(seg.make, StageMake::Lazy(_))) {
-                schema.intern_dyn(MotionStateKey::LazyStage { base });
+                schema.intern_dyn(MotionStateKey::LazyStage { base: node_id });
             }
             for seg in segs {
                 if let StageTerm::Until(pred, _) = &seg.term {
-                    collect_scan_sites(pred, base, 0, schema);
+                    collect_scan_sites(pred, node_id, 0, schema);
                 }
                 if let StageMake::Ready(d) = &seg.make {
                     collect_pose_state(d, schema);
@@ -497,7 +538,7 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
 
 pub fn collect_scan_sites(
     form: &Form,
-    base: usize,
+    base: MotionNodeId,
     start_index: u32,
     schema: &mut MotionStateSchema,
 ) -> u32 {
@@ -667,9 +708,13 @@ pub(crate) fn read_scan_in(
     base: usize,
     readers: Option<MotionReaders>,
 ) -> ScanShared {
+    let dense_base = readers
+        .as_ref()
+        .and_then(|readers| readers.node_ids.get(&base).copied());
     Rc::new(std::cell::RefCell::new(ScanIo {
         state: state.clone(),
         base,
+        dense_base,
         counter: 0,
         advance: false,
         dt: 0.0,
@@ -779,7 +824,8 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let [x, y] = (readers.n2)(MotionStateKey::NodePtr(key))
+            let dense_key = state_key_for_node(key, readers);
+            let [x, y] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&key) {
                     Some(Cell::N(v)) => Some(*v),
                     _ => None,
@@ -822,7 +868,8 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
-            let [idx, epoch] = (readers.n2)(MotionStateKey::NodePtr(key))
+            let dense_key = state_key_for_node(key, readers);
+            let [idx, epoch] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&key) {
                     Some(Cell::N(v)) => Some(*v),
                     _ => None,
@@ -868,7 +915,7 @@ pub(crate) fn stage_dyn_in(
     let seg = segs.get(idx).ok_or("stages: segment index out of range")?;
     match &seg.make {
         StageMake::Ready(d) => Ok(d.clone()),
-        StageMake::Lazy(_) => (readers.dyns)(MotionStateKey::LazyStage { base: key })
+        StageMake::Lazy(_) => (readers.dyns)(lazy_state_key_for_node(key, readers))
             .or_else(|| match state.get(&(key + 1)) {
                 Some(Cell::D(d)) => Some(d.clone()),
                 _ => None,
@@ -913,7 +960,8 @@ pub fn step_motion_in(
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
             let key = d as *const DynNode as usize;
-            let [x, y] = (readers.n2)(MotionStateKey::NodePtr(key))
+            let dense_key = state_key_for_node(key, readers);
+            let [x, y] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&key) {
                     Some(Cell::N(v)) => Some(*v),
                     _ => None,
@@ -927,7 +975,7 @@ pub fn step_motion_in(
             }
             let next = [x + vx * dt, y + vy * dt];
             state.insert(key, Cell::N(next));
-            write_n2(MotionStateKey::NodePtr(key), next);
+            write_n2(dense_key, next);
             Ok(())
         }
         DynNode::RotExpr { form, env } => {
@@ -971,7 +1019,8 @@ pub fn step_motion_in(
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
                 let write_dyn = &mut *ctx.write_dyn;
-                let [mut idx, mut epoch] = (readers.n2)(MotionStateKey::NodePtr(key))
+                let dense_key = state_key_for_node(key, readers);
+                let [mut idx, mut epoch] = (readers.n2)(dense_key)
                     .or_else(|| match state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -1017,14 +1066,14 @@ pub fn step_motion_in(
                         let dyn_pose = as_dyn(dv)?;
                         state.insert(key + 1, Cell::D(dyn_pose.clone()));
                         local_lazy_key = Some(key + 1);
-                        write_dyn(MotionStateKey::LazyStage { base: key }, dyn_pose);
+                        write_dyn(lazy_state_key_for_node(key, readers), dyn_pose);
                     }
                 }
                 let next = [idx, epoch];
                 if mirror_legacy {
                     state.insert(key, Cell::N(next));
                 }
-                write_n2(MotionStateKey::NodePtr(key), next);
+                write_n2(dense_key, next);
                 let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
                 (cur, epoch, local_lazy_key, mirror_legacy)
             };
@@ -1112,17 +1161,18 @@ pub(crate) fn clamp_integrator(
     match &**d {
         DynNode::Vel { .. } => {
             let key = Rc::as_ptr(d) as *const DynNode as usize;
+            let dense_key = state_key_for_node(key, readers);
             if let Some([x, y]) = match state.get(&key) {
                 Some(Cell::N(v)) => Some(*v),
                 _ => None,
             }
-            .or_else(|| (readers.n2)(MotionStateKey::NodePtr(key)))
+            .or_else(|| (readers.n2)(dense_key))
             {
                 let next = [x.clamp(lo.0, hi.0), y.clamp(lo.1, hi.1)];
                 if mirror_legacy {
                     state.insert(key, Cell::N(next));
                 }
-                write_n2(MotionStateKey::NodePtr(key), next);
+                write_n2(dense_key, next);
             }
         }
         DynNode::Frame(a, b) => {
@@ -1157,9 +1207,13 @@ pub(crate) fn advance_sites_with_writes<T>(
     mirror_legacy: bool,
     f: impl FnOnce(ScanShared) -> Result<T, String>,
 ) -> Result<(T, Vec<(MotionStateKey, [f64; 2])>), String> {
+    let dense_base = readers
+        .as_ref()
+        .and_then(|readers| readers.node_ids.get(&base).copied());
     let io = Rc::new(std::cell::RefCell::new(ScanIo {
         state: std::mem::take(state),
         base,
+        dense_base,
         counter: 0,
         advance: true,
         dt,
