@@ -288,8 +288,8 @@ language.md.
   inspection/serialization need the shared load-time table; keep the
   reverse int→name table for debugging and the host boundary (never on
   hot paths). Runtime string→keyword construction is confined to load
-  time. Interned enums (layers, tags, teams) fall out of the same
-  mechanism.
+  time. Interned enums (layers, tags, teams, event names) fall out of the
+  same mechanism.
   * Shape interning (hidden classes, spawn-shaped): a spawn site's meta
     literal has a static key set; the sorted key set interns to a shape
     id and entity meta is (shape_id, dense value slice). Reads compile
@@ -458,6 +458,11 @@ language.md.
       variant. `Form::Str` remains syntax/quoted-form data for imports,
       `m"..."`, and macro/form inspection; evaluated strings become
       keywords, and `form-name` returns keywords.
+  2aa. ~~Clarify events as keyword symbols.~~ Done; `(event :name)` requires
+      a keyword symbol and the action field is named accordingly. Event
+      storage still uses `Rc<str>` as a bridge, but the target is the same
+      load-time keyword/symbol interner used for tags, layers, and style
+      names, with host conversion at the boundary.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

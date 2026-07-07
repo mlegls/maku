@@ -411,8 +411,10 @@ pub struct World {
     pub contacts: Vec<ContactRule>,
 }
 
-/// A gameplay event: emitted by collision or by the (event :name) action.
-/// Names are interned (Rc<str>) — a card emits a handful of distinct names.
+/// A gameplay event: emitted by collision or by the `(event :name)` action.
+/// `name` is a keyword symbol. `Rc<str>` is the bridge representation until
+/// keywords/events/layers/styles share one small-int symbol table; hosts
+/// convert the symbol back to their string/name boundary representation.
 #[derive(Clone, Debug)]
 pub struct Event {
     pub tick: u64,

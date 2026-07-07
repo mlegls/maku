@@ -341,7 +341,7 @@ pub enum ActionV {
     SetVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, val: Val },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
-    Event { channel: Rc<str>, pos: Option<(f64, f64)> },
+    Event { name: Rc<str>, pos: Option<(f64, f64)> },
     Nothing,
 }
 
@@ -660,9 +660,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 })));
             }
             "event" => {
-                let ch = match evaluate(&items[1], env, ctx, world)? {
+                let name = match evaluate(&items[1], env, ctx, world)? {
                     Val::Kw(k) => k,
-                    v => return Err(format!("event: expected channel keyword, got {:?}", v)),
+                    v => return Err(format!("event: expected keyword symbol, got {:?}", v)),
                 };
                 let pos = if let Some(p) = items.get(2) {
                     match evaluate(p, env, ctx, world)? {
@@ -672,7 +672,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 } else {
                     None
                 };
-                return Ok(Val::Action(Rc::new(ActionV::Event { channel: ch, pos })));
+                return Ok(Val::Action(Rc::new(ActionV::Event { name, pos })));
             }
             "defcontact" => return sf_defcontact(items, env, ctx, world),
             "spawn" => return sf_spawn(items, env, ctx, world),
@@ -1691,8 +1691,8 @@ fn run_pure_loop(
 pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     match a {
         ActionV::Nothing => Ok(Val::Nothing),
-        ActionV::Event { channel, pos } => {
-            world.push_event(Event { tick: world.tick, name: channel.as_ref().into(), pos: *pos });
+        ActionV::Event { name, pos } => {
+            world.push_event(Event { tick: world.tick, name: name.as_ref().into(), pos: *pos });
             Ok(Val::Nothing)
         }
         ActionV::Export { scope, name } => {

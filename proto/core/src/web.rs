@@ -220,8 +220,8 @@ impl Maku {
     }
 
     /// Recent positioned events for effect flashes: [code, age_ticks, x, y]*
-    /// (codes: 0 graze, 1 player-hit, 2 enemy-hit, 3 died). Stateless — they
-    /// replay under scrubbing.
+    /// Event symbols are converted to this host's numeric effect ids here.
+    /// Stateless — they replay under scrubbing.
     pub fn flashes(&self, max_age: f64) -> Vec<f32> {
         let now = self.inst.tick().unwrap_or(0);
         let mut out = Vec::new();
