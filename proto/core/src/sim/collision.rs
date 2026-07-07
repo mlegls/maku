@@ -85,6 +85,7 @@ fn collider_overlap(a: &ColliderData, b: &ColliderData) -> bool {
 
 fn materialize_colliders(
     b: &Entity,
+    projector: &ColliderProjector,
     tau: f64,
     sig: &SigEnv,
     scale: f64,
@@ -94,7 +95,7 @@ fn materialize_colliders(
     symbols: &mut SymbolTable,
 ) -> Result<Vec<ColliderData>, String> {
     let state = MotionState::new();
-    let mut defs = materialize_collider_defs(&b.collider_projector, tau, &state, sig, symbols)
+    let mut defs = materialize_collider_defs(projector, tau, &state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
     if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         if let Some(projection) = first_render_projection(b, tau, sig) {
@@ -150,7 +151,23 @@ impl Sim {
             let b = &self.world.entities[i];
             let trace = self.world.entities.trace_samples(i);
             let traced = self.world.entities.is_traced(i);
-            colliders.push(materialize_colliders(b, tau, &sig, scale, p, trace, traced, &mut self.world.symbols)?);
+            let projector = self
+                .world
+                .entities
+                .collider_projector(i)
+                .ok_or_else(|| format!("colliders: missing projector for row {i}"))?
+                .clone();
+            colliders.push(materialize_colliders(
+                b,
+                &projector,
+                tau,
+                &sig,
+                scale,
+                p,
+                trace,
+                traced,
+                &mut self.world.symbols,
+            )?);
         }
 
         let rules = self.world.contacts.clone();

@@ -387,8 +387,11 @@ impl Sim {
                         .map(DynRender::polyline)
                         .map(|projection| tau <= projection.activity.warn + projection.activity.active);
                     let collider_live = || {
+                        let Some(projector) = self.world.entities.collider_projector(i).cloned() else {
+                            return None;
+                        };
                         let mut slots = materialize_collider_defs(
-                            &b.collider_projector,
+                            &projector,
                             tau,
                             &state,
                             &sig,

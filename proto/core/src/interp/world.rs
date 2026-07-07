@@ -219,10 +219,6 @@ pub struct RenderSigs {
 #[derive(Clone)]
 pub struct Entity {
     pub dyn_figure: DynFigure,
-    /// Collider projector — archetype data, Rc-shared across a spawn's
-    /// elements. Layers are opaque core routing keys; specs evaluate each
-    /// tick against the current figure into collision rows or nothing.
-    pub collider_projector: ColliderProjector,
     /// Render projector — archetype data, Rc-shared across a spawn's elements.
     pub render_projector: RenderProjector,
 }
@@ -236,6 +232,7 @@ pub struct EntityStore {
     scanned: Vec<bool>,
     cache_policy: Vec<EntityCachePolicy>,
     triggers: Vec<Rc<[TriggerRule]>>,
+    collider_projector: Vec<ColliderProjector>,
     sampled_pose: [Vec<Option<Pose>>; 2],
     trace_cache: TraceCache,
     motion_schema: Vec<Rc<MotionStateSchema>>,
@@ -377,6 +374,7 @@ impl EntityStore {
             scanned: Vec::with_capacity(max),
             cache_policy: Vec::with_capacity(max),
             triggers: Vec::with_capacity(max),
+            collider_projector: Vec::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
             trace_cache: TraceCache::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
@@ -434,6 +432,10 @@ impl EntityStore {
 
     pub fn triggers(&self, row: usize) -> Rc<[TriggerRule]> {
         self.triggers.get(row).cloned().unwrap_or_else(|| Rc::from([]))
+    }
+
+    pub fn collider_projector(&self, row: usize) -> Option<&ColliderProjector> {
+        self.collider_projector.get(row)
     }
 
     pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {
@@ -664,6 +666,7 @@ impl EntityStore {
         scanned: bool,
         cache_policy: EntityCachePolicy,
         triggers: Rc<[TriggerRule]>,
+        collider_projector: ColliderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) -> usize {
         let i = self.free.swap_remove(slot);
@@ -674,6 +677,7 @@ impl EntityStore {
         self.scanned[i] = scanned;
         self.cache_policy[i] = cache_policy;
         self.triggers[i] = triggers;
+        self.collider_projector[i] = collider_projector;
         self.motion_schema[i] = motion_schema;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
@@ -689,6 +693,7 @@ impl EntityStore {
         scanned: bool,
         cache_policy: EntityCachePolicy,
         triggers: Rc<[TriggerRule]>,
+        collider_projector: ColliderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) -> Result<usize, String> {
         if self.rows.len() >= self.max {
@@ -703,6 +708,7 @@ impl EntityStore {
         self.scanned.push(scanned);
         self.cache_policy.push(cache_policy);
         self.triggers.push(triggers);
+        self.collider_projector.push(collider_projector);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
         self.trace_cache.push_row();
@@ -739,6 +745,7 @@ impl Clone for EntityStore {
             scanned: self.scanned.clone(),
             cache_policy: self.cache_policy.clone(),
             triggers: self.triggers.clone(),
+            collider_projector: self.collider_projector.clone(),
             sampled_pose: self.sampled_pose.clone(),
             trace_cache: self.trace_cache.clone(),
             motion_schema: self.motion_schema.clone(),
@@ -1109,6 +1116,7 @@ impl World {
             self.entities.scanned.truncate(max_entities);
             self.entities.cache_policy.truncate(max_entities);
             self.entities.triggers.truncate(max_entities);
+            self.entities.collider_projector.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
             self.entities.trace_cache.truncate_rows(max_entities);
@@ -1162,6 +1170,9 @@ impl World {
         if self.entities.triggers.capacity() < max_entities {
             self.entities.triggers.reserve_exact(max_entities - self.entities.triggers.capacity());
         }
+        if self.entities.collider_projector.capacity() < max_entities {
+            self.entities.collider_projector.reserve_exact(max_entities - self.entities.collider_projector.capacity());
+        }
         for poses in &mut self.entities.sampled_pose {
             if poses.capacity() < max_entities {
                 poses.reserve_exact(max_entities - poses.capacity());
@@ -1189,15 +1200,33 @@ impl World {
         entity: Entity,
         cache_policy: EntityCachePolicy,
         triggers: Rc<[TriggerRule]>,
+        collider_projector: ColliderProjector,
     ) -> Result<usize, String> {
         let motion_schema = Rc::new(collect_motion_state_schema(&entity.dyn_figure));
         let scanned = is_scanned_figure(&entity.dyn_figure);
         if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
             self.clear_sym_fields_at(i);
-            Ok(self.entities.reuse_free_row(slot, entity, self.tick, scanned, cache_policy, triggers, motion_schema))
+            Ok(self.entities.reuse_free_row(
+                slot,
+                entity,
+                self.tick,
+                scanned,
+                cache_policy,
+                triggers,
+                collider_projector,
+                motion_schema,
+            ))
         } else {
-            self.entities.push_row(entity, self.tick, scanned, cache_policy, triggers, motion_schema)
+            self.entities.push_row(
+                entity,
+                self.tick,
+                scanned,
+                cache_policy,
+                triggers,
+                collider_projector,
+                motion_schema,
+            )
         }
     }
 

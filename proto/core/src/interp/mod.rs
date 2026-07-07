@@ -1989,11 +1989,11 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let row = world.install_entity(
                     Entity {
                         dyn_figure,
-                        collider_projector: spec.collider_projector.clone(),
                         render_projector: spec.render_projector.clone(),
                     },
                     spec.cache_policy.clone(),
                     spec.triggers.clone(),
+                    spec.collider_projector.clone(),
                 )?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);
