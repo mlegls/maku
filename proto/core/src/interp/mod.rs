@@ -351,7 +351,7 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub sym_fields: Rc<[(FieldName, Symbol)]>,
+    pub sym_fields: Vec<Option<Symbol>>,
     pub cols: Vec<(ColName, f64)>,
     pub triggers: Rc<[TriggerRule]>,
     pub collider_projector: ColliderProjector,
@@ -1454,8 +1454,12 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
         (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
     ];
-    for (field, value) in &b.sym_fields {
-        if let (Some(field), Some(value)) = (world.symbols.resolve(*field), world.symbols.resolve(*value)) {
+    for (slot, value) in b.sym_fields.iter().enumerate() {
+        let Some(value) = value else {
+            continue;
+        };
+        let field = world.fields.sym_names.get(slot).and_then(|field| world.symbols.resolve(*field));
+        if let (Some(field), Some(value)) = (field, world.symbols.resolve(*value)) {
             view.push((Val::Kw(field.into()), Val::Kw(value.into())));
         }
     }
@@ -1992,7 +1996,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
                     cols: col_slots,
-                    sym_fields: spec.sym_fields.to_vec(),
+                    sym_fields: spec.sym_fields.clone(),
                     triggers: spec.triggers.clone(),
                     prev_pos: None,
                     trail: Vec::new(),

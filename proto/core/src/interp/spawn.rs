@@ -161,7 +161,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     }
     let styles = resolve_styles(&meta, &elems)?;
     let sigs = resolve_sigs(&metas, env, elems.len());
-    let mut sym_fields: Vec<(FieldName, Symbol)> = Vec::new();
+    let mut sym_fields: Vec<Option<Symbol>> = Vec::new();
     if let Val::Map(kvs) = &meta {
         for (k, v) in kvs.iter() {
             let (Val::Kw(field), Val::Kw(value)) = (k, v) else {
@@ -172,11 +172,13 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
             let field = world.field_sym(field.as_ref());
             let value = world.symbols.intern(value.as_ref());
-            sym_fields.retain(|(k, _)| *k != field);
-            sym_fields.push((field, value));
+            let slot = world.intern_sym_field_slot(field);
+            if sym_fields.len() <= slot {
+                sym_fields.resize(slot + 1, None);
+            }
+            sym_fields[slot] = Some(value);
         }
     }
-    let sym_fields: Rc<[(FieldName, Symbol)]> = sym_fields.into();
     // columns: :hp n is sugar for a col (the contact layer reads the hp
     // column by name; what zero hp MEANS is a trigger's business, and the
     // default death trigger is library code, not engine). :cols {:armor 2

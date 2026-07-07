@@ -38,6 +38,7 @@ pub struct HandleFieldId(pub u32);
 pub struct WorldFields {
     pub num_slots: HashMap<FieldName, usize>,
     pub num_names: Vec<FieldName>,
+    pub sym_slots: HashMap<FieldName, usize>,
     pub sym_names: Vec<FieldName>,
     pub handle_names: Vec<FieldName>,
 }
@@ -233,9 +234,10 @@ pub struct Entity {
     /// Bridge numeric fields in a per-entity dense slot vector. Target
     /// storage is a world-owned numeric field matrix.
     pub cols: Vec<Option<f64>>,
-    /// Bridge symbol fields. Target storage is a world-owned symbol field
-    /// matrix; `:team` lives here for compatibility.
-    pub sym_fields: Vec<(FieldName, Symbol)>,
+    /// Bridge symbol fields in a per-entity dense slot vector. Target
+    /// storage is a world-owned symbol field matrix; `:team` lives here for
+    /// compatibility.
+    pub sym_fields: Vec<Option<Symbol>>,
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
@@ -699,11 +701,23 @@ impl World {
         self.symbols.intern(name)
     }
 
+    pub fn sym_field_slot(&self, field: FieldName) -> Option<usize> {
+        self.fields.sym_slots.get(&field).copied()
+    }
+
+    pub fn intern_sym_field_slot(&mut self, field: FieldName) -> usize {
+        if let Some(slot) = self.fields.sym_slots.get(&field).copied() {
+            return slot;
+        }
+        let slot = self.fields.sym_names.len();
+        self.fields.sym_names.push(field);
+        self.fields.sym_slots.insert(field, slot);
+        slot
+    }
+
     pub fn sym_field_value(&self, entity: &Entity, field: FieldName) -> Option<Symbol> {
-        entity
-            .sym_fields
-            .iter()
-            .find_map(|(k, v)| (*k == field).then_some(*v))
+        let slot = self.sym_field_slot(field)?;
+        entity.sym_fields.get(slot).copied().flatten()
     }
 
     pub fn sym_field_value_at(&self, i: usize, field: FieldName) -> Option<Symbol> {
