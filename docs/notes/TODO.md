@@ -24,7 +24,7 @@ work.
 
 ## Engine Refactor
 
-- Move cold dyn/projector data from dense per-row columns into shared
+- Deduplicate `EntitySpecStore` cold dyn/projector data into shared
   spawn-site/program/archetype storage where possible.
 - Remove pointer-keyed compatibility fallback from legacy scratch motion
   evaluation. Live entity stepping now requires stable lowered node ids, while

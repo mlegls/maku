@@ -222,18 +222,101 @@ pub struct EntityStore {
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
     scanned: Vec<bool>,
-    cache_policy: Vec<EntityCachePolicy>,
-    triggers: Vec<Rc<[TriggerRule]>>,
-    collider_projector: Vec<ColliderProjector>,
-    render_projector: Vec<RenderProjector>,
+    specs: EntitySpecStore,
     sampled_pose: [Vec<Option<Pose>>; 2],
     trace_cache: TraceCache,
-    motion_schema: Vec<Rc<MotionStateSchema>>,
     state_n2: Vec<Vec<[f64; 2]>>,
     state_dyn: Vec<Vec<Option<DynPose>>>,
     max: usize,
     free: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct EntitySpecStore {
     dyn_figure: Vec<DynFigure>,
+    cache_policy: Vec<EntityCachePolicy>,
+    triggers: Vec<Rc<[TriggerRule]>>,
+    collider_projector: Vec<ColliderProjector>,
+    render_projector: Vec<RenderProjector>,
+    motion_schema: Vec<Rc<MotionStateSchema>>,
+}
+
+impl EntitySpecStore {
+    fn with_capacity(max: usize) -> EntitySpecStore {
+        EntitySpecStore {
+            dyn_figure: Vec::with_capacity(max),
+            cache_policy: Vec::with_capacity(max),
+            triggers: Vec::with_capacity(max),
+            collider_projector: Vec::with_capacity(max),
+            render_projector: Vec::with_capacity(max),
+            motion_schema: Vec::with_capacity(max),
+        }
+    }
+
+    fn push(
+        &mut self,
+        dyn_figure: DynFigure,
+        cache_policy: EntityCachePolicy,
+        triggers: Rc<[TriggerRule]>,
+        collider_projector: ColliderProjector,
+        render_projector: RenderProjector,
+        motion_schema: Rc<MotionStateSchema>,
+    ) {
+        self.dyn_figure.push(dyn_figure);
+        self.cache_policy.push(cache_policy);
+        self.triggers.push(triggers);
+        self.collider_projector.push(collider_projector);
+        self.render_projector.push(render_projector);
+        self.motion_schema.push(motion_schema);
+    }
+
+    fn set(
+        &mut self,
+        row: usize,
+        dyn_figure: DynFigure,
+        cache_policy: EntityCachePolicy,
+        triggers: Rc<[TriggerRule]>,
+        collider_projector: ColliderProjector,
+        render_projector: RenderProjector,
+        motion_schema: Rc<MotionStateSchema>,
+    ) {
+        self.dyn_figure[row] = dyn_figure;
+        self.cache_policy[row] = cache_policy;
+        self.triggers[row] = triggers;
+        self.collider_projector[row] = collider_projector;
+        self.render_projector[row] = render_projector;
+        self.motion_schema[row] = motion_schema;
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.dyn_figure.truncate(len);
+        self.cache_policy.truncate(len);
+        self.triggers.truncate(len);
+        self.collider_projector.truncate(len);
+        self.render_projector.truncate(len);
+        self.motion_schema.truncate(len);
+    }
+
+    fn reserve_rows(&mut self, max: usize) {
+        if self.dyn_figure.capacity() < max {
+            self.dyn_figure.reserve_exact(max - self.dyn_figure.capacity());
+        }
+        if self.cache_policy.capacity() < max {
+            self.cache_policy.reserve_exact(max - self.cache_policy.capacity());
+        }
+        if self.triggers.capacity() < max {
+            self.triggers.reserve_exact(max - self.triggers.capacity());
+        }
+        if self.collider_projector.capacity() < max {
+            self.collider_projector.reserve_exact(max - self.collider_projector.capacity());
+        }
+        if self.render_projector.capacity() < max {
+            self.render_projector.reserve_exact(max - self.render_projector.capacity());
+        }
+        if self.motion_schema.capacity() < max {
+            self.motion_schema.reserve_exact(max - self.motion_schema.capacity());
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -365,18 +448,13 @@ impl EntityStore {
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
             scanned: Vec::with_capacity(max),
-            cache_policy: Vec::with_capacity(max),
-            triggers: Vec::with_capacity(max),
-            collider_projector: Vec::with_capacity(max),
-            render_projector: Vec::with_capacity(max),
+            specs: EntitySpecStore::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
             trace_cache: TraceCache::with_capacity(max),
-            motion_schema: Vec::with_capacity(max),
             state_n2: Vec::new(),
             state_dyn: Vec::new(),
             max,
             free: Vec::new(),
-            dyn_figure: Vec::with_capacity(max),
         }
     }
 
@@ -438,41 +516,41 @@ impl EntityStore {
     }
 
     pub fn trace_window(&self, row: usize) -> Option<f64> {
-        self.cache_policy.get(row)?.trace.as_ref()?.window
+        self.specs.cache_policy.get(row)?.trace.as_ref()?.window
     }
 
     pub fn triggers(&self, row: usize) -> Rc<[TriggerRule]> {
-        self.triggers.get(row).cloned().unwrap_or_else(|| Rc::from([]))
+        self.specs.triggers.get(row).cloned().unwrap_or_else(|| Rc::from([]))
     }
 
     pub fn collider_projector(&self, row: usize) -> Option<&ColliderProjector> {
-        self.collider_projector.get(row)
+        self.specs.collider_projector.get(row)
     }
 
     pub fn render_projector(&self, row: usize) -> Option<&RenderProjector> {
-        self.render_projector.get(row)
+        self.specs.render_projector.get(row)
     }
 
     pub fn render_projector_mut(&mut self, row: usize) -> Option<&mut RenderProjector> {
-        self.render_projector.get_mut(row)
+        self.specs.render_projector.get_mut(row)
     }
 
     pub fn dyn_figure(&self, row: usize) -> Option<&DynFigure> {
-        self.dyn_figure.get(row)
+        self.specs.dyn_figure.get(row)
     }
 
     pub fn set_dyn_figure(&mut self, row: usize, dyn_figure: DynFigure) {
-        if let Some(slot) = self.dyn_figure.get_mut(row) {
+        if let Some(slot) = self.specs.dyn_figure.get_mut(row) {
             *slot = dyn_figure;
         }
     }
 
     pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {
-        self.motion_schema.get(row).map(|schema| schema.as_ref())
+        self.specs.motion_schema.get(row).map(|schema| schema.as_ref())
     }
 
     pub fn set_motion_schema(&mut self, row: usize, schema: Rc<MotionStateSchema>) {
-        if let Some(slot) = self.motion_schema.get_mut(row) {
+        if let Some(slot) = self.specs.motion_schema.get_mut(row) {
             *slot = schema;
         }
         self.reset_motion_state(row);
@@ -489,7 +567,7 @@ impl EntityStore {
                 "motion schema extension is only supported for lazy stages, got {key:?}"
             ));
         }
-        let Some(current) = self.motion_schema.get(row).cloned() else { return Ok(Vec::new()) };
+        let Some(current) = self.specs.motion_schema.get(row).cloned() else { return Ok(Vec::new()) };
         let old_nodes = current.node_ptrs.len();
         let old_n2 = current.n2_keys.len();
         let old_dyn = current.dyn_keys.len();
@@ -502,7 +580,7 @@ impl EntityStore {
             .iter()
             .filter_map(|ptr| next.node_ids.get(ptr).copied().map(|id| (*ptr, id)))
             .collect::<Vec<_>>();
-        if let Some(slot) = self.motion_schema.get_mut(row) {
+        if let Some(slot) = self.specs.motion_schema.get_mut(row) {
             *slot = Rc::new(next.clone());
         }
         self.ensure_motion_state_shape(&next);
@@ -604,7 +682,7 @@ impl EntityStore {
     }
 
     pub fn reset_motion_state(&mut self, row: usize) {
-        let Some(schema) = self.motion_schema.get(row).cloned() else { return };
+        let Some(schema) = self.specs.motion_schema.get(row).cloned() else { return };
         self.ensure_motion_state_shape(&schema);
         for slot in 0..schema.n2_keys.len() {
             if let Some(cell) = self.state_n2.get_mut(slot).and_then(|col| col.get_mut(row)) {
@@ -699,17 +777,20 @@ impl EntityStore {
         motion_schema: Rc<MotionStateSchema>,
     ) -> usize {
         let i = self.free.swap_remove(slot);
-        self.dyn_figure[i] = dyn_figure;
+        self.specs.set(
+            i,
+            dyn_figure,
+            cache_policy,
+            triggers,
+            collider_projector,
+            render_projector,
+            motion_schema,
+        );
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.alive[i] = true;
         self.freed_at[i] = None;
         self.birth[i] = birth;
         self.scanned[i] = scanned;
-        self.cache_policy[i] = cache_policy;
-        self.triggers[i] = triggers;
-        self.collider_projector[i] = collider_projector;
-        self.render_projector[i] = render_projector;
-        self.motion_schema[i] = motion_schema;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
         self.clear_trace(i);
@@ -731,20 +812,22 @@ impl EntityStore {
             return Err(format!("spawn: entity capacity {} exhausted", self.max));
         }
         let i = self.len();
-        self.dyn_figure.push(dyn_figure);
+        self.specs.push(
+            dyn_figure,
+            cache_policy,
+            triggers,
+            collider_projector,
+            render_projector,
+            motion_schema,
+        );
         self.generation.push(0);
         self.alive.push(true);
         self.freed_at.push(None);
         self.birth.push(birth);
         self.scanned.push(scanned);
-        self.cache_policy.push(cache_policy);
-        self.triggers.push(triggers);
-        self.collider_projector.push(collider_projector);
-        self.render_projector.push(render_projector);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
         self.trace_cache.push_row();
-        self.motion_schema.push(motion_schema);
         for col in &mut self.state_n2 {
             col.push([0.0, 0.0]);
         }
@@ -772,14 +855,9 @@ impl Clone for EntityStore {
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
             scanned: self.scanned.clone(),
-            cache_policy: self.cache_policy.clone(),
-            triggers: self.triggers.clone(),
-            collider_projector: self.collider_projector.clone(),
-            render_projector: self.render_projector.clone(),
-            dyn_figure: self.dyn_figure.clone(),
+            specs: self.specs.clone(),
             sampled_pose: self.sampled_pose.clone(),
             trace_cache: self.trace_cache.clone(),
-            motion_schema: self.motion_schema.clone(),
             state_n2: self.state_n2.clone(),
             state_dyn: self.state_dyn.clone(),
             max: self.max,
@@ -1107,20 +1185,15 @@ impl World {
             ));
         }
         if max_entities < self.entities.len() {
-            self.entities.dyn_figure.truncate(max_entities);
+            self.entities.specs.truncate(max_entities);
             self.entities.generation.truncate(max_entities);
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
             self.entities.birth.truncate(max_entities);
             self.entities.scanned.truncate(max_entities);
-            self.entities.cache_policy.truncate(max_entities);
-            self.entities.triggers.truncate(max_entities);
-            self.entities.collider_projector.truncate(max_entities);
-            self.entities.render_projector.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
             self.entities.trace_cache.truncate_rows(max_entities);
-            self.entities.motion_schema.truncate(max_entities);
             for col in &mut self.entities.state_n2 {
                 col.truncate(max_entities);
             }
@@ -1146,9 +1219,7 @@ impl World {
             }
         }
         self.entities.max = max_entities;
-        if self.entities.dyn_figure.capacity() < max_entities {
-            self.entities.dyn_figure.reserve_exact(max_entities - self.entities.dyn_figure.capacity());
-        }
+        self.entities.specs.reserve_rows(max_entities);
         if self.entities.generation.capacity() < max_entities {
             self.entities.generation.reserve_exact(max_entities - self.entities.generation.capacity());
         }
@@ -1164,27 +1235,12 @@ impl World {
         if self.entities.scanned.capacity() < max_entities {
             self.entities.scanned.reserve_exact(max_entities - self.entities.scanned.capacity());
         }
-        if self.entities.cache_policy.capacity() < max_entities {
-            self.entities.cache_policy.reserve_exact(max_entities - self.entities.cache_policy.capacity());
-        }
-        if self.entities.triggers.capacity() < max_entities {
-            self.entities.triggers.reserve_exact(max_entities - self.entities.triggers.capacity());
-        }
-        if self.entities.collider_projector.capacity() < max_entities {
-            self.entities.collider_projector.reserve_exact(max_entities - self.entities.collider_projector.capacity());
-        }
-        if self.entities.render_projector.capacity() < max_entities {
-            self.entities.render_projector.reserve_exact(max_entities - self.entities.render_projector.capacity());
-        }
         for poses in &mut self.entities.sampled_pose {
             if poses.capacity() < max_entities {
                 poses.reserve_exact(max_entities - poses.capacity());
             }
         }
         self.entities.trace_cache.reserve_rows(max_entities);
-        if self.entities.motion_schema.capacity() < max_entities {
-            self.entities.motion_schema.reserve_exact(max_entities - self.entities.motion_schema.capacity());
-        }
         for col in &mut self.entities.state_n2 {
             if col.capacity() < max_entities {
                 col.reserve_exact(max_entities - col.capacity());
