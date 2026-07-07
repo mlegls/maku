@@ -610,6 +610,11 @@ language.md.
       keyword metadata such as `:team` and `:role` now lowers to interned
       symbol-field slots, with entity-local dense optional values as the
       temporary bridge before world-owned symbol matrices.
+  2v.17. ~~Move numeric entity fields into `WorldFields`.~~ Done; numeric
+      fields now live in world-owned slot-major matrices, with rows cleared
+      on reuse. Culled rows remain invalid through `alive`, but numeric
+      values survive until reuse so same-tick contact/trigger bookkeeping can
+      observe writes made before culling.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

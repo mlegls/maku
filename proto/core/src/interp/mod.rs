@@ -1463,7 +1463,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
             view.push((Val::Kw(field.into()), Val::Kw(value.into())));
         }
     }
-    for (k, v) in world.cols_for_view(b) {
+    for (k, v) in world.cols_for_view(i) {
         view.push((Val::Kw(k), Val::Num(v)));
     }
     Ok(Val::Map(Rc::new(view)))
@@ -1976,14 +1976,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             for spec in entities {
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
                 let scanned = is_scanned_figure(&dyn_figure);
-                let mut col_slots = Vec::new();
-                for (name, val) in &spec.cols {
-                    let slot = world.intern_col_slot(*name);
-                    if col_slots.len() <= slot {
-                        col_slots.resize(slot + 1, None);
-                    }
-                    col_slots[slot] = Some(*val);
-                }
                 let row = world.install_entity(Entity {
                     generation: 0,
                     freed_at: None,
@@ -1995,12 +1987,14 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
-                    cols: col_slots,
                     sym_fields: spec.sym_fields.clone(),
                     triggers: spec.triggers.clone(),
                     prev_pos: None,
                     trail: Vec::new(),
                 })?;
+                for (name, val) in &spec.cols {
+                    world.col_set_sym_at(row, *name, *val);
+                }
                 let handle = world.entity_ref(row);
                 for (col, chan) in spec.expose.iter() {
                     world.exposes.push((chan.clone(), handle, col.clone()));

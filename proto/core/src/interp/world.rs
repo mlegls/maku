@@ -38,6 +38,7 @@ pub struct HandleFieldId(pub u32);
 pub struct WorldFields {
     pub num_slots: HashMap<FieldName, usize>,
     pub num_names: Vec<FieldName>,
+    pub num_values: Vec<Vec<Option<f64>>>,
     pub sym_slots: HashMap<FieldName, usize>,
     pub sym_names: Vec<FieldName>,
     pub handle_names: Vec<FieldName>,
@@ -231,9 +232,6 @@ pub struct Entity {
     pub collider_projector: ColliderProjector,
     /// Render projector — archetype data, Rc-shared across a spawn's elements.
     pub render_projector: RenderProjector,
-    /// Bridge numeric fields in a per-entity dense slot vector. Target
-    /// storage is a world-owned numeric field matrix.
-    pub cols: Vec<Option<f64>>,
     /// Bridge symbol fields in a per-entity dense slot vector. Target
     /// storage is a world-owned symbol field matrix; `:team` lives here for
     /// compatibility.
@@ -584,6 +582,14 @@ impl World {
             self.entities.truncate(max_entities);
             self.free_entities.retain(|i| *i < max_entities);
         }
+        for values in &mut self.fields.num_values {
+            if max_entities < values.len() {
+                values.truncate(max_entities);
+            }
+            if values.capacity() < max_entities {
+                values.reserve_exact(max_entities - values.capacity());
+            }
+        }
         self.max_entities = max_entities;
         if self.entities.capacity() < max_entities {
             self.entities.reserve_exact(max_entities - self.entities.capacity());
@@ -600,6 +606,7 @@ impl World {
             let i = self.free_entities.swap_remove(slot);
             entity.generation = self.entities[i].generation.wrapping_add(1);
             entity.freed_at = None;
+            self.clear_num_fields_at(i);
             self.entities[i] = entity;
             Ok(i)
         } else {
@@ -657,13 +664,15 @@ impl World {
         }
         let slot = self.fields.num_names.len();
         self.fields.num_names.push(name);
+        self.fields.num_values.push(Vec::new());
         self.fields.num_slots.insert(name, slot);
         slot
     }
 
     pub fn col_get_sym_at(&self, bullet_idx: usize, name: ColName) -> Option<f64> {
         let slot = self.col_slot(name)?;
-        self.entities.get(bullet_idx)?.cols.get(slot).copied().flatten()
+        self.entities.get(bullet_idx)?;
+        self.fields.num_values.get(slot)?.get(bullet_idx).copied().flatten()
     }
 
     pub fn col_get_at(&self, bullet_idx: usize, name: &str) -> Option<f64> {
@@ -673,11 +682,14 @@ impl World {
 
     pub fn col_set_sym_at(&mut self, bullet_idx: usize, name: ColName, v: f64) {
         let slot = self.intern_col_slot(name);
-        let Some(b) = self.entities.get_mut(bullet_idx) else { return };
-        if b.cols.len() <= slot {
-            b.cols.resize(slot + 1, None);
+        if self.entities.get(bullet_idx).is_none() {
+            return;
         }
-        b.cols[slot] = Some(v);
+        let values = &mut self.fields.num_values[slot];
+        if values.len() <= bullet_idx {
+            values.resize(bullet_idx + 1, None);
+        }
+        values[bullet_idx] = Some(v);
     }
 
     pub fn col_set_at(&mut self, bullet_idx: usize, name: &Rc<str>, v: f64) {
@@ -685,16 +697,25 @@ impl World {
         self.col_set_sym_at(bullet_idx, sym, v);
     }
 
-    pub fn cols_for_view(&self, b: &Entity) -> Vec<(Rc<str>, f64)> {
-        b.cols
+    pub fn cols_for_view(&self, row: usize) -> Vec<(Rc<str>, f64)> {
+        self.fields
+            .num_values
             .iter()
             .enumerate()
-            .filter_map(|(slot, v)| {
-                let v = (*v)?;
+            .filter_map(|(slot, values)| {
+                let v = values.get(row).copied().flatten()?;
                 let name = self.symbols.resolve(*self.fields.num_names.get(slot)?)?;
                 Some((name.into(), v))
             })
             .collect()
+    }
+
+    fn clear_num_fields_at(&mut self, row: usize) {
+        for values in &mut self.fields.num_values {
+            if let Some(value) = values.get_mut(row) {
+                *value = None;
+            }
+        }
     }
 
     pub fn field_sym(&mut self, name: impl AsRef<str>) -> FieldName {
