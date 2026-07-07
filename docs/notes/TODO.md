@@ -35,7 +35,9 @@ language.md.
   ```text
   Figure = Pose | Polyline | ParametricCurve | Composite...
   Dyn<F> = t -> F
-  Entity = Dyn<Figure> * Dyn<[Collider]> * Dyn<[Render]> * Meta
+  ColliderProjector = Figure, t -> [Collider]
+  RenderProjector = Figure, t -> [Render]
+  Entity = Dyn<Figure> * ColliderProjector * RenderProjector * Meta
   ```
   A pose carries position plus orientation, which is why current point-like
   figures can drive facing and subfire semantics. Interpreter `DynNode`s are
@@ -53,8 +55,8 @@ language.md.
   The important layer boundary is:
   ```text
   Figure:    abstract/math geometry evolving over time
-  Collider:  per-tick collision data derived from the figure
-  Render:    per-tick renderable records/meshes derived from the figure
+  Collider:  per-tick collision rows derived from the current figure
+  Render:    per-tick renderable records/meshes derived from the current figure
   Meta:      opaque library/host data
   ```
   The abstract figure should not be locked to one sampled/renderable form.
@@ -85,10 +87,18 @@ language.md.
 
   SampleSet = Values(Vec<u>) | RangeStep(min, max, step)
   ```
-  Semantically the collider and render sets are dynamic:
+  Semantically collider and render are projectors over the figure, not
+  independent static entity data. Syntax can still represent a projector as a
+  dyn-like list/record schema, and implementation can lower common projectors
+  to stable slots, but the meaning is:
   ```text
-  Entity = Dyn<Figure> * Dyn<[Collider]> * Dyn<[Render]> * Meta
+  collider(entity.figure(t), t) -> [Collider]
+  renderer(entity.figure(t), t) -> [Render]
   ```
+  A single projector can return zero, one, or many rows, so the semantic
+  entity does not need "multiple renderers" or "multiple colliders" as
+  primitive fields. Multiple source specs are just syntax/convenience for a
+  projector that returns a list.
   General dyn typing rule:
   ```text
   Dyn<T> is the typed interpretation of any expression in a time-indexed
@@ -111,8 +121,8 @@ language.md.
   produces a dyn radius inside a preserved collider shape. A collider slot
   can also be `(if (< t 2) :none [:capsule-chain ...])` when the whole
   shape/list is dynamic.
-  For implementation and compilation, the common/static-arity case can lower
-  to stable slots:
+  For implementation and compilation, the common/static-arity projector case
+  can lower to stable slots:
   ```text
   Entity = Dyn<Figure> * Rc<[DynCollider]> * Rc<[DynRender]> * Meta
   ```
@@ -199,9 +209,10 @@ language.md.
   rank/shape information in the VALUE (a shaped array), which bracket
   flavor could not express anyway.
 
-  Low-level collider/render specs are spawn arguments, not generally
-  first-class functions. This keeps the primitive vocabulary small and lets
-  each slot know the spawned `Dyn<Figure>` type at each tick:
+  Low-level collider/render syntax should be separated from the semantic
+  representation. Source-level specs are spawn arguments, not generally
+  first-class functions; semantically those specs denote one collider
+  projector and one render projector over the spawned figure:
   ```text
   (spawn dyn
     [[:collider :hostile-shot :capsule-chain
@@ -210,22 +221,26 @@ language.md.
       {:domain render-domain :stroke w}]]
     meta)
   ```
-  A slot's domain is applied to the current figure. For a parametric curve it
-  supplies `u` values/ranges; for a polyline it can be omitted (`:full`) or
-  used as an index/subrange selector. Higher-level constructors like Touhou
-  `laser` produce these spawn arguments; core does not need one builtin per
-  collider/render mode.
+  The lists above are syntax/coercion input. After lowering, the meaning is
+  `collider(figure(t), t) -> [Collider]` and
+  `renderer(figure(t), t) -> [Render]`. A spec's domain is applied to the
+  current figure. For a parametric curve it supplies `u` values/ranges; for a
+  polyline it can be omitted (`:full`) or used as an index/subrange selector.
+  Higher-level constructors like Touhou `laser` produce these spawn arguments;
+  core does not need one builtin per collider/render mode.
 
-  The second spawn argument is an array of collider specs. Empty array means
-  no colliders. Collision layer is universal collider metadata owned by core
-  as an opaque routing key:
+  The second spawn argument is an array of collider specs that composes into
+  one collider projector. Empty array means a projector that returns no
+  colliders. Collision layer is universal collider metadata owned by core as
+  an opaque routing key:
   ```text
   Collider slot {
     layer: Symbol,
     shape: Circle | CapsuleChain | ...
   }
   ```
-  The third spawn argument is an array of render slot specs:
+  The third spawn argument is an array of render specs that composes into one
+  render projector:
   ```text
   Render slot {
     shape: Point | Polyline | Mesh...
@@ -295,14 +310,14 @@ language.md.
     preallocated and reused; dyn evaluation uses a fixed scratch stack
     with dyns compiled to a flat program at spawn (the DynLike work
     already points there).
-- Render/meta boundary target (2026-07): keep Dyn<[Render]> and
-  Dyn<Meta> separate slots. They differ on every axis that matters:
-  render rows are typed things core can project from a Figure and are
-  hot (touched every frame); meta is engine-opaque, arbitrarily keyed,
-  queried by lib logic (team/damage are lib concepts precisely because
-  they live in meta), and mostly cold. Folding render into meta would
-  make extraction rummage an untyped map per entity per frame. The host
-  render boundary has two tiers:
+- Render/meta boundary target (2026-07): keep the render projector output and
+  entity meta separate even if both use symbol-keyed records as their value
+  format. They differ on every axis that matters: render rows are typed
+  per-frame projection products from a Figure and are hot (touched every
+  frame); meta is engine-opaque, arbitrarily keyed, queried by lib logic
+  (team/damage are lib concepts precisely because they live in meta), and
+  mostly cold. Folding render into meta would make extraction rummage an
+  untyped map per entity per frame. The host render boundary has two tiers:
   * Tier 0 (host renders): the per-tick derived snapshot IS the
     contract — per render tag, a packed array of fully RESOLVED rows
     (owner handle, world pose, evaluated params, sample slices into the
