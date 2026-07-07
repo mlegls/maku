@@ -220,7 +220,6 @@ pub struct RenderSigs {
 pub struct Entity {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub scanned: bool,
     /// Collider projector — archetype data, Rc-shared across a spawn's
     /// elements. Layers are opaque core routing keys; specs evaluate each
     /// tick against the current figure into collision rows or nothing.
@@ -238,6 +237,7 @@ pub struct EntityStore {
     alive: Vec<bool>,
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
+    scanned: Vec<bool>,
     sampled_pose: [Vec<Option<Pose>>; 2],
     trace_cache: TraceCache,
     motion_schema: Vec<Rc<MotionStateSchema>>,
@@ -376,6 +376,7 @@ impl EntityStore {
             alive: Vec::with_capacity(max),
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
+            scanned: Vec::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
             trace_cache: TraceCache::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
@@ -410,6 +411,16 @@ impl EntityStore {
     pub fn reset_birth(&mut self, row: usize, tick: u64) {
         if let Some(birth) = self.birth.get_mut(row) {
             *birth = tick;
+        }
+    }
+
+    pub fn is_scanned(&self, row: usize) -> bool {
+        self.scanned.get(row).copied().unwrap_or(false)
+    }
+
+    pub fn set_scanned(&mut self, row: usize, scanned: bool) {
+        if let Some(slot) = self.scanned.get_mut(row) {
+            *slot = scanned;
         }
     }
 
@@ -638,6 +649,7 @@ impl EntityStore {
         slot: usize,
         entity: Entity,
         birth: u64,
+        scanned: bool,
         motion_schema: Rc<MotionStateSchema>,
     ) -> usize {
         let i = self.free.swap_remove(slot);
@@ -645,6 +657,7 @@ impl EntityStore {
         self.alive[i] = true;
         self.freed_at[i] = None;
         self.birth[i] = birth;
+        self.scanned[i] = scanned;
         self.motion_schema[i] = motion_schema;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
@@ -657,6 +670,7 @@ impl EntityStore {
         &mut self,
         entity: Entity,
         birth: u64,
+        scanned: bool,
         motion_schema: Rc<MotionStateSchema>,
     ) -> Result<usize, String> {
         if self.rows.len() >= self.max {
@@ -668,6 +682,7 @@ impl EntityStore {
         self.alive.push(true);
         self.freed_at.push(None);
         self.birth.push(birth);
+        self.scanned.push(scanned);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
         self.trace_cache.push_row();
@@ -701,6 +716,7 @@ impl Clone for EntityStore {
             alive: self.alive.clone(),
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
+            scanned: self.scanned.clone(),
             sampled_pose: self.sampled_pose.clone(),
             trace_cache: self.trace_cache.clone(),
             motion_schema: self.motion_schema.clone(),
@@ -1068,6 +1084,7 @@ impl World {
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
             self.entities.birth.truncate(max_entities);
+            self.entities.scanned.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
             self.entities.trace_cache.truncate_rows(max_entities);
@@ -1112,6 +1129,9 @@ impl World {
         if self.entities.birth.capacity() < max_entities {
             self.entities.birth.reserve_exact(max_entities - self.entities.birth.capacity());
         }
+        if self.entities.scanned.capacity() < max_entities {
+            self.entities.scanned.reserve_exact(max_entities - self.entities.scanned.capacity());
+        }
         for poses in &mut self.entities.sampled_pose {
             if poses.capacity() < max_entities {
                 poses.reserve_exact(max_entities - poses.capacity());
@@ -1136,12 +1156,13 @@ impl World {
 
     pub fn install_entity(&mut self, entity: Entity) -> Result<usize, String> {
         let motion_schema = Rc::new(collect_motion_state_schema(&entity.dyn_figure));
+        let scanned = is_scanned_figure(&entity.dyn_figure);
         if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
             self.clear_sym_fields_at(i);
-            Ok(self.entities.reuse_free_row(slot, entity, self.tick, motion_schema))
+            Ok(self.entities.reuse_free_row(slot, entity, self.tick, scanned, motion_schema))
         } else {
-            self.entities.push_row(entity, self.tick, motion_schema)
+            self.entities.push_row(entity, self.tick, scanned, motion_schema)
         }
     }
 

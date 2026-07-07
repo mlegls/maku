@@ -1986,11 +1986,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let mut handles = Vec::new();
             for spec in entities {
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
-                let scanned = is_scanned_figure(&dyn_figure);
                 let row = world.install_entity(Entity {
                     dyn_figure,
                     cache_policy: spec.cache_policy.clone(),
-                    scanned,
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
                     triggers: spec.triggers.clone(),
@@ -2070,9 +2068,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.entities.reset_birth(i, world.tick);
             world.entities.set_motion_schema(i, motion_schema);
             world.entities.set_sampled_pose(i, world.tick, Some(anchor));
+            world.entities.set_scanned(i, scanned);
             let b = &mut world.entities[i];
             b.dyn_figure = dyn_figure;
-            b.scanned = scanned;
             Ok(Val::Nothing)
         }
         ActionV::SetCol { target, col, val } => {

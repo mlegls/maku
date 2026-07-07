@@ -289,7 +289,7 @@ impl Sim {
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
         for i in 0..self.world.entities.len() {
-            if self.world.entities.is_alive(i) && self.world.entities[i].scanned {
+            if self.world.entities.is_alive(i) && self.world.entities.is_scanned(i) {
                 let tau = self.world.entities.tau(i, tick);
                 let dyn_figure = self.world.entities[i].dyn_figure.clone();
                 let readers = self.motion_readers(i);

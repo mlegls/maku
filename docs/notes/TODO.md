@@ -26,7 +26,7 @@ work.
 
 - Move remaining row-local `Entity` fields into final storage shapes:
   - `dyn_figure`, `collider_projector`, `render_projector`, `triggers`,
-    `cache_policy`, and `scanned` -> shared spawn-site/program/archetype data
+    and `cache_policy` -> shared spawn-site/program/archetype data
     where possible, leaving row storage mostly indices plus dense state.
 - Remove pointer-keyed compatibility fallback from legacy scratch motion
   evaluation. Live entity stepping now requires stable lowered node ids, while
