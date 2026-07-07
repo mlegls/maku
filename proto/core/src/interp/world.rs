@@ -15,6 +15,33 @@ pub struct Symbol(pub u32);
 pub type ColName = Symbol;
 pub type FieldName = Symbol;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    Num,
+    Sym,
+    Handle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NumFieldId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SymFieldId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HandleFieldId(pub u32);
+
+/// Bridge layout for typed entity field matrices. Values still live on
+/// entities for now; this owns the load-time schema/slot ids that will back
+/// world-owned SoA matrices.
+#[derive(Clone, Debug, Default)]
+pub struct WorldFields {
+    pub num_slots: HashMap<FieldName, usize>,
+    pub num_names: Vec<FieldName>,
+    pub sym_names: Vec<FieldName>,
+    pub handle_names: Vec<FieldName>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SymbolTable {
     by_name: HashMap<Rc<str>, Symbol>,
@@ -403,10 +430,9 @@ pub struct World {
     /// Global index one past the last event THIS timeline emitted.
     pub cursor: u64,
     pub rng: u64,
-    /// Interned source column symbol → dense numeric slot. Entities store
-    /// only slot values; names resolve through the world symbol table.
-    pub col_slots: HashMap<ColName, usize>,
-    pub col_names: Vec<ColName>,
+    /// Typed field schema/layout. Numeric values still live on entities as a
+    /// bridge; target storage moves values into world-owned matrices here.
+    pub fields: WorldFields,
     pub symbols: SymbolTable,
     /// Column-expose rules from spawn meta :expose {$channel :col}:
     /// channel := that entity's column while alive, else 0. Registered at
@@ -430,8 +456,7 @@ impl Clone for World {
             log: self.log.clone(),
             cursor: self.cursor,
             rng: self.rng,
-            col_slots: self.col_slots.clone(),
-            col_names: self.col_names.clone(),
+            fields: self.fields.clone(),
             symbols: self.symbols.clone(),
             exposes: self.exposes.clone(),
             contacts: self.contacts.clone(),
@@ -532,8 +557,7 @@ impl World {
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
             cursor: 0,
             rng: 0x9e37_79b9_7f4a_7c15,
-            col_slots: HashMap::new(),
-            col_names: Vec::new(),
+            fields: WorldFields::default(),
             symbols: SymbolTable::default(),
             exposes: Vec::new(),
             contacts: Vec::new(),
@@ -618,7 +642,7 @@ impl World {
     }
 
     pub fn col_slot(&self, name: ColName) -> Option<usize> {
-        self.col_slots.get(&name).copied()
+        self.fields.num_slots.get(&name).copied()
     }
 
     pub fn intern_col(&mut self, name: impl AsRef<str>) -> ColName {
@@ -626,12 +650,12 @@ impl World {
     }
 
     pub fn intern_col_slot(&mut self, name: ColName) -> usize {
-        if let Some(slot) = self.col_slots.get(&name).copied() {
+        if let Some(slot) = self.fields.num_slots.get(&name).copied() {
             return slot;
         }
-        let slot = self.col_names.len();
-        self.col_names.push(name);
-        self.col_slots.insert(name, slot);
+        let slot = self.fields.num_names.len();
+        self.fields.num_names.push(name);
+        self.fields.num_slots.insert(name, slot);
         slot
     }
 
@@ -665,7 +689,7 @@ impl World {
             .enumerate()
             .filter_map(|(slot, v)| {
                 let v = (*v)?;
-                let name = self.symbols.resolve(*self.col_names.get(slot)?)?;
+                let name = self.symbols.resolve(*self.fields.num_names.get(slot)?)?;
                 Some((name.into(), v))
             })
             .collect()

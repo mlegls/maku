@@ -602,6 +602,10 @@ language.md.
       key is reserved for spawn/render/control compatibility. Entity views,
       field access, `matches`, and map queries can use arbitrary keyword
       metadata such as `:role :boss`.
+  2v.15. ~~Introduce the `WorldFields` layout bridge.~~ Done; `World` now owns
+      a `WorldFields` schema object with typed field-id names and numeric
+      layout slots. Numeric values and symbol fields still live on entities,
+      but layout/schema has a target home for future SoA matrices.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
