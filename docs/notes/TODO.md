@@ -28,8 +28,6 @@ work.
   - `dyn_figure`, `collider_projector`, `render_projector`, `triggers`,
     `cache_policy`, and `scanned` -> shared spawn-site/program/archetype data
     where possible, leaving row storage mostly indices plus dense state.
-- Replace store-owned trace sample vectors with dense/ring-buffer trace cache
-  storage.
 - Remove pointer-keyed compatibility fallback from legacy scratch motion
   evaluation. Live entity stepping now requires stable lowered node ids, while
   old direct evaluation and schema-remap bridges still accept pointer keys.

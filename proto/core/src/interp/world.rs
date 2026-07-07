@@ -239,12 +239,115 @@ pub struct EntityStore {
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
     sampled_pose: [Vec<Option<Pose>>; 2],
-    trace_samples: Vec<Vec<Pose>>,
+    trace_cache: TraceCache,
     motion_schema: Vec<Rc<MotionStateSchema>>,
     state_n2: Vec<Vec<[f64; 2]>>,
     state_dyn: Vec<Vec<Option<DynPose>>>,
     max: usize,
     free: Vec<usize>,
+}
+
+#[derive(Clone)]
+struct TraceCache {
+    stride: usize,
+    samples: Vec<Pose>,
+    len: Vec<usize>,
+}
+
+impl TraceCache {
+    fn with_capacity(max_rows: usize) -> TraceCache {
+        TraceCache {
+            stride: 0,
+            samples: Vec::new(),
+            len: Vec::with_capacity(max_rows),
+        }
+    }
+
+    fn rows(&self) -> usize {
+        self.len.len()
+    }
+
+    fn ensure_rows(&mut self, rows: usize) {
+        if self.len.len() < rows {
+            self.len.resize(rows, 0);
+            self.samples.resize(rows * self.stride, Pose::IDENTITY);
+        }
+    }
+
+    fn reserve_rows(&mut self, max_rows: usize) {
+        if self.len.capacity() < max_rows {
+            self.len.reserve_exact(max_rows - self.len.capacity());
+        }
+        let wanted = max_rows.saturating_mul(self.stride);
+        if self.samples.capacity() < wanted {
+            self.samples.reserve_exact(wanted - self.samples.capacity());
+        }
+    }
+
+    fn truncate_rows(&mut self, rows: usize) {
+        self.len.truncate(rows);
+        self.samples.truncate(rows * self.stride);
+    }
+
+    fn push_row(&mut self) {
+        self.len.push(0);
+        if self.stride > 0 {
+            self.samples.resize(self.samples.len() + self.stride, Pose::IDENTITY);
+        }
+    }
+
+    fn grow_stride(&mut self, stride: usize) {
+        if stride <= self.stride {
+            return;
+        }
+        let rows = self.rows();
+        let mut next = vec![Pose::IDENTITY; rows * stride];
+        for row in 0..rows {
+            let old_start = row * self.stride;
+            let new_start = row * stride;
+            let len = self.len[row].min(stride);
+            if len > 0 {
+                next[new_start..new_start + len].copy_from_slice(&self.samples[old_start..old_start + len]);
+                self.len[row] = len;
+            }
+        }
+        self.stride = stride;
+        self.samples = next;
+    }
+
+    fn samples(&self, row: usize) -> &[Pose] {
+        let Some(len) = self.len.get(row).copied() else { return &[] };
+        let start = row * self.stride;
+        &self.samples[start..start + len]
+    }
+
+    fn push(&mut self, row: usize, pose: Pose, cap: usize) {
+        if cap == 0 {
+            self.clear(row);
+            return;
+        }
+        if cap > self.stride {
+            self.grow_stride(cap);
+        }
+        self.ensure_rows(row + 1);
+        let start = row * self.stride;
+        let mut len = self.len[row];
+        if len >= cap {
+            let keep = cap - 1;
+            if keep > 0 {
+                self.samples.copy_within(start + len - keep..start + len, start);
+            }
+            len = keep;
+        }
+        self.samples[start + len] = pose;
+        self.len[row] = len + 1;
+    }
+
+    fn clear(&mut self, row: usize) {
+        if let Some(len) = self.len.get_mut(row) {
+            *len = 0;
+        }
+    }
 }
 
 fn remap_motion_state_key(schema: &MotionStateSchema, key: MotionStateKey) -> MotionStateKey {
@@ -274,7 +377,7 @@ impl EntityStore {
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
-            trace_samples: Vec::with_capacity(max),
+            trace_cache: TraceCache::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
             state_n2: Vec::new(),
             state_dyn: Vec::new(),
@@ -491,25 +594,15 @@ impl EntityStore {
     }
 
     pub fn trace_samples(&self, row: usize) -> &[Pose] {
-        self.trace_samples.get(row).map(Vec::as_slice).unwrap_or(&[])
+        self.trace_cache.samples(row)
     }
 
     pub fn push_trace_sample(&mut self, row: usize, pose: Pose, cap: usize) {
-        if self.trace_samples.len() <= row {
-            self.trace_samples.resize_with(row + 1, Vec::new);
-        }
-        let samples = &mut self.trace_samples[row];
-        samples.push(pose);
-        if samples.len() > cap {
-            let drop = samples.len() - cap;
-            samples.drain(..drop);
-        }
+        self.trace_cache.push(row, pose, cap);
     }
 
     pub fn clear_trace(&mut self, row: usize) {
-        if let Some(samples) = self.trace_samples.get_mut(row) {
-            samples.clear();
-        }
+        self.trace_cache.clear(row);
     }
 
     pub fn entity_ref(&self, row: usize) -> EntityRef {
@@ -567,7 +660,7 @@ impl EntityStore {
         self.birth.push(birth);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
-        self.trace_samples.push(Vec::new());
+        self.trace_cache.push_row();
         self.motion_schema.push(motion_schema);
         for col in &mut self.state_n2 {
             col.push([0.0, 0.0]);
@@ -599,7 +692,7 @@ impl Clone for EntityStore {
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
             sampled_pose: self.sampled_pose.clone(),
-            trace_samples: self.trace_samples.clone(),
+            trace_cache: self.trace_cache.clone(),
             motion_schema: self.motion_schema.clone(),
             state_n2: self.state_n2.clone(),
             state_dyn: self.state_dyn.clone(),
@@ -967,7 +1060,7 @@ impl World {
             self.entities.birth.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
-            self.entities.trace_samples.truncate(max_entities);
+            self.entities.trace_cache.truncate_rows(max_entities);
             self.entities.motion_schema.truncate(max_entities);
             for col in &mut self.entities.state_n2 {
                 col.truncate(max_entities);
@@ -1014,9 +1107,7 @@ impl World {
                 poses.reserve_exact(max_entities - poses.capacity());
             }
         }
-        if self.entities.trace_samples.capacity() < max_entities {
-            self.entities.trace_samples.reserve_exact(max_entities - self.entities.trace_samples.capacity());
-        }
+        self.entities.trace_cache.reserve_rows(max_entities);
         if self.entities.motion_schema.capacity() < max_entities {
             self.entities.motion_schema.reserve_exact(max_entities - self.entities.motion_schema.capacity());
         }
@@ -1210,5 +1301,37 @@ impl World {
         self.symbols
             .lookup(field)
             .is_none_or(|field| self.sym_field_value_at(i, field).is_none())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(x: f64) -> Pose {
+        Pose::point(x, 0.0)
+    }
+
+    #[test]
+    fn trace_cache_is_dense_and_cap_trimmed() {
+        let mut cache = TraceCache::with_capacity(4);
+        cache.push_row();
+        cache.push_row();
+
+        cache.push(0, p(1.0), 2);
+        cache.push(0, p(2.0), 2);
+        cache.push(0, p(3.0), 2);
+        cache.push(1, p(10.0), 3);
+
+        assert_eq!(cache.samples(0), &[p(2.0), p(3.0)]);
+        assert_eq!(cache.samples(1), &[p(10.0)]);
+
+        cache.push(0, p(4.0), 4);
+        assert_eq!(cache.samples(0), &[p(2.0), p(3.0), p(4.0)]);
+        assert_eq!(cache.samples(1), &[p(10.0)]);
+
+        cache.clear(0);
+        assert!(cache.samples(0).is_empty());
+        assert_eq!(cache.samples(1), &[p(10.0)]);
     }
 }
