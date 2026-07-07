@@ -79,7 +79,7 @@ pub enum Val {
     Pose(Pose),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
-    SourceExpr(Rc<SourceExpr>),
+    DynLike(Rc<DynLike>),
     Dyn(DynPose),
     CurveV(Rc<ExtCurve>),
     /// A form as a value — what macros manipulate and quasiquote builds.
@@ -100,16 +100,18 @@ pub enum Val {
     Nothing,
 }
 
-/// A source structure with temporal leaves. This is not a typed `Dyn<T>` by
-/// itself; typed boundaries such as spawn interpret it with `as_*` schema
-/// checks, while ordinary static structures still evaluate to ordinary
+/// A value-level structure that can be lifted into a typed dyn at an
+/// expected boundary. This is not source syntax and not a typed `Dyn<T>` by
+/// itself: `DynLike::Dyn` keeps a deferred expression plus its environment,
+/// while typed boundaries such as spawn interpret the structure with `as_*`
+/// schema checks. Ordinary static structures still evaluate to ordinary
 /// arrays/maps.
 #[derive(Clone, Debug)]
-pub enum SourceExpr {
+pub enum DynLike {
     Const(Val),
     Dyn(DynVal),
-    Arr(Rc<[SourceExpr]>),
-    Map(Rc<Vec<(Val, SourceExpr)>>),
+    Arr(Rc<[DynLike]>),
+    Map(Rc<Vec<(Val, DynLike)>>),
 }
 
 #[derive(Clone, Debug)]
@@ -117,28 +119,28 @@ pub enum DynVal {
     Expr { form: Form, env: Env },
 }
 
-impl SourceExpr {
+impl DynLike {
     pub fn is_dynamic(&self) -> bool {
         match self {
-            SourceExpr::Const(_) => false,
-            SourceExpr::Dyn(_) => true,
-            SourceExpr::Arr(items) => items.iter().any(SourceExpr::is_dynamic),
-            SourceExpr::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
+            DynLike::Const(_) => false,
+            DynLike::Dyn(_) => true,
+            DynLike::Arr(items) => items.iter().any(DynLike::is_dynamic),
+            DynLike::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
         }
     }
 
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
         match self {
-            SourceExpr::Const(v) => Ok(v.clone()),
-            SourceExpr::Dyn(DynVal::Expr { form, env }) => {
+            DynLike::Const(v) => Ok(v.clone()),
+            DynLike::Dyn(DynVal::Expr { form, env }) => {
                 eval_dyn(&DynNum::num_expr(form.clone(), env.clone()), tau, state, sig).map(Val::Num)
             }
-            SourceExpr::Arr(items) => items
+            DynLike::Arr(items) => items
                 .iter()
                 .map(|v| v.eval(tau, state, sig))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Val::arr),
-            SourceExpr::Map(kvs) => kvs
+            DynLike::Map(kvs) => kvs
                 .iter()
                 .map(|(k, v)| Ok((k.clone(), v.eval(tau, state, sig)?)))
                 .collect::<Result<Vec<_>, String>>()
@@ -146,18 +148,18 @@ impl SourceExpr {
         }
     }
 
-    pub fn from_val(v: Val) -> SourceExpr {
+    pub fn from_val(v: Val) -> DynLike {
         match v {
-            Val::SourceExpr(d) => (*d).clone(),
-            Val::Arr(items) => SourceExpr::Arr(
-                items.iter().cloned().map(SourceExpr::from_val).collect::<Vec<_>>().into(),
+            Val::DynLike(d) => (*d).clone(),
+            Val::Arr(items) => DynLike::Arr(
+                items.iter().cloned().map(DynLike::from_val).collect::<Vec<_>>().into(),
             ),
-            Val::Map(kvs) => SourceExpr::Map(Rc::new(
+            Val::Map(kvs) => DynLike::Map(Rc::new(
                 kvs.iter()
-                    .map(|(k, v)| (k.clone(), SourceExpr::from_val(v.clone())))
+                    .map(|(k, v)| (k.clone(), DynLike::from_val(v.clone())))
                     .collect(),
             )),
-            other => SourceExpr::Const(other),
+            other => DynLike::Const(other),
         }
     }
 }
@@ -483,10 +485,10 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Vector(items) => {
             let lifted = items
                 .iter()
-                .map(|i| eval_source_expr_form(i, env, ctx, world))
+                .map(|i| eval_dynlike_form(i, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
-            if lifted.iter().any(SourceExpr::is_dynamic) {
-                Ok(Val::SourceExpr(Rc::new(SourceExpr::Arr(lifted.into()))))
+            if lifted.iter().any(DynLike::is_dynamic) {
+                Ok(Val::DynLike(Rc::new(DynLike::Arr(lifted.into()))))
             } else {
                 lifted
                     .iter()
@@ -498,10 +500,10 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Map(kvs) => {
             let pairs = kvs
                 .iter()
-                .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_source_expr_form(v, env, ctx, world)?)))
+                .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_dynlike_form(v, env, ctx, world)?)))
                 .collect::<Result<Vec<_>, String>>()?;
             if pairs.iter().any(|(_, v)| v.is_dynamic()) {
-                Ok(Val::SourceExpr(Rc::new(SourceExpr::Map(Rc::new(pairs)))))
+                Ok(Val::DynLike(Rc::new(DynLike::Map(Rc::new(pairs)))))
             } else {
                 pairs
                     .iter()
@@ -514,28 +516,28 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     }
 }
 
-fn eval_source_expr_form(
+fn eval_dynlike_form(
     form: &Form,
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<SourceExpr, String> {
+) -> Result<DynLike, String> {
     match form {
         Form::Vector(items) => items
             .iter()
-            .map(|i| eval_source_expr_form(i, env, ctx, world))
+            .map(|i| eval_dynlike_form(i, env, ctx, world))
             .collect::<Result<Vec<_>, _>>()
-            .map(|items| SourceExpr::Arr(items.into())),
+            .map(|items| DynLike::Arr(items.into())),
         Form::Map(kvs) => kvs
             .iter()
-            .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_source_expr_form(v, env, ctx, world)?)))
+            .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_dynlike_form(v, env, ctx, world)?)))
             .collect::<Result<Vec<_>, String>>()
-            .map(|pairs| SourceExpr::Map(Rc::new(pairs))),
-        form if contains_t(form) => Ok(SourceExpr::Dyn(DynVal::Expr {
+            .map(|pairs| DynLike::Map(Rc::new(pairs))),
+        form if contains_t(form) => Ok(DynLike::Dyn(DynVal::Expr {
             form: form.clone(),
             env: env.clone(),
         })),
-        form => evaluate(form, env, ctx, world).map(SourceExpr::from_val),
+        form => evaluate(form, env, ctx, world).map(DynLike::from_val),
     }
 }
 

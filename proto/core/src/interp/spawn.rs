@@ -62,7 +62,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 // signal tags need a literal map to stay unevaluated
                 match evaluate(m, env, ctx, world)? {
                     Val::Map(kvs) => pairs.extend(kvs.iter().cloned()),
-                    Val::SourceExpr(d) => pairs.extend(source_expr_meta_pairs(&d)?),
+                    Val::DynLike(d) => pairs.extend(dynlike_meta_pairs(&d)?),
                     _ => {}
                 }
             }
@@ -177,7 +177,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // that lets a template's default collider set fit a bigger sprite.
     let colliders: Rc<[DynCollider]> = match map_get(&meta, "colliders") {
         Some(v) => {
-            let mut cs = as_collider_list(&SourceExpr::from_val(v))?.to_vec();
+            let mut cs = as_collider_list(&DynLike::from_val(v))?.to_vec();
             if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
                 let slot = first.slot();
                 let layer = match slot.shape {
@@ -193,7 +193,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         _ => Vec::new().into(),
     };
     let renderers: Rc<[DynRender]> = match map_get(&meta, "renderers") {
-        Some(v) => as_render_list(&SourceExpr::from_val(v))?,
+        Some(v) => as_render_list(&DynLike::from_val(v))?,
         _ => Vec::new().into(),
     };
     // per-element column resolution: same axis rules as styles
@@ -441,40 +441,40 @@ pub(crate) fn map_get(m: &Val, key: &str) -> Option<Val> {
     None
 }
 
-fn source_arr(v: &SourceExpr) -> Option<Vec<SourceExpr>> {
+fn dynlike_arr(v: &DynLike) -> Option<Vec<DynLike>> {
     match v {
-        SourceExpr::Arr(items) => Some(items.iter().cloned().collect()),
-        SourceExpr::Const(Val::Arr(items)) => Some(items.iter().cloned().map(SourceExpr::from_val).collect()),
+        DynLike::Arr(items) => Some(items.iter().cloned().collect()),
+        DynLike::Const(Val::Arr(items)) => Some(items.iter().cloned().map(DynLike::from_val).collect()),
         _ => None,
     }
 }
 
-fn as_source_list(v: &SourceExpr, what: &str) -> Result<Vec<SourceExpr>, String> {
-    source_arr(v).ok_or_else(|| format!("{}: expected array", what))
+fn as_dynlike_list(v: &DynLike, what: &str) -> Result<Vec<DynLike>, String> {
+    dynlike_arr(v).ok_or_else(|| format!("{}: expected array", what))
 }
 
-fn source_expr_to_val(v: &SourceExpr) -> Result<Val, String> {
+fn dynlike_to_val(v: &DynLike) -> Result<Val, String> {
     if v.is_dynamic() {
-        Ok(Val::SourceExpr(Rc::new(v.clone())))
+        Ok(Val::DynLike(Rc::new(v.clone())))
     } else {
         v.eval(0.0, &MotionState::new(), &SigEnv::default())
     }
 }
 
-fn source_expr_meta_pairs(v: &SourceExpr) -> Result<Vec<(Val, Val)>, String> {
+fn dynlike_meta_pairs(v: &DynLike) -> Result<Vec<(Val, Val)>, String> {
     match v {
-        SourceExpr::Map(kvs) => kvs
+        DynLike::Map(kvs) => kvs
             .iter()
-            .map(|(k, v)| Ok((k.clone(), source_expr_to_val(v)?)))
+            .map(|(k, v)| Ok((k.clone(), dynlike_to_val(v)?)))
             .collect(),
-        SourceExpr::Const(Val::Map(kvs)) => Ok(kvs.iter().cloned().collect()),
+        DynLike::Const(Val::Map(kvs)) => Ok(kvs.iter().cloned().collect()),
         _ => Err("spawn meta: expected map".into()),
     }
 }
 
-fn source_map_get(m: &SourceExpr, key: &str) -> Option<SourceExpr> {
+fn dynlike_map_get(m: &DynLike, key: &str) -> Option<DynLike> {
     match m {
-        SourceExpr::Map(kvs) => {
+        DynLike::Map(kvs) => {
             for (k, v) in kvs.iter() {
                 if matches!(k, Val::Kw(kw) if &**kw == key) {
                     return Some(v.clone());
@@ -482,54 +482,54 @@ fn source_map_get(m: &SourceExpr, key: &str) -> Option<SourceExpr> {
             }
             None
         }
-        SourceExpr::Const(v) => map_get(v, key).map(SourceExpr::from_val),
+        DynLike::Const(v) => map_get(v, key).map(DynLike::from_val),
         _ => None,
     }
 }
 
-fn source_kw(v: &SourceExpr) -> Option<Rc<str>> {
+fn dynlike_kw(v: &DynLike) -> Option<Rc<str>> {
     match v {
-        SourceExpr::Const(Val::Kw(k)) => Some(k.clone()),
+        DynLike::Const(Val::Kw(k)) => Some(k.clone()),
         _ => None,
     }
 }
 
-fn as_dyn_num(v: &SourceExpr) -> Result<DynNum, String> {
+fn as_dyn_num(v: &DynLike) -> Result<DynNum, String> {
     match v {
-        SourceExpr::Dyn(DynVal::Expr { form, env }) => {
+        DynLike::Dyn(DynVal::Expr { form, env }) => {
             Ok(DynNum::num_expr(form.clone(), env.clone()))
         }
-        SourceExpr::Const(Val::Num(n)) => Ok(DynNum::num(*n)),
+        DynLike::Const(Val::Num(n)) => Ok(DynNum::num(*n)),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }
 
-fn as_static_num(v: &SourceExpr) -> Result<f64, String> {
+fn as_static_num(v: &DynLike) -> Result<f64, String> {
     match v {
-        SourceExpr::Const(Val::Num(n)) => Ok(*n),
-        SourceExpr::Dyn(_) => Err("expected static number".into()),
+        DynLike::Const(Val::Num(n)) => Ok(*n),
+        DynLike::Dyn(_) => Err("expected static number".into()),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }
 
-fn source_map_as_static_num(m: &SourceExpr, key: &str, default: f64) -> Result<f64, String> {
-    match source_map_get(m, key) {
+fn dynlike_map_as_static_num(m: &DynLike, key: &str, default: f64) -> Result<f64, String> {
+    match dynlike_map_get(m, key) {
         Some(v) => as_static_num(&v),
         None => Ok(default),
     }
 }
 
-fn source_map_as_dyn_num_any(m: &SourceExpr, keys: &[&str], default: f64) -> Result<DynNum, String> {
+fn dynlike_map_as_dyn_num_any(m: &DynLike, keys: &[&str], default: f64) -> Result<DynNum, String> {
     for key in keys {
-        if let Some(v) = source_map_get(m, key) {
+        if let Some(v) = dynlike_map_get(m, key) {
             return as_dyn_num(&v);
         }
     }
     Ok(DynNum::num(default))
 }
 
-fn as_sample_set(opts: &SourceExpr) -> Result<SampleSet, String> {
-    if let Some(vals) = source_map_get(opts, "samples").and_then(|v| source_arr(&v)) {
+fn as_sample_set(opts: &DynLike) -> Result<SampleSet, String> {
+    if let Some(vals) = dynlike_map_get(opts, "samples").and_then(|v| dynlike_arr(&v)) {
         let mut out = Vec::with_capacity(vals.len());
         for v in vals.iter() {
             out.push(as_static_num(v)?);
@@ -537,101 +537,101 @@ fn as_sample_set(opts: &SourceExpr) -> Result<SampleSet, String> {
         return Ok(SampleSet::Values(out.into()));
     }
     Ok(SampleSet::Step {
-        resolution: source_map_as_static_num(opts, "resolution", 0.1)?,
+        resolution: dynlike_map_as_static_num(opts, "resolution", 0.1)?,
     })
 }
 
-fn as_slot_activity(opts: &SourceExpr) -> Result<SlotActivity, String> {
+fn as_slot_activity(opts: &DynLike) -> Result<SlotActivity, String> {
     Ok(SlotActivity {
-        warn: source_map_as_static_num(opts, "warn", 0.0)?,
-        active: source_map_as_static_num(opts, "active", f64::INFINITY)?,
+        warn: dynlike_map_as_static_num(opts, "warn", 0.0)?,
+        active: dynlike_map_as_static_num(opts, "active", f64::INFINITY)?,
         // Full structural Dyn<T> coercion should replace this parser-level
         // shortcut; for now explicit low-level spawn specs are static data.
         hot_frac_sig: None,
     })
 }
 
-fn as_capsule_chain_slot(opts: &SourceExpr) -> Result<CapsuleChainSlot, String> {
+fn as_capsule_chain_slot(opts: &DynLike) -> Result<CapsuleChainSlot, String> {
     Ok(CapsuleChainSlot {
         sample_set: as_sample_set(opts)?,
         u_max_sig: None,
-        width: source_map_as_static_num(opts, "width", 1.0)?,
+        width: dynlike_map_as_static_num(opts, "width", 1.0)?,
         activity: as_slot_activity(opts)?,
     })
 }
 
-fn as_shape_spec(v: &SourceExpr) -> Result<(Rc<str>, SourceExpr), String> {
+fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
     match v {
-        SourceExpr::Arr(items) if items.len() == 2 => {
-            let Some(shape) = source_kw(&items[0]) else {
+        DynLike::Arr(items) if items.len() == 2 => {
+            let Some(shape) = dynlike_kw(&items[0]) else {
                 return Err("shape: expected keyword shape name".into());
             };
             Ok((shape, items[1].clone()))
         }
-        SourceExpr::Const(Val::Kw(shape)) => {
-            Ok((shape.clone(), SourceExpr::Map(Rc::new(Vec::new()))))
+        DynLike::Const(Val::Kw(shape)) => {
+            Ok((shape.clone(), DynLike::Map(Rc::new(Vec::new()))))
         }
         _ => Err("shape: expected [:shape opts]".into()),
     }
 }
 
-fn as_collider(v: &SourceExpr) -> Result<DynCollider, String> {
-    if !matches!(v, SourceExpr::Map(_) | SourceExpr::Const(Val::Map(_))) {
+fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
+    if !matches!(v, DynLike::Map(_) | DynLike::Const(Val::Map(_))) {
         return Err("colliders: expected maps".into());
     }
-    let layer = match source_map_get(v, "layer").and_then(|v| source_kw(&v)) {
+    let layer = match dynlike_map_get(v, "layer").and_then(|v| dynlike_kw(&v)) {
         Some(k) => k,
         _ => return Err("colliders: missing :layer".into()),
     };
-    if let Some(shape_v) = source_map_get(v, "shape") {
+    if let Some(shape_v) = dynlike_map_get(v, "shape") {
         let (shape, opts) = as_shape_spec(&shape_v)?;
         return match shape.as_ref() {
             "circle" => Ok(DynCollider::collider_circle(
                 layer,
-                source_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
+                dynlike_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
             )),
             "capsule-chain" => Ok(DynCollider::collider_capsule_chain(
                 layer,
-                source_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
+                dynlike_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
                 as_capsule_chain_slot(&opts)?,
             )),
             _ => Err(format!("colliders: unknown shape :{}", shape)),
         };
     }
-    match source_map_get(v, "r") {
+    match dynlike_map_get(v, "r") {
         Some(r) => Ok(DynCollider::collider_circle(layer, as_dyn_num(&r)?)),
         _ => Err("colliders: missing :r or :shape".into()),
     }
 }
 
-fn as_collider_list(v: &SourceExpr) -> Result<Rc<[DynCollider]>, String> {
-    as_source_list(v, "colliders")?
+fn as_collider_list(v: &DynLike) -> Result<Rc<[DynCollider]>, String> {
+    as_dynlike_list(v, "colliders")?
         .iter()
         .map(as_collider)
         .collect::<Result<Vec<_>, _>>()
         .map(Into::into)
 }
 
-fn as_render(v: &SourceExpr) -> Result<DynRender, String> {
-    if !matches!(v, SourceExpr::Map(_) | SourceExpr::Const(Val::Map(_))) {
+fn as_render(v: &DynLike) -> Result<DynRender, String> {
+    if !matches!(v, DynLike::Map(_) | DynLike::Const(Val::Map(_))) {
         return Err("renderers: expected maps".into());
     }
-    let shape_v = source_map_get(v, "shape")
-        .unwrap_or_else(|| SourceExpr::Const(Val::Kw("polyline".into())));
+    let shape_v = dynlike_map_get(v, "shape")
+        .unwrap_or_else(|| DynLike::Const(Val::Kw("polyline".into())));
     let (shape, opts) = as_shape_spec(&shape_v)?;
     match shape.as_ref() {
         "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {
             sample_set: as_sample_set(&opts)?,
             u_max_sig: None,
-            width: source_map_as_static_num(&opts, "width", 1.0)?,
+            width: dynlike_map_as_static_num(&opts, "width", 1.0)?,
             activity: as_slot_activity(&opts)?,
         })),
         _ => Err(format!("renderers: unknown shape :{}", shape)),
     }
 }
 
-fn as_render_list(v: &SourceExpr) -> Result<Rc<[DynRender]>, String> {
-    as_source_list(v, "renderers")?
+fn as_render_list(v: &DynLike) -> Result<Rc<[DynRender]>, String> {
+    as_dynlike_list(v, "renderers")?
         .iter()
         .map(as_render)
         .collect::<Result<Vec<_>, _>>()

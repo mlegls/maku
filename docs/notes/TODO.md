@@ -250,7 +250,7 @@ language.md.
   * Supporting rules: intern layer strings to small ints at spawn (the
     collision pass never touches Rc<str>); broadphase buckets/grid
     preallocated and reused; dyn evaluation uses a fixed scratch stack
-    with dyns compiled to a flat program at spawn (the SourceExpr work
+    with dyns compiled to a flat program at spawn (the DynLike work
     already points there).
 - Render/meta boundary target (2026-07): keep Dyn<[Render]> and
   Dyn<Meta> separate slots. They differ on every axis that matters:
@@ -414,22 +414,23 @@ language.md.
       collider/render schema. Current implementation covers static structure
       shape plus dyn expression leaves; whole-list/whole-shape dynamic
       expressions still need typed conditional/function lowering. The
-      prototype carrier is named `SourceExpr` rather than `DynStruct`:
-      `as_*` schema checks at typed boundaries turn source structures into
-      `Dyn<T>`-backed slots, while the structure itself remains ordinary
-      source data.
+      prototype carrier is named `DynLike` rather than `DynStruct` or
+      `SourceExpr`: it is value-level coercion input, distinct from the
+      EDN/form AST. `as_*` schema checks at typed boundaries turn dyn-like
+      structures into `Dyn<T>`-backed slots, while static structures remain
+      ordinary values unless an expected dyn type asks for lifting.
   2t. ~~Stage spawn slot checks by coercion family.~~ Done; first
-      `as_source_list` rejects non-list outer shapes, then
+      `as_dynlike_list` rejects non-list outer shapes, then
       `as_collider_list` / `as_render_list` apply element schemas
-      (`as_collider` / `as_render`). The recursive list/map source-expression
-      lift is shared; collider and render schemas only run after the expected
-      list boundary is accepted.
+      (`as_collider` / `as_render`). The recursive list/map dyn-like lift is
+      shared; collider and render schemas only run after the expected list
+      boundary is accepted.
   2u. ~~Generalize dynamic source leaves away from `DynNum`.~~ Done;
-      `SourceExpr` now carries untyped `DynVal::Expr { form, env }`.
+      `DynLike` now carries untyped `DynVal::Expr { form, env }`.
       Numeric interpretation happens only in numeric typed contexts such as
-      `as_dyn_num`, leaving room for `as_bool`, dynamic enum/shape choices,
-      and other `Dyn<T>` targets without treating numbers as the only
-      dynamic leaf kind.
+      `as_dyn_num`, leaving room for numeric masks, dynamic enum/shape
+      choices, and other `Dyn<T>` targets without treating numbers as the
+      only dynamic leaf kind.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with
