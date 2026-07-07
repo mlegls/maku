@@ -53,17 +53,21 @@ impl Sim {
                                 alpha: self.sample_sig(&b.render_projector.sigs.opacity, tau, 1.0),
                             });
                         }
-                    } else if let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig) {
-                        out.push(RenderItem::Dot {
-                            x: p.x,
-                            y: p.y,
-                            // :facing overrides the motion direction
-                            th: self.sample_sig(&b.render_projector.sigs.facing, tau, p.angle_or(0.0)),
-                            style: b.render_projector.style.clone(),
-                            hue: self.sample_hue(b, tau),
-                            scale: self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0),
-                            alpha: self.sample_sig(&b.render_projector.sigs.opacity, tau, 1.0),
-                        });
+                    } else {
+                        let dense = std::rc::Rc::new(self.world.entities.state_n2_snapshot(i));
+                        let read_n2: N2Reader = std::rc::Rc::new(move |key| dense.get(&key).copied());
+                        if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, sig, &read_n2) {
+                            out.push(RenderItem::Dot {
+                                x: p.x,
+                                y: p.y,
+                                // :facing overrides the motion direction
+                                th: self.sample_sig(&b.render_projector.sigs.facing, tau, p.angle_or(0.0)),
+                                style: b.render_projector.style.clone(),
+                                hue: self.sample_hue(b, tau),
+                                scale: self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0),
+                                alpha: self.sample_sig(&b.render_projector.sigs.opacity, tau, 1.0),
+                            });
+                        }
                     }
                 }
                 FigureDynRepr::Curve { .. } => {

@@ -680,6 +680,11 @@ language.md.
       bridge; advancing scan contexts now collect `ScanSite` `N2` writes from
       stateful scan functions and forward them through the dense motion-state
       write path, while legacy `MotionState` remains the read source.
+  2v.30. ~~Read numeric motion state from dense columns.~~ Done as a bridge;
+      dense-aware motion evaluation now reads `NodePtr` and `ScanSite` `N2`
+      state before falling back to legacy `MotionState`, and sim stepping,
+      collision sampling, rendering, trace recording, and culling pass
+      row-local dense snapshots through that path.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

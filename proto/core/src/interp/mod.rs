@@ -2762,10 +2762,14 @@ fn sf_stateful(
             let target = evaluate(target_form, env, ctx, world)?.num()?;
             let stored = {
                 let io = scan.borrow();
-                match io.state.get(&key) {
-                    Some(Cell::N(v)) => Some(v[0]),
-                    _ => None,
-                }
+                io.read_n2
+                    .as_ref()
+                    .and_then(|read| read(site))
+                    .or_else(|| match io.state.get(&key) {
+                        Some(Cell::N(v)) => Some(*v),
+                        _ => None,
+                    })
+                    .map(|v| v[0])
             };
             let mut cur = stored.unwrap_or(init.unwrap_or(target));
             if advance {
@@ -2789,10 +2793,13 @@ fn sf_stateful(
             };
             let stored = {
                 let io = scan.borrow();
-                match io.state.get(&key) {
-                    Some(Cell::N(v)) => Some(*v),
-                    _ => None,
-                }
+                io.read_n2
+                    .as_ref()
+                    .and_then(|read| read(site))
+                    .or_else(|| match io.state.get(&key) {
+                        Some(Cell::N(v)) => Some(*v),
+                        _ => None,
+                    })
             };
             let [mut x, mut y] = stored.unwrap_or([tx, ty]);
             if advance {

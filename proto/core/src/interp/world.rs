@@ -319,6 +319,17 @@ impl EntityStore {
         self.state_n2.get(slot)?.get(row).copied()
     }
 
+    pub fn state_n2_snapshot(&self, row: usize) -> HashMap<MotionStateKey, [f64; 2]> {
+        let Some(schema) = self.motion_schema(row) else { return HashMap::new() };
+        let mut out = HashMap::with_capacity(schema.n2_keys.len());
+        for key in schema.n2_keys.iter().copied() {
+            if let Some(value) = self.state_n2(row, key) {
+                out.insert(key, value);
+            }
+        }
+        out
+    }
+
     pub fn set_state_n2(&mut self, row: usize, key: MotionStateKey, value: [f64; 2]) -> bool {
         let Some(slot) = self
             .motion_schema(row)

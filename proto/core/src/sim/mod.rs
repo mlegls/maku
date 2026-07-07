@@ -274,8 +274,10 @@ impl Sim {
             if self.world.entities.is_alive(i) && self.world.entities[i].scanned {
                 let tau = self.world.entities.tau(i, tick);
                 let dyn_figure = self.world.entities[i].dyn_figure.clone();
+                let dense = Rc::new(self.world.entities.state_n2_snapshot(i));
+                let read_n2: N2Reader = Rc::new(move |key| dense.get(&key).copied());
                 let mut state = std::mem::take(&mut self.world.entities[i].state);
-                step_dyn_figure_with_dense(&dyn_figure, tau, dt, &mut state, &sig, &mut |key, value| {
+                step_dyn_figure_with_dense(&dyn_figure, tau, dt, &mut state, &sig, read_n2, &mut |key, value| {
                     self.world.entities.set_state_n2(i, key, value);
                 })?;
                 self.world.entities[i].state = state;
@@ -291,10 +293,12 @@ impl Sim {
                     continue;
                 }
                 let tau = self.world.entities.tau(i, tick);
+                let dense = Rc::new(self.world.entities.state_n2_snapshot(i));
+                let read_n2: N2Reader = Rc::new(move |key| dense.get(&key).copied());
                 let b = &mut self.world.entities[i];
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
-                    if let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
+                    if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &read_n2) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         b.trail.push(p);
                         if b.trail.len() > cap {
@@ -329,8 +333,10 @@ impl Sim {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = self.world.entities.tau(i, tick);
+            let dense = Rc::new(self.world.entities.state_n2_snapshot(i));
+            let read_n2: N2Reader = Rc::new(move |key| dense.get(&key).copied());
             let keep = match b.dyn_figure.repr() {
-                FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
+                FigureDynRepr::Pose(_) => match dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &read_n2) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);

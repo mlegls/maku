@@ -133,7 +133,9 @@ impl Sim {
             let tau = self.world.entities.tau(i, tick);
             let p = {
                 let b = &self.world.entities[i];
-                dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?
+                let dense = std::rc::Rc::new(self.world.entities.state_n2_snapshot(i));
+                let read_n2: N2Reader = std::rc::Rc::new(move |key| dense.get(&key).copied());
+                dyn_figure_pose_with_dense(&b.dyn_figure, tau, &b.state, &sig, &read_n2)?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));

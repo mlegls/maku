@@ -114,9 +114,11 @@ pub struct ScanIo {
     pub counter: usize,
     pub advance: bool,
     pub dt: f64,
+    pub read_n2: Option<N2Reader>,
     pub n2_writes: Vec<(MotionStateKey, [f64; 2])>,
 }
 pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
+pub type N2Reader = Rc<dyn Fn(MotionStateKey) -> Option<[f64; 2]>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanStateShape {
@@ -618,12 +620,21 @@ pub(crate) fn eval_pt(
 
 /// Read-only scan context over a clone of the bullet's state.
 pub(crate) fn read_scan(state: &MotionState, base: usize) -> ScanShared {
+    read_scan_with_dense(state, base, None)
+}
+
+pub(crate) fn read_scan_with_dense(
+    state: &MotionState,
+    base: usize,
+    read_n2: Option<N2Reader>,
+) -> ScanShared {
     Rc::new(std::cell::RefCell::new(ScanIo {
         state: state.clone(),
         base,
         counter: 0,
         advance: false,
         dt: 0.0,
+        read_n2,
         n2_writes: Vec::new(),
     }))
 }
@@ -643,6 +654,16 @@ pub fn dyn_figure_pose(
     sig: &SigEnv,
 ) -> Result<Pose, String> {
     dyn_node_pose(d.pose_dyn(), tau, state, sig)
+}
+
+pub fn dyn_figure_pose_with_dense(
+    d: &DynFigure,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    read_n2: &N2Reader,
+) -> Result<Pose, String> {
+    dyn_node_pose_u_with_dense(d.pose_dyn(), tau, 0.0, state, sig, read_n2)
 }
 
 pub fn eval_dyn_figure(
@@ -671,6 +692,18 @@ pub fn dyn_node_pose_u(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Pose, String> {
+    let read_n2: N2Reader = Rc::new(|_| None);
+    dyn_node_pose_u_with_dense(d, tau, u, state, sig, &read_n2)
+}
+
+pub fn dyn_node_pose_u_with_dense(
+    d: &DynNode,
+    tau: f64,
+    u: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    read_n2: &N2Reader,
+) -> Result<Pose, String> {
     match d {
         DynNode::Const(p) => Ok(*p),
         DynNode::Linear { vx, vy } => Ok(Pose {
@@ -680,20 +713,50 @@ pub fn dyn_node_pose_u(
         }),
         DynNode::ClosedPt { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let (x, y) = eval_pt(a, b, *polar, env, sig, tau, u, Some(read_scan(state, key)), None)?;
+            let (x, y) = eval_pt(
+                a,
+                b,
+                *polar,
+                env,
+                sig,
+                tau,
+                u,
+                Some(read_scan_with_dense(state, key, Some(read_n2.clone()))),
+                None,
+            )?;
             let eps = 1.0 / TICK_RATE;
-            let (x2, y2) =
-                eval_pt(a, b, *polar, env, sig, tau + eps, u, Some(read_scan(state, key)), None)?;
+            let (x2, y2) = eval_pt(
+                a,
+                b,
+                *polar,
+                env,
+                sig,
+                tau + eps,
+                u,
+                Some(read_scan_with_dense(state, key, Some(read_n2.clone()))),
+                None,
+            )?;
             Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
         }
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let [x, y] = match state.get(&key) {
-                Some(Cell::N(v)) => *v,
-                _ => [0.0, 0.0],
-            };
-            let (vx, vy) =
-                eval_pt(a, b, *polar, env, sig, tau, u, Some(read_scan(state, key)), Some((x, y)))?;
+            let [x, y] = read_n2(MotionStateKey::NodePtr(key))
+                .or_else(|| match state.get(&key) {
+                    Some(Cell::N(v)) => Some(*v),
+                    _ => None,
+                })
+                .unwrap_or([0.0, 0.0]);
+            let (vx, vy) = eval_pt(
+                a,
+                b,
+                *polar,
+                env,
+                sig,
+                tau,
+                u,
+                Some(read_scan_with_dense(state, key, Some(read_n2.clone()))),
+                Some((x, y)),
+            )?;
             Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()))
         }
         DynNode::Live { channel } => {
@@ -701,13 +764,21 @@ pub fn dyn_node_pose_u(
             Ok(Pose::point(x, y))
         }
         DynNode::Clamp { lo, hi, child } => {
-            let p = dyn_node_pose(child, tau, state, sig)?;
+            let p = dyn_node_pose_u_with_dense(child, tau, 0.0, state, sig, read_n2)?;
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })
         }
         DynNode::RotExpr { form, env } => {
             let key = d as *const DynNode as usize;
-            let th = eval_sig(form, env, sig, tau, u, Some(read_scan(state, key)), Some((0.0, 0.0)))?
-                .num()?;
+            let th = eval_sig(
+                form,
+                env,
+                sig,
+                tau,
+                u,
+                Some(read_scan_with_dense(state, key, Some(read_n2.clone()))),
+                Some((0.0, 0.0)),
+            )?
+            .num()?;
             Ok(Pose::oriented(0.0, 0.0, th))
         }
         DynNode::Stages { segs } => {
@@ -717,21 +788,29 @@ pub fn dyn_node_pose_u(
                 _ => [0.0, 0.0],
             };
             let cur = stage_dyn(segs, idx as usize, state, key)?;
-            dyn_pose_u(&cur, tau - epoch, u, state, sig)
+            dyn_node_pose_u_with_dense(cur.node(), tau - epoch, u, state, sig, read_n2)
         }
         DynNode::Translate { dx, dy, child } => {
-            let p = dyn_node_pose_u(child, tau, u, state, sig)?;
+            let p = dyn_node_pose_u_with_dense(child, tau, u, state, sig, read_n2)?;
             Ok(Pose { x: p.x + dx, y: p.y + dy, theta: p.theta })
         }
         DynNode::Path { curve, progress, env } => {
             let key = d as *const DynNode as usize;
-            let u = eval_sig(progress, env, sig, tau, 0.0, Some(read_scan(state, key)), None)?
-                .num()?;
-            dyn_node_pose_u(curve, tau, u, state, sig)
+            let u = eval_sig(
+                progress,
+                env,
+                sig,
+                tau,
+                0.0,
+                Some(read_scan_with_dense(state, key, Some(read_n2.clone()))),
+                None,
+            )?
+            .num()?;
+            dyn_node_pose_u_with_dense(curve, tau, u, state, sig, read_n2)
         }
         DynNode::Frame(parent, child) => {
-            let pp = dyn_node_pose_u(parent, tau, u, state, sig)?;
-            let cp = dyn_node_pose_u(child, tau, u, state, sig)?;
+            let pp = dyn_node_pose_u_with_dense(parent, tau, u, state, sig, read_n2)?;
+            let cp = dyn_node_pose_u_with_dense(child, tau, u, state, sig, read_n2)?;
             Ok(pp.compose(&cp))
         }
     }
@@ -762,7 +841,8 @@ pub fn step_motion(
     state: &mut MotionState,
     sig: &SigEnv,
 ) -> Result<(), String> {
-    step_motion_with_dense(d, tau, dt, state, sig, &mut |_, _| {})
+    let read_n2: N2Reader = Rc::new(|_| None);
+    step_motion_with_dense(d, tau, dt, state, sig, &read_n2, &mut |_, _| {})
 }
 
 fn step_motion_with_dense(
@@ -771,16 +851,19 @@ fn step_motion_with_dense(
     dt: f64,
     state: &mut MotionState,
     sig: &SigEnv,
+    read_n2: &N2Reader,
     write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
 ) -> Result<(), String> {
     match d {
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let [x, y] = match state.get(&key) {
-                Some(Cell::N(v)) => *v,
-                _ => [0.0, 0.0],
-            };
-            let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, |scan| {
+            let [x, y] = read_n2(MotionStateKey::NodePtr(key))
+                .or_else(|| match state.get(&key) {
+                    Some(Cell::N(v)) => Some(*v),
+                    _ => None,
+                })
+                .unwrap_or([0.0, 0.0]);
+            let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, Some(read_n2.clone()), |scan| {
                 eval_pt(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)))
             })?;
             for (key, value) in writes {
@@ -793,7 +876,7 @@ fn step_motion_with_dense(
         }
         DynNode::RotExpr { form, env } => {
             let key = d as *const DynNode as usize;
-            let (_, writes) = advance_sites_with_writes(state, key, dt, |scan| {
+            let (_, writes) = advance_sites_with_writes(state, key, dt, Some(read_n2.clone()), |scan| {
                 eval_sig(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)))?.num()
             })?;
             for (key, value) in writes {
@@ -803,13 +886,13 @@ fn step_motion_with_dense(
         }
         DynNode::Path { curve, progress, env } => {
             let key = d as *const DynNode as usize;
-            let (_, writes) = advance_sites_with_writes(state, key, dt, |scan| {
+            let (_, writes) = advance_sites_with_writes(state, key, dt, Some(read_n2.clone()), |scan| {
                 eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
             })?;
             for (key, value) in writes {
                 write_n2(key, value);
             }
-            step_motion_with_dense(curve, tau, dt, state, sig, write_n2)
+            step_motion_with_dense(curve, tau, dt, state, sig, read_n2, write_n2)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
@@ -860,16 +943,18 @@ fn step_motion_with_dense(
             state.insert(key, Cell::N([idx, epoch]));
             let cur = stage_dyn(segs, idx as usize, state, key)?;
             // step the inner dyn on the segment-local clock
-            step_motion_with_dense(cur.node(), tau - epoch, dt, state, sig, write_n2)
+            step_motion_with_dense(cur.node(), tau - epoch, dt, state, sig, read_n2, write_n2)
         }
-        DynNode::Translate { child, .. } => step_motion_with_dense(child, tau, dt, state, sig, write_n2),
+        DynNode::Translate { child, .. } => {
+            step_motion_with_dense(child, tau, dt, state, sig, read_n2, write_n2)
+        }
         DynNode::Frame(a, b) => {
-            step_motion_with_dense(a, tau, dt, state, sig, write_n2)?;
-            step_motion_with_dense(b, tau, dt, state, sig, write_n2)
+            step_motion_with_dense(a, tau, dt, state, sig, read_n2, write_n2)?;
+            step_motion_with_dense(b, tau, dt, state, sig, read_n2, write_n2)
         }
         DynNode::Clamp { lo, hi, child } => {
-            step_motion_with_dense(child, tau, dt, state, sig, write_n2)?;
-            clamp_integrator(child, *lo, *hi, state);
+            step_motion_with_dense(child, tau, dt, state, sig, read_n2, write_n2)?;
+            clamp_integrator(child, *lo, *hi, state, write_n2);
             Ok(())
         }
         _ => Ok(()),
@@ -883,7 +968,8 @@ pub fn step_dyn_figure(
     state: &mut MotionState,
     sig: &SigEnv,
 ) -> Result<(), String> {
-    step_dyn_figure_with_dense(d, tau, dt, state, sig, &mut |_, _| {})
+    let read_n2: N2Reader = Rc::new(|_| None);
+    step_dyn_figure_with_dense(d, tau, dt, state, sig, read_n2, &mut |_, _| {})
 }
 
 pub fn step_dyn_figure_with_dense(
@@ -892,12 +978,13 @@ pub fn step_dyn_figure_with_dense(
     dt: f64,
     state: &mut MotionState,
     sig: &SigEnv,
+    read_n2: N2Reader,
     write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
 ) -> Result<(), String> {
-    step_motion_with_dense(d.pose_dyn(), tau, dt, state, sig, write_n2)?;
+    step_motion_with_dense(d.pose_dyn(), tau, dt, state, sig, &read_n2, write_n2)?;
     if let Some(curve) = d.curve() {
         if let CurveEval::Expr(shape) = &curve.eval {
-            step_motion_with_dense(shape.node(), tau, dt, state, sig, write_n2)?;
+            step_motion_with_dense(shape.node(), tau, dt, state, sig, &read_n2, write_n2)?;
         }
     }
     Ok(())
@@ -906,15 +993,20 @@ pub fn step_dyn_figure_with_dense(
 /// Walk through unrotated const offsets to an integrating Vel node and
 /// clamp its state (bounds shifted into the integrator's local frame).
 /// Anything else: the output clamp in dyn_pose is the only effect.
-pub(crate) fn clamp_integrator(d: &Rc<DynNode>, lo: (f64, f64), hi: (f64, f64), state: &mut MotionState) {
+pub(crate) fn clamp_integrator(
+    d: &Rc<DynNode>,
+    lo: (f64, f64),
+    hi: (f64, f64),
+    state: &mut MotionState,
+    write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
+) {
     match &**d {
         DynNode::Vel { .. } => {
             let key = Rc::as_ptr(d) as *const DynNode as usize;
             if let Some(Cell::N([x, y])) = state.get(&key).cloned() {
-                state.insert(
-                    key,
-                    Cell::N([x.clamp(lo.0, hi.0), y.clamp(lo.1, hi.1)]),
-                );
+                let next = [x.clamp(lo.0, hi.0), y.clamp(lo.1, hi.1)];
+                state.insert(key, Cell::N(next));
+                write_n2(MotionStateKey::NodePtr(key), next);
             }
         }
         DynNode::Frame(a, b) => {
@@ -925,12 +1017,13 @@ pub(crate) fn clamp_integrator(d: &Rc<DynNode>, lo: (f64, f64), hi: (f64, f64), 
                         (lo.0 - p.x, lo.1 - p.y),
                         (hi.0 - p.x, hi.1 - p.y),
                         state,
+                        write_n2,
                     );
                 }
             }
         }
         DynNode::Translate { dx, dy, child } => {
-            clamp_integrator(child, (lo.0 - dx, lo.1 - dy), (hi.0 - dx, hi.1 - dy), state);
+            clamp_integrator(child, (lo.0 - dx, lo.1 - dy), (hi.0 - dx, hi.1 - dy), state, write_n2);
         }
         _ => {}
     }
@@ -942,6 +1035,7 @@ pub(crate) fn advance_sites_with_writes<T>(
     state: &mut MotionState,
     base: usize,
     dt: f64,
+    read_n2: Option<N2Reader>,
     f: impl FnOnce(ScanShared) -> Result<T, String>,
 ) -> Result<(T, Vec<(MotionStateKey, [f64; 2])>), String> {
     let io = Rc::new(std::cell::RefCell::new(ScanIo {
@@ -950,6 +1044,7 @@ pub(crate) fn advance_sites_with_writes<T>(
         counter: 0,
         advance: true,
         dt,
+        read_n2,
         n2_writes: Vec::new(),
     }));
     let r = f(io.clone());
