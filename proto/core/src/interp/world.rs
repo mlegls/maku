@@ -13,6 +13,7 @@ pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
 pub struct Symbol(pub u32);
 
 pub type ColName = Symbol;
+pub type FieldName = Symbol;
 
 #[derive(Clone, Debug, Default)]
 pub struct SymbolTable {
@@ -31,6 +32,10 @@ impl SymbolTable {
         self.names.push(name.clone());
         self.by_name.insert(name, sym);
         sym
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<Symbol> {
+        self.by_name.get(name).copied()
     }
 
     pub fn resolve(&self, sym: Symbol) -> Option<&str> {
@@ -186,10 +191,6 @@ pub struct RenderSigs {
 pub struct Entity {
     pub generation: u32,
     pub freed_at: Option<u64>,
-    /// Gameplay team tag (F20: derived channels like $nearest-enemy are
-    /// queries over tagged entities). Collision ignores this; layer tags and
-    /// contact rules define interactions.
-    pub team: Option<Rc<str>>,
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
     pub birth: u64,
@@ -206,6 +207,9 @@ pub struct Entity {
     /// not special — it is just another named source column assigned to a
     /// slot by the world.
     pub cols: Vec<Option<f64>>,
+    /// Interned keyword-valued entity fields. This is a bridge toward finite
+    /// symbol-keyed metadata; `:team` lives here for compatibility.
+    pub kw_fields: Vec<(FieldName, Symbol)>,
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
@@ -638,7 +642,7 @@ impl World {
     }
 
     pub fn col_get_at(&self, bullet_idx: usize, name: &str) -> Option<f64> {
-        let sym = self.symbols.by_name.get(name).copied()?;
+        let sym = self.symbols.lookup(name)?;
         self.col_get_sym_at(bullet_idx, sym)
     }
 
@@ -666,5 +670,38 @@ impl World {
                 Some((name.into(), v))
             })
             .collect()
+    }
+
+    pub fn field_sym(&mut self, name: impl AsRef<str>) -> FieldName {
+        self.symbols.intern(name)
+    }
+
+    pub fn kw_field_value(&self, entity: &Entity, field: FieldName) -> Option<Symbol> {
+        entity
+            .kw_fields
+            .iter()
+            .find_map(|(k, v)| (*k == field).then_some(*v))
+    }
+
+    pub fn kw_field_value_at(&self, i: usize, field: FieldName) -> Option<Symbol> {
+        self.entities.get(i).and_then(|entity| self.kw_field_value(entity, field))
+    }
+
+    pub fn kw_field_resolved_at(&self, i: usize, field: &str) -> Option<&str> {
+        let field = self.symbols.lookup(field)?;
+        let value = self.kw_field_value_at(i, field)?;
+        self.symbols.resolve(value)
+    }
+
+    pub fn kw_field_matches(&self, entity: &Entity, field: &str, value: &str) -> bool {
+        let Some(field) = self.symbols.lookup(field) else { return false };
+        let Some(value) = self.symbols.lookup(value) else { return false };
+        self.kw_field_value(entity, field) == Some(value)
+    }
+
+    pub fn kw_field_missing(&self, entity: &Entity, field: &str) -> bool {
+        self.symbols
+            .lookup(field)
+            .is_none_or(|field| self.kw_field_value(entity, field).is_none())
     }
 }

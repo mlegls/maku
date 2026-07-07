@@ -419,7 +419,7 @@ impl Instance {
                 let t = s.tick() as f64;
                 s.world.entities.iter().enumerate().any(|(i, b)| {
                     b.alive
-                        && b.team.as_deref() == Some("player-body")
+                        && s.world.kw_field_matches(b, "team", "player-body")
                         && s.world.col_get_at(i, "iframe-until").map(|u| u > t).unwrap_or(false)
                 })
             })

@@ -351,7 +351,7 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub team: Option<Rc<str>>,
+    pub kw_fields: Rc<[(FieldName, Symbol)]>,
     pub cols: Vec<(ColName, f64)>,
     pub triggers: Rc<[TriggerRule]>,
     pub collider_projector: ColliderProjector,
@@ -1454,8 +1454,10 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
         (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
     ];
-    if let Some(t) = &b.team {
-        view.push((Val::Kw("team".into()), Val::Kw(t.clone())));
+    if let Some(t) = world.symbols.lookup("team").and_then(|field| world.kw_field_value(b, field)) {
+        if let Some(name) = world.symbols.resolve(t) {
+            view.push((Val::Kw("team".into()), Val::Kw(name.into())));
+        }
     }
     for (k, v) in world.cols_for_view(b) {
         view.push((Val::Kw(k), Val::Num(v)));
@@ -1540,6 +1542,7 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
         Some(Val::Arr(xs)) => xs.iter().any(|v| matches!(v, Val::Kw(k) if &**k == actual)),
         _ => false,
     };
+    let team_field = world.symbols.lookup("team");
     let (family, color, variant, team) =
         (
             get_any(&["render.style.family", "family"]),
@@ -1555,7 +1558,13 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             || !axis_ok(&family, &b.render_projector.style.family)
             || !axis_ok(&color, &b.render_projector.style.color)
             || !axis_ok(&variant, &b.render_projector.style.variant)
-            || !axis_ok(&team, b.team.as_deref().unwrap_or(""))
+            || !axis_ok(
+                &team,
+                team_field
+                    .and_then(|field| world.kw_field_value(b, field))
+                    .and_then(|value| world.symbols.resolve(value))
+                    .unwrap_or(""),
+            )
         {
             continue;
         }
@@ -1624,10 +1633,9 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             crate::interp::motion::FigureDynRepr::Curve { .. } => "curve",
         }
         .into())),
-        "team" => Ok(world.entities[i]
-            .team
-            .as_ref()
-            .map(|t| Val::Kw(t.clone()))
+        "team" => Ok(world
+            .kw_field_resolved_at(i, "team")
+            .map(|t| Val::Kw(t.into()))
             .unwrap_or(Val::Nothing)),
         "family" => Ok(Val::Kw(world.entities[i].render_projector.style.family.as_str().into())),
         "color" => Ok(Val::Kw(world.entities[i].render_projector.style.color.as_str().into())),
@@ -1927,7 +1935,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 .entities
                 .iter()
                 .enumerate()
-                .filter_map(|(i, b)| (b.alive && b.team.is_none()).then_some(i))
+                .filter_map(|(i, b)| {
+                    (b.alive && world.kw_field_missing(b, "team")).then_some(i)
+                })
                 .collect::<Vec<_>>();
             for i in targets {
                 world.cull_at(i);
@@ -1956,7 +1966,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let row = world.install_entity(Entity {
                     generation: 0,
                     freed_at: None,
-                    team: spec.team.clone(),
                     dyn_figure,
                     cache_policy: spec.cache_policy.clone(),
                     birth: world.tick,
@@ -1966,6 +1975,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
                     cols: col_slots,
+                    kw_fields: spec.kw_fields.to_vec(),
                     triggers: spec.triggers.clone(),
                     prev_pos: None,
                     trail: Vec::new(),

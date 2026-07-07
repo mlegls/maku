@@ -319,7 +319,7 @@ impl Sim {
                 continue;
             }
             let b = &self.world.entities[i];
-            if b.team.as_deref() == Some("player-body") {
+            if self.world.kw_field_matches(b, "team", "player-body") {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;

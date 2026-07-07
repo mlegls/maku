@@ -143,10 +143,13 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     }
     let styles = resolve_styles(&meta, &elems)?;
     let sigs = resolve_sigs(&metas, env, elems.len());
-    let team: Option<Rc<str>> = match map_get(&meta, "team") {
-        Some(Val::Kw(k)) => Some(Rc::from(&*k)),
-        _ => None,
-    };
+    let mut kw_fields: Vec<(FieldName, Symbol)> = Vec::new();
+    if let Some(Val::Kw(k)) = map_get(&meta, "team") {
+        let field = world.field_sym("team");
+        let value = world.symbols.intern(k.as_ref());
+        kw_fields.push((field, value));
+    }
+    let kw_fields: Rc<[(FieldName, Symbol)]> = kw_fields.into();
     // columns: :hp n is sugar for a col (the contact layer reads the hp
     // column by name; what zero hp MEANS is a trigger's business, and the
     // default death trigger is library code, not engine). :cols {:armor 2
@@ -279,7 +282,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
-                team: team.clone(),
+                kw_fields: kw_fields.clone(),
                 cols,
                 triggers: triggers.clone(),
                 collider_projector: ColliderProjector { specs: collider_specs.into() },

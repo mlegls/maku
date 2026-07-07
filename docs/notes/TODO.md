@@ -579,6 +579,11 @@ language.md.
       rules now store `ColName` symbols. `World` column layout maps symbols
       to dense slots, with string helpers retained at source/host/test
       boundaries.
+  2v.13. ~~Move `:team` out of the entity struct.~~ Done as a bridge;
+      entities now carry interned keyword fields (`kw_fields`), and source
+      `:team :enemy` lowers to a `FieldName` / keyword-symbol pair. Query,
+      view, cull-hostile, player-body checks, and host iframe checks read
+      through keyword-field helpers.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
