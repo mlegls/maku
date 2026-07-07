@@ -63,8 +63,10 @@ work.
   Dyn<F> = t -> F
   ColliderProjector = Figure, t -> [Collider]
   RenderProjector = Figure, t -> [Render]
-  Entity = Dyn<Figure> * ColliderProjector * RenderProjector * Meta
+  SpawnedObject = Dyn<Figure> * ColliderProjector * RenderProjector * Meta
   ```
+- Spawned objects are retained as row ids into SoA stores, not as an `Entity`
+  row struct.
 - Pose is `(x, y, theta?)`; `theta = none` means facing is unspecified, while
   `theta = some 0` is an explicit zero angle.
 - Sampling is not intrinsic to figures. It belongs to collider/render slots or
