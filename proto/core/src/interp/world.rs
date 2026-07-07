@@ -216,11 +216,7 @@ pub struct RenderSigs {
     pub opacity: Option<MetaSig>,
 }
 
-#[derive(Clone)]
-pub struct Entity {}
-
 pub struct EntityStore {
-    rows: Vec<Entity>,
     generation: Vec<u32>,
     alive: Vec<bool>,
     freed_at: Vec<Option<u64>>,
@@ -364,7 +360,6 @@ fn remap_motion_state_key(schema: &MotionStateSchema, key: MotionStateKey) -> Mo
 impl EntityStore {
     pub fn with_capacity(max: usize) -> EntityStore {
         EntityStore {
-            rows: Vec::with_capacity(max),
             generation: Vec::with_capacity(max),
             alive: Vec::with_capacity(max),
             freed_at: Vec::with_capacity(max),
@@ -387,6 +382,22 @@ impl EntityStore {
 
     pub fn max(&self) -> usize {
         self.max
+    }
+
+    pub fn len(&self) -> usize {
+        self.generation.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> std::ops::Range<usize> {
+        0..self.len()
+    }
+
+    pub fn get(&self, row: usize) -> Option<usize> {
+        (row < self.len()).then_some(row)
     }
 
     pub fn is_alive(&self, row: usize) -> bool {
@@ -573,7 +584,7 @@ impl EntityStore {
     }
 
     fn ensure_motion_state_shape(&mut self, schema: &MotionStateSchema) {
-        let rows = self.rows.len();
+        let rows = self.len();
         while self.state_n2.len() < schema.n2_keys.len() {
             self.state_n2.push(vec![[0.0, 0.0]; rows]);
         }
@@ -663,8 +674,7 @@ impl EntityStore {
     }
 
     pub fn find(&self, handle: EntityRef) -> Option<usize> {
-        self.rows
-            .get(handle.row)
+        self.get(handle.row)
             .filter(|_| self.is_alive(handle.row) && self.generation[handle.row] == handle.generation)
             .map(|_| handle.row)
     }
@@ -703,7 +713,6 @@ impl EntityStore {
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
         self.clear_trace(i);
-        self.rows[i] = Entity {};
         i
     }
 
@@ -718,11 +727,10 @@ impl EntityStore {
         render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) -> Result<usize, String> {
-        if self.rows.len() >= self.max {
+        if self.len() >= self.max {
             return Err(format!("spawn: entity capacity {} exhausted", self.max));
         }
-        let i = self.rows.len();
-        self.rows.push(Entity {});
+        let i = self.len();
         self.dyn_figure.push(dyn_figure);
         self.generation.push(0);
         self.alive.push(true);
@@ -748,7 +756,7 @@ impl EntityStore {
     }
 
     pub fn cull(&mut self, row: usize, tick: u64) {
-        if row < self.rows.len() && self.alive[row] {
+        if row < self.len() && self.alive[row] {
             self.alive[row] = false;
             self.freed_at[row] = Some(tick);
             self.free.push(row);
@@ -758,10 +766,7 @@ impl EntityStore {
 
 impl Clone for EntityStore {
     fn clone(&self) -> EntityStore {
-        let mut rows = Vec::with_capacity(self.max);
-        rows.extend(self.rows.iter().cloned());
         EntityStore {
-            rows,
             generation: self.generation.clone(),
             alive: self.alive.clone(),
             freed_at: self.freed_at.clone(),
@@ -780,38 +785,6 @@ impl Clone for EntityStore {
             max: self.max,
             free: self.free.clone(),
         }
-    }
-}
-
-impl std::ops::Deref for EntityStore {
-    type Target = Vec<Entity>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.rows
-    }
-}
-
-impl std::ops::DerefMut for EntityStore {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.rows
-    }
-}
-
-impl<'a> IntoIterator for &'a EntityStore {
-    type Item = &'a Entity;
-    type IntoIter = std::slice::Iter<'a, Entity>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.rows.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a mut EntityStore {
-    type Item = &'a mut Entity;
-    type IntoIter = std::slice::IterMut<'a, Entity>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.rows.iter_mut()
     }
 }
 
@@ -1134,7 +1107,6 @@ impl World {
             ));
         }
         if max_entities < self.entities.len() {
-            self.entities.rows.truncate(max_entities);
             self.entities.dyn_figure.truncate(max_entities);
             self.entities.generation.truncate(max_entities);
             self.entities.alive.truncate(max_entities);
@@ -1174,9 +1146,6 @@ impl World {
             }
         }
         self.entities.max = max_entities;
-        if self.entities.rows.capacity() < max_entities {
-            self.entities.rows.reserve_exact(max_entities - self.entities.rows.capacity());
-        }
         if self.entities.dyn_figure.capacity() < max_entities {
             self.entities.dyn_figure.reserve_exact(max_entities - self.entities.dyn_figure.capacity());
         }
