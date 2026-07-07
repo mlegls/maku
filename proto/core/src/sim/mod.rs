@@ -384,7 +384,6 @@ impl Sim {
 fn truthy_pub(v: &Val) -> bool {
     match v {
         Val::Num(n) => *n != 0.0,
-        Val::Bool(b) => *b,
         Val::Nothing => false,
         _ => false,
     }

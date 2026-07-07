@@ -413,7 +413,6 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                 Val::Num(_) => "num",
                 Val::Str(_) => "str",
                 Val::Kw(_) => "kw",
-                Val::Bool(_) => "bool",
                 Val::Arr(_) => "arr",
                 Val::Map(_) => "map",
                 Val::Nothing => "nothing",

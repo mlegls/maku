@@ -72,7 +72,6 @@ impl Deref for Seq {
 #[derive(Clone, Debug)]
 pub enum Val {
     Num(f64),
-    Bool(bool),
     Kw(Rc<str>),
     Str(Rc<str>),
     Vec2 { x: f64, y: f64 },
@@ -843,8 +842,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let expect = evaluate(&items[3], env, ctx, world)?.num()?;
                 let cells = ctx.sig.cells.borrow();
                 let req_set = matches!(cells.get(&req), Some((_, Val::Kw(_))))
-                    || matches!(cells.get(&req), Some((_, Val::Num(n))) if *n != 0.0)
-                    || matches!(cells.get(&req), Some((_, Val::Bool(true))));
+                    || matches!(cells.get(&req), Some((_, Val::Num(n))) if *n != 0.0);
                 let g = match cells.get(&genc) {
                     Some((_, Val::Num(n))) => *n,
                     _ => expect,
@@ -856,8 +854,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // cell; true means one arm has completed.
                 let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
                 let cells = ctx.sig.cells.borrow();
-                let done = matches!(cells.get(&cell), Some((_, Val::Num(n))) if *n != 0.0)
-                    || matches!(cells.get(&cell), Some((_, Val::Bool(true))));
+                let done = matches!(cells.get(&cell), Some((_, Val::Num(n))) if *n != 0.0);
                 return Ok(Val::Num(if done { 1.0 } else { 0.0 }));
             }
             "race-won!" => {
@@ -1977,8 +1974,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             // first request wins until the machine clears it (tree order);
             // bare (goto) files numeric true = "default successor"
             let already_set = matches!(cells.get(cell), Some((_, Val::Kw(_))))
-                || matches!(cells.get(cell), Some((_, Val::Num(n))) if *n != 0.0)
-                || matches!(cells.get(cell), Some((_, Val::Bool(true))));
+                || matches!(cells.get(cell), Some((_, Val::Num(n))) if *n != 0.0);
             if !already_set {
                 let v = match label {
                     Some(l) => Val::Kw(l.clone()),
@@ -2069,7 +2065,6 @@ fn val_to_form(v: &Val) -> Result<Form, String> {
     Ok(match v {
         Val::FormV(f) => (**f).clone(),
         Val::Num(n) => Form::Num(*n),
-        Val::Bool(b) => Form::Bool(*b),
         Val::Str(s) => Form::Str(s.clone()),
         Val::Kw(k) => Form::Kw(k.clone()),
         Val::Arr(xs) => Form::Vector(
@@ -2085,7 +2080,6 @@ fn val_to_form(v: &Val) -> Result<Form, String> {
 pub(crate) fn truthy(v: &Val) -> bool {
     match v {
         Val::Num(n) => *n != 0.0,
-        Val::Bool(b) => *b,
         Val::Nothing => false,
         _ => false,
     }
@@ -2224,7 +2218,6 @@ fn literal_pattern_matches(pat: &Form, subject: &Val) -> bool {
     match (pat, subject) {
         (Form::Num(a), Val::Num(b)) => (a - b).abs() < 1e-9,
         (Form::Kw(a), Val::Kw(b)) | (Form::Str(a), Val::Str(b)) => a == b,
-        (Form::Bool(a), Val::Bool(b)) => a == b,
         (Form::Bool(a), Val::Num(b)) => (*a && *b != 0.0) || (!*a && *b == 0.0),
         (_, Val::FormV(f)) => form_literal_matches(pat, f),
         _ => false,
