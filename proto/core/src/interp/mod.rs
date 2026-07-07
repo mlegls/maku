@@ -1906,16 +1906,20 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::Nothing)
         }
         ActionV::CullHostile => {
-            for b in world.entities.iter_mut() {
-                if b.team.is_none() {
-                    b.alive = false;
-                }
+            let targets = world
+                .entities
+                .iter()
+                .enumerate()
+                .filter_map(|(i, b)| (b.alive && b.team.is_none()).then_some(i))
+                .collect::<Vec<_>>();
+            for i in targets {
+                world.cull_at(i);
             }
             Ok(Val::Nothing)
         }
         ActionV::Cull { target } => {
             if let Some(i) = world.find(*target) {
-                world.entities[i].alive = false;
+                world.cull_at(i);
             }
             Ok(Val::Nothing)
         }
@@ -1934,8 +1938,10 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     }
                     col_slots[slot] = Some(*val);
                 }
-                world.entities.push(Entity {
+                let row = world.install_entity(Entity {
                     id,
+                    generation: 0,
+                    freed_at: None,
                     team: spec.team.clone(),
                     dyn_figure,
                     cache_policy: spec.cache_policy.clone(),
@@ -1961,10 +1967,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     // same-tick availability: the channel exists the moment
                     // the entity does (gates may read it this very tick)
                     let v = world
-                        .entities
-                        .len()
-                        .checked_sub(1)
-                        .and_then(|i| world.col_get_at(i, col))
+                        .col_get_at(row, col)
                         .unwrap_or(0.0);
                     let mut m = (*ctx.sig.channels).clone();
                     m.insert(chan.to_string(), Val::Num(v));

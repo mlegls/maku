@@ -1,5 +1,17 @@
     use super::*;
 
+    fn live_count(sim: &Sim) -> usize {
+        sim.world.entities.iter().filter(|b| b.alive).count()
+    }
+
+    fn live_family_count(sim: &Sim, family: &str) -> usize {
+        sim.world
+            .entities
+            .iter()
+            .filter(|b| b.alive && b.style.family == family)
+            .count()
+    }
+
     /// Conformance: the real translation files, loaded verbatim from disk.
     #[test]
     fn translations_run() {
@@ -132,8 +144,8 @@
         for _ in 0..120 {
             sim.step().unwrap();
         }
-        let lstars = sim.world.entities.iter().filter(|b| b.style.family == "lstar").count();
-        let stars = sim.world.entities.iter().filter(|b| b.style.family == "star").count();
+        let lstars = live_family_count(&sim, "lstar");
+        let stars = live_family_count(&sim, "star");
         assert_eq!(lstars, 3, "one big star culled");
         assert_eq!(stars, 8, "explosion ring spawned");
         // ring anchored at the culled star's position at t≈0.5 (x = 0.5 from
@@ -203,7 +215,7 @@
             sim.events_vec().into_iter().filter(|e| &*e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
-        assert_eq!(sim.world.entities.iter().filter(|b| b.team.is_none()).count(), 1);
+        assert_eq!(sim.world.entities.iter().filter(|b| b.alive && b.team.is_none()).count(), 1);
         assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 2.0), "graze ring precedes the hitbox; iframes graze too");
         // the hit effect is a column write; $lives is a channel
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == 2.0));
@@ -403,7 +415,7 @@
         // the column keeps counting (what game-over MEANS is host policy)
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == -2.0));
         // non-culling: the player entity is still there (host decides)
-        assert!(sim.world.entities.iter().any(|b| b.team.as_deref() == Some("player-body")));
+        assert!(sim.world.entities.iter().any(|b| b.alive && b.team.as_deref() == Some("player-body")));
     }
 
     /// Death is not special: :triggers replaces the synthesized default,
@@ -486,7 +498,7 @@
         }
         assert_eq!(sim.channel_u64("hits"), 1, "active beam hits");
         assert_eq!(
-            sim.world.entities.iter().filter(|b| b.team.is_none()).count(),
+            sim.world.entities.iter().filter(|b| b.alive && b.team.is_none()).count(),
             1,
             "the beam persists through the hit"
         );
@@ -607,7 +619,7 @@
         for _ in 0..90 {
             sim.step().unwrap();
         }
-        let count = |f: &str| sim.world.entities.iter().filter(|b| b.style.family == f).count();
+        let count = |f: &str| live_family_count(&sim, f);
         assert_eq!(count("circle"), 0, "stage-1 entities consumed");
         assert_eq!(count("gem"), 12, "even indices: two 6-rings");
         assert_eq!(count("star"), 6, "odd indices: two 3-fans");
@@ -963,17 +975,17 @@
         }
         // only the seed with ci=3 matched the query and died
         assert_eq!(
-            sim.world.entities.iter().filter(|b| b.style.family == "seed").count(),
+            live_family_count(&sim, "seed"),
             3,
             "per-element column selected exactly one seed"
         );
-        assert_eq!(sim.world.entities.iter().filter(|b| b.style.family == "burst").count(), 0);
+        assert_eq!(live_family_count(&sim, "burst"), 0);
         for _ in 0..15 {
             sim.step().unwrap();
         }
         // the deferred fork's timed spawn landed after its wait
         assert_eq!(
-            sim.world.entities.iter().filter(|b| b.style.family == "burst").count(),
+            live_family_count(&sim, "burst"),
             6,
             "callback-forked timed work ran as an adopted task"
         );
@@ -1236,7 +1248,7 @@
             panic!("no $player channel");
         }
         // field quiets after the kill (rig + parked guides only)
-        assert!(sim.world.entities.len() <= 6, "post-fight field: {}", sim.world.entities.len());
+        assert!(live_count(&sim) <= 6, "post-fight field: {}", live_count(&sim));
     }
 
     /// The playable demo card exercises the whole gameplay layer at once:
@@ -1327,14 +1339,14 @@
             sim.step().unwrap();
         }
         // b waits 30 ticks from ITS start: nothing through tick 129
-        assert_eq!(sim.world.entities.iter().filter(|b| b.style.family == "y").count(), 0);
+        assert_eq!(live_family_count(&sim, "y"), 0);
         sim.step().unwrap(); // the step processing tick 130 = add(100) + 30
         let ys: Vec<_> =
             sim.world.entities.iter().filter(|b| b.style.family == "y").collect();
         assert_eq!(ys.len(), 3);
         assert_eq!(ys[0].birth, 130, "b's clock anchored at the add tick");
         // a kept its own cadence meanwhile (volleys at ticks 0, 60, 120)
-        assert_eq!(sim.world.entities.iter().filter(|b| b.style.family == "x").count(), 6);
+        assert_eq!(live_family_count(&sim, "x"), 6);
     }
 
     /// Patterns are callable: (par (a) (b)) plays two patterns in parallel.
@@ -1348,8 +1360,8 @@
         for _ in 0..30 {
             sim.step().unwrap();
         }
-        let x = sim.world.entities.iter().filter(|b| b.style.family == "x").count();
-        let y = sim.world.entities.iter().filter(|b| b.style.family == "y").count();
+        let x = live_family_count(&sim, "x");
+        let y = live_family_count(&sim, "y");
         assert_eq!((x, y), (4, 3), "both patterns ran in parallel");
     }
 
@@ -1758,7 +1770,7 @@
             sim.step_with(&inp).unwrap();
         }
         let count = |sim: &Sim, fam: &str| {
-            sim.world.entities.iter().filter(|b| b.style.family == fam).count()
+            sim.world.entities.iter().filter(|b| b.alive && b.style.family == fam).count()
         };
         let g1 = count(&sim, "circle");
         assert!(g1 >= 8, "ground moveset firing: {}", g1);
@@ -2027,6 +2039,38 @@ fn predicate_queries_drive_manipulate() {
         .map(|(i, _)| sim.world.col_get_at(i, "hp").unwrap())
         .collect::<Vec<_>>();
     assert_eq!(hp, vec![1.0, 6.0]);
+}
+
+#[test]
+fn entity_rows_do_not_shift_after_cull() {
+    const CARD: &str = r#"
+(defchannel $enemy-rows (entities-where (matches :team :enemy)))
+(defpattern p []
+  (seq
+    (let [a (spawn (pose c[0 0]) {:team :enemy :hp 1})
+          b (spawn (pose c[1 0]) {:team :enemy :hp 2})]
+      (seq
+        (wait (ticks 2))
+        (cull (first a))
+        (wait (ticks 1))))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    let Some(Val::EntitySet(rows)) = sim.ctx.sig.channel("enemy-rows") else {
+        panic!("expected row view before cull")
+    };
+    assert_eq!(&*rows, &[0, 1]);
+    for _ in 0..3 {
+        sim.step().unwrap();
+    }
+    let Some(Val::EntitySet(rows)) = sim.ctx.sig.channel("enemy-rows") else {
+        panic!("expected row view after cull")
+    };
+    assert_eq!(&*rows, &[1]);
+    assert!(!sim.world.entities[0].alive);
+    assert!(sim.world.entities[1].alive);
 }
 
     /// Ancestor clocks are lib-expressible (§13.1 audit): a parent

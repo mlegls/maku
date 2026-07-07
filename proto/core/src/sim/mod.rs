@@ -267,7 +267,7 @@ impl Sim {
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
         for b in &mut self.world.entities {
-            if b.scanned {
+            if b.alive && b.scanned {
                 let tau = (tick - b.birth) as f64 / TICK_RATE;
                 step_dyn_figure(&b.dyn_figure, tau, dt, &mut b.state, &sig)?;
             }
@@ -278,6 +278,9 @@ impl Sim {
             let tick = self.world.tick;
             let sig = self.ctx.sig.clone();
             for b in &mut self.world.entities {
+                if !b.alive {
+                    continue;
+                }
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
@@ -307,15 +310,16 @@ impl Sim {
         // cull: off-playfield poses/traces; compatibility curves past their active window
         let tick = self.world.tick;
         let mut err = None;
-        self.world.entities.retain(|b| {
-            if !b.alive {
-                return false;
+        for i in 0..self.world.entities.len() {
+            if !self.world.entities[i].alive {
+                continue;
             }
+            let b = &self.world.entities[i];
             if b.team.as_deref() == Some("player-body") {
-                return true; // the player rides a channel; never field-culled
+                continue; // the player rides a channel; never field-culled
             }
             let tau = (tick - b.birth) as f64 / TICK_RATE;
-            match b.dyn_figure.repr() {
+            let keep = match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
@@ -348,8 +352,11 @@ impl Sim {
                     };
                     render_live.or_else(collider_live).unwrap_or(true)
                 }
+            };
+            if !keep {
+                self.world.cull_at(i);
             }
-        });
+        }
         match err {
             Some(e) => Err(e),
             None => Ok(()),

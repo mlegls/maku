@@ -137,6 +137,8 @@ pub struct RenderSigs {
 #[derive(Clone)]
 pub struct Entity {
     pub id: u64,
+    pub generation: u32,
+    pub freed_at: Option<u64>,
     /// Gameplay team tag (F20: derived channels like $nearest-enemy are
     /// queries over tagged entities). Collision ignores this; layer tags and
     /// contact rules define interactions.
@@ -354,6 +356,7 @@ pub struct World {
     pub tick: u64,
     pub next_id: u64,
     pub entities: Vec<Entity>,
+    pub free_entities: Vec<usize>,
     /// The event log is SHARED across snapshots (Rc): the log is monotonic,
     /// so a snapshot needs only `cursor` — restore truncates the shared
     /// tail and re-stepping re-emits deterministically. Snapshots carry
@@ -443,6 +446,7 @@ impl Default for World {
             tick: 0,
             next_id: 0,
             entities: Vec::new(),
+            free_entities: Vec::new(),
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
             cursor: 0,
             rng: 0x9e37_79b9_7f4a_7c15,
@@ -455,6 +459,33 @@ impl Default for World {
 }
 
 impl World {
+    pub fn install_entity(&mut self, mut entity: Entity) -> usize {
+        if let Some(slot) = self
+            .free_entities
+            .iter()
+            .position(|&i| self.entities[i].freed_at.is_some_and(|t| t < self.tick))
+        {
+            let i = self.free_entities.swap_remove(slot);
+            entity.generation = self.entities[i].generation.wrapping_add(1);
+            entity.freed_at = None;
+            self.entities[i] = entity;
+            i
+        } else {
+            let i = self.entities.len();
+            self.entities.push(entity);
+            i
+        }
+    }
+
+    pub fn cull_at(&mut self, i: usize) {
+        let Some(entity) = self.entities.get_mut(i) else { return };
+        if entity.alive {
+            entity.alive = false;
+            entity.freed_at = Some(self.tick);
+            self.free_entities.push(i);
+        }
+    }
+
     /// Deterministic splitmix64-ish stream (counter-based enough for the
     /// prototype: same run order → same stream → replays agree).
     pub fn next_rand(&mut self) -> f64 {

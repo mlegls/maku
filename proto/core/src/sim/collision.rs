@@ -227,7 +227,7 @@ impl Sim {
                 let at = self.world.entities[i].prev_pos;
                 self.world.col_set_at(i, &latch, 1.0);
                 if cull {
-                    self.world.entities[i].alive = false;
+                    self.world.cull_at(i);
                 }
                 self.world.push_event(Event { tick, name, pos: at });
             }

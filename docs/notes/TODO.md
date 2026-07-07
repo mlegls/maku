@@ -490,10 +490,10 @@ language.md.
       `entities-where` returns an ephemeral `EntitySet(Vec<usize>)`, and
       keyword application/dot syntax broadcasts flat field access over it.
       Entity sets are per-tick row-index views, not stable identity-keyed
-      vectors. The current storage still compacts `world.entities` with
-      `retain`, so row numbers are only valid for the current realized view;
-      the stronger host contract ("stable while live, stale for at least one
-      tick before reuse") needs tombstones/free-list/generation storage.
+      vectors. Tombstone/free-list/generation storage now keeps live rows
+      from shifting when earlier rows die and prevents same-tick slot reuse.
+      The next storage step is making max entity capacity an explicit client
+      construction-time parameter instead of letting the backing vector grow.
       Stable per-entity control should keep handles or sort/key the view
       explicitly. Predicate queries such as `(entities-where (matches :team
       :enemy))` are now supported; query maps remain compatibility syntax.
