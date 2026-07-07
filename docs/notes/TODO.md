@@ -659,6 +659,9 @@ language.md.
       `MotionStateSchema` now tracks numeric and compatibility dyn slots, and
       a dyn-tree collector discovers node-level `Vel` / `Stages` state while
       leaving expression-local scan sites for expression lowering.
+  2v.25. ~~Collect expression-local scan state sites.~~ Done; the schema
+      collector walks scanned forms for `slew` / `smooth` in evaluation order
+      and assigns `ScanSite` numeric slots under the containing node base.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

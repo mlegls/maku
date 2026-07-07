@@ -395,17 +395,20 @@ pub fn collect_pose_state(d: &DynPose, schema: &mut MotionStateSchema) {
 pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
     let base = Rc::as_ptr(node) as usize;
     match &**node {
-        DynNode::Vel { .. } => {
+        DynNode::Vel { a, b, .. } => {
             schema.intern_n2(MotionStateKey::NodePtr(base));
+            let index = collect_scan_sites(a, base, 0, schema);
+            collect_scan_sites(b, base, index, schema);
         }
-        DynNode::RotExpr { .. } | DynNode::ClosedPt { .. } => {
-            // Stateful expression sites under this node are discovered by
-            // expression lowering as ScanSite keys. The node itself has no
-            // persistent cell in the current interpreter.
+        DynNode::ClosedPt { a, b, .. } => {
+            let index = collect_scan_sites(a, base, 0, schema);
+            collect_scan_sites(b, base, index, schema);
         }
-        DynNode::Path { curve, .. } => {
-            // Progress expressions may have ScanSite cells; collect the curve
-            // node-level state here and leave expression sites to lowering.
+        DynNode::RotExpr { form, .. } => {
+            collect_scan_sites(form, base, 0, schema);
+        }
+        DynNode::Path { curve, progress, .. } => {
+            collect_scan_sites(progress, base, 0, schema);
             collect_node_state(curve, schema);
         }
         DynNode::Stages { segs } => {
@@ -414,6 +417,9 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
                 schema.intern_dyn(MotionStateKey::LazyStage { base });
             }
             for seg in segs {
+                if let StageTerm::Until(pred, _) = &seg.term {
+                    collect_scan_sites(pred, base, 0, schema);
+                }
                 if let StageMake::Ready(d) = &seg.make {
                     collect_pose_state(d, schema);
                 }
@@ -427,6 +433,35 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
             collect_node_state(b, schema);
         }
         DynNode::Const(_) | DynNode::Linear { .. } | DynNode::Live { .. } => {}
+    }
+}
+
+pub fn collect_scan_sites(
+    form: &Form,
+    base: usize,
+    start_index: u32,
+    schema: &mut MotionStateSchema,
+) -> u32 {
+    match form {
+        Form::List(items) => {
+            let mut index = start_index;
+            if matches!(items.first(), Some(Form::Sym(s)) if &**s == "slew" || &**s == "smooth") {
+                schema.intern_n2(MotionStateKey::ScanSite { base, index });
+                index += 1;
+            }
+            for item in items.iter() {
+                index = collect_scan_sites(item, base, index, schema);
+            }
+            index
+        }
+        Form::Vector(items) => items
+            .iter()
+            .fold(start_index, |index, item| collect_scan_sites(item, base, index, schema)),
+        Form::Map(kvs) => kvs.iter().fold(start_index, |index, (k, v)| {
+            let index = collect_scan_sites(k, base, index, schema);
+            collect_scan_sites(v, base, index, schema)
+        }),
+        _ => start_index,
     }
 }
 

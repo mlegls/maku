@@ -3048,6 +3048,21 @@ mod tests {
     }
 
     #[test]
+    fn motion_state_schema_collects_scan_sites() {
+        let Val::Dyn(d) = ev("(vel (cart m\"smooth(0.5, 4)\" m\"slew(10, 0, 90)\"))") else { panic!() };
+        let schema = collect_motion_state_schema(&DynFigure::pose(d));
+        assert_eq!(schema.n2_keys.len(), 3, "vel plus smooth/slew state slots");
+        assert!(schema
+            .n2_keys
+            .iter()
+            .any(|key| matches!(key, MotionStateKey::ScanSite { index: 0, .. })));
+        assert!(schema
+            .n2_keys
+            .iter()
+            .any(|key| matches!(key, MotionStateKey::ScanSite { index: 1, .. })));
+    }
+
+    #[test]
     fn motion_state_schema_collects_lazy_stage_slots() {
         let ready = DynPose::pose_node(std::rc::Rc::new(DynNode::Linear { vx: 1.0, vy: 0.0 }));
         let staged = DynPose::pose_node(std::rc::Rc::new(DynNode::Stages {
