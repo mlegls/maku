@@ -32,8 +32,6 @@ work.
   storage.
 - Replace `MotionStateKey::NodePtr(usize)` with stable lowered node ids.
   Pointer identity is the main remaining blocker for compiled dyn programs.
-- Flatten the private motion step arg-bundle helper into `MotionStepCtx`
-  internally, not just at the public live-sim boundary.
 - Lower lazy `stages` to a closed set of dyns at load time, or isolate it as
   an explicitly interpreted compatibility path. It currently extends dense
   schemas at runtime when a lazy segment is first constructed.

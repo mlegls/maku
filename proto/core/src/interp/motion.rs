@@ -905,32 +905,13 @@ pub fn step_motion_in(
     dt: f64,
     ctx: &mut MotionStepCtx<'_>,
 ) -> Result<(), String> {
-    step_motion_args(
-        d,
-        tau,
-        dt,
-        ctx.state,
-        ctx.sig,
-        ctx.readers,
-        ctx.mirror_legacy,
-        ctx.write_n2,
-        ctx.write_dyn,
-    )
-}
-
-fn step_motion_args(
-    d: &DynNode,
-    tau: f64,
-    dt: f64,
-    state: &mut MotionState,
-    sig: &SigEnv,
-    readers: &MotionReaders,
-    mirror_legacy: bool,
-    write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
-    write_dyn: &mut dyn FnMut(MotionStateKey, DynPose),
-) -> Result<(), String> {
     match d {
         DynNode::Vel { a, b, polar, env } => {
+            let state = &mut *ctx.state;
+            let sig = ctx.sig;
+            let readers = ctx.readers;
+            let mirror_legacy = ctx.mirror_legacy;
+            let write_n2 = &mut *ctx.write_n2;
             let key = d as *const DynNode as usize;
             let [x, y] = (readers.n2)(MotionStateKey::NodePtr(key))
                 .or_else(|| match state.get(&key) {
@@ -950,6 +931,11 @@ fn step_motion_args(
             Ok(())
         }
         DynNode::RotExpr { form, env } => {
+            let state = &mut *ctx.state;
+            let sig = ctx.sig;
+            let readers = ctx.readers;
+            let mirror_legacy = ctx.mirror_legacy;
+            let write_n2 = &mut *ctx.write_n2;
             let key = d as *const DynNode as usize;
             let (_, writes) = advance_sites_with_writes(state, key, dt, Some(readers.clone()), mirror_legacy, |scan| {
                 eval_sig(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)))?.num()
@@ -960,93 +946,115 @@ fn step_motion_args(
             Ok(())
         }
         DynNode::Path { curve, progress, env } => {
-            let key = d as *const DynNode as usize;
-            let (_, writes) = advance_sites_with_writes(state, key, dt, Some(readers.clone()), mirror_legacy, |scan| {
-                eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
-            })?;
-            for (key, value) in writes {
-                write_n2(key, value);
+            {
+                let state = &mut *ctx.state;
+                let sig = ctx.sig;
+                let readers = ctx.readers;
+                let mirror_legacy = ctx.mirror_legacy;
+                let write_n2 = &mut *ctx.write_n2;
+                let key = d as *const DynNode as usize;
+                let (_, writes) = advance_sites_with_writes(state, key, dt, Some(readers.clone()), mirror_legacy, |scan| {
+                    eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
+                })?;
+                for (key, value) in writes {
+                    write_n2(key, value);
+                }
             }
-            step_motion_args(curve, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
+            step_motion_in(curve, tau, dt, ctx)
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
-            let [mut idx, mut epoch] = (readers.n2)(MotionStateKey::NodePtr(key))
-                .or_else(|| match state.get(&key) {
-                    Some(Cell::N(v)) => Some(*v),
-                    _ => None,
-                })
-                .unwrap_or([0.0, 0.0]);
-            // terminate current segment?
-            let seg = segs.get(idx as usize).ok_or("stages: bad segment")?;
-            let local = tau - epoch;
-            let done = match &seg.term {
-                StageTerm::Dur(dsec) => local >= *dsec,
-                StageTerm::Until(pred, penv) => {
-                    let scan = read_scan_in(state, key, Some(readers.clone()));
-                    truthy(&eval_sig(pred, penv, sig, local, 0.0, Some(scan), None)?)
+            let (cur, epoch, local_lazy_key, mirror_legacy) = {
+                let state = &mut *ctx.state;
+                let sig = ctx.sig;
+                let readers = ctx.readers;
+                let mirror_legacy = ctx.mirror_legacy;
+                let write_n2 = &mut *ctx.write_n2;
+                let write_dyn = &mut *ctx.write_dyn;
+                let [mut idx, mut epoch] = (readers.n2)(MotionStateKey::NodePtr(key))
+                    .or_else(|| match state.get(&key) {
+                        Some(Cell::N(v)) => Some(*v),
+                        _ => None,
+                    })
+                    .unwrap_or([0.0, 0.0]);
+                let seg = segs.get(idx as usize).ok_or("stages: bad segment")?;
+                let local = tau - epoch;
+                let done = match &seg.term {
+                    StageTerm::Dur(dsec) => local >= *dsec,
+                    StageTerm::Until(pred, penv) => {
+                        let scan = read_scan_in(state, key, Some(readers.clone()));
+                        truthy(&eval_sig(pred, penv, sig, local, 0.0, Some(scan), None)?)
+                    }
+                    StageTerm::Forever => false,
+                };
+                let mut local_lazy_key = None;
+                if done && (idx as usize) + 1 < segs.len() {
+                    let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
+                    let eval_ctx = MotionEvalCtx::new(state, sig, readers);
+                    let p1 = dyn_node_pose_u_in(cur.node(), local, 0.0, eval_ctx)?;
+                    let p0 = dyn_node_pose_u_in(cur.node(), (local - dt).max(0.0), 0.0, eval_ctx)?;
+                    let exit = Val::Map(Rc::new(vec![
+                        (Val::Kw("pos".into()), Val::Pose(Pose::point(p1.x, p1.y))),
+                        (
+                            Val::Kw("vel".into()),
+                            Val::Pose(Pose::point((p1.x - p0.x) / dt, (p1.y - p0.y) / dt)),
+                        ),
+                        (Val::Kw("pose".into()), Val::Pose(p1)),
+                    ]));
+                    idx += 1.0;
+                    epoch = tau;
+                    if let StageMake::Lazy(f) = &segs[idx as usize].make {
+                        let mut ctx = Ctx {
+                            sig: sig.clone(),
+                            ambient: Pose::IDENTITY,
+                            scan: None,
+                            patterns: Rc::new(HashMap::new()),
+                            macros: Rc::new(HashMap::new()),
+                            deferred: Vec::new(),
+                        };
+                        let mut w = World::default();
+                        let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
+                        let dyn_pose = as_dyn(dv)?;
+                        state.insert(key + 1, Cell::D(dyn_pose.clone()));
+                        local_lazy_key = Some(key + 1);
+                        write_dyn(MotionStateKey::LazyStage { base: key }, dyn_pose);
+                    }
                 }
-                StageTerm::Forever => false,
-            };
-            let mut local_lazy_key = None;
-            if done && (idx as usize) + 1 < segs.len() {
-                // exit snapshot from the finishing segment
+                let next = [idx, epoch];
+                if mirror_legacy {
+                    state.insert(key, Cell::N(next));
+                }
+                write_n2(MotionStateKey::NodePtr(key), next);
                 let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
-                let ctx = MotionEvalCtx::new(state, sig, readers);
-                let p1 = dyn_node_pose_u_in(cur.node(), local, 0.0, ctx)?;
-                let p0 = dyn_node_pose_u_in(cur.node(), (local - dt).max(0.0), 0.0, ctx)?;
-                let exit = Val::Map(Rc::new(vec![
-                    (Val::Kw("pos".into()), Val::Pose(Pose::point(p1.x, p1.y))),
-                    (
-                        Val::Kw("vel".into()),
-                        Val::Pose(Pose::point((p1.x - p0.x) / dt, (p1.y - p0.y) / dt)),
-                    ),
-                    (Val::Kw("pose".into()), Val::Pose(p1)),
-                ]));
-                idx += 1.0;
-                epoch = tau;
-                if let StageMake::Lazy(f) = &segs[idx as usize].make {
-                    let mut ctx = Ctx {
-                        sig: sig.clone(),
-                        ambient: Pose::IDENTITY,
-                        scan: None,
-                        patterns: Rc::new(HashMap::new()),
-                        macros: Rc::new(HashMap::new()),
-                        deferred: Vec::new(),
-                    };
-                    let mut w = World::default();
-                    let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
-                    let dyn_pose = as_dyn(dv)?;
-                    state.insert(key + 1, Cell::D(dyn_pose.clone()));
-                    local_lazy_key = Some(key + 1);
-                    write_dyn(MotionStateKey::LazyStage { base: key }, dyn_pose);
-                }
-            }
-            let next = [idx, epoch];
-            if mirror_legacy {
-                state.insert(key, Cell::N(next));
-            }
-            write_n2(MotionStateKey::NodePtr(key), next);
-            let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
+                (cur, epoch, local_lazy_key, mirror_legacy)
+            };
             // step the inner dyn on the segment-local clock
-            let result = step_motion_args(cur.node(), tau - epoch, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn);
+            let result = step_motion_in(cur.node(), tau - epoch, dt, ctx);
             if !mirror_legacy {
                 if let Some(key) = local_lazy_key {
-                    state.remove(&key);
+                    ctx.state.remove(&key);
                 }
             }
             result
         }
         DynNode::Translate { child, .. } => {
-            step_motion_args(child, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
+            step_motion_in(child, tau, dt, ctx)
         }
         DynNode::Frame(a, b) => {
-            step_motion_args(a, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)?;
-            step_motion_args(b, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)
+            step_motion_in(a, tau, dt, ctx)?;
+            step_motion_in(b, tau, dt, ctx)
         }
         DynNode::Clamp { lo, hi, child } => {
-            step_motion_args(child, tau, dt, state, sig, readers, mirror_legacy, write_n2, write_dyn)?;
-            clamp_integrator(child, *lo, *hi, state, readers, mirror_legacy, write_n2);
+            step_motion_in(child, tau, dt, ctx)?;
+            clamp_integrator(
+                child,
+                *lo,
+                *hi,
+                ctx.state,
+                ctx.readers,
+                ctx.mirror_legacy,
+                ctx.write_n2,
+            );
             Ok(())
         }
         _ => Ok(()),
