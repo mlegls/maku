@@ -676,6 +676,10 @@ language.md.
       shape (`N2` for current `slew`/`smooth`), and both scan-site schema
       collection and scan-context dispatch consult that spec instead of
       keeping independent hardcoded name lists.
+  2v.29. ~~Mirror scan-site state writes into dense columns.~~ Done as a
+      bridge; advancing scan contexts now collect `ScanSite` `N2` writes from
+      stateful scan functions and forward them through the dense motion-state
+      write path, while legacy `MotionState` remains the read source.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

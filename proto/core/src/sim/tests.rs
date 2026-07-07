@@ -2174,6 +2174,29 @@ fn vel_motion_writes_dense_state_slot() {
 }
 
 #[test]
+fn scan_sites_write_dense_state_slots() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel p[3 (slew 720 0 90)])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let key = sim
+        .world
+        .entities
+        .motion_schema(0)
+        .unwrap()
+        .n2_keys
+        .iter()
+        .copied()
+        .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
+        .unwrap();
+    let [angle, aux] = sim.world.entities.state_n2(0, key).unwrap();
+    assert!((angle - 6.0).abs() < 1e-9, "dense slew angle: {angle}");
+    assert_eq!(aux, 0.0);
+}
+
+#[test]
 fn entity_capacity_is_explicit() {
     const CARD: &str = r#"
 (defpattern p [] (spawn (circle 2 (still))))

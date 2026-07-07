@@ -2743,11 +2743,12 @@ fn sf_stateful(
     world: &mut World,
 ) -> Result<Val, String> {
     let scan = ctx.scan.clone().unwrap();
-    let (key, advance, dt) = {
+    let (key, site, advance, dt) = {
         let mut io = scan.borrow_mut();
+        let site = MotionStateKey::ScanSite { base: io.base, index: io.counter as u32 };
         let k = site_key(io.base, io.counter);
         io.counter += 1;
-        (k, io.advance, io.dt)
+        (k, site, io.advance, io.dt)
     };
     match which {
         "slew" => {
@@ -2770,7 +2771,10 @@ fn sf_stateful(
             if advance {
                 let d = shortest_arc(cur, target);
                 cur += d.clamp(-rate * dt, rate * dt);
-                scan.borrow_mut().state.insert(key, Cell::N([cur, 0.0]));
+                let next = [cur, 0.0];
+                let mut io = scan.borrow_mut();
+                io.state.insert(key, Cell::N(next));
+                io.n2_writes.push((site, next));
             }
             Ok(Val::Num(cur))
         }
@@ -2794,7 +2798,10 @@ fn sf_stateful(
             if advance {
                 x += k * (tx - x);
                 y += k * (ty - y);
-                scan.borrow_mut().state.insert(key, Cell::N([x, y]));
+                let next = [x, y];
+                let mut io = scan.borrow_mut();
+                io.state.insert(key, Cell::N(next));
+                io.n2_writes.push((site, next));
             }
             Ok(Val::Pose(Pose::point(x, y)))
         }

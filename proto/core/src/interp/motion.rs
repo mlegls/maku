@@ -114,6 +114,7 @@ pub struct ScanIo {
     pub counter: usize,
     pub advance: bool,
     pub dt: f64,
+    pub n2_writes: Vec<(MotionStateKey, [f64; 2])>,
 }
 pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
 
@@ -623,6 +624,7 @@ pub(crate) fn read_scan(state: &MotionState, base: usize) -> ScanShared {
         counter: 0,
         advance: false,
         dt: 0.0,
+        n2_writes: Vec::new(),
     }))
 }
 
@@ -778,9 +780,12 @@ fn step_motion_with_dense(
                 Some(Cell::N(v)) => *v,
                 _ => [0.0, 0.0],
             };
-            let (vx, vy) = advance_sites(state, key, dt, |scan| {
+            let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, |scan| {
                 eval_pt(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)))
             })?;
+            for (key, value) in writes {
+                write_n2(key, value);
+            }
             let next = [x + vx * dt, y + vy * dt];
             state.insert(key, Cell::N(next));
             write_n2(MotionStateKey::NodePtr(key), next);
@@ -788,16 +793,22 @@ fn step_motion_with_dense(
         }
         DynNode::RotExpr { form, env } => {
             let key = d as *const DynNode as usize;
-            advance_sites(state, key, dt, |scan| {
+            let (_, writes) = advance_sites_with_writes(state, key, dt, |scan| {
                 eval_sig(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)))?.num()
             })?;
+            for (key, value) in writes {
+                write_n2(key, value);
+            }
             Ok(())
         }
         DynNode::Path { curve, progress, env } => {
             let key = d as *const DynNode as usize;
-            advance_sites(state, key, dt, |scan| {
+            let (_, writes) = advance_sites_with_writes(state, key, dt, |scan| {
                 eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
             })?;
+            for (key, value) in writes {
+                write_n2(key, value);
+            }
             step_motion_with_dense(curve, tau, dt, state, sig, write_n2)
         }
         DynNode::Stages { segs } => {
@@ -927,25 +938,26 @@ pub(crate) fn clamp_integrator(d: &Rc<DynNode>, lo: (f64, f64), hi: (f64, f64), 
 
 /// Run an evaluation with an advancing scan context over the bullet's state,
 /// then merge the (possibly grown) state back.
-pub(crate) fn advance_sites<T>(
+pub(crate) fn advance_sites_with_writes<T>(
     state: &mut MotionState,
     base: usize,
     dt: f64,
     f: impl FnOnce(ScanShared) -> Result<T, String>,
-) -> Result<T, String> {
+) -> Result<(T, Vec<(MotionStateKey, [f64; 2])>), String> {
     let io = Rc::new(std::cell::RefCell::new(ScanIo {
         state: std::mem::take(state),
         base,
         counter: 0,
         advance: true,
         dt,
+        n2_writes: Vec::new(),
     }));
     let r = f(io.clone());
-    *state = Rc::try_unwrap(io)
+    let io = Rc::try_unwrap(io)
         .map_err(|_| "scan context escaped".to_string())?
-        .into_inner()
-        .state;
-    r
+        .into_inner();
+    *state = io.state;
+    r.map(|value| (value, io.n2_writes))
 }
 
 pub fn is_scanned(d: &DynNode) -> bool {
