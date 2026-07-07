@@ -443,8 +443,7 @@ pub(crate) fn map_get(m: &Val, key: &str) -> Option<Val> {
 
 fn dynlike_arr(v: &DynLike) -> Option<Vec<DynLike>> {
     match v {
-        DynLike::Arr(items) => Some(items.iter().cloned().collect()),
-        DynLike::Const(Val::Arr(items)) => Some(items.iter().cloned().map(DynLike::from_val).collect()),
+        DynLike::List(items) => Some(items.iter().cloned().collect()),
         _ => None,
     }
 }
@@ -465,9 +464,8 @@ fn dynlike_meta_pairs(v: &DynLike) -> Result<Vec<(Val, Val)>, String> {
     match v {
         DynLike::Map(kvs) => kvs
             .iter()
-            .map(|(k, v)| Ok((k.clone(), dynlike_to_val(v)?)))
+            .map(|(k, v)| Ok((k.to_val(), dynlike_to_val(v)?)))
             .collect(),
-        DynLike::Const(Val::Map(kvs)) => Ok(kvs.iter().cloned().collect()),
         _ => Err("spawn meta: expected map".into()),
     }
 }
@@ -476,20 +474,19 @@ fn dynlike_map_get(m: &DynLike, key: &str) -> Option<DynLike> {
     match m {
         DynLike::Map(kvs) => {
             for (k, v) in kvs.iter() {
-                if matches!(k, Val::Kw(kw) if &**kw == key) {
+                if matches!(k, DataAtom::Kw(kw) if &**kw == key) {
                     return Some(v.clone());
                 }
             }
             None
         }
-        DynLike::Const(v) => map_get(v, key).map(DynLike::from_val),
         _ => None,
     }
 }
 
 fn dynlike_kw(v: &DynLike) -> Option<Rc<str>> {
     match v {
-        DynLike::Const(Val::Kw(k)) => Some(k.clone()),
+        DynLike::Atom(DataAtom::Kw(k)) => Some(k.clone()),
         _ => None,
     }
 }
@@ -499,14 +496,14 @@ fn as_dyn_num(v: &DynLike) -> Result<DynNum, String> {
         DynLike::Dyn(DynVal::Expr { form, env }) => {
             Ok(DynNum::num_expr(form.clone(), env.clone()))
         }
-        DynLike::Const(Val::Num(n)) => Ok(DynNum::num(*n)),
+        DynLike::Atom(DataAtom::Num(n)) => Ok(DynNum::num(*n)),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }
 
 fn as_static_num(v: &DynLike) -> Result<f64, String> {
     match v {
-        DynLike::Const(Val::Num(n)) => Ok(*n),
+        DynLike::Atom(DataAtom::Num(n)) => Ok(*n),
         DynLike::Dyn(_) => Err("expected static number".into()),
         _ => Err(format!("expected number, got {:?}", v)),
     }
@@ -562,13 +559,13 @@ fn as_capsule_chain_slot(opts: &DynLike) -> Result<CapsuleChainSlot, String> {
 
 fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
     match v {
-        DynLike::Arr(items) if items.len() == 2 => {
+        DynLike::List(items) if items.len() == 2 => {
             let Some(shape) = dynlike_kw(&items[0]) else {
                 return Err("shape: expected keyword shape name".into());
             };
             Ok((shape, items[1].clone()))
         }
-        DynLike::Const(Val::Kw(shape)) => {
+        DynLike::Atom(DataAtom::Kw(shape)) => {
             Ok((shape.clone(), DynLike::Map(Rc::new(Vec::new()))))
         }
         _ => Err("shape: expected [:shape opts]".into()),
@@ -576,7 +573,7 @@ fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
 }
 
 fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
-    if !matches!(v, DynLike::Map(_) | DynLike::Const(Val::Map(_))) {
+    if !matches!(v, DynLike::Map(_)) {
         return Err("colliders: expected maps".into());
     }
     let layer = match dynlike_map_get(v, "layer").and_then(|v| dynlike_kw(&v)) {
@@ -613,11 +610,11 @@ fn as_dyn_collider_list(v: &DynLike) -> Result<DynColliderList, String> {
 }
 
 fn as_render(v: &DynLike) -> Result<DynRender, String> {
-    if !matches!(v, DynLike::Map(_) | DynLike::Const(Val::Map(_))) {
+    if !matches!(v, DynLike::Map(_)) {
         return Err("renderers: expected maps".into());
     }
     let shape_v = dynlike_map_get(v, "shape")
-        .unwrap_or_else(|| DynLike::Const(Val::Kw("polyline".into())));
+        .unwrap_or_else(|| DynLike::Atom(DataAtom::Kw("polyline".into())));
     let (shape, opts) = as_shape_spec(&shape_v)?;
     match shape.as_ref() {
         "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {

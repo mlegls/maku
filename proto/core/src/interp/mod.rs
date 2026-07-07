@@ -77,6 +77,7 @@ pub enum Val {
     Str(Rc<str>),
     Vec2 { x: f64, y: f64 },
     Pose(Pose),
+    Figure(Figure),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     DynLike(Rc<DynLike>),
@@ -100,6 +101,45 @@ pub enum Val {
     Nothing,
 }
 
+/// Atomic data values in the target runtime-data layer. `Legacy` is a
+/// temporary bridge for interpreter/control values and pre-refactor data
+/// atoms; typed dyn boundaries should consume the concrete variants first.
+#[derive(Clone, Debug)]
+pub enum DataAtom {
+    Num(f64),
+    Kw(Rc<str>),
+    Figure(Figure),
+    Handle(u64),
+    Nothing,
+    Legacy(Val),
+}
+
+impl DataAtom {
+    pub fn from_val(v: Val) -> DataAtom {
+        match v {
+            Val::Num(n) => DataAtom::Num(n),
+            Val::Kw(k) => DataAtom::Kw(k),
+            Val::Pose(p) => DataAtom::Figure(Figure::Pose(p)),
+            Val::Figure(f) => DataAtom::Figure(f),
+            Val::Handle(id) => DataAtom::Handle(id),
+            Val::Nothing => DataAtom::Nothing,
+            other => DataAtom::Legacy(other),
+        }
+    }
+
+    pub fn to_val(&self) -> Val {
+        match self {
+            DataAtom::Num(n) => Val::Num(*n),
+            DataAtom::Kw(k) => Val::Kw(k.clone()),
+            DataAtom::Figure(Figure::Pose(p)) => Val::Pose(*p),
+            DataAtom::Figure(f) => Val::Figure(f.clone()),
+            DataAtom::Handle(id) => Val::Handle(*id),
+            DataAtom::Nothing => Val::Nothing,
+            DataAtom::Legacy(v) => v.clone(),
+        }
+    }
+}
+
 /// A value-level structure that can be lifted into a typed dyn at an
 /// expected boundary. This is not source syntax and not a typed `Dyn<T>` by
 /// itself: `DynLike::Dyn` keeps a deferred expression plus its environment,
@@ -108,10 +148,10 @@ pub enum Val {
 /// arrays/maps.
 #[derive(Clone, Debug)]
 pub enum DynLike {
-    Const(Val),
+    Atom(DataAtom),
     Dyn(DynVal),
-    Arr(Rc<[DynLike]>),
-    Map(Rc<Vec<(Val, DynLike)>>),
+    List(Rc<[DynLike]>),
+    Map(Rc<Vec<(DataAtom, DynLike)>>),
 }
 
 #[derive(Clone, Debug)]
@@ -122,27 +162,27 @@ pub enum DynVal {
 impl DynLike {
     pub fn is_dynamic(&self) -> bool {
         match self {
-            DynLike::Const(_) => false,
+            DynLike::Atom(_) => false,
             DynLike::Dyn(_) => true,
-            DynLike::Arr(items) => items.iter().any(DynLike::is_dynamic),
+            DynLike::List(items) => items.iter().any(DynLike::is_dynamic),
             DynLike::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
         }
     }
 
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
         match self {
-            DynLike::Const(v) => Ok(v.clone()),
+            DynLike::Atom(v) => Ok(v.to_val()),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
                 eval_dyn(&DynNum::num_expr(form.clone(), env.clone()), tau, state, sig).map(Val::Num)
             }
-            DynLike::Arr(items) => items
+            DynLike::List(items) => items
                 .iter()
                 .map(|v| v.eval(tau, state, sig))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Val::arr),
             DynLike::Map(kvs) => kvs
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), v.eval(tau, state, sig)?)))
+                .map(|(k, v)| Ok((k.to_val(), v.eval(tau, state, sig)?)))
                 .collect::<Result<Vec<_>, String>>()
                 .map(|pairs| Val::Map(Rc::new(pairs))),
         }
@@ -151,15 +191,15 @@ impl DynLike {
     pub fn from_val(v: Val) -> DynLike {
         match v {
             Val::DynLike(d) => (*d).clone(),
-            Val::Arr(items) => DynLike::Arr(
+            Val::Arr(items) => DynLike::List(
                 items.iter().cloned().map(DynLike::from_val).collect::<Vec<_>>().into(),
             ),
             Val::Map(kvs) => DynLike::Map(Rc::new(
                 kvs.iter()
-                    .map(|(k, v)| (k.clone(), DynLike::from_val(v.clone())))
+                    .map(|(k, v)| (DataAtom::from_val(k.clone()), DynLike::from_val(v.clone())))
                     .collect(),
             )),
-            other => DynLike::Const(other),
+            other => DynLike::Atom(DataAtom::from_val(other)),
         }
     }
 }
@@ -488,7 +528,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 .map(|i| eval_dynlike_form(i, env, ctx, world))
                 .collect::<Result<Vec<_>, _>>()?;
             if lifted.iter().any(DynLike::is_dynamic) {
-                Ok(Val::DynLike(Rc::new(DynLike::Arr(lifted.into()))))
+                Ok(Val::DynLike(Rc::new(DynLike::List(lifted.into()))))
             } else {
                 lifted
                     .iter()
@@ -500,14 +540,19 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Map(kvs) => {
             let pairs = kvs
                 .iter()
-                .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_dynlike_form(v, env, ctx, world)?)))
+                .map(|(k, v)| {
+                    Ok((
+                        DataAtom::from_val(evaluate(k, env, ctx, world)?),
+                        eval_dynlike_form(v, env, ctx, world)?,
+                    ))
+                })
                 .collect::<Result<Vec<_>, String>>()?;
             if pairs.iter().any(|(_, v)| v.is_dynamic()) {
                 Ok(Val::DynLike(Rc::new(DynLike::Map(Rc::new(pairs)))))
             } else {
                 pairs
                     .iter()
-                    .map(|(k, v)| Ok((k.clone(), v.eval(0.0, &MotionState::new(), &ctx.sig)?)))
+                    .map(|(k, v)| Ok((k.to_val(), v.eval(0.0, &MotionState::new(), &ctx.sig)?)))
                     .collect::<Result<Vec<_>, String>>()
                     .map(|pairs| Val::Map(Rc::new(pairs)))
             }
@@ -527,10 +572,15 @@ fn eval_dynlike_form(
             .iter()
             .map(|i| eval_dynlike_form(i, env, ctx, world))
             .collect::<Result<Vec<_>, _>>()
-            .map(|items| DynLike::Arr(items.into())),
+            .map(|items| DynLike::List(items.into())),
         Form::Map(kvs) => kvs
             .iter()
-            .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, eval_dynlike_form(v, env, ctx, world)?)))
+            .map(|(k, v)| {
+                Ok((
+                    DataAtom::from_val(evaluate(k, env, ctx, world)?),
+                    eval_dynlike_form(v, env, ctx, world)?,
+                ))
+            })
             .collect::<Result<Vec<_>, String>>()
             .map(|pairs| DynLike::Map(Rc::new(pairs))),
         form if contains_t(form) => Ok(DynLike::Dyn(DynVal::Expr {

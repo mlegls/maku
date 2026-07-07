@@ -436,6 +436,13 @@ language.md.
       `DynRenderList`, whose current `Stable` variant preserves the old
       `Rc<[DynCollider]>` / `Rc<[DynRender]>` lowering. Dynamic whole-list
       variants can be added here without changing `Entity` again.
+  2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
+      `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
+      map keys and leaves going through concrete atoms for `Num`, `Kw`,
+      `Figure`, handles, and nothing. `DataAtom::Legacy(Val)` remains as a
+      temporary escape hatch while interpreter/control objects (`Action`,
+      `Fn`, `Form`, `Cells`) and legacy data atoms (`Bool`, `Str`, `Vec2`,
+      old pose conveniences) are migrated out of runtime data.
   3. Represent fill as dyn collider/render slots returning different data
      over time rather than a laser-only lifecycle shortcut.
   4. Recast trails/pathers as derived curves over entity dyn history, with

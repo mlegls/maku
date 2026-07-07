@@ -246,6 +246,16 @@ impl Dyn<Pose> {
 }
 
 impl Dyn<Figure> {
+    pub fn figure_const(f: Figure) -> DynFigure {
+        match f {
+            Figure::Pose(p) => DynFigure::pose_node(Rc::new(DynNode::Const(p))),
+            Figure::Curve(c) => {
+                let frame = DynPose::pose_node(Rc::new(DynNode::Const(c.frame)));
+                DynFigure::figure_curve(frame, c.spec)
+            }
+        }
+    }
+
     pub fn pose(d: DynPose) -> DynFigure {
         Dyn { repr: FigureDynRepr::Pose(d) }
     }
