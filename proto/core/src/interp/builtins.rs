@@ -52,23 +52,27 @@ pub(crate) fn num_bin(a: Val, b: Val, f: fn(f64, f64) -> f64) -> Result<Val, Str
 pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
     match (a, b) {
         (Val::Num(x), Val::Num(y)) => Ok(Val::Num(x + y)),
-        (Val::Vec2 { x: ax, y: ay }, Val::Vec2 { x: bx, y: by }) => {
-            Ok(Val::Vec2 { x: ax + bx, y: ay + by })
-        }
-        (Val::Vec2 { x, y }, Val::Pose(p)) | (Val::Pose(p), Val::Vec2 { x, y }) => {
-            Ok(Val::Pose(Pose { x: p.x + x, y: p.y + y, th: p.th }))
-        }
-        (v @ Val::Vec2 { .. }, Val::Arr(items)) | (Val::Arr(items), v @ Val::Vec2 { .. }) => {
+        (Val::Pose(a), Val::Pose(b)) => Ok(Val::Pose(Pose {
+            x: a.x + b.x,
+            y: a.y + b.y,
+            theta: match (a.theta, b.theta) {
+                (Some(x), Some(y)) => Some(x + y),
+                (Some(x), None) => Some(x),
+                (None, Some(y)) => Some(y),
+                (None, None) => None,
+            },
+        })),
+        (v @ Val::Pose(_), Val::Arr(items)) | (Val::Arr(items), v @ Val::Pose(_)) => {
             let out = items
                 .iter()
                 .map(|i| add2(v.clone(), i.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Val::arr(out))
         }
-        (Val::Vec2 { x, y }, Val::Dyn(d)) | (Val::Dyn(d), Val::Vec2 { x, y }) => Ok(Val::Dyn(
+        (Val::Pose(p), Val::Dyn(d)) | (Val::Dyn(d), Val::Pose(p)) => Ok(Val::Dyn(
             DynPose::pose_node(Rc::new(DynNode::Translate {
-                dx: x,
-                dy: y,
+                dx: p.x,
+                dy: p.y,
                 child: d.into_node(),
             })),
         )),
@@ -167,9 +171,18 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             Ok(acc)
         }
         "-" => match (&args.first(), args.len()) {
-            (Some(Val::Vec2 { x: ax, y: ay }), 2) => {
-                if let Val::Vec2 { x: bx, y: by } = &args[1] {
-                    Ok(Val::Vec2 { x: ax - bx, y: ay - by })
+            (Some(Val::Pose(a)), 2) => {
+                if let Val::Pose(b) = &args[1] {
+                    Ok(Val::Pose(Pose {
+                        x: a.x - b.x,
+                        y: a.y - b.y,
+                        theta: match (a.theta, b.theta) {
+                            (Some(x), Some(y)) => Some(x - y),
+                            (Some(x), None) => Some(x),
+                            (None, Some(y)) => Some(-y),
+                            (None, None) => None,
+                        },
+                    }))
                 } else {
                     Err("-: mixed vector/number".into())
                 }
@@ -202,11 +215,11 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             let (period, amp, x) = (n(0)?, n(1)?, n(2)?);
             Ok(Val::Num(amp * (std::f64::consts::TAU * x / period).sin()))
         }
-        "cart" => Ok(Val::Vec2 { x: n(0)?, y: n(1)? }),
+        "cart" => Ok(Val::Pose(Pose::point(n(0)?, n(1)?))),
         "polar" => {
             let (r, th) = (n(0)?, n(1)?);
             let (s, c) = th.to_radians().sin_cos();
-            Ok(Val::Vec2 { x: r * c, y: r * s })
+            Ok(Val::Pose(Pose::point(r * c, r * s)))
         }
         "pose" => as_pose(args[0].clone()).map(Val::Pose),
         "rot" => match &args[0] {
@@ -214,26 +227,26 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
             // spawn combinators are arithmetic on pose arrays (§5)
             Val::Arr(xs) => Ok(Val::arr(
                 xs.iter()
-                    .map(|v| v.num().map(|th| Val::Pose(Pose { x: 0.0, y: 0.0, th })))
+                    .map(|v| v.num().map(|th| Val::Pose(Pose::oriented(0.0, 0.0, th))))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            v => Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: v.num()? })),
+            v => Ok(Val::Pose(Pose::oriented(0.0, 0.0, v.num()?))),
         },
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
         "not" => Ok(mask(n(0)? == 0.0)),
         "linear" => match &args[0] {
-            Val::Vec2 { x, y } => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Linear {
-                vx: *x,
-                vy: *y,
+            Val::Pose(p) => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Linear {
+                vx: p.x,
+                vy: p.y,
             })))),
             v => Err(format!("linear: expected point, got {:?}", v)),
         },
         "angle-of" => match &args[0] {
-            Val::Vec2 { x, y } => Ok(Val::Num(y.atan2(*x).to_degrees())),
+            Val::Pose(p) => Ok(Val::Num(p.y.atan2(p.x).to_degrees())),
             v => Err(format!("angle-of: expected point, got {:?}", v)),
         },
         "mag" => match &args[0] {
-            Val::Vec2 { x, y } => Ok(Val::Num((x * x + y * y).sqrt())),
+            Val::Pose(p) => Ok(Val::Num((p.x * p.x + p.y * p.y).sqrt())),
             v => Err(format!("mag: expected point, got {:?}", v)),
         },
         "iota" => {

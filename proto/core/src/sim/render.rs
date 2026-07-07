@@ -58,7 +58,7 @@ impl Sim {
                             x: p.x,
                             y: p.y,
                             // :facing overrides the motion direction
-                            th: self.sample_sig(&b.sigs.facing, tau, p.th),
+                            th: self.sample_sig(&b.sigs.facing, tau, p.angle_or(0.0)),
                             style: b.style.clone(),
                             hue: self.sample_hue(b, tau),
                             scale: self.sample_sig(&b.sigs.scale, tau, 1.0),

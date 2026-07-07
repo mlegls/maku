@@ -870,7 +870,7 @@
             sim.step_with(&inputs).unwrap();
         }
         let x_wall = match sim.channel_val("player") {
-            Some(Val::Vec2 { x, .. }) => x,
+            Some(Val::Pose(p)) => p.x,
             v => panic!("bad player channel: {:?}", v),
         };
         assert!((x_wall + 2.0).abs() < 0.05, "parked at the wall: {}", x_wall);
@@ -880,7 +880,7 @@
             sim.step_with(&inputs).unwrap();
         }
         let x_back = match sim.channel_val("player") {
-            Some(Val::Vec2 { x, .. }) => x,
+            Some(Val::Pose(p)) => p.x,
             _ => unreachable!(),
         };
         assert!(x_back > -0.2, "no banked phantom distance: {}", x_back);
@@ -1136,11 +1136,11 @@
             sim.step_with(&inputs).unwrap();
         }
         let p1 = match sim.channel_val("player-1") {
-            Some(Val::Vec2 { x, .. }) => x,
+            Some(Val::Pose(p)) => p.x,
             v => panic!("no $player-1: {:?}", v),
         };
         let p2 = match sim.channel_val("player-2") {
-            Some(Val::Vec2 { x, .. }) => x,
+            Some(Val::Pose(p)) => p.x,
             v => panic!("no $player-2: {:?}", v),
         };
         assert!(p1 > -1.5 && p2 < 1.5, "rigs moved on their own channels: {} {}", p1, p2);
@@ -1199,7 +1199,8 @@
         assert_eq!(count("bomb"), 1, "one bomb consumed");
         assert_eq!(count("died"), 1, "boss down");
         // the piloted rig moved off its start: $player is entity-derived
-        if let Some(Val::Vec2 { x, y }) = sim.channel_val("player") {
+        if let Some(Val::Pose(p)) = sim.channel_val("player") {
+            let (x, y) = (p.x, p.y);
             assert!(x.abs() > 0.01 || (y + 3.0).abs() > 0.01, "rig integrated the axes");
         } else {
             panic!("no $player channel");
@@ -1247,7 +1248,8 @@
             sim.step().unwrap();
         }
         match sim.channel_val("nearest-enemy") {
-            Some(Val::Vec2 { x, y }) => {
+            Some(Val::Pose(p)) => {
+                let (x, y) = (p.x, p.y);
                 assert!((x - 2.0).abs() < 1e-9 && (y - 3.0).abs() < 1e-9, "derived: {} {}", x, y);
             }
             v => panic!("bad channel: {:?}", v),
@@ -1942,7 +1944,7 @@ fn defchannel_derives_per_tick() {
         "control layer saw the derived channel"
     );
     // $nearest-enemy now derives from the stdlib defchannel
-    assert!(matches!(sim.ctx.sig.channel("nearest-enemy"), Some(Val::Vec2 { .. })));
+    assert!(matches!(sim.ctx.sig.channel("nearest-enemy"), Some(Val::Pose(_))));
 }
 
     /// Ancestor clocks are lib-expressible (§13.1 audit): a parent

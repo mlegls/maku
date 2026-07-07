@@ -73,7 +73,6 @@ impl Deref for Seq {
 pub enum Val {
     Num(f64),
     Kw(Rc<str>),
-    Vec2 { x: f64, y: f64 },
     Pose(Pose),
     Figure(Figure),
     Arr(Seq),
@@ -431,7 +430,7 @@ impl SigEnv {
     }
     pub fn channel_pos(&self, name: &str) -> (f64, f64) {
         match self.channels.get(name) {
-            Some(Val::Vec2 { x, y }) => (*x, *y),
+            Some(Val::Pose(p)) => (p.x, p.y),
             _ => (0.0, 0.0),
         }
     }
@@ -666,7 +665,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 };
                 let pos = if let Some(p) = items.get(2) {
                     match evaluate(p, env, ctx, world)? {
-                        Val::Vec2 { x, y } => Some((x, y)),
+                        Val::Pose(p) => Some((p.x, p.y)),
                         _ => None,
                     }
                 } else {
@@ -885,7 +884,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let b = &world.entities[i];
                 let tau = (world.tick - b.birth) as f64 / TICK_RATE;
                 let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
-                return Ok(Val::Vec2 { x: p.x, y: p.y });
+                return Ok(Val::Pose(Pose::point(p.x, p.y)));
             }
             "in-frame" => {
                 // frames form a monoid: (in-frame f1 f2 body) folds as
@@ -1024,7 +1023,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                         let p0 = dyn_pose_u(&dv, tv, u, &st, &ctx.sig)?;
                         let p1 = dyn_pose_u(&dv, tv, u + 0.01, &st, &ctx.sig)?;
                         let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
-                        Ok(Val::Pose(Pose { x: p0.x, y: p0.y, th }))
+                        Ok(Val::Pose(Pose::oriented(p0.x, p0.y, th)))
                     }
                     None => Ok(Val::Pose(dyn_pose(&dv, tv, &st, &ctx.sig)?)),
                 };
@@ -1052,7 +1051,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let p0 = at(u)?;
                 let p1 = at(u + 0.01)?;
                 let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
-                return Ok(Val::Pose(Pose { x: p0.x, y: p0.y, th }));
+                return Ok(Val::Pose(Pose::oriented(p0.x, p0.y, th)));
             }
             "live" => {
                 // in a scan context: the channel's current value (class b/d);
@@ -1067,7 +1066,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                             Ok(cur)
                         } else {
                             match cur {
-                                Val::Vec2 { .. } | Val::Pose(_) => Ok(Val::Dyn(DynPose::pose_node(
+                                Val::Pose(_) => Ok(Val::Dyn(DynPose::pose_node(
                                     Rc::new(DynNode::Live { channel: Rc::from(name) }),
                                 ))),
                                 v => Ok(v),
@@ -1120,11 +1119,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "aim" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
-                let Val::Vec2 { x, y } = target else {
+                let Val::Pose(target) = target else {
                     return Err("aim: expected a point target".into());
                 };
-                let world_ang = (y - ctx.ambient.y).atan2(x - ctx.ambient.x).to_degrees();
-                return Ok(Val::Pose(Pose { x: 0.0, y: 0.0, th: world_ang - ctx.ambient.th }));
+                let world_ang = (target.y - ctx.ambient.y).atan2(target.x - ctx.ambient.x).to_degrees();
+                return Ok(Val::Pose(Pose::oriented(
+                    0.0,
+                    0.0,
+                    world_ang - ctx.ambient.angle_or(0.0),
+                )));
             }
             // World queries over the manipulate query language (§9): the
             // same {axes/:team/:where} maps, read-only, cheap enough for
@@ -1159,7 +1162,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // leaves the channel untouched (mock fallbacks survive)
                 let q = evaluate(&items[1], env, ctx, world)?;
                 let (tx, ty) = match evaluate(&items[2], env, ctx, world)? {
-                    Val::Vec2 { x, y } => (x, y),
                     Val::Pose(p) => (p.x, p.y),
                     v => return Err(format!("nearest-entity: expected a point, got {:?}", v)),
                 };
@@ -1177,7 +1179,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     }
                 }
                 return Ok(match best {
-                    Some((_, (x, y))) => Val::Vec2 { x, y },
+                    Some((_, (x, y))) => Val::Pose(Pose::point(x, y)),
                     None => Val::Nothing,
                 });
             }
@@ -1333,7 +1335,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
         Val::Kw(k) => {
             // keyword application: map access, e.g. (:vel exit); on
-            // Vec2/Pose, :x/:y/:th read components; on an entity Handle,
+            // Pose, :x/:y/:th read components; on an entity Handle,
             // fields of the live entity view (b.pos.y just works in
             // callbacks and :where alike)
             let arg = evaluate(&items[1], env, ctx, world)?;
@@ -1345,11 +1347,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Nothing);
             }
             match (&*k, &arg) {
-                ("x", Val::Vec2 { x, .. }) => return Ok(Val::Num(*x)),
-                ("y", Val::Vec2 { y, .. }) => return Ok(Val::Num(*y)),
                 ("x", Val::Pose(p)) => return Ok(Val::Num(p.x)),
                 ("y", Val::Pose(p)) => return Ok(Val::Num(p.y)),
-                ("th", Val::Pose(p)) => return Ok(Val::Num(p.th)),
+                ("th", Val::Pose(p)) => return Ok(Val::Num(p.angle_or(0.0))),
                 _ => {}
             }
             Ok(map_get(&arg, &k).unwrap_or(Val::Nothing))
@@ -1417,8 +1417,8 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         None => (0.0, 0.0),
     };
     let mut view = vec![
-        (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
-        (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
+        (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
+        (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("kind".into()), Val::Kw(match b.dyn_figure.repr() {
@@ -1859,16 +1859,16 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     None => (0.0, 0.0),
                 };
                 let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
-                    p.th
+                    p.angle_or(0.0)
                 } else {
                     vel.1.atan2(vel.0).to_degrees()
                 };
                 let exit = Val::Map(Rc::new(vec![
-                    (Val::Kw("pos".into()), Val::Vec2 { x: p.x, y: p.y }),
-                    (Val::Kw("vel".into()), Val::Vec2 { x: vel.0, y: vel.1 }),
+                    (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
+                    (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
                     (Val::Kw("t".into()), Val::Num(tau)),
                 ]));
-                (exit, Pose { x: p.x, y: p.y, th: heading })
+                (exit, Pose::oriented(p.x, p.y, heading))
             };
             let new_dyn = match &f {
                 Val::Fn { .. } | Val::Builtin(_) => {
@@ -2068,8 +2068,15 @@ fn val_to_form(v: &Val) -> Result<Form, String> {
         Val::Arr(xs) => Form::Vector(
             xs.iter().map(val_to_form).collect::<Result<Vec<_>, _>>()?.into(),
         ),
-        Val::Vec2 { x, y } => {
-            Form::list(vec![Form::sym("cart"), Form::Num(*x), Form::Num(*y)])
+        Val::Pose(p) if p.theta.is_none() => {
+            Form::list(vec![Form::sym("cart"), Form::Num(p.x), Form::Num(p.y)])
+        }
+        Val::Pose(p) => {
+            Form::list(vec![
+                Form::sym("+"),
+                Form::list(vec![Form::sym("cart"), Form::Num(p.x), Form::Num(p.y)]),
+                Form::list(vec![Form::sym("rot"), Form::Num(p.angle_or(0.0))]),
+            ])
         }
         other => return Err(format!("cannot embed {:?} in a form template", other)),
     })
@@ -2096,7 +2103,6 @@ fn as_action(v: Val) -> Result<Rc<ActionV>, String> {
 fn as_pose(v: Val) -> Result<Pose, String> {
     match v {
         Val::Pose(p) => Ok(p),
-        Val::Vec2 { x, y } => Ok(Pose { x, y, th: 0.0 }),
         v => Err(format!("expected pose, got {:?}", v)),
     }
 }
@@ -2105,7 +2111,6 @@ fn as_dyn(v: Val) -> Result<DynPose, String> {
     match v {
         Val::Dyn(d) => Ok(d),
         Val::Pose(p) => Ok(DynPose::pose_node(Rc::new(DynNode::Const(p)))),
-        Val::Vec2 { x, y } => Ok(DynPose::pose_node(Rc::new(DynNode::Const(Pose { x, y, th: 0.0 })))),
         v => Err(format!("expected dyn, got {:?}", v)),
     }
 }
@@ -2612,7 +2617,7 @@ fn sf_stateful(
             let k = evaluate(&items[1], env, ctx, world)?.num()?;
             let target = evaluate(&items[2], env, ctx, world)?;
             let (tx, ty) = match target {
-                Val::Vec2 { x, y } => (x, y),
+                Val::Pose(p) => (p.x, p.y),
                 Val::Num(x) => (x, 0.0),
                 v => return Err(format!("smooth: bad target {:?}", v)),
             };
@@ -2629,7 +2634,7 @@ fn sf_stateful(
                 y += k * (ty - y);
                 scan.borrow_mut().state.insert(key, Cell::N([x, y]));
             }
-            Ok(Val::Vec2 { x, y })
+            Ok(Val::Pose(Pose::point(x, y)))
         }
         _ => unreachable!(),
     }
@@ -2837,7 +2842,7 @@ mod tests {
         let Val::Arr(items) = ev("(circle 4)") else { panic!() };
         assert_eq!(items.len(), 4);
         let Val::Pose(p) = &items[1] else { panic!() };
-        assert!((p.th - 90.0).abs() < 1e-9);
+        assert!((p.angle_or(0.0) - 90.0).abs() < 1e-9);
     }
 
     #[test]
@@ -2857,7 +2862,7 @@ mod tests {
         let p = dyn_pose(&d, 1.0, &st, &SigEnv::default()).unwrap();
         let (ex, ey) = (2.0 * (20f64).to_radians().cos(), 2.0 * (20f64).to_radians().sin());
         assert!((p.x - ex).abs() < 1e-9 && (p.y - ey).abs() < 1e-9, "{:?}", p);
-        assert!(matches!(ev("p[2 90]"), Val::Vec2 { .. }));
+        assert!(matches!(ev("p[2 90]"), Val::Pose(p) if p.theta.is_none()));
     }
 
     #[test]
@@ -2906,14 +2911,18 @@ mod tests {
     fn aim_is_ambient_relative() {
         let ctx = &mut Ctx::default();
         let mut ch = HashMap::new();
-        ch.insert("player".to_string(), Val::Vec2 { x: 0.0, y: -4.0 });
+        ch.insert("player".to_string(), Val::Pose(Pose::point(0.0, -4.0)));
         ctx.sig.channels = Rc::new(ch);
         let f = read_one("(aim $player)").unwrap();
         let Val::Pose(p) = evaluate(&f, &Env::empty(), ctx, &mut World::default()).unwrap()
         else {
             panic!()
         };
-        assert!((p.th - -90.0).abs() < 1e-9, "aim down: {}", p.th);
+        assert!(
+            (p.angle_or(0.0) - -90.0).abs() < 1e-9,
+            "aim down: {}",
+            p.angle_or(0.0)
+        );
     }
 
     #[test]

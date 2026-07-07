@@ -11,18 +11,39 @@ pub const TICK_RATE: f64 = 120.0;
 pub struct Pose {
     pub x: f64,
     pub y: f64,
-    pub th: f64, // degrees, canonical (language.md §11)
+    /// Degrees, canonical (language.md §11). `None` means the pose only
+    /// specifies a point; consumers that need facing derive it from context.
+    pub theta: Option<f64>,
 }
 
 impl Pose {
-    pub const IDENTITY: Pose = Pose { x: 0.0, y: 0.0, th: 0.0 };
+    pub const IDENTITY: Pose = Pose { x: 0.0, y: 0.0, theta: Some(0.0) };
+
+    pub const fn point(x: f64, y: f64) -> Pose {
+        Pose { x, y, theta: None }
+    }
+
+    pub const fn oriented(x: f64, y: f64, theta: f64) -> Pose {
+        Pose { x, y, theta: Some(theta) }
+    }
+
+    pub fn angle_or(self, default: f64) -> f64 {
+        self.theta.unwrap_or(default)
+    }
+
     /// SE(2) composition: self ∘ child (child expressed in self's frame).
     pub fn compose(&self, child: &Pose) -> Pose {
-        let (s, c) = self.th.to_radians().sin_cos();
+        let parent_th = self.angle_or(0.0);
+        let (s, c) = parent_th.to_radians().sin_cos();
         Pose {
             x: self.x + c * child.x - s * child.y,
             y: self.y + s * child.x + c * child.y,
-            th: self.th + child.th,
+            theta: match (self.theta, child.theta) {
+                (Some(a), Some(b)) => Some(a + b),
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            },
         }
     }
 }
@@ -350,7 +371,7 @@ pub fn eval_curve_pose(
     sig: &SigEnv,
 ) -> Result<Pose, String> {
     match eval {
-        CurveEval::Straight => Ok(Pose { x: u, y: 0.0, th: 0.0 }),
+        CurveEval::Straight => Ok(Pose::oriented(u, 0.0, 0.0)),
         CurveEval::Expr(d) => dyn_pose_u(d, tau, u, state, sig),
     }
 }
@@ -391,7 +412,7 @@ pub fn eval_sig(
 ) -> Result<Val, String> {
     let mut e = env.bind("t".into(), Val::Num(tau)).bind("u".into(), Val::Num(u));
     if let Some((px, py)) = pos {
-        e = e.bind("pos".into(), Val::Vec2 { x: px, y: py });
+        e = e.bind("pos".into(), Val::Pose(Pose::point(px, py)));
     }
     let mut ctx = Ctx {
         sig: sig.clone(),
@@ -486,7 +507,7 @@ pub fn dyn_node_pose_u(
         DynNode::Linear { vx, vy } => Ok(Pose {
             x: vx * tau,
             y: vy * tau,
-            th: vy.atan2(*vx).to_degrees(),
+            theta: Some(vy.atan2(*vx).to_degrees()),
         }),
         DynNode::ClosedPt { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
@@ -494,7 +515,7 @@ pub fn dyn_node_pose_u(
             let eps = 1.0 / TICK_RATE;
             let (x2, y2) =
                 eval_pt(a, b, *polar, env, sig, tau + eps, u, Some(read_scan(state, key)), None)?;
-            Ok(Pose { x, y, th: (y2 - y).atan2(x2 - x).to_degrees() })
+            Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
         }
         DynNode::Vel { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
@@ -504,21 +525,21 @@ pub fn dyn_node_pose_u(
             };
             let (vx, vy) =
                 eval_pt(a, b, *polar, env, sig, tau, u, Some(read_scan(state, key)), Some((x, y)))?;
-            Ok(Pose { x, y, th: vy.atan2(vx).to_degrees() })
+            Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()))
         }
         DynNode::Live { channel } => {
             let (x, y) = sig.channel_pos(channel);
-            Ok(Pose { x, y, th: 0.0 })
+            Ok(Pose::point(x, y))
         }
         DynNode::Clamp { lo, hi, child } => {
             let p = dyn_node_pose(child, tau, state, sig)?;
-            Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), th: p.th })
+            Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })
         }
         DynNode::RotExpr { form, env } => {
             let key = d as *const DynNode as usize;
             let th = eval_sig(form, env, sig, tau, u, Some(read_scan(state, key)), Some((0.0, 0.0)))?
                 .num()?;
-            Ok(Pose { x: 0.0, y: 0.0, th })
+            Ok(Pose::oriented(0.0, 0.0, th))
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
@@ -531,7 +552,7 @@ pub fn dyn_node_pose_u(
         }
         DynNode::Translate { dx, dy, child } => {
             let p = dyn_node_pose_u(child, tau, u, state, sig)?;
-            Ok(Pose { x: p.x + dx, y: p.y + dy, th: p.th })
+            Ok(Pose { x: p.x + dx, y: p.y + dy, theta: p.theta })
         }
         DynNode::Path { curve, progress, env } => {
             let key = d as *const DynNode as usize;
@@ -622,10 +643,10 @@ pub fn step_motion(
                 let p1 = dyn_pose_u(&cur, local, 0.0, state, sig)?;
                 let p0 = dyn_pose_u(&cur, (local - dt).max(0.0), 0.0, state, sig)?;
                 let exit = Val::Map(Rc::new(vec![
-                    (Val::Kw("pos".into()), Val::Vec2 { x: p1.x, y: p1.y }),
+                    (Val::Kw("pos".into()), Val::Pose(Pose::point(p1.x, p1.y))),
                     (
                         Val::Kw("vel".into()),
-                        Val::Vec2 { x: (p1.x - p0.x) / dt, y: (p1.y - p0.y) / dt },
+                        Val::Pose(Pose::point((p1.x - p0.x) / dt, (p1.y - p0.y) / dt)),
                     ),
                     (Val::Kw("pose".into()), Val::Pose(p1)),
                 ]));
@@ -696,7 +717,7 @@ pub(crate) fn clamp_integrator(d: &Rc<DynNode>, lo: (f64, f64), hi: (f64, f64), 
         }
         DynNode::Frame(a, b) => {
             if let DynNode::Const(p) = &**a {
-                if p.th.abs() < 1e-12 {
+                if p.angle_or(0.0).abs() < 1e-12 {
                     clamp_integrator(
                         b,
                         (lo.0 - p.x, lo.1 - p.y),

@@ -47,7 +47,7 @@ impl Inputs {
     }
 
     pub fn set_vec2(&mut self, name: &str, x: f64, y: f64) {
-        self.set(name, Val::Vec2 { x, y });
+        self.set(name, Val::Pose(Pose::point(x, y)));
     }
 
     pub fn set_flag(&mut self, name: &str, b: bool) {

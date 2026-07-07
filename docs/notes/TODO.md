@@ -40,9 +40,11 @@ language.md.
   A pose carries position plus orientation, which is why current point-like
   figures can drive facing and subfire semantics. Interpreter `DynNode`s are
   prototype-level `Dyn<Pose>` expressions, not the semantic `Pose` value; a
-  compiled core should store pose data compactly as `(x, y, theta)`. Unit
-  vectors can be cached by optimized backends when useful, but the semantic
-  pose representation is angular.
+  compiled core should store pose data compactly as `(x, y, theta?)`, where
+  `theta = none` means "derive facing from context" and `theta = some 0`
+  remains distinguishable from an unspecified angle. Unit vectors can be
+  cached by optimized backends when useful, but the semantic pose
+  representation is angular.
   The Rust prototype now represents the first slice as `Dyn<Figure>` through
   the `DynFigure` type alias. Its backing is still a compatibility enum
   (`DynRepr`) rather than the final typed expression IR, but figure-valued
@@ -445,8 +447,12 @@ language.md.
       map keys and leaves going through concrete atoms for `Num`, `Kw`,
       `Figure`, handles, and nothing. `DataAtom::Legacy(Val)` remains as a
       temporary escape hatch while interpreter/control objects (`Action`,
-      `Fn`, `Form`, `Cells`) and legacy data atoms (`Vec2`, old pose
-      conveniences) are migrated out of runtime data.
+      `Fn`, `Form`, `Cells`) and old pose conveniences are migrated out of
+      runtime data.
+  2aa. ~~Remove runtime Vec2 values.~~ Done; coordinate constructors and
+      point-valued channels now produce `Pose::point` (`theta = none`), while
+      explicit rotations and tangent-producing samplers use oriented poses
+      (`theta = some angle`).
   2x. ~~Switch predicates to numeric masks.~~ Done; comparisons and
       predicate builtins return `0`/`1`, source booleans evaluate to `0`/`1`,
       control guards consume numeric masks, `not` is numeric, and runtime

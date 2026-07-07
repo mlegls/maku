@@ -782,7 +782,7 @@ pub(crate) fn sf_circle(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wo
         return Err("circle: zero elements".into());
     }
     let poses = (0..n)
-        .map(|k| Pose { x: 0.0, y: 0.0, th: k as f64 * 360.0 / n as f64 })
+        .map(|k| Pose::oriented(0.0, 0.0, k as f64 * 360.0 / n as f64))
         .collect();
     formation(poses, items.get(2), env, ctx, world)
 }
@@ -793,7 +793,7 @@ pub(crate) fn sf_arrow(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     let side = evaluate(&items[3], env, ctx, world)?.num()?;
     let half = (n - 1) / 2;
     let poses = (-half..=(n - 1 - half))
-        .map(|j| Pose { x: -back * (j.abs() as f64), y: side * j as f64, th: 0.0 })
+        .map(|j| Pose::point(-back * (j.abs() as f64), side * j as f64))
         .collect();
     formation(poses, items.get(4), env, ctx, world)
 }
@@ -803,7 +803,7 @@ pub(crate) fn sf_fan(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World
     let step = evaluate(&items[2], env, ctx, world)?.num()?;
     let mid = (n - 1) as f64 / 2.0;
     let poses = (0..n)
-        .map(|k| Pose { x: 0.0, y: 0.0, th: (k as f64 - mid) * step })
+        .map(|k| Pose::oriented(0.0, 0.0, (k as f64 - mid) * step))
         .collect();
     formation(poses, items.get(3), env, ctx, world)
 }

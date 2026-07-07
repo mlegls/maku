@@ -50,7 +50,7 @@ impl Maku {
         self.pending.set_num(name, v);
     }
 
-    /// Set a Vec2 input channel ($player mock, $nearest-enemy mock, …).
+    /// Set a point input channel ($player mock, $nearest-enemy mock, …).
     pub fn input_vec2(&mut self, name: &str, x: f64, y: f64) {
         self.pending.set_vec2(name, x, y);
     }
@@ -133,10 +133,10 @@ impl Maku {
         self.inst.current_pattern().unwrap_or_default()
     }
 
-    /// [x, y] of a Vec2-valued channel ($player, $boss, …), or empty.
+    /// [x, y] of a point-valued channel ($player, $boss, …), or empty.
     pub fn channel_vec(&self, name: &str) -> Vec<f32> {
         match self.inst.channel(name) {
-            Some(Val::Vec2 { x, y }) => vec![x as f32, y as f32],
+            Some(Val::Pose(p)) => vec![p.x as f32, p.y as f32],
             _ => Vec::new(),
         }
     }
