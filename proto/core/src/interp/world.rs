@@ -32,7 +32,6 @@ pub struct SymFieldId(pub u32);
 pub struct HandleFieldId(pub u32);
 
 /// Bridge layout for typed entity field matrices. Values still live on
-/// entities for now; this owns the load-time schema/slot ids that will back
 /// world-owned SoA matrices.
 #[derive(Clone, Debug, Default)]
 pub struct WorldFields {
@@ -41,6 +40,7 @@ pub struct WorldFields {
     pub num_values: Vec<Vec<Option<f64>>>,
     pub sym_slots: HashMap<FieldName, usize>,
     pub sym_names: Vec<FieldName>,
+    pub sym_values: Vec<Vec<Option<Symbol>>>,
     pub handle_names: Vec<FieldName>,
 }
 
@@ -227,10 +227,6 @@ pub struct Entity {
     pub collider_projector: ColliderProjector,
     /// Render projector — archetype data, Rc-shared across a spawn's elements.
     pub render_projector: RenderProjector,
-    /// Bridge symbol fields in a per-entity dense slot vector. Target
-    /// storage is a world-owned symbol field matrix; `:team` lives here for
-    /// compatibility.
-    pub sym_fields: Vec<Option<Symbol>>,
     /// Standing edge-triggers over own columns — archetype data. Death is
     /// not special: :hp n synthesizes (col hp ≤ 0 → cull + event :died).
     pub triggers: Rc<[TriggerRule]>,
@@ -941,6 +937,14 @@ impl World {
                 values.reserve_exact(max_entities - values.capacity());
             }
         }
+        for values in &mut self.fields.sym_values {
+            if max_entities < values.len() {
+                values.truncate(max_entities);
+            }
+            if values.capacity() < max_entities {
+                values.reserve_exact(max_entities - values.capacity());
+            }
+        }
         self.entities.max = max_entities;
         if self.entities.rows.capacity() < max_entities {
             self.entities.rows.reserve_exact(max_entities - self.entities.rows.capacity());
@@ -982,6 +986,7 @@ impl World {
         let motion_schema = Rc::new(collect_motion_state_schema(&entity.dyn_figure));
         if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
+            self.clear_sym_fields_at(i);
             Ok(self.entities.reuse_free_row(slot, entity, self.tick, motion_schema))
         } else {
             self.entities.push_row(entity, self.tick, motion_schema)
@@ -1093,23 +1098,49 @@ impl World {
         }
         let slot = self.fields.sym_names.len();
         self.fields.sym_names.push(field);
+        self.fields.sym_values.push(Vec::new());
         self.fields.sym_slots.insert(field, slot);
         slot
     }
 
-    pub fn sym_field_value(&self, entity: &Entity, field: FieldName) -> Option<Symbol> {
-        let slot = self.sym_field_slot(field)?;
-        entity.sym_fields.get(slot).copied().flatten()
-    }
-
     pub fn sym_field_value_at(&self, i: usize, field: FieldName) -> Option<Symbol> {
-        self.entities.get(i).and_then(|entity| self.sym_field_value(entity, field))
+        let slot = self.sym_field_slot(field)?;
+        self.entities.get(i)?;
+        self.fields.sym_values.get(slot)?.get(i).copied().flatten()
     }
 
-    pub fn sym_field_resolved<'a>(&'a self, entity: &'a Entity, field: &str) -> Option<&'a str> {
-        let field = self.symbols.lookup(field)?;
-        let value = self.sym_field_value(entity, field)?;
-        self.symbols.resolve(value)
+    pub fn sym_field_set_at(&mut self, i: usize, field: FieldName, value: Symbol) {
+        let slot = self.intern_sym_field_slot(field);
+        if self.entities.get(i).is_none() {
+            return;
+        }
+        let values = &mut self.fields.sym_values[slot];
+        if values.len() <= i {
+            values.resize(i + 1, None);
+        }
+        values[i] = Some(value);
+    }
+
+    pub fn sym_fields_for_view(&self, row: usize) -> Vec<(Rc<str>, Rc<str>)> {
+        self.fields
+            .sym_values
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, values)| {
+                let value = values.get(row).copied().flatten()?;
+                let field = self.symbols.resolve(*self.fields.sym_names.get(slot)?)?;
+                let value = self.symbols.resolve(value)?;
+                Some((field.into(), value.into()))
+            })
+            .collect()
+    }
+
+    fn clear_sym_fields_at(&mut self, row: usize) {
+        for values in &mut self.fields.sym_values {
+            if let Some(value) = values.get_mut(row) {
+                *value = None;
+            }
+        }
     }
 
     pub fn sym_field_resolved_at(&self, i: usize, field: &str) -> Option<&str> {
@@ -1118,15 +1149,15 @@ impl World {
         self.symbols.resolve(value)
     }
 
-    pub fn sym_field_matches(&self, entity: &Entity, field: &str, value: &str) -> bool {
+    pub fn sym_field_matches_at(&self, i: usize, field: &str, value: &str) -> bool {
         let Some(field) = self.symbols.lookup(field) else { return false };
         let Some(value) = self.symbols.lookup(value) else { return false };
-        self.sym_field_value(entity, field) == Some(value)
+        self.sym_field_value_at(i, field) == Some(value)
     }
 
-    pub fn sym_field_missing(&self, entity: &Entity, field: &str) -> bool {
+    pub fn sym_field_missing_at(&self, i: usize, field: &str) -> bool {
         self.symbols
             .lookup(field)
-            .is_none_or(|field| self.sym_field_value(entity, field).is_none())
+            .is_none_or(|field| self.sym_field_value_at(i, field).is_none())
     }
 }

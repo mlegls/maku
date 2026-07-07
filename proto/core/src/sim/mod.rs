@@ -355,7 +355,7 @@ impl Sim {
                 continue;
             }
             let b = &self.world.entities[i];
-            if self.world.sym_field_matches(b, "team", "player-body") {
+            if self.world.sym_field_matches_at(i, "team", "player-body") {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = self.world.entities.tau(i, tick);

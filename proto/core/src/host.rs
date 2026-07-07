@@ -421,9 +421,9 @@ impl Instance {
             .as_ref()
             .map(|s| {
                 let t = s.tick() as f64;
-                s.world.entities.iter().enumerate().any(|(i, b)| {
+                s.world.entities.iter().enumerate().any(|(i, _)| {
                     s.world.entities.is_alive(i)
-                        && s.world.sym_field_matches(b, "team", "player-body")
+                        && s.world.sym_field_matches_at(i, "team", "player-body")
                         && s.world.col_get_at(i, "iframe-until").map(|u| u > t).unwrap_or(false)
                 })
             })

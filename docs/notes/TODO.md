@@ -25,7 +25,6 @@ work.
 ## Engine Refactor
 
 - Move remaining row-local `Entity` fields into final storage shapes:
-  - `sym_fields` -> `WorldFields` symbol matrices.
   - `trail` -> dense/ring-buffer trace cache storage.
   - `dyn_figure`, `collider_projector`, `render_projector`, `triggers`,
     `cache_policy`, and `scanned` -> shared spawn-site/program/archetype data

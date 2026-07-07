@@ -351,7 +351,7 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub sym_fields: Vec<Option<Symbol>>,
+    pub sym_fields: Vec<(FieldName, Symbol)>,
     pub cols: Vec<(ColName, f64)>,
     pub triggers: Rc<[TriggerRule]>,
     pub collider_projector: ColliderProjector,
@@ -1469,14 +1469,8 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("color".into()), Val::Kw(b.render_projector.style.color.as_str().into())),
         (Val::Kw("variant".into()), Val::Kw(b.render_projector.style.variant.as_str().into())),
     ];
-    for (slot, value) in b.sym_fields.iter().enumerate() {
-        let Some(value) = value else {
-            continue;
-        };
-        let field = world.fields.sym_names.get(slot).and_then(|field| world.symbols.resolve(*field));
-        if let (Some(field), Some(value)) = (field, world.symbols.resolve(*value)) {
-            view.push((Val::Kw(field.into()), Val::Kw(value.into())));
-        }
+    for (field, value) in world.sym_fields_for_view(i) {
+        view.push((Val::Kw(field), Val::Kw(value)));
     }
     for (k, v) in world.cols_for_view(i) {
         view.push((Val::Kw(k), Val::Num(v)));
@@ -1599,10 +1593,10 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             || !axis_ok(&family, &b.render_projector.style.family)
             || !axis_ok(&color, &b.render_projector.style.color)
             || !axis_ok(&variant, &b.render_projector.style.variant)
-            || !axis_ok(&team, world.sym_field_resolved(b, "team").unwrap_or(""))
+            || !axis_ok(&team, world.sym_field_resolved_at(i, "team").unwrap_or(""))
             || kw_filters
                 .iter()
-                .any(|(field, sel)| !axis_ok(&Some(sel.clone()), world.sym_field_resolved(b, field).unwrap_or("")))
+                .any(|(field, sel)| !axis_ok(&Some(sel.clone()), world.sym_field_resolved_at(i, field).unwrap_or("")))
         {
             continue;
         }
@@ -1964,8 +1958,8 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 .entities
                 .iter()
                 .enumerate()
-                .filter_map(|(i, b)| {
-                    (world.entities.is_alive(i) && world.sym_field_missing(b, "team")).then_some(i)
+                .filter_map(|(i, _)| {
+                    (world.entities.is_alive(i) && world.sym_field_missing_at(i, "team")).then_some(i)
                 })
                 .collect::<Vec<_>>();
             for i in targets {
@@ -1990,10 +1984,12 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     collider_projector: spec.collider_projector.clone(),
                     render_projector: spec.render_projector.clone(),
-                    sym_fields: spec.sym_fields.clone(),
                     triggers: spec.triggers.clone(),
                     trail: Vec::new(),
                 })?;
+                for (field, value) in &spec.sym_fields {
+                    world.sym_field_set_at(row, *field, *value);
+                }
                 for (name, val) in &spec.cols {
                     world.col_set_sym_at(row, *name, *val);
                 }
