@@ -700,6 +700,11 @@ language.md.
       dense row readers, and lazy stage constructors extend the row's dense
       motion schema with generated dyn internals instead of persisting an
       entity-local compatibility map.
+  2v.34. ~~Make dense motion readers an explicit eval context.~~ Done as a
+      bridge; `MotionEvalCtx` now carries scratch state, signal environment,
+      and dense readers through pose evaluation. Live entity reads use the
+      context-native helpers, while legacy `*_with_dense` and state/sig
+      wrappers remain as compatibility shims.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

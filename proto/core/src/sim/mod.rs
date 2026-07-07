@@ -324,7 +324,7 @@ impl Sim {
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
                     let state = MotionState::new();
-                    if let Ok(p) = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers) {
+                    if let Ok(p) = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         b.trail.push(p);
                         if b.trail.len() > cap {
@@ -363,7 +363,7 @@ impl Sim {
             let keep = match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
                     let state = MotionState::new();
-                    match dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers) {
+                    match dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);

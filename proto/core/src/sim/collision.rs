@@ -137,7 +137,7 @@ impl Sim {
                 let b = &self.world.entities[i];
                 let readers = self.motion_readers(i);
                 let state = MotionState::new();
-                dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers)?
+                dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers))?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));

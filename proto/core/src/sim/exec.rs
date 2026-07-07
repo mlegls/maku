@@ -88,7 +88,7 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
             let tau = world.entities.tau(i, world.tick);
             let state = MotionState::new();
             let readers = crate::interp::entity_motion_readers(i, world);
-            if let Ok(p) = dyn_node_pose_u_with_dense(node, tau, 0.0, &state, sig, &readers) {
+            if let Ok(p) = dyn_node_pose_u_in(node, tau, 0.0, MotionEvalCtx::new(&state, sig, &readers)) {
                 return p;
             }
         }

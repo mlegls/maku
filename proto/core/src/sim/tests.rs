@@ -191,8 +191,8 @@
             let state = MotionState::new();
             let ax = a.motion_readers(i);
             let by = b.motion_readers(i);
-            let px = dyn_figure_pose_with_dense(&x.dyn_figure, tau, &state, &a.ctx.sig, &ax).unwrap();
-            let py = dyn_figure_pose_with_dense(&y.dyn_figure, tau, &state, &b.ctx.sig, &by).unwrap();
+            let px = dyn_figure_pose_in(&x.dyn_figure, tau, MotionEvalCtx::new(&state, &a.ctx.sig, &ax)).unwrap();
+            let py = dyn_figure_pose_in(&y.dyn_figure, tau, MotionEvalCtx::new(&state, &b.ctx.sig, &by)).unwrap();
             assert!(
                 (px.x - py.x).abs() < 1e-12 && (px.y - py.y).abs() < 1e-12,
                 "diverged: {:?} vs {:?}",
@@ -773,7 +773,7 @@
         let tau = sim.world.entities.tau(0, sim.world.tick);
         let state = MotionState::new();
         let readers = sim.motion_readers(0);
-        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sim.ctx.sig, &readers).unwrap();
+        let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
         let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
         assert!((p.x - mid).abs() < 0.03 && p.y.abs() < 1e-9, "mid-move pose: {:?}", p);
 
@@ -784,7 +784,7 @@
         let tau = sim.world.entities.tau(0, sim.world.tick);
         let state = MotionState::new();
         let readers = sim.motion_readers(0);
-        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sim.ctx.sig, &readers).unwrap();
+        let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
         assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
     }
 
@@ -1345,7 +1345,7 @@
         let tau = sim.world.entities.tau(i, sim.world.tick);
         let readers = sim.motion_readers(i);
         let state = MotionState::new();
-        let p = dyn_figure_pose_with_dense(&b.dyn_figure, tau, &state, &sig, &readers).unwrap();
+        let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
 

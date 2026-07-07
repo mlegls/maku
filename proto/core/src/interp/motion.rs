@@ -137,6 +137,19 @@ impl MotionReaders {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct MotionEvalCtx<'a> {
+    pub state: &'a MotionState,
+    pub sig: &'a SigEnv,
+    pub readers: &'a MotionReaders,
+}
+
+impl<'a> MotionEvalCtx<'a> {
+    pub fn new(state: &'a MotionState, sig: &'a SigEnv, readers: &'a MotionReaders) -> MotionEvalCtx<'a> {
+        MotionEvalCtx { state, sig, readers }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanStateShape {
     N2,
@@ -662,7 +675,9 @@ pub fn dyn_node_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -
 }
 
 pub fn dyn_pose(d: &DynPose, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
-    eval_dyn(d, tau, state, sig)
+    let readers = MotionReaders::legacy();
+    let ctx = MotionEvalCtx::new(state, sig, &readers);
+    dyn_pose_in(d, tau, ctx)
 }
 
 pub fn dyn_figure_pose(
@@ -671,7 +686,9 @@ pub fn dyn_figure_pose(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Pose, String> {
-    dyn_node_pose(d.pose_dyn(), tau, state, sig)
+    let readers = MotionReaders::legacy();
+    let ctx = MotionEvalCtx::new(state, sig, &readers);
+    dyn_figure_pose_in(d, tau, ctx)
 }
 
 pub fn dyn_figure_pose_with_dense(
@@ -681,7 +698,12 @@ pub fn dyn_figure_pose_with_dense(
     sig: &SigEnv,
     readers: &MotionReaders,
 ) -> Result<Pose, String> {
-    dyn_node_pose_u_with_dense(d.pose_dyn(), tau, 0.0, state, sig, readers)
+    let ctx = MotionEvalCtx::new(state, sig, readers);
+    dyn_figure_pose_in(d, tau, ctx)
+}
+
+pub fn dyn_figure_pose_in(d: &DynFigure, tau: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
+    dyn_node_pose_u_in(d.pose_dyn(), tau, 0.0, ctx)
 }
 
 pub fn eval_dyn_figure(
@@ -703,6 +725,10 @@ pub fn dyn_pose_u(
     dyn_node_pose_u(d.node(), tau, u, state, sig)
 }
 
+pub fn dyn_pose_in(d: &DynPose, tau: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
+    dyn_node_pose_u_in(d.node(), tau, 0.0, ctx)
+}
+
 pub fn dyn_node_pose_u(
     d: &DynNode,
     tau: f64,
@@ -711,7 +737,8 @@ pub fn dyn_node_pose_u(
     sig: &SigEnv,
 ) -> Result<Pose, String> {
     let readers = MotionReaders::legacy();
-    dyn_node_pose_u_with_dense(d, tau, u, state, sig, &readers)
+    let ctx = MotionEvalCtx::new(state, sig, &readers);
+    dyn_node_pose_u_in(d, tau, u, ctx)
 }
 
 pub fn dyn_node_pose_u_with_dense(
@@ -722,6 +749,14 @@ pub fn dyn_node_pose_u_with_dense(
     sig: &SigEnv,
     readers: &MotionReaders,
 ) -> Result<Pose, String> {
+    let ctx = MotionEvalCtx::new(state, sig, readers);
+    dyn_node_pose_u_in(d, tau, u, ctx)
+}
+
+pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
+    let state = ctx.state;
+    let sig = ctx.sig;
+    let readers = ctx.readers;
     match d {
         DynNode::Const(p) => Ok(*p),
         DynNode::Linear { vx, vy } => Ok(Pose {
@@ -782,7 +817,7 @@ pub fn dyn_node_pose_u_with_dense(
             Ok(Pose::point(x, y))
         }
         DynNode::Clamp { lo, hi, child } => {
-            let p = dyn_node_pose_u_with_dense(child, tau, 0.0, state, sig, readers)?;
+            let p = dyn_node_pose_u_in(child, tau, 0.0, ctx)?;
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })
         }
         DynNode::RotExpr { form, env } => {
@@ -808,10 +843,10 @@ pub fn dyn_node_pose_u_with_dense(
                 })
                 .unwrap_or([0.0, 0.0]);
             let cur = stage_dyn_with_dense(segs, idx as usize, state, key, readers)?;
-            dyn_node_pose_u_with_dense(cur.node(), tau - epoch, u, state, sig, readers)
+            dyn_node_pose_u_in(cur.node(), tau - epoch, u, ctx)
         }
         DynNode::Translate { dx, dy, child } => {
-            let p = dyn_node_pose_u_with_dense(child, tau, u, state, sig, readers)?;
+            let p = dyn_node_pose_u_in(child, tau, u, ctx)?;
             Ok(Pose { x: p.x + dx, y: p.y + dy, theta: p.theta })
         }
         DynNode::Path { curve, progress, env } => {
@@ -826,11 +861,11 @@ pub fn dyn_node_pose_u_with_dense(
                 None,
             )?
             .num()?;
-            dyn_node_pose_u_with_dense(curve, tau, u, state, sig, readers)
+            dyn_node_pose_u_in(curve, tau, u, ctx)
         }
         DynNode::Frame(parent, child) => {
-            let pp = dyn_node_pose_u_with_dense(parent, tau, u, state, sig, readers)?;
-            let cp = dyn_node_pose_u_with_dense(child, tau, u, state, sig, readers)?;
+            let pp = dyn_node_pose_u_in(parent, tau, u, ctx)?;
+            let cp = dyn_node_pose_u_in(child, tau, u, ctx)?;
             Ok(pp.compose(&cp))
         }
     }
@@ -942,8 +977,9 @@ fn step_motion_with_dense(
             if done && (idx as usize) + 1 < segs.len() {
                 // exit snapshot from the finishing segment
                 let cur = stage_dyn_with_dense(segs, idx as usize, state, key, readers)?;
-                let p1 = dyn_node_pose_u_with_dense(cur.node(), local, 0.0, state, sig, readers)?;
-                let p0 = dyn_node_pose_u_with_dense(cur.node(), (local - dt).max(0.0), 0.0, state, sig, readers)?;
+                let ctx = MotionEvalCtx::new(state, sig, readers);
+                let p1 = dyn_node_pose_u_in(cur.node(), local, 0.0, ctx)?;
+                let p0 = dyn_node_pose_u_in(cur.node(), (local - dt).max(0.0), 0.0, ctx)?;
                 let exit = Val::Map(Rc::new(vec![
                     (Val::Kw("pos".into()), Val::Pose(Pose::point(p1.x, p1.y))),
                     (
