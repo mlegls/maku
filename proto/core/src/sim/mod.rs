@@ -331,9 +331,8 @@ impl Sim {
                 }
                 let tau = self.world.entities.tau(i, tick);
                 let readers = self.motion_readers(i);
-                let b = &self.world.entities[i];
-                if let Some(policy) = &b.cache_policy.trace {
-                    let Some(window) = policy.window else { continue };
+                if let Some(window) = self.world.entities.trace_window(i) {
+                    let b = &self.world.entities[i];
                     let state = MotionState::new();
                     if let Ok(p) = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;

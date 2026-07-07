@@ -1469,7 +1469,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("kind".into()), Val::Kw(match b.dyn_figure.repr() {
-            FigureDynRepr::Pose(_) if b.cache_policy.trace.is_some() => "pather",
+            FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "laser",
         }.into())),
@@ -1986,13 +1986,15 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let mut handles = Vec::new();
             for spec in entities {
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
-                let row = world.install_entity(Entity {
-                    dyn_figure,
-                    cache_policy: spec.cache_policy.clone(),
-                    collider_projector: spec.collider_projector.clone(),
-                    render_projector: spec.render_projector.clone(),
-                    triggers: spec.triggers.clone(),
-                })?;
+                let row = world.install_entity(
+                    Entity {
+                        dyn_figure,
+                        collider_projector: spec.collider_projector.clone(),
+                        render_projector: spec.render_projector.clone(),
+                        triggers: spec.triggers.clone(),
+                    },
+                    spec.cache_policy.clone(),
+                )?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);
                 }

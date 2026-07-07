@@ -43,7 +43,7 @@ impl Sim {
             let tau = self.world.entities.tau(i, self.world.tick);
             match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
-                    if b.cache_policy.trace.is_some() {
+                    if self.world.entities.is_traced(i) {
                         let trace = self.world.entities.trace_samples(i);
                         if trace.len() >= 2 {
                             out.push(RenderItem::Polyline {
