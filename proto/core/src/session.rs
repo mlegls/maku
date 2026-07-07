@@ -240,13 +240,12 @@ mod tests {
 "#;
 
     fn count(s: &Session, fam: &str) -> usize {
-        s.sim
-            .as_ref()
-            .unwrap()
-            .world
+        let world = &s.sim.as_ref().unwrap().world;
+        world
             .entities
             .iter()
-            .filter(|b| b.alive && b.render_projector.style.family == fam)
+            .enumerate()
+            .filter(|(i, b)| world.entities.is_alive(*i) && b.render_projector.style.family == fam)
             .count()
     }
 

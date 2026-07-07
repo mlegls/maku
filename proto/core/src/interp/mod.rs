@@ -1508,7 +1508,7 @@ fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>
         Val::Map(_) => resolve_map_query(q, ctx, world),
         Val::Fn { .. } | Val::Builtin(_) => resolve_predicate_query(q, ctx, world),
         Val::EntitySet(_) => entity_index_value(q.clone(), world)
-            .map(|idxs| idxs.into_iter().filter(|i| world.entities[*i].alive).collect()),
+            .map(|idxs| idxs.into_iter().filter(|i| world.entities.is_alive(*i)).collect()),
         v => Err(format!("query: expected predicate, entity set, or map, got {:?}", v)),
     }
 }
@@ -1519,7 +1519,7 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
         .entities
         .iter()
         .enumerate()
-        .filter_map(|(i, b)| b.alive.then_some(i))
+        .filter_map(|(i, _)| world.entities.is_alive(i).then_some(i))
         .collect::<Vec<_>>();
     let mut out = Vec::new();
     for i in candidates {
@@ -1580,7 +1580,7 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
     let sig = ctx.sig.clone();
     let mut candidates: Vec<usize> = Vec::new();
     for (i, b) in world.entities.iter().enumerate() {
-        if !b.alive
+        if !world.entities.is_alive(i)
             || !axis_ok(&family, &b.render_projector.style.family)
             || !axis_ok(&color, &b.render_projector.style.color)
             || !axis_ok(&variant, &b.render_projector.style.variant)
@@ -1672,8 +1672,7 @@ fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
     let idxs = entity_index_value(v, world)?;
     let mut vals = Vec::with_capacity(idxs.len());
     for i in idxs {
-        let b = &world.entities[i];
-        if b.alive {
+        if world.entities.is_alive(i) {
             vals.push(Val::Num(world.col_get_at(i, col).unwrap_or(0.0)));
         }
     }
@@ -1682,7 +1681,7 @@ fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
 
 fn entity_field_value(v: Val, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
     if let Val::Handle(id) = v {
-        return match world.entities.get(id.row).filter(|b| b.generation == id.generation) {
+        return match world.entities.generation(id.row).filter(|generation| *generation == id.generation) {
             Some(_) => entity_field_at(id.row, field, world, sig),
             None => Ok(Val::Nothing),
         };
@@ -1690,8 +1689,7 @@ fn entity_field_value(v: Val, field: &str, world: &World, sig: &SigEnv) -> Resul
     let idxs = entity_index_value(v, world)?;
     let mut vals = Vec::with_capacity(idxs.len());
     for i in idxs {
-        let b = &world.entities[i];
-        if b.alive {
+        if world.entities.is_alive(i) {
             vals.push(entity_field_at(i, field, world, sig)?);
         }
     }
@@ -1957,7 +1955,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 .iter()
                 .enumerate()
                 .filter_map(|(i, b)| {
-                    (b.alive && world.sym_field_missing(b, "team")).then_some(i)
+                    (world.entities.is_alive(i) && world.sym_field_missing(b, "team")).then_some(i)
                 })
                 .collect::<Vec<_>>();
             for i in targets {
@@ -1977,12 +1975,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
                 let scanned = is_scanned_figure(&dyn_figure);
                 let row = world.install_entity(Entity {
-                    generation: 0,
-                    freed_at: None,
                     dyn_figure,
                     cache_policy: spec.cache_policy.clone(),
                     birth: world.tick,
-                    alive: true,
                     state: MotionState::new(),
                     scanned,
                     collider_projector: spec.collider_projector.clone(),

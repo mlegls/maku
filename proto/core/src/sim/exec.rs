@@ -79,8 +79,8 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
 
 fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
     let key = Rc::as_ptr(node) as usize;
-    for b in &world.entities {
-        if b.alive && b.state.contains_key(&key) {
+    for (i, b) in world.entities.iter().enumerate() {
+        if world.entities.is_alive(i) && b.state.contains_key(&key) {
             let tau = (world.tick - b.birth) as f64 / TICK_RATE;
             if let Ok(p) = dyn_node_pose(node, tau, &b.state, sig) {
                 return p;

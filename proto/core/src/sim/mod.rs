@@ -270,8 +270,9 @@ impl Sim {
         let dt = 1.0 / TICK_RATE;
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
-        for b in &mut self.world.entities {
-            if b.alive && b.scanned {
+        for i in 0..self.world.entities.len() {
+            if self.world.entities.is_alive(i) && self.world.entities[i].scanned {
+                let b = &mut self.world.entities[i];
                 let tau = (tick - b.birth) as f64 / TICK_RATE;
                 step_dyn_figure(&b.dyn_figure, tau, dt, &mut b.state, &sig)?;
             }
@@ -281,10 +282,11 @@ impl Sim {
         {
             let tick = self.world.tick;
             let sig = self.ctx.sig.clone();
-            for b in &mut self.world.entities {
-                if !b.alive {
+            for i in 0..self.world.entities.len() {
+                if !self.world.entities.is_alive(i) {
                     continue;
                 }
+                let b = &mut self.world.entities[i];
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
                     let tau = (tick - b.birth) as f64 / TICK_RATE;
@@ -315,7 +317,7 @@ impl Sim {
         let tick = self.world.tick;
         let mut err = None;
         for i in 0..self.world.entities.len() {
-            if !self.world.entities[i].alive {
+            if !self.world.entities.is_alive(i) {
                 continue;
             }
             let b = &self.world.entities[i];

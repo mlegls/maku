@@ -36,8 +36,8 @@ impl Sim {
     pub fn render(&self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
-        for b in &self.world.entities {
-            if !b.alive {
+        for (i, b) in self.world.entities.iter().enumerate() {
+            if !self.world.entities.is_alive(i) {
                 continue;
             }
             let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;

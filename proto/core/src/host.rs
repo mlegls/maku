@@ -388,7 +388,9 @@ impl Instance {
             .entities
             .iter()
             .enumerate()
-            .filter(|(i, b)| b.alive && sim.world.col_get_at(*i, col).is_some())
+            .filter(|(i, _)| {
+                sim.world.entities.is_alive(*i) && sim.world.col_get_at(*i, col).is_some()
+            })
             .filter_map(|(_, b)| b.prev_pos)
             .collect()
     }
@@ -397,7 +399,9 @@ impl Instance {
         self.session
             .sim
             .as_ref()
-            .map(|s| s.world.entities.iter().filter(|b| b.alive).count())
+            .map(|s| {
+                s.world.entities.iter().enumerate().filter(|(i, _)| s.world.entities.is_alive(*i)).count()
+            })
             .unwrap_or(0)
     }
 
@@ -418,7 +422,7 @@ impl Instance {
             .map(|s| {
                 let t = s.tick() as f64;
                 s.world.entities.iter().enumerate().any(|(i, b)| {
-                    b.alive
+                    s.world.entities.is_alive(i)
                         && s.world.sym_field_matches(b, "team", "player-body")
                         && s.world.col_get_at(i, "iframe-until").map(|u| u > t).unwrap_or(false)
                 })

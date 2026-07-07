@@ -123,8 +123,8 @@ impl Sim {
         let mut colliders: Vec<Vec<ColliderData>> = Vec::with_capacity(n);
         // :scale multiplies collider radii (a scaled sprite scales its
         // hitbox); sampled once per bullet per tick, 1.0 when absent
-        for b in &self.world.entities {
-            if !b.alive {
+        for (i, b) in self.world.entities.iter().enumerate() {
+            if !self.world.entities.is_alive(i) {
                 pos.push(None);
                 colliders.push(Vec::new());
                 continue;
@@ -140,12 +140,12 @@ impl Sim {
         let mut contacts: Vec<Vec<(usize, usize)>> = Vec::with_capacity(rules.len());
         for rule in &rules {
             let mut pairs = Vec::new();
-            for (i, a) in self.world.entities.iter().enumerate() {
-                if !a.alive || pos[i].is_none() {
+            for (i, _a) in self.world.entities.iter().enumerate() {
+                if !self.world.entities.is_alive(i) || pos[i].is_none() {
                     continue;
                 }
-                for (j, b) in self.world.entities.iter().enumerate() {
-                    if i == j || !b.alive {
+                for (j, _b) in self.world.entities.iter().enumerate() {
+                    if i == j || !self.world.entities.is_alive(j) {
                         continue;
                     }
                     if pos[j].is_none() {
@@ -165,7 +165,7 @@ impl Sim {
 
         for (rule, pairs) in rules.iter().zip(contacts.iter()) {
             for &(i, j) in pairs {
-                if !self.world.entities[i].alive || !self.world.entities[j].alive {
+                if !self.world.entities.is_alive(i) || !self.world.entities.is_alive(j) {
                     continue;
                 }
                 if let Some(col) = &rule.once {
@@ -199,8 +199,8 @@ impl Sim {
                     if self
                         .world
                         .entities
-                        .get(a_ref.row)
-                        .is_some_and(|b| b.generation == a_ref.generation)
+                        .generation(a_ref.row)
+                        .is_some_and(|generation| generation == a_ref.generation)
                     {
                         let bi = a_ref.row;
                         self.world.col_set_sym_at(bi, *col, 1.0);
@@ -225,7 +225,7 @@ impl Sim {
         for i in 0..self.world.entities.len() {
             let n_rules = self.world.entities[i].triggers.len();
             for r in 0..n_rules {
-                if !self.world.entities[i].alive {
+                if !self.world.entities.is_alive(i) {
                     break;
                 }
                 let rule = self.world.entities[i].triggers[r].clone();

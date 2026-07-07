@@ -623,6 +623,10 @@ language.md.
       `EntityStore` now owns handle lookup, liveness, generation, cull, push,
       and reusable-row selection helpers. `EntityStore` rows and
       `WorldFields` matrices intentionally share one entity-row namespace.
+  2v.20. ~~Move lifecycle columns into `EntityStore`.~~ Done; generation,
+      alive flags, and freed-at ticks now live in `EntityStore` side vectors
+      instead of on `Entity`, with tests and runtime code reading through the
+      store APIs.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

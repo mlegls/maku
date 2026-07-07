@@ -1,14 +1,22 @@
     use super::*;
 
     fn live_count(sim: &Sim) -> usize {
-        sim.world.entities.iter().filter(|b| b.alive).count()
+        sim.world
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| sim.world.entities.is_alive(*i))
+            .count()
     }
 
     fn live_family_count(sim: &Sim, family: &str) -> usize {
         sim.world
             .entities
             .iter()
-            .filter(|b| b.alive && b.render_projector.style.family == family)
+            .enumerate()
+            .filter(|(i, b)| {
+                sim.world.entities.is_alive(*i) && b.render_projector.style.family == family
+            })
             .count()
     }
 
@@ -174,9 +182,9 @@
             b.step_with(&inputs).unwrap();
         }
         assert_eq!(a.world.entities.len(), b.world.entities.len());
-        for (x, y) in a.world.entities.iter().zip(b.world.entities.iter()) {
-            assert_eq!(x.generation, y.generation);
-            assert_eq!(x.alive, y.alive);
+        for (i, (x, y)) in a.world.entities.iter().zip(b.world.entities.iter()).enumerate() {
+            assert_eq!(a.world.entities.generation(i), b.world.entities.generation(i));
+            assert_eq!(a.world.entities.is_alive(i), b.world.entities.is_alive(i));
             let tau = (a.world.tick - x.birth) as f64 / TICK_RATE;
             let px = dyn_figure_pose(&x.dyn_figure, tau, &x.state, &a.ctx.sig).unwrap();
             let py = dyn_figure_pose(&y.dyn_figure, tau, &y.state, &b.ctx.sig).unwrap();
@@ -218,7 +226,12 @@
             sim.events_vec().into_iter().filter(|e| &*e.name == "player-hit").collect();
         assert_eq!(hits.len(), 1);
         // the iframed bullet passed through (grazing) and is still flying
-        assert_eq!(sim.world.entities.iter().filter(|b| b.alive && sim.world.sym_field_missing(b, "team")).count(), 1);
+        assert_eq!(
+            sim.world.entities.iter().enumerate().filter(|(i, b)| {
+                sim.world.entities.is_alive(*i) && sim.world.sym_field_missing(b, "team")
+            }).count(),
+            1
+        );
         assert!(matches!(sim.channel_val("graze"), Some(Val::Num(n)) if n == 2.0), "graze ring precedes the hitbox; iframes graze too");
         // the hit effect is a column write; $lives is a channel
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == 2.0));
@@ -419,7 +432,9 @@
         // the column keeps counting (what game-over MEANS is host policy)
         assert!(matches!(sim.channel_val("lives"), Some(Val::Num(n)) if n == -2.0));
         // non-culling: the player entity is still there (host decides)
-        assert!(sim.world.entities.iter().any(|b| b.alive && sim.world.sym_field_matches(b, "team", "player-body")));
+        assert!(sim.world.entities.iter().enumerate().any(|(i, b)| {
+            sim.world.entities.is_alive(i) && sim.world.sym_field_matches(b, "team", "player-body")
+        }));
     }
 
     /// Death is not special: :triggers replaces the synthesized default,
@@ -503,7 +518,9 @@
         }
         assert_eq!(sim.channel_u64("hits"), 1, "active beam hits");
         assert_eq!(
-            sim.world.entities.iter().filter(|b| b.alive && sim.world.sym_field_missing(b, "team")).count(),
+            sim.world.entities.iter().enumerate().filter(|(i, b)| {
+                sim.world.entities.is_alive(*i) && sim.world.sym_field_missing(b, "team")
+            }).count(),
             1,
             "the beam persists through the hit"
         );
@@ -1782,7 +1799,9 @@
             sim.step_with(&inp).unwrap();
         }
         let count = |sim: &Sim, fam: &str| {
-            sim.world.entities.iter().filter(|b| b.alive && b.render_projector.style.family == fam).count()
+            sim.world.entities.iter().enumerate().filter(|(i, b)| {
+                sim.world.entities.is_alive(*i) && b.render_projector.style.family == fam
+            }).count()
         };
         let g1 = count(&sim, "circle");
         assert!(g1 >= 8, "ground moveset firing: {}", g1);
@@ -2104,8 +2123,8 @@ fn entity_rows_do_not_shift_after_cull() {
         panic!("expected row view after cull")
     };
     assert_eq!(&*rows, &[1]);
-    assert!(!sim.world.entities[0].alive);
-    assert!(sim.world.entities[1].alive);
+    assert!(!sim.world.entities.is_alive(0));
+    assert!(sim.world.entities.is_alive(1));
 }
 
 #[test]
@@ -2144,8 +2163,8 @@ fn stale_handles_do_not_target_reused_rows() {
         sim.step().unwrap();
     }
     assert_eq!(sim.world.entities.len(), 1);
-    assert!(sim.world.entities[0].alive);
-    assert_eq!(sim.world.entities[0].generation, 1);
+    assert!(sim.world.entities.is_alive(0));
+    assert_eq!(sim.world.entities.generation(0), Some(1));
     assert!(matches!(sim.ctx.sig.channel("enemy-hp"), Some(Val::Num(n)) if n == 2.0));
 }
 
