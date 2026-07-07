@@ -195,10 +195,11 @@ language.md.
     shape: Point | Polyline | Mesh...
   }
   ```
-  The prototype now stores collider/render slots as
-  `colliders: Rc<[DynCollider]>` and `renderers: Rc<[DynRender]>`; the
-  remaining work is exposing those low-level slot constructors to library
-  code and removing the Rust-side `laser` bridge.
+  The prototype now stores user collider/render arguments as generic
+  dyn-like metadata. Each tick realizes those structures to lists, then
+  decodes the concrete list entries through the collider/render schemas.
+  Compatibility curve projections still use internal Rust slots until the
+  Rust-side `laser` bridge can move into library code.
   Normalized curves are just `Range(0, 1)`. Higher-level helpers can turn
   min/max/step descriptions into `Values`; callers/slots must provide
   sample sets compatible with the source domain when they use sampled
@@ -355,13 +356,14 @@ language.md.
       structs.~~ Done; sampling, activity, and width now belong to temporary
       slot-shaped components. Trace policy is separate cache policy.
   2e. ~~Move projection/cache fields out of the generic legacy bucket.~~ Done;
-      entities now carry dyn collider/render slots plus `EntityCachePolicy`.
+      entities now carry collider/render metadata, compatibility curve
+      projections, and `EntityCachePolicy`.
   2f. ~~Make layer universal collider metadata.~~ Done; entity collider
       slots are now `ColliderSlot { layer, shape }`, with layer outside the
       circle/capsule-chain shape.
-  2g. Target update: collider/render slots should become stable dyn
-      slots (`Rc<[DynCollider]>`, `Rc<[DynRender]>`) that evaluate to
-      `None` when inactive, rather than static slots plus activity masks.
+  2g. Target update: collider/render spawn args are generic dyn-like
+      structures expected to realize to lists; typed collider/render data is
+      decoded only at the collision/render boundary.
   2h. ~~Introduce internal dyn collider/render slots.~~ Done for the current
       bridge: collider slots are `DynCollider::Slot(ColliderSlot)`, with
       shape variants for circles and capsule chains, and curve rendering is
@@ -409,39 +411,40 @@ language.md.
       Touhou/library code can build those slots directly and the Rust
       `laser` bridge can disappear.
   2r. ~~Expose static low-level collider/render slot specs through spawn
-      metadata.~~ Done; `:colliders` accepts explicit `:shape` maps for
-      `:circle` and `:capsule-chain`, while `:renderers` accepts explicit
-      `:polyline` specs. This is intentionally only the static-data bridge:
-      structural `Dyn<T>` coercion should replace parser-specific dynamic
-      field handling before low-level spawn becomes the final public form.
+      arguments.~~ Done; `(colliders ...)` accepts explicit `:shape` maps
+      for `:circle` and `:capsule-chain`, while `(renderers ...)` accepts
+      explicit `:polyline` specs. The old `:colliders` / `:renderers` meta
+      keys remain as compatibility sugar while library code migrates, but
+      the typed boundary is now the operator argument.
   2s. ~~Prototype structural dyn coercion for ordinary maps/vectors at the
       spawn boundary.~~ Done; dynamic leaves inside precomputed collider
       structures now survive until `spawn` validates the expected
       collider/render schema. Current implementation covers static structure
-      shape plus dyn expression leaves; whole-list/whole-shape dynamic
-      expressions still need typed conditional/function lowering. The
+      shape, dyn expression leaves, and whole-list dynamic expressions via
+      `(colliders dyn-list-expr)` / `(renderers dyn-list-expr)`. The
       prototype carrier is named `DynLike` rather than `DynStruct` or
       `SourceExpr`: it is value-level coercion input, distinct from the
       EDN/form AST. `as_*` schema checks at typed boundaries turn dyn-like
       structures into `Dyn<T>`-backed slots, while static structures remain
       ordinary values unless an expected dyn type asks for lifting.
   2t. ~~Stage spawn slot checks by coercion family.~~ Done; first
-      `as_dynlike_list` rejects non-list outer shapes, then
-      `as_dyn_collider_list` / `as_dyn_render_list` apply element schemas
-      (`as_collider` / `as_render`). The recursive list/map dyn-like lift is
-      shared; collider and render schemas only run after the expected list
-      boundary is accepted.
+      static paths still let `as_dynlike_list` reject non-list outer shapes
+      early, while dynamic paths realize the generic `DynLike` first and then
+      apply element schemas (`as_collider` / `as_render`). The recursive
+      list/map dyn-like lift is shared; collider and render schemas only run
+      after the expected list boundary is accepted.
   2u. ~~Generalize dynamic source leaves away from `DynNum`.~~ Done;
       `DynLike` now carries untyped `DynVal::Expr { form, env }`.
       Numeric interpretation happens only in numeric typed contexts such as
       `as_dyn_num`, leaving room for numeric masks, dynamic enum/shape
       choices, and other `Dyn<T>` targets without treating numbers as the
       only dynamic leaf kind.
-  2v. ~~Make collider/render lists semantic dyn boundaries.~~ Done;
-      entities and spawn actions now store `DynColliderList` and
-      `DynRenderList`, whose current `Stable` variant preserves the old
-      `Rc<[DynCollider]>` / `Rc<[DynRender]>` lowering. Dynamic whole-list
-      variants can be added here without changing `Entity` again.
+  2v. ~~Make collider/render args generic dyn-list boundaries.~~ Done;
+      entities and spawn actions now store generic `DynLike` collider/render
+      metadata collected from explicit `(colliders ...)` / `(renderers ...)`
+      arguments and compatibility meta keys. At collision/render time it is
+      realized to a concrete list and decoded through the typed schema; there
+      is no special `DynColliderList` / `DynRenderList` semantic type.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

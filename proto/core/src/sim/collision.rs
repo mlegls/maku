@@ -1,5 +1,5 @@
 use super::*;
-use super::slots::eval_collider_slot;
+use super::slots::{eval_collider_slot, materialize_collider_defs};
 
 /// Distance from a point to a polyline (capsule-chain narrow phase).
 fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
@@ -88,11 +88,20 @@ fn materialize_colliders(
     tau: f64,
     sig: &SigEnv,
     scale: f64,
-) -> Vec<ColliderData> {
-    b.colliders
-        .iter()
-        .map(|slot| eval_collider_slot(b, slot, tau, sig, scale))
-        .collect()
+) -> Result<Vec<ColliderData>, String> {
+    let mut defs = materialize_collider_defs(&b.colliders, tau, &b.state, sig)
+        .map_err(|e| format!("colliders: {}", e))?;
+    if let Some(radius) = b.primary_hitbox {
+        replace_primary_hitbox(&mut defs, radius);
+    }
+    if let Some(curve_slot) = &b.curve_collider {
+        defs = curve_capsule_slots(defs, curve_slot);
+    }
+    let defs = defs
+        .into_iter()
+        .map(|slot| eval_collider_slot(b, &slot, tau, sig, scale))
+        .collect();
+    Ok(defs)
 }
 
 impl Sim {
@@ -118,7 +127,7 @@ impl Sim {
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
             let scale = self.sample_sig(&b.sigs.scale, tau, 1.0);
-            colliders.push(materialize_colliders(b, tau, &sig, scale));
+            colliders.push(materialize_colliders(b, tau, &sig, scale)?);
         }
 
         let rules = self.world.contacts.clone();

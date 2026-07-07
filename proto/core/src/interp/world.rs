@@ -105,79 +105,11 @@ impl DynKind for RenderData {
 pub type DynCollider = Dyn<ColliderData>;
 pub type DynRender = Dyn<RenderData>;
 
-/// Semantic `Dyn<List<Collider>>` boundary. The current interpreter lowers
-/// only stable-arity lists; later variants can carry dynamic whole-list
-/// expressions without changing Entity's shape again.
-#[derive(Clone, Debug)]
-pub enum DynColliderList {
-    Stable(Rc<[DynCollider]>),
-}
-
-impl DynColliderList {
-    pub fn stable(slots: Rc<[DynCollider]>) -> DynColliderList {
-        DynColliderList::Stable(slots)
-    }
-
-    pub fn empty() -> DynColliderList {
-        DynColliderList::Stable(Vec::new().into())
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, DynCollider> {
-        match self {
-            DynColliderList::Stable(slots) => slots.iter(),
-        }
-    }
-
-    pub fn first(&self) -> Option<&DynCollider> {
-        match self {
-            DynColliderList::Stable(slots) => slots.first(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            DynColliderList::Stable(slots) => slots.len(),
-        }
-    }
-
-    pub fn to_vec(&self) -> Vec<DynCollider> {
-        self.iter().cloned().collect()
-    }
-}
-
-/// Semantic `Dyn<List<Render>>` boundary, currently lowered to stable slots.
-#[derive(Clone, Debug)]
-pub enum DynRenderList {
-    Stable(Rc<[DynRender]>),
-}
-
-impl DynRenderList {
-    pub fn stable(slots: Rc<[DynRender]>) -> DynRenderList {
-        DynRenderList::Stable(slots)
-    }
-
-    pub fn empty() -> DynRenderList {
-        DynRenderList::Stable(Vec::new().into())
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, DynRender> {
-        match self {
-            DynRenderList::Stable(slots) => slots.iter(),
-        }
-    }
-
-    pub fn first(&self) -> Option<&DynRender> {
-        match self {
-            DynRenderList::Stable(slots) => slots.first(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            DynRenderList::Stable(slots) => slots.len(),
-        }
-    }
-}
+/// Source-level collider/render metadata carried as generic dyn-like data.
+/// Typed projection happens at the collision/render boundary after this data
+/// is realized for the current tick.
+pub type ColliderSpecList = DynLike;
+pub type RenderSpecList = DynLike;
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
 #[derive(Debug, Clone)]
@@ -220,9 +152,12 @@ pub struct Entity {
     /// Collider slots — archetype data, Rc-shared across a spawn's
     /// elements. Layers are opaque core routing keys; slots evaluate each
     /// tick into collision data or nothing.
-    pub colliders: DynColliderList,
+    pub colliders: Rc<[ColliderSpecList]>,
+    pub primary_hitbox: Option<f64>,
+    pub curve_collider: Option<CapsuleChainSlot>,
     /// Render slots — archetype data, Rc-shared across a spawn's elements.
-    pub renderers: DynRenderList,
+    pub renderers: Rc<[RenderSpecList]>,
+    pub curve_renderer: Option<CurveRenderSlot>,
     /// User-defined numeric columns in World's dense column layout. hp is
     /// not special — it is just another named source column assigned to a
     /// slot by the world.
@@ -340,6 +275,35 @@ impl Dyn<ColliderData> {
             ColliderSlotShape::Circle { .. } => None,
         }
     }
+}
+
+pub(crate) fn replace_primary_hitbox(slots: &mut [DynCollider], radius: f64) {
+    if let Some(first) = slots.first_mut() {
+        let slot = first.slot();
+        if let ColliderSlotShape::Circle { .. } = &slot.shape {
+            *first = DynCollider::collider_circle_const(slot.layer.clone(), radius);
+        }
+    }
+}
+
+pub(crate) fn curve_capsule_slots(
+    slots: impl IntoIterator<Item = DynCollider>,
+    curve_slot: &CapsuleChainSlot,
+) -> Vec<DynCollider> {
+    slots
+        .into_iter()
+        .map(|collider| {
+            let slot = collider.slot();
+            match &slot.shape {
+                ColliderSlotShape::Circle { radius } => DynCollider::collider_capsule_chain(
+                    slot.layer.clone(),
+                    radius.clone(),
+                    curve_slot.clone(),
+                ),
+                ColliderSlotShape::CapsuleChain { .. } => collider,
+            }
+        })
+        .collect()
 }
 
 impl Dyn<RenderData> {

@@ -1,5 +1,5 @@
 use super::*;
-use super::slots::eval_render_slot;
+use super::slots::eval_render_list;
 
 pub enum RenderItem {
     Dot { x: f64, y: f64, th: f64, style: Style, hue: f64, scale: f64, alpha: f64 },
@@ -68,11 +68,7 @@ impl Sim {
                 }
                 FigureDynRepr::Curve { .. } => {
                     let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
-                    for data in b
-                        .renderers
-                        .iter()
-                        .flat_map(|slot| eval_render_slot(b, slot, tau, sig))
-                    {
+                    for data in eval_render_list(b, &b.renderers, tau, sig) {
                         match data {
                             RenderData::None => {}
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {

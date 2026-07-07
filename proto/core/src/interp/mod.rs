@@ -75,6 +75,8 @@ pub enum Val {
     Kw(Rc<str>),
     Pose(Pose),
     Figure(Figure),
+    ColliderSpecs(Rc<DynLike>),
+    RenderSpecs(Rc<DynLike>),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     DynLike(Rc<DynLike>),
@@ -170,7 +172,7 @@ impl DynLike {
         match self {
             DynLike::Atom(v) => Ok(v.to_val()),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
-                eval_dyn(&DynNum::num_expr(form.clone(), env.clone()), tau, state, sig).map(Val::Num)
+                eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, 0)), None)
             }
             DynLike::List(items) => items
                 .iter()
@@ -235,9 +237,10 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
-    pub colliders: DynColliderList,
+    pub colliders: ColliderSpecList,
     pub curve_collider: Option<CapsuleChainSlot>,
-    pub renderers: DynRenderList,
+    pub renderers: RenderSpecList,
+    pub curve_renderer: Option<CurveRenderSlot>,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
 }
@@ -281,8 +284,9 @@ pub enum ActionV {
         cols: Vec<Vec<(Rc<str>, f64)>>,
         triggers: Rc<[TriggerRule]>,
         damage: Val,
-        colliders: DynColliderList,
-        renderers: DynRenderList,
+        colliders: Rc<[ColliderSpecList]>,
+        hitbox: Option<f64>,
+        renderers: Rc<[RenderSpecList]>,
         expose: Rc<[(Rc<str>, Rc<str>)]>,
     },
     Manipulate { targets: Vec<u64>, query: Option<Val>, callback: Val },
@@ -360,9 +364,10 @@ pub enum FrameSpec {
 #[derive(Debug)]
 pub struct SpawnMade {
     pub dyn_figure: DynFigure,
-    pub colliders: DynColliderList,
+    pub colliders: ColliderSpecList,
     pub curve_collider: Option<CapsuleChainSlot>,
-    pub renderers: DynRenderList,
+    pub renderers: RenderSpecList,
+    pub curve_renderer: Option<CurveRenderSlot>,
     pub cache_policy: EntityCachePolicy,
 }
 
@@ -675,6 +680,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "defcontact" => return sf_defcontact(items, env, ctx, world),
             "spawn" => return sf_spawn(items, env, ctx, world),
+            "colliders" => return sf_colliders(items, env, ctx, world),
+            "renderers" => return sf_renderers(items, env, ctx, world),
             // "manip" is the surface name; "manipulate" kept as an alias
             "manip" | "manipulate" => {
                 let target = evaluate(&items[1], env, ctx, world)?;
@@ -1756,7 +1763,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, renderers, expose } => {
+        ActionV::Spawn { dyns, styles, sigs, team, cols, triggers, damage, colliders, hitbox, renderers, expose } => {
             let mut handles = Vec::new();
             for (ei, ((d, s), h)) in dyns.iter().zip(styles.iter()).zip(sigs.iter()).enumerate() {
                 let dyn_figure = d.dyn_figure.framed(ctx.ambient);
@@ -1783,35 +1790,18 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     scanned,
                     sigs: h.clone(),
                     colliders: {
-                        let mut slots = Vec::with_capacity(colliders.len() + d.colliders.len());
-                        if let Some(curve_slot) = &d.curve_collider {
-                            for collider in colliders.iter() {
-                                let slot = collider.slot();
-                                match &slot.shape {
-                                    ColliderSlotShape::Circle { radius } => {
-                                        slots.push(DynCollider::collider_capsule_chain(
-                                            slot.layer.clone(),
-                                            radius.clone(),
-                                            curve_slot.clone(),
-                                        ));
-                                    }
-                                    ColliderSlotShape::CapsuleChain { .. } => {
-                                        slots.push(collider.clone());
-                                    }
-                                }
-                            }
-                        } else {
-                            slots.extend(colliders.iter().cloned());
-                        }
-                        slots.extend(d.colliders.iter().cloned());
-                        DynColliderList::stable(slots.into())
+                        let mut sources = colliders.iter().cloned().collect::<Vec<_>>();
+                        sources.push(d.colliders.clone());
+                        sources.into()
                     },
+                    primary_hitbox: *hitbox,
+                    curve_collider: d.curve_collider.clone(),
                     renderers: {
-                        let mut slots = Vec::with_capacity(renderers.len() + d.renderers.len());
-                        slots.extend(renderers.iter().cloned());
-                        slots.extend(d.renderers.iter().cloned());
-                        DynRenderList::stable(slots.into())
+                        let mut sources = renderers.iter().cloned().collect::<Vec<_>>();
+                        sources.push(d.renderers.clone());
+                        sources.into()
                     },
+                    curve_renderer: d.curve_renderer.clone(),
                     cols: col_slots,
                     triggers: triggers.clone(),
                     damage: damage.clone(),

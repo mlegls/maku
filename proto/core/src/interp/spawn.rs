@@ -10,7 +10,73 @@ use std::rc::Rc;
 /// Meta tags whose values are NOT evaluated at spawn: signal-valued tags
 /// (contain t), and :expose (whose $names are channel DESIGNATORS, not
 /// reads — evaluated, $some-channel would resolve as a channel read).
-const SIGNAL_TAGS: &[&str] = &["hue", "scale", "facing", "opacity", "expose"];
+const SIGNAL_TAGS: &[&str] = &[
+    "hue",
+    "scale",
+    "facing",
+    "opacity",
+    "expose",
+    "colliders",
+    "renderers",
+];
+
+fn raw_meta_dynlike(
+    metas: &[Form],
+    key: &str,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Option<DynLike>, String> {
+    for meta in metas.iter().rev() {
+        let Form::Map(kvs) = meta else { continue };
+        for (k, v) in kvs.iter() {
+            if matches!(k, Form::Kw(kw) if &**kw == key) {
+                return eval_dynlike_form(v, env, ctx, world).map(Some);
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
+    match items.len() {
+        0 => Ok(empty_spec_list()),
+        1 => {
+            let one = eval_dynlike_form(&items[0], env, ctx, world)?;
+            match one {
+                DynLike::Map(_) => Ok(DynLike::List(vec![one].into())),
+                other => Ok(other),
+            }
+        }
+        _ => items
+            .iter()
+            .map(|i| eval_dynlike_form(i, env, ctx, world))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| DynLike::List(items.into())),
+    }
+}
+
+pub(crate) fn sf_colliders(
+    items: &[Form],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Val, String> {
+    let specs = spec_args(&items[1..], env, ctx, world)?;
+    as_collider_spec_list(&specs)?;
+    Ok(Val::ColliderSpecs(Rc::new(specs)))
+}
+
+pub(crate) fn sf_renderers(
+    items: &[Form],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Val, String> {
+    let specs = spec_args(&items[1..], env, ctx, world)?;
+    as_render_spec_list(&specs)?;
+    Ok(Val::RenderSpecs(Rc::new(specs)))
+}
 
 pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
     let mut out = Vec::new();
@@ -45,7 +111,23 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // what lets a library template prepend its defaults and pass the
     // caller's map through: (spawn d {defaults…} user-meta). map_get is
     // first-match, so pairs collect in reverse map order.
-    let metas = &items[2..];
+    let mut metas = Vec::new();
+    let mut computed_meta_pairs: Vec<(Val, Val)> = Vec::new();
+    let mut explicit_colliders = Vec::new();
+    let mut explicit_renderers = Vec::new();
+    for item in &items[2..] {
+        if matches!(item, Form::Map(_)) {
+            metas.push(item.clone());
+            continue;
+        }
+        match evaluate(item, env, ctx, world)? {
+            Val::ColliderSpecs(specs) => explicit_colliders.push((*specs).clone()),
+            Val::RenderSpecs(specs) => explicit_renderers.push((*specs).clone()),
+            Val::Map(kvs) => computed_meta_pairs.extend(kvs.iter().cloned()),
+            Val::DynLike(d) => computed_meta_pairs.extend(dynlike_meta_pairs(&d)?),
+            _ => {}
+        }
+    }
     let mut pairs: Vec<(Val, Val)> = Vec::new();
     for mf in metas.iter().rev() {
         match mf {
@@ -68,6 +150,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
         }
     }
+    pairs.extend(computed_meta_pairs);
     let meta = Val::Map(Rc::new(pairs));
     let mut elems = Vec::new();
     flatten_elems(dv, &mut Vec::new(), &mut elems)?;
@@ -79,7 +162,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         }
     }
     let styles = resolve_styles(&meta, &elems)?;
-    let sigs = resolve_sigs(metas, env, elems.len());
+    let sigs = resolve_sigs(&metas, env, elems.len());
     let team: Option<Rc<str>> = match map_get(&meta, "team") {
         Some(Val::Kw(k)) => Some(Rc::from(&*k)),
         _ => None,
@@ -168,34 +251,37 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
     // the keys of (with {$rank 0.5} …) — not reads).
-    let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(metas);
+    let expose: Rc<[(Rc<str>, Rc<str>)]> = parse_expose(&metas);
     // collider set: archetype data, one Rc shared by every spawned element.
     // No genre defaults — an entity with no :colliders is inert to the
     // contact pass (scenery); what a "bullet" or "enemy" carries is the
     // library's business (spawn-bullet/spawn-enemy in lib/touhou.maku).
     // :hitbox r resizes the PRIMARY (first) collider — the generic knob
     // that lets a template's default collider set fit a bigger sprite.
-    let colliders: DynColliderList = match map_get(&meta, "colliders") {
-        Some(v) => {
-            let mut cs = as_dyn_collider_list(&DynLike::from_val(v))?.to_vec();
-            if let (Some(r), Some(first)) = (hitbox, cs.first_mut()) {
-                let slot = first.slot();
-                let layer = match slot.shape {
-                    ColliderSlotShape::Circle { .. } => Some(slot.layer.clone()),
-                    ColliderSlotShape::CapsuleChain { .. } => None,
-                };
-                if let Some(layer) = layer {
-                    *first = DynCollider::collider_circle_const(layer, r);
-                }
-            }
-            DynColliderList::stable(cs.into())
-        }
-        _ => DynColliderList::empty(),
-    };
-    let renderers: DynRenderList = match map_get(&meta, "renderers") {
-        Some(v) => as_dyn_render_list(&DynLike::from_val(v))?,
-        _ => DynRenderList::empty(),
-    };
+    if let Some(v) = raw_meta_dynlike(&metas, "colliders", env, ctx, world)? {
+        explicit_colliders.push(as_collider_spec_list(&v)?);
+    } else {
+        let v = match map_get(&meta, "colliders") {
+            Some(v) => as_collider_spec_list(&DynLike::from_val(v))?,
+            _ => empty_spec_list(),
+        };
+        explicit_colliders.push(v);
+    }
+    if explicit_colliders.is_empty() {
+        explicit_colliders.push(empty_spec_list());
+    }
+    if let Some(v) = raw_meta_dynlike(&metas, "renderers", env, ctx, world)? {
+        explicit_renderers.push(as_render_spec_list(&v)?);
+    } else {
+        let v = match map_get(&meta, "renderers") {
+            Some(v) => as_render_spec_list(&DynLike::from_val(v))?,
+            _ => empty_spec_list(),
+        };
+        explicit_renderers.push(v);
+    }
+    if explicit_renderers.is_empty() {
+        explicit_renderers.push(empty_spec_list());
+    }
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(Rc<str>, f64)>> = elems
         .iter()
@@ -211,6 +297,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             colliders: e.colliders,
             curve_collider: e.curve_collider,
             renderers: e.renderers,
+            curve_renderer: e.curve_renderer,
             cache_policy: e.cache_policy,
         })
         .collect();
@@ -222,8 +309,9 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         cols,
         triggers,
         damage,
-        colliders,
-        renderers,
+        colliders: explicit_colliders.into(),
+        hitbox,
+        renderers: explicit_renderers.into(),
         expose,
     })))
 }
@@ -244,7 +332,7 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (dyn_figure, colliders, curve_collider, renderers, cache_policy) = match &l.backing {
+            let (dyn_figure, colliders, curve_collider, renderers, curve_renderer, cache_policy) = match &l.backing {
                 CurveBacking::Parametric {
                     curve,
                     sample_set,
@@ -256,7 +344,7 @@ pub(crate) fn flatten_elems(
                 } => {
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
-                        DynColliderList::empty(),
+                        empty_spec_list(),
                         Some(CapsuleChainSlot {
                             sample_set: sample_set.clone(),
                             u_max_sig: u_max_sig.clone(),
@@ -267,7 +355,8 @@ pub(crate) fn flatten_elems(
                                 hot_frac_sig: fill_sig.clone(),
                             },
                         }),
-                        DynRenderList::stable(vec![DynRender::render_polyline(CurveRenderSlot {
+                        empty_spec_list(),
+                        Some(CurveRenderSlot {
                             sample_set: sample_set.clone(),
                             u_max_sig: u_max_sig.clone(),
                             width: *width,
@@ -276,16 +365,16 @@ pub(crate) fn flatten_elems(
                                 active: *active,
                                 hot_frac_sig: fill_sig.clone(),
                             },
-                        })]
-                        .into()),
+                        }),
                         EntityCachePolicy::default(),
                     )
                 }
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
-                    DynColliderList::empty(),
+                    empty_spec_list(),
                     None,
-                    DynRenderList::empty(),
+                    empty_spec_list(),
+                    None,
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },
@@ -296,6 +385,7 @@ pub(crate) fn flatten_elems(
                 colliders,
                 curve_collider,
                 renderers,
+                curve_renderer,
                 cache_policy,
                 path: path.clone(),
             });
@@ -304,9 +394,10 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: DynFigure::pose(as_dyn(other)?),
-                colliders: DynColliderList::empty(),
+                colliders: empty_spec_list(),
                 curve_collider: None,
-                renderers: DynRenderList::empty(),
+                renderers: empty_spec_list(),
+                curve_renderer: None,
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });
@@ -572,7 +663,7 @@ fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
     }
 }
 
-fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
+pub(crate) fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
     if !matches!(v, DynLike::Map(_)) {
         return Err("colliders: expected maps".into());
     }
@@ -601,15 +692,25 @@ fn as_collider(v: &DynLike) -> Result<DynCollider, String> {
     }
 }
 
-fn as_dyn_collider_list(v: &DynLike) -> Result<DynColliderList, String> {
+pub(crate) fn as_stable_collider_slots(v: &DynLike) -> Result<Vec<DynCollider>, String> {
     as_dynlike_list(v, "colliders")?
         .iter()
         .map(as_collider)
         .collect::<Result<Vec<_>, _>>()
-        .map(|slots| DynColliderList::stable(slots.into()))
 }
 
-fn as_render(v: &DynLike) -> Result<DynRender, String> {
+pub(crate) fn empty_spec_list() -> DynLike {
+    DynLike::List(Vec::new().into())
+}
+
+fn as_collider_spec_list(v: &DynLike) -> Result<ColliderSpecList, String> {
+    if !v.is_dynamic() {
+        as_stable_collider_slots(v)?;
+    }
+    Ok(v.clone())
+}
+
+pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
     if !matches!(v, DynLike::Map(_)) {
         return Err("renderers: expected maps".into());
     }
@@ -627,12 +728,18 @@ fn as_render(v: &DynLike) -> Result<DynRender, String> {
     }
 }
 
-fn as_dyn_render_list(v: &DynLike) -> Result<DynRenderList, String> {
+pub(crate) fn as_stable_render_slots(v: &DynLike) -> Result<Vec<DynRender>, String> {
     as_dynlike_list(v, "renderers")?
         .iter()
         .map(as_render)
         .collect::<Result<Vec<_>, _>>()
-        .map(|slots| DynRenderList::stable(slots.into()))
+}
+
+fn as_render_spec_list(v: &DynLike) -> Result<RenderSpecList, String> {
+    if !v.is_dynamic() {
+        as_stable_render_slots(v)?;
+    }
+    Ok(v.clone())
 }
 
 pub(crate) fn kw_str(v: &Val) -> String {

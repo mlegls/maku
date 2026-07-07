@@ -4,7 +4,8 @@ const CURVE_R: f64 = 0.08; // compatibility curve half-width for collision
 
 /// Sample a world-space curve at `tau` (shared by render and collision).
 pub fn sample_curve(b: &Entity, tau: f64, sig: &SigEnv) -> Option<Vec<(f64, f64)>> {
-    sample_curve_frac(b, tau, sig, 1.0)
+    let projection = first_render_projection(b, tau, sig)?;
+    sample_curve_projection(b, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig)
 }
 
 /// Sample the curve up to `frac` of its length. frac 1.0 = the whole path.
@@ -14,8 +15,17 @@ pub fn sample_curve_frac(
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let projection = b.renderers.first().map(DynRender::polyline)?;
+    let projection = first_render_projection(b, tau, sig)?;
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
+}
+
+fn first_render_projection(b: &Entity, tau: f64, sig: &SigEnv) -> Option<CurveRenderSlot> {
+    materialize_render_defs(&b.renderers, tau, &b.state, sig)
+        .ok()?
+        .first()
+        .cloned()
+        .map(|r| r.polyline().clone())
+        .or_else(|| b.curve_renderer.clone())
 }
 
 fn sample_curve_collider_frac(
@@ -23,8 +33,8 @@ fn sample_curve_collider_frac(
     tau: f64,
     sig: &SigEnv,
     frac: f64,
+    projection: &CapsuleChainSlot,
 ) -> Option<Vec<(f64, f64)>> {
-    let (_, projection, _) = b.colliders.iter().find_map(DynCollider::capsule_chain)?;
     sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
@@ -76,6 +86,36 @@ fn sample_curve_projection(
         pts.push((w.x, w.y));
     }
     Some(pts)
+}
+
+pub fn materialize_collider_defs(
+    lists: &[ColliderSpecList],
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Vec<DynCollider>, String> {
+    let mut out = Vec::new();
+    for list in lists {
+        let val = list.eval(tau, state, sig)?;
+        let dynlike = DynLike::from_val(val);
+        out.extend(as_stable_collider_slots(&dynlike)?);
+    }
+    Ok(out)
+}
+
+pub fn materialize_render_defs(
+    lists: &[RenderSpecList],
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+) -> Result<Vec<DynRender>, String> {
+    let mut out = Vec::new();
+    for list in lists {
+        let val = list.eval(tau, state, sig)?;
+        let dynlike = DynLike::from_val(val);
+        out.extend(as_stable_render_slots(&dynlike)?);
+    }
+    Ok(out)
 }
 
 /// A curve's hot fraction at age tau. Curves without :fill are hot in full
@@ -149,6 +189,7 @@ pub fn eval_collider_slot(
                             tau,
                             sig,
                             hot_frac(&curve_slot.activity, tau, sig),
+                            curve_slot,
                         ) else {
                             return ColliderData::None;
                         };
@@ -176,7 +217,7 @@ pub fn eval_render_slot(
             let hot = hot_frac(&projection.activity, tau, sig);
             let partly = tau >= projection.activity.warn && hot < 1.0;
             let mut out = Vec::new();
-            match sample_curve(b, tau, sig) {
+            match sample_curve_projection(b, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig) {
                 Some(points) => out.push(RenderData::Polyline {
                     points,
                     // a filling curve's full path stays a telegraph
@@ -185,7 +226,7 @@ pub fn eval_render_slot(
                 None => out.push(RenderData::None),
             }
             if partly {
-                match sample_curve_frac(b, tau, sig, hot) {
+                match sample_curve_projection(b, tau, sig, hot, &projection.sample_set, &projection.u_max_sig) {
                     Some(points) => out.push(RenderData::Polyline { points, active: true }),
                     None => out.push(RenderData::None),
                 }
@@ -193,4 +234,20 @@ pub fn eval_render_slot(
             out
         }
     }
+}
+
+pub fn eval_render_list(
+    b: &Entity,
+    lists: &[RenderSpecList],
+    tau: f64,
+    sig: &SigEnv,
+) -> Vec<RenderData> {
+    let mut slots = materialize_render_defs(lists, tau, &b.state, sig).unwrap_or_default();
+    if let Some(slot) = &b.curve_renderer {
+        slots.push(DynRender::render_polyline(slot.clone()));
+    }
+    slots
+        .iter()
+        .flat_map(|slot| eval_render_slot(b, slot, tau, sig))
+        .collect()
 }

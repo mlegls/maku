@@ -502,10 +502,10 @@
     (spawn (pose c[0 0])
            {:colliders [{:layer :body :shape [:circle {:r 0.06}]}]})
     (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
-           {:colliders [{:layer :beam
-                         :shape [:capsule-chain {:r 0.06 :width 1 :resolution 0.1
-                                                  :warn 0 :active 2}]}]
-            :renderers [{:shape [:polyline {:resolution 0.1 :warn 0 :active 2}]}]})))
+           (colliders {:layer :beam
+                       :shape [:capsule-chain {:r 0.06 :width 1 :resolution 0.1
+                                                :warn 0 :active 2}]})
+           (renderers {:shape [:polyline {:resolution 0.1 :warn 0 :active 2}]}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -526,7 +526,7 @@
 (defpattern p []
   (par
     (spawn (pose c[0 0])
-           {:colliders [{:layer :body :shape [:circle {:r 0.05}]}]})
+           (colliders {:layer :body :shape [:circle {:r 0.05}]}))
     (let [meta {:colliders [{:layer :expanding
                              :shape [:circle {:r m"t"}]}]}]
       (spawn (pose c[1 0]) meta))))
@@ -545,6 +545,36 @@
         assert!(
             sim.events_vec().iter().any(|e| &*e.name == "hit"),
             "dynamic radius inside a collider structure is sampled at collision time"
+        );
+    }
+
+    #[test]
+    fn dynamic_whole_collider_list() {
+        const CARD: &str = r#"
+(defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0])
+           {:colliders [{:layer :body :shape [:circle {:r 0.05}]}]})
+    (spawn (pose c[0 0])
+           (colliders (if (> t 0.5)
+                        [{:layer :appears :shape [:circle {:r 0.1}]}]
+                        [])))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.events_vec().iter().all(|e| &*e.name != "hit"),
+            "empty dynamic collider list should be inert"
+        );
+        for _ in 0..60 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.events_vec().iter().any(|e| &*e.name == "hit"),
+            "whole dynamic collider list should decode after per-tick realization"
         );
     }
 

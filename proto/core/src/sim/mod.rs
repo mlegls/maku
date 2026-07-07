@@ -18,6 +18,7 @@ pub use render::RenderItem;
 pub use slots::{sample_curve, sample_curve_frac};
 
 use exec::{new_task, step_task, Task, TF};
+use slots::{materialize_collider_defs, materialize_render_defs};
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
 
@@ -322,19 +323,31 @@ impl Sim {
                         false
                     }
                 },
-                FigureDynRepr::Curve { .. } => b
-                    .renderers
-                    .iter()
-                    .next()
-                    .map(DynRender::polyline)
-                    .map(|projection| tau <= projection.activity.warn + projection.activity.active)
-                    .or_else(|| {
-                        b.colliders
-                            .iter()
-                            .find_map(DynCollider::capsule_chain)
-                            .map(|(_, projection, _)| tau <= projection.activity.warn + projection.activity.active)
-                    })
-                    .unwrap_or(true),
+                FigureDynRepr::Curve { .. } => {
+                    let mut render_slots = materialize_render_defs(&b.renderers, tau, &b.state, &sig)
+                        .ok()
+                        .unwrap_or_default();
+                    if let Some(slot) = &b.curve_renderer {
+                        render_slots.push(DynRender::render_polyline(slot.clone()));
+                    }
+                    let render_live = render_slots
+                        .first()
+                        .map(DynRender::polyline)
+                        .map(|projection| tau <= projection.activity.warn + projection.activity.active);
+                    let collider_live = || {
+                        let mut slots = materialize_collider_defs(&b.colliders, tau, &b.state, &sig)
+                            .ok()?;
+                        if let Some(curve_slot) = &b.curve_collider {
+                            slots = curve_capsule_slots(slots, curve_slot);
+                        }
+                        slots.iter().find_map(DynCollider::capsule_chain).map(
+                            |(_, projection, _)| {
+                                tau <= projection.activity.warn + projection.activity.active
+                            },
+                        )
+                    };
+                    render_live.or_else(collider_live).unwrap_or(true)
+                }
             }
         });
         match err {
