@@ -4,25 +4,25 @@ const CURVE_R: f64 = 0.08; // compatibility curve half-width for collision
 
 /// Sample a world-space curve at `tau` (shared by render and collision).
 pub fn sample_curve(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
 ) -> Option<Vec<(f64, f64)>> {
     let projection = first_render_projection(projector, tau, sig)?;
-    sample_curve_projection(b, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig)
+    sample_curve_projection(dyn_figure, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig)
 }
 
 /// Sample the curve up to `frac` of its length. frac 1.0 = the whole path.
 pub fn sample_curve_frac(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
     frac: f64,
 ) -> Option<Vec<(f64, f64)>> {
     let projection = first_render_projection(projector, tau, sig)?;
-    sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
+    sample_curve_projection(dyn_figure, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
 pub(crate) fn first_render_projection(
@@ -39,17 +39,17 @@ pub(crate) fn first_render_projection(
 }
 
 fn sample_curve_collider_frac(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     tau: f64,
     sig: &SigEnv,
     frac: f64,
     projection: &CapsuleChainSlot,
 ) -> Option<Vec<(f64, f64)>> {
-    sample_curve_projection(b, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
+    sample_curve_projection(dyn_figure, tau, sig, frac, &projection.sample_set, &projection.u_max_sig)
 }
 
 fn sample_curve_projection(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     tau: f64,
     sig: &SigEnv,
     frac: f64,
@@ -57,7 +57,7 @@ fn sample_curve_projection(
     u_max_sig: &Option<DynNum>,
 ) -> Option<Vec<(f64, f64)>> {
     let state = MotionState::new();
-    let Figure::Curve(curve) = eval_dyn_figure(&b.dyn_figure, tau, &state, sig).ok()? else {
+    let Figure::Curve(curve) = eval_dyn_figure(dyn_figure, tau, &state, sig).ok()? else {
         return None;
     };
     if frac <= 0.0 {
@@ -143,7 +143,7 @@ pub fn hot_frac(activity: &SlotActivity, tau: f64, sig: &SigEnv) -> f64 {
 }
 
 pub fn eval_collider_slot(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     slot: &DynCollider,
     tau: f64,
     sig: &SigEnv,
@@ -157,7 +157,7 @@ pub fn eval_collider_slot(
             ColliderSlotShape::Circle { radius } => {
                 let state = MotionState::new();
                 let radius = eval_dyn(radius, tau, &state, sig).unwrap_or(0.0);
-                match b.dyn_figure.repr() {
+                match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if traced => {
                         let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
                         if points.len() < 2 {
@@ -184,7 +184,7 @@ pub fn eval_collider_slot(
                 if tau < curve_slot.activity.warn {
                     return ColliderData::None;
                 }
-                match b.dyn_figure.repr() {
+                match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if traced => {
                         let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
                         if points.len() < 2 {
@@ -199,7 +199,7 @@ pub fn eval_collider_slot(
                     }
                     FigureDynRepr::Curve { .. } => {
                         let Some(points) = sample_curve_collider_frac(
-                            b,
+                            dyn_figure,
                             tau,
                             sig,
                             hot_frac(&curve_slot.activity, tau, sig),
@@ -221,7 +221,7 @@ pub fn eval_collider_slot(
 }
 
 pub fn eval_render_slot(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     slot: &DynRender,
     tau: f64,
     sig: &SigEnv,
@@ -231,7 +231,7 @@ pub fn eval_render_slot(
             let hot = hot_frac(&projection.activity, tau, sig);
             let partly = tau >= projection.activity.warn && hot < 1.0;
             let mut out = Vec::new();
-            match sample_curve_projection(b, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig) {
+            match sample_curve_projection(dyn_figure, tau, sig, 1.0, &projection.sample_set, &projection.u_max_sig) {
                 Some(points) => out.push(RenderData::Polyline {
                     points,
                     // a filling curve's full path stays a telegraph
@@ -240,7 +240,7 @@ pub fn eval_render_slot(
                 None => out.push(RenderData::None),
             }
             if partly {
-                match sample_curve_projection(b, tau, sig, hot, &projection.sample_set, &projection.u_max_sig) {
+                match sample_curve_projection(dyn_figure, tau, sig, hot, &projection.sample_set, &projection.u_max_sig) {
                     Some(points) => out.push(RenderData::Polyline { points, active: true }),
                     None => out.push(RenderData::None),
                 }
@@ -251,7 +251,7 @@ pub fn eval_render_slot(
 }
 
 pub fn eval_render_list(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
@@ -260,6 +260,6 @@ pub fn eval_render_list(
     let slots = materialize_render_defs(projector, tau, &state, sig).unwrap_or_default();
     slots
         .iter()
-        .flat_map(|slot| eval_render_slot(b, slot, tau, sig))
+        .flat_map(|slot| eval_render_slot(dyn_figure, slot, tau, sig))
         .collect()
 }

@@ -217,9 +217,7 @@ pub struct RenderSigs {
 }
 
 #[derive(Clone)]
-pub struct Entity {
-    pub dyn_figure: DynFigure,
-}
+pub struct Entity {}
 
 pub struct EntityStore {
     rows: Vec<Entity>,
@@ -239,6 +237,7 @@ pub struct EntityStore {
     state_dyn: Vec<Vec<Option<DynPose>>>,
     max: usize,
     free: Vec<usize>,
+    dyn_figure: Vec<DynFigure>,
 }
 
 #[derive(Clone)]
@@ -382,6 +381,7 @@ impl EntityStore {
             state_dyn: Vec::new(),
             max,
             free: Vec::new(),
+            dyn_figure: Vec::with_capacity(max),
         }
     }
 
@@ -444,6 +444,16 @@ impl EntityStore {
 
     pub fn render_projector_mut(&mut self, row: usize) -> Option<&mut RenderProjector> {
         self.render_projector.get_mut(row)
+    }
+
+    pub fn dyn_figure(&self, row: usize) -> Option<&DynFigure> {
+        self.dyn_figure.get(row)
+    }
+
+    pub fn set_dyn_figure(&mut self, row: usize, dyn_figure: DynFigure) {
+        if let Some(slot) = self.dyn_figure.get_mut(row) {
+            *slot = dyn_figure;
+        }
     }
 
     pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {
@@ -669,7 +679,7 @@ impl EntityStore {
     pub fn reuse_free_row(
         &mut self,
         slot: usize,
-        entity: Entity,
+        dyn_figure: DynFigure,
         birth: u64,
         scanned: bool,
         cache_policy: EntityCachePolicy,
@@ -679,6 +689,7 @@ impl EntityStore {
         motion_schema: Rc<MotionStateSchema>,
     ) -> usize {
         let i = self.free.swap_remove(slot);
+        self.dyn_figure[i] = dyn_figure;
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.alive[i] = true;
         self.freed_at[i] = None;
@@ -692,13 +703,13 @@ impl EntityStore {
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
         self.clear_trace(i);
-        self.rows[i] = entity;
+        self.rows[i] = Entity {};
         i
     }
 
     pub fn push_row(
         &mut self,
-        entity: Entity,
+        dyn_figure: DynFigure,
         birth: u64,
         scanned: bool,
         cache_policy: EntityCachePolicy,
@@ -711,7 +722,8 @@ impl EntityStore {
             return Err(format!("spawn: entity capacity {} exhausted", self.max));
         }
         let i = self.rows.len();
-        self.rows.push(entity);
+        self.rows.push(Entity {});
+        self.dyn_figure.push(dyn_figure);
         self.generation.push(0);
         self.alive.push(true);
         self.freed_at.push(None);
@@ -759,6 +771,7 @@ impl Clone for EntityStore {
             triggers: self.triggers.clone(),
             collider_projector: self.collider_projector.clone(),
             render_projector: self.render_projector.clone(),
+            dyn_figure: self.dyn_figure.clone(),
             sampled_pose: self.sampled_pose.clone(),
             trace_cache: self.trace_cache.clone(),
             motion_schema: self.motion_schema.clone(),
@@ -1122,6 +1135,7 @@ impl World {
         }
         if max_entities < self.entities.len() {
             self.entities.rows.truncate(max_entities);
+            self.entities.dyn_figure.truncate(max_entities);
             self.entities.generation.truncate(max_entities);
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
@@ -1162,6 +1176,9 @@ impl World {
         self.entities.max = max_entities;
         if self.entities.rows.capacity() < max_entities {
             self.entities.rows.reserve_exact(max_entities - self.entities.rows.capacity());
+        }
+        if self.entities.dyn_figure.capacity() < max_entities {
+            self.entities.dyn_figure.reserve_exact(max_entities - self.entities.dyn_figure.capacity());
         }
         if self.entities.generation.capacity() < max_entities {
             self.entities.generation.reserve_exact(max_entities - self.entities.generation.capacity());
@@ -1214,20 +1231,20 @@ impl World {
 
     pub fn install_entity(
         &mut self,
-        entity: Entity,
+        dyn_figure: DynFigure,
         cache_policy: EntityCachePolicy,
         triggers: Rc<[TriggerRule]>,
         collider_projector: ColliderProjector,
         render_projector: RenderProjector,
     ) -> Result<usize, String> {
-        let motion_schema = Rc::new(collect_motion_state_schema(&entity.dyn_figure));
-        let scanned = is_scanned_figure(&entity.dyn_figure);
+        let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
+        let scanned = is_scanned_figure(&dyn_figure);
         if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
             self.clear_sym_fields_at(i);
             Ok(self.entities.reuse_free_row(
                 slot,
-                entity,
+                dyn_figure,
                 self.tick,
                 scanned,
                 cache_policy,
@@ -1238,7 +1255,7 @@ impl World {
             ))
         } else {
             self.entities.push_row(
-                entity,
+                dyn_figure,
                 self.tick,
                 scanned,
                 cache_policy,

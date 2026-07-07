@@ -84,7 +84,7 @@ fn collider_overlap(a: &ColliderData, b: &ColliderData) -> bool {
 }
 
 fn materialize_colliders(
-    b: &Entity,
+    dyn_figure: &DynFigure,
     projector: &ColliderProjector,
     render_projector: &RenderProjector,
     tau: f64,
@@ -98,7 +98,7 @@ fn materialize_colliders(
     let state = MotionState::new();
     let mut defs = materialize_collider_defs(projector, tau, &state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
-    if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
+    if matches!(dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         if let Some(projection) = first_render_projection(render_projector, tau, sig) {
             let curve_slot = CapsuleChainSlot {
                 sample_set: projection.sample_set,
@@ -111,7 +111,7 @@ fn materialize_colliders(
     }
     let defs = defs
         .into_iter()
-        .map(|slot| eval_collider_slot(b, &slot, tau, sig, scale, pose, trace, traced))
+        .map(|slot| eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced))
         .collect();
     Ok(defs)
 }
@@ -138,10 +138,14 @@ impl Sim {
             }
             let tau = self.world.entities.tau(i, tick);
             let p = {
-                let b = &self.world.entities[i];
+                let dyn_figure = self
+                    .world
+                    .entities
+                    .dyn_figure(i)
+                    .ok_or_else(|| format!("colliders: missing dyn figure for row {i}"))?;
                 let readers = self.motion_readers(i);
                 let state = MotionState::new();
-                dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers))?
+                dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers))?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
@@ -152,7 +156,12 @@ impl Sim {
                 };
                 self.sample_sig(&render_projector.sigs.scale, tau, 1.0)
             };
-            let b = &self.world.entities[i];
+            let dyn_figure = self
+                .world
+                .entities
+                .dyn_figure(i)
+                .ok_or_else(|| format!("colliders: missing dyn figure for row {i}"))?
+                .clone();
             let trace = self.world.entities.trace_samples(i);
             let traced = self.world.entities.is_traced(i);
             let collider_projector = self
@@ -168,7 +177,7 @@ impl Sim {
                 .ok_or_else(|| format!("colliders: missing render projector for row {i}"))?
                 .clone();
             colliders.push(materialize_colliders(
-                b,
+                &dyn_figure,
                 &collider_projector,
                 &render_projector,
                 tau,

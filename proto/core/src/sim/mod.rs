@@ -291,7 +291,9 @@ impl Sim {
         for i in 0..self.world.entities.len() {
             if self.world.entities.is_alive(i) && self.world.entities.is_scanned(i) {
                 let tau = self.world.entities.tau(i, tick);
-                let dyn_figure = self.world.entities[i].dyn_figure.clone();
+                let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
+                    continue;
+                };
                 let readers = self.motion_readers(i);
                 let mut state = MotionState::new();
                 let mut n2_writes = Vec::new();
@@ -332,9 +334,11 @@ impl Sim {
                 let tau = self.world.entities.tau(i, tick);
                 let readers = self.motion_readers(i);
                 if let Some(window) = self.world.entities.trace_window(i) {
-                    let b = &self.world.entities[i];
+                    let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                        continue;
+                    };
                     let state = MotionState::new();
-                    if let Ok(p) = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
+                    if let Ok(p) = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         self.world.entities.push_trace_sample(i, p, cap);
                     }
@@ -360,16 +364,18 @@ impl Sim {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
-            let b = &self.world.entities[i];
             if self.world.sym_field_matches_at(i, "team", "player-body") {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = self.world.entities.tau(i, tick);
             let readers = self.motion_readers(i);
-            let keep = match b.dyn_figure.repr() {
+            let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                continue;
+            };
+            let keep = match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
                     let state = MotionState::new();
-                    match dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
+                    match dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);

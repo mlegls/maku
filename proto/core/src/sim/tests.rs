@@ -29,6 +29,10 @@
         &sim.world.entities.render_projector(row).unwrap().style
     }
 
+    fn dyn_figure(sim: &Sim, row: usize) -> &DynFigure {
+        sim.world.entities.dyn_figure(row).unwrap()
+    }
+
     /// Conformance: the real translation files, loaded verbatim from disk.
     #[test]
     #[ignore = "long corpus test; run with cargo test --lib -- --ignored --test-threads=1"]
@@ -88,12 +92,11 @@
         assert_eq!(sim.world.entities.len(), 15 * 5, "15 volleys × 5 arms");
 
         let sig = SigEnv::default();
-        let b = &sim.world.entities[0];
         assert_eq!(sim.world.entities.birth(0), Some(0));
         assert_eq!(style(&sim, 0).family, "gem");
         assert_eq!(style(&sim, 0).color, "yellow");
         let state = MotionState::new();
-        let p = dyn_figure_pose(&b.dyn_figure, 1.0, &state, &sig).unwrap();
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 1.0, &state, &sig).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
@@ -129,11 +132,11 @@
         }
         assert_eq!(sa.world.entities.len(), sb.world.entities.len());
         let sig = SigEnv::default();
-        for (i, (a, b)) in sa.world.entities.iter().zip(sb.world.entities.iter()).enumerate() {
+        for (i, _) in sa.world.entities.iter().zip(sb.world.entities.iter()).enumerate() {
             assert_eq!(sa.world.entities.birth(i), sb.world.entities.birth(i));
             let state = MotionState::new();
-            let pa = dyn_figure_pose(&a.dyn_figure, 0.7, &state, &sig).unwrap();
-            let pb = dyn_figure_pose(&b.dyn_figure, 0.7, &state, &sig).unwrap();
+            let pa = dyn_figure_pose(dyn_figure(&sa, i), 0.7, &state, &sig).unwrap();
+            let pb = dyn_figure_pose(dyn_figure(&sb, i), 0.7, &state, &sig).unwrap();
             assert!(
                 (pa.x - pb.x).abs() < 1e-6 && (pa.y - pb.y).abs() < 1e-6,
                 "A/B diverged: {:?} vs {:?}",
@@ -176,10 +179,10 @@
             .iter()
             .enumerate()
             .filter(|(i, _)| style(&sim, *i).family == "star")
-            .map(|(_, b)| b)
+            .map(|(i, _)| i)
             .collect();
         let state = MotionState::new();
-        let p = dyn_figure_pose(&ring[0].dyn_figure, 0.0, &state, &sig).unwrap();
+        let p = dyn_figure_pose(dyn_figure(&sim, ring[0]), 0.0, &state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
     }
 
@@ -199,15 +202,15 @@
             b.step_with(&inputs).unwrap();
         }
         assert_eq!(a.world.entities.len(), b.world.entities.len());
-        for (i, (x, y)) in a.world.entities.iter().zip(b.world.entities.iter()).enumerate() {
+        for (i, _) in a.world.entities.iter().zip(b.world.entities.iter()).enumerate() {
             assert_eq!(a.world.entities.generation(i), b.world.entities.generation(i));
             assert_eq!(a.world.entities.is_alive(i), b.world.entities.is_alive(i));
             let tau = a.world.entities.tau(i, a.world.tick);
             let state = MotionState::new();
             let ax = a.motion_readers(i);
             let by = b.motion_readers(i);
-            let px = dyn_figure_pose_in(&x.dyn_figure, tau, MotionEvalCtx::new(&state, &a.ctx.sig, &ax)).unwrap();
-            let py = dyn_figure_pose_in(&y.dyn_figure, tau, MotionEvalCtx::new(&state, &b.ctx.sig, &by)).unwrap();
+            let px = dyn_figure_pose_in(dyn_figure(&a, i), tau, MotionEvalCtx::new(&state, &a.ctx.sig, &ax)).unwrap();
+            let py = dyn_figure_pose_in(dyn_figure(&b, i), tau, MotionEvalCtx::new(&state, &b.ctx.sig, &by)).unwrap();
             assert!(
                 (px.x - py.x).abs() < 1e-12 && (px.y - py.y).abs() < 1e-12,
                 "diverged: {:?} vs {:?}",
@@ -784,22 +787,20 @@
         for _ in 0..60 {
             sim.step().unwrap();
         }
-        let b = &sim.world.entities[0];
         let tau = sim.world.entities.tau(0, sim.world.tick);
         let state = MotionState::new();
         let readers = sim.motion_readers(0);
-        let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
+        let p = dyn_figure_pose_in(dyn_figure(&sim, 0), tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
         let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
         assert!((p.x - mid).abs() < 0.03 && p.y.abs() < 1e-9, "mid-move pose: {:?}", p);
 
         for _ in 0..70 {
             sim.step().unwrap();
         }
-        let b = &sim.world.entities[0];
         let tau = sim.world.entities.tau(0, sim.world.tick);
         let state = MotionState::new();
         let readers = sim.motion_readers(0);
-        let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
+        let p = dyn_figure_pose_in(dyn_figure(&sim, 0), tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
         assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
     }
 
@@ -819,10 +820,9 @@
             for _ in 0..60 {
                 sim.step_with(&inputs).unwrap();
             }
-            let b = &sim.world.entities[0];
             let sig = SigEnv::default();
             let state = MotionState::new();
-            let p = dyn_figure_pose(&b.dyn_figure, 0.5, &state, &sig).unwrap();
+            let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
             assert!(
                 p.x.abs() < 1e-9 && (p.y - 2.0).abs() < 1e-9,
                 "{}: fired from (0,3) toward the player below: {:?}",
@@ -849,20 +849,8 @@
         }
         let sig = SigEnv::default();
         let state = MotionState::new();
-        let pa = dyn_figure_pose(
-            &a.world.entities[0].dyn_figure,
-            0.5,
-            &state,
-            &sig,
-        )
-        .unwrap();
-        let pb = dyn_figure_pose(
-            &b.world.entities[0].dyn_figure,
-            0.5,
-            &state,
-            &sig,
-        )
-        .unwrap();
+        let pa = dyn_figure_pose(dyn_figure(&a, 0), 0.5, &state, &sig).unwrap();
+        let pb = dyn_figure_pose(dyn_figure(&b, 0), 0.5, &state, &sig).unwrap();
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
         // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 → (0, 1.5)
         assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
@@ -1350,7 +1338,7 @@
             }
             v => panic!("bad channel: {:?}", v),
         }
-        let (i, b) = sim
+        let (i, _) = sim
             .world
             .entities
             .iter()
@@ -1361,7 +1349,7 @@
         let tau = sim.world.entities.tau(i, sim.world.tick);
         let readers = sim.motion_readers(i);
         let state = MotionState::new();
-        let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)).unwrap();
+        let p = dyn_figure_pose_in(dyn_figure(&sim, i), tau, MotionEvalCtx::new(&state, &sig, &readers)).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
 

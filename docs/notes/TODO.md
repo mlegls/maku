@@ -24,9 +24,9 @@ work.
 
 ## Engine Refactor
 
-- Move remaining row-local `Entity` fields into final storage shapes:
-  - `dyn_figure` -> shared spawn-site/program/archetype data where possible,
-    leaving row storage mostly indices plus dense state.
+- Remove the empty `Entity` row marker now that row data lives in dense
+  `EntityStore` side columns. Longer-term, move cold dyn/projector data into
+  shared spawn-site/program/archetype storage where possible.
 - Remove pointer-keyed compatibility fallback from legacy scratch motion
   evaluation. Live entity stepping now requires stable lowered node ids, while
   old direct evaluation and schema-remap bridges still accept pointer keys.

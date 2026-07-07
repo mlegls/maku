@@ -36,13 +36,14 @@ impl Sim {
     pub fn render(&self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
-        for (i, b) in self.world.entities.iter().enumerate() {
+        for (i, _) in self.world.entities.iter().enumerate() {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
             let Some(render_projector) = self.world.entities.render_projector(i) else { continue };
+            let Some(dyn_figure) = self.world.entities.dyn_figure(i) else { continue };
             let tau = self.world.entities.tau(i, self.world.tick);
-            match b.dyn_figure.repr() {
+            match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
                     if self.world.entities.is_traced(i) {
                         let trace = self.world.entities.trace_samples(i);
@@ -58,7 +59,7 @@ impl Sim {
                     } else {
                         let readers = self.motion_readers(i);
                         let state = MotionState::new();
-                        if let Ok(p) = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)) {
+                        if let Ok(p) = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)) {
                             out.push(RenderItem::Dot {
                                 x: p.x,
                                 y: p.y,
@@ -74,7 +75,7 @@ impl Sim {
                 }
                 FigureDynRepr::Curve { .. } => {
                     let alpha = self.sample_sig(&render_projector.sigs.opacity, tau, 1.0);
-                    for data in eval_render_list(b, render_projector, tau, sig) {
+                    for data in eval_render_list(dyn_figure, render_projector, tau, sig) {
                         match data {
                             RenderData::None => {}
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {

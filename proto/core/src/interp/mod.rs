@@ -876,11 +876,14 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Some(i) = world.find(id) else {
                     return Err("pos: dead handle".into());
                 };
-                let b = &world.entities[i];
+                let dyn_figure = world
+                    .entities
+                    .dyn_figure(i)
+                    .ok_or_else(|| format!("pos: missing dyn figure for row {i}"))?;
                 let tau = world.entities.tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::new();
-                let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &ctx.sig, &readers))?;
+                let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &ctx.sig, &readers))?;
                 return Ok(Val::Pose(Pose::point(p.x, p.y)));
             }
             "in-frame" => {
@@ -1035,15 +1038,18 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Some(i) = world.find(id) else {
                     return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
                 };
-                let b = &world.entities[i];
-                let Some(curve) = b.dyn_figure.curve() else {
+                let dyn_figure = world
+                    .entities
+                    .dyn_figure(i)
+                    .ok_or_else(|| format!("on-laser: missing dyn figure for row {i}"))?;
+                let Some(curve) = dyn_figure.curve() else {
                     return Err("on-laser: not a laser".into());
                 };
                 let tau = world.entities.tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::new();
                 let mctx = MotionEvalCtx::new(&state, &ctx.sig, &readers);
-                let anchor = dyn_figure_pose_in(&b.dyn_figure, tau, mctx)?;
+                let anchor = dyn_figure_pose_in(dyn_figure, tau, mctx)?;
                 let at = |uu: f64| -> Result<Pose, String> {
                     let local = eval_curve_pose(&curve.eval, tau, uu, &state, &ctx.sig)?;
                     Ok(anchor.compose(&local))
@@ -1183,11 +1189,11 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let sig = ctx.sig.clone();
                 let mut best: Option<(f64, (f64, f64))> = None;
                 for i in idxs {
-                    let b = &world.entities[i];
+                    let Some(dyn_figure) = world.entities.dyn_figure(i) else { continue };
                     let tau = world.entities.tau(i, world.tick);
                     let readers = entity_motion_readers(i, world);
                     let state = MotionState::new();
-                    let Ok(p) = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) else { continue };
+                    let Ok(p) = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) else { continue };
                     let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
                     if best.map(|(bd, _)| d2 < bd).unwrap_or(true) {
                         best = Some((d2, (p.x, p.y)));
@@ -1457,7 +1463,10 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
 }
 
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
-    let b = &world.entities[i];
+    let dyn_figure = world
+        .entities
+        .dyn_figure(i)
+        .ok_or_else(|| format!("entity view: missing dyn figure for row {i}"))?;
     let render_projector = world
         .entities
         .render_projector(i)
@@ -1465,14 +1474,14 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     let tau = world.entities.tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::new();
-    let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers))?;
+    let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers))?;
     let vel = world.entities.velocity_from_samples(i, world.tick);
     let mut view = vec![
         (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
         (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
-        (Val::Kw("kind".into()), Val::Kw(match b.dyn_figure.repr() {
+        (Val::Kw("kind".into()), Val::Kw(match dyn_figure.repr() {
             FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "laser",
@@ -1654,11 +1663,14 @@ fn singleton_or_array(mut vals: Vec<Val>) -> Val {
 fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
     match field {
         "pos" => {
-            let b = &world.entities[i];
+            let dyn_figure = world
+                .entities
+                .dyn_figure(i)
+                .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
             let tau = world.entities.tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::new();
-            let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers))?;
+            let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers))?;
             Ok(Val::Pose(Pose::point(p.x, p.y)))
         }
         "vel" => {
@@ -1669,7 +1681,11 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             Ok(Val::Num(world.entities.tau(i, world.tick)))
         }
         "tick" => Ok(Val::Num(world.tick as f64)),
-        "kind" => Ok(Val::Kw(match world.entities[i].dyn_figure.repr() {
+        "kind" => Ok(Val::Kw(match world
+            .entities
+            .dyn_figure(i)
+            .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?
+            .repr() {
             crate::interp::motion::FigureDynRepr::Pose(_) => "point",
             crate::interp::motion::FigureDynRepr::Curve { .. } => "curve",
         }
@@ -2013,9 +2029,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             for spec in entities {
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
                 let row = world.install_entity(
-                    Entity {
-                        dyn_figure,
-                    },
+                    dyn_figure,
                     spec.cache_policy.clone(),
                     spec.triggers.clone(),
                     spec.collider_projector.clone(),
@@ -2061,11 +2075,14 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Remat { target, f } => {
             let Some(i) = world.find(*target) else { return Ok(Val::Nothing) };
             let (exit, anchor) = {
-                let b = &world.entities[i];
+                let dyn_figure = world
+                    .entities
+                    .dyn_figure(i)
+                    .ok_or_else(|| format!("remat: missing dyn figure for row {i}"))?;
                 let tau = world.entities.tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::new();
-                let p = dyn_figure_pose_in(&b.dyn_figure, tau, MotionEvalCtx::new(&state, &ctx.sig, &readers))?;
+                let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &ctx.sig, &readers))?;
                 let vel = world.entities.velocity_from_samples(i, world.tick);
                 let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
                     p.angle_or(0.0)
@@ -2097,8 +2114,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.entities.set_motion_schema(i, motion_schema);
             world.entities.set_sampled_pose(i, world.tick, Some(anchor));
             world.entities.set_scanned(i, scanned);
-            let b = &mut world.entities[i];
-            b.dyn_figure = dyn_figure;
+            world.entities.set_dyn_figure(i, dyn_figure);
             Ok(Val::Nothing)
         }
         ActionV::SetCol { target, col, val } => {
