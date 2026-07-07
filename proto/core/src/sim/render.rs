@@ -40,7 +40,7 @@ impl Sim {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
-            let tau = (self.world.tick - b.birth) as f64 / TICK_RATE;
+            let tau = self.world.entities.tau(i, self.world.tick);
             match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
                     if b.cache_policy.trace.is_some() {

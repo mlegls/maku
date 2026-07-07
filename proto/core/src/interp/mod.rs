@@ -877,7 +877,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     return Err("pos: dead handle".into());
                 };
                 let b = &world.entities[i];
-                let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                let tau = world.entities.tau(i, world.tick);
                 let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
                 return Ok(Val::Pose(Pose::point(p.x, p.y)));
             }
@@ -1037,7 +1037,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Some(curve) = b.dyn_figure.curve() else {
                     return Err("on-laser: not a laser".into());
                 };
-                let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                let tau = world.entities.tau(i, world.tick);
                 let anchor = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
                 let at = |uu: f64| -> Result<Pose, String> {
                     let local = eval_curve_pose(&curve.eval, tau, uu, &b.state, &ctx.sig)?;
@@ -1179,7 +1179,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let mut best: Option<(f64, (f64, f64))> = None;
                 for i in idxs {
                     let b = &world.entities[i];
-                    let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                    let tau = world.entities.tau(i, world.tick);
                     let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) else { continue };
                     let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
                     if best.map(|(bd, _)| d2 < bd).unwrap_or(true) {
@@ -1433,7 +1433,7 @@ fn render_view(b: &Entity) -> Val {
 /// renderer compatibility data, legacy flat style aliases, and columns.
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
     let b = &world.entities[i];
-    let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+    let tau = world.entities.tau(i, world.tick);
     let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
     let vel = match b.prev_pos {
         Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
@@ -1632,13 +1632,13 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
     match field {
         "pos" => {
             let b = &world.entities[i];
-            let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+            let tau = world.entities.tau(i, world.tick);
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
             Ok(Val::Pose(Pose::point(p.x, p.y)))
         }
         "vel" => {
             let b = &world.entities[i];
-            let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+            let tau = world.entities.tau(i, world.tick);
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, sig)?;
             let vel = match b.prev_pos {
                 Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
@@ -1647,8 +1647,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             Ok(Val::Pose(Pose::point(vel.0, vel.1)))
         }
         "t" => {
-            let b = &world.entities[i];
-            Ok(Val::Num((world.tick - b.birth) as f64 / TICK_RATE))
+            Ok(Val::Num(world.entities.tau(i, world.tick)))
         }
         "tick" => Ok(Val::Num(world.tick as f64)),
         "kind" => Ok(Val::Kw(match world.entities[i].dyn_figure.repr() {
@@ -1977,7 +1976,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let row = world.install_entity(Entity {
                     dyn_figure,
                     cache_policy: spec.cache_policy.clone(),
-                    birth: world.tick,
                     state: MotionState::new(),
                     scanned,
                     collider_projector: spec.collider_projector.clone(),
@@ -2025,7 +2023,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             let Some(i) = world.find(*target) else { return Ok(Val::Nothing) };
             let (exit, anchor) = {
                 let b = &world.entities[i];
-                let tau = (world.tick - b.birth) as f64 / TICK_RATE;
+                let tau = world.entities.tau(i, world.tick);
                 let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &ctx.sig)?;
                 let vel = match b.prev_pos {
                     Some((ox, oy)) => ((p.x - ox) * TICK_RATE, (p.y - oy) * TICK_RATE),
@@ -2049,16 +2047,16 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 }
                 direct => as_dyn((*direct).clone())?,
             };
-            let b = &mut world.entities[i];
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
+            world.entities.reset_birth(i, world.tick);
+            let b = &mut world.entities[i];
             b.dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
                 Rc::new(DynNode::Const(anchor)),
                 new_dyn.into_node(),
             ))));
             b.scanned = is_scanned_figure(&b.dyn_figure);
             b.state = MotionState::new();
-            b.birth = world.tick;
             b.prev_pos = Some((anchor.x, anchor.y));
             Ok(Val::Nothing)
         }

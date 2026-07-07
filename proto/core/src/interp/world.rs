@@ -220,7 +220,6 @@ pub struct RenderSigs {
 pub struct Entity {
     pub dyn_figure: DynFigure,
     pub cache_policy: EntityCachePolicy,
-    pub birth: u64,
     pub state: MotionState,
     pub scanned: bool,
     /// Collider projector — archetype data, Rc-shared across a spawn's
@@ -254,6 +253,7 @@ pub struct EntityStore {
     generation: Vec<u32>,
     alive: Vec<bool>,
     freed_at: Vec<Option<u64>>,
+    birth: Vec<u64>,
     max: usize,
     free: Vec<usize>,
 }
@@ -265,6 +265,7 @@ impl EntityStore {
             generation: Vec::with_capacity(max),
             alive: Vec::with_capacity(max),
             freed_at: Vec::with_capacity(max),
+            birth: Vec::with_capacity(max),
             max,
             free: Vec::new(),
         }
@@ -280,6 +281,21 @@ impl EntityStore {
 
     pub fn generation(&self, row: usize) -> Option<u32> {
         self.generation.get(row).copied()
+    }
+
+    pub fn birth(&self, row: usize) -> Option<u64> {
+        self.birth.get(row).copied()
+    }
+
+    pub fn tau(&self, row: usize, tick: u64) -> f64 {
+        let birth = self.birth[row];
+        tick.saturating_sub(birth) as f64 / TICK_RATE
+    }
+
+    pub fn reset_birth(&mut self, row: usize, tick: u64) {
+        if let Some(birth) = self.birth.get_mut(row) {
+            *birth = tick;
+        }
     }
 
     pub fn entity_ref(&self, row: usize) -> EntityRef {
@@ -300,16 +316,17 @@ impl EntityStore {
             .map(|slot| (slot, self.free[slot]))
     }
 
-    pub fn reuse_free_row(&mut self, slot: usize, entity: Entity) -> usize {
+    pub fn reuse_free_row(&mut self, slot: usize, entity: Entity, birth: u64) -> usize {
         let i = self.free.swap_remove(slot);
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.alive[i] = true;
         self.freed_at[i] = None;
+        self.birth[i] = birth;
         self.rows[i] = entity;
         i
     }
 
-    pub fn push_row(&mut self, entity: Entity) -> Result<usize, String> {
+    pub fn push_row(&mut self, entity: Entity, birth: u64) -> Result<usize, String> {
         if self.rows.len() >= self.max {
             return Err(format!("spawn: entity capacity {} exhausted", self.max));
         }
@@ -318,6 +335,7 @@ impl EntityStore {
         self.generation.push(0);
         self.alive.push(true);
         self.freed_at.push(None);
+        self.birth.push(birth);
         Ok(i)
     }
 
@@ -339,6 +357,7 @@ impl Clone for EntityStore {
             generation: self.generation.clone(),
             alive: self.alive.clone(),
             freed_at: self.freed_at.clone(),
+            birth: self.birth.clone(),
             max: self.max,
             free: self.free.clone(),
         }
@@ -700,6 +719,7 @@ impl World {
             self.entities.generation.truncate(max_entities);
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
+            self.entities.birth.truncate(max_entities);
             self.entities.free.retain(|i| *i < max_entities);
         }
         for values in &mut self.fields.num_values {
@@ -723,15 +743,18 @@ impl World {
         if self.entities.freed_at.capacity() < max_entities {
             self.entities.freed_at.reserve_exact(max_entities - self.entities.freed_at.capacity());
         }
+        if self.entities.birth.capacity() < max_entities {
+            self.entities.birth.reserve_exact(max_entities - self.entities.birth.capacity());
+        }
         Ok(())
     }
 
     pub fn install_entity(&mut self, entity: Entity) -> Result<usize, String> {
         if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
-            Ok(self.entities.reuse_free_row(slot, entity))
+            Ok(self.entities.reuse_free_row(slot, entity, self.tick))
         } else {
-            self.entities.push_row(entity)
+            self.entities.push_row(entity, self.tick)
         }
     }
 

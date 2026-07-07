@@ -272,8 +272,9 @@ mod tests {
             .world
             .entities
             .iter()
-            .filter(|b| b.render_projector.style.family == "y")
-            .map(|b| b.birth)
+            .enumerate()
+            .filter(|(_, b)| b.render_projector.style.family == "y")
+            .filter_map(|(i, _)| sess.sim.as_ref().unwrap().world.entities.birth(i))
             .collect();
 
         // rewind to before the add: the layer is gone
@@ -292,8 +293,9 @@ mod tests {
             .world
             .entities
             .iter()
-            .filter(|b| b.render_projector.style.family == "y")
-            .map(|b| b.birth)
+            .enumerate()
+            .filter(|(_, b)| b.render_projector.style.family == "y")
+            .filter_map(|(i, _)| sess.sim.as_ref().unwrap().world.entities.birth(i))
             .collect();
         assert_eq!(y_births, y_births_after, "identical birth ticks (130)");
         assert_eq!(y_births_after[0], 130);

@@ -272,8 +272,8 @@ impl Sim {
         let sig = self.ctx.sig.clone();
         for i in 0..self.world.entities.len() {
             if self.world.entities.is_alive(i) && self.world.entities[i].scanned {
+                let tau = self.world.entities.tau(i, tick);
                 let b = &mut self.world.entities[i];
-                let tau = (tick - b.birth) as f64 / TICK_RATE;
                 step_dyn_figure(&b.dyn_figure, tau, dt, &mut b.state, &sig)?;
             }
         }
@@ -286,10 +286,10 @@ impl Sim {
                 if !self.world.entities.is_alive(i) {
                     continue;
                 }
+                let tau = self.world.entities.tau(i, tick);
                 let b = &mut self.world.entities[i];
                 if let Some(policy) = &b.cache_policy.trace {
                     let Some(window) = policy.window else { continue };
-                    let tau = (tick - b.birth) as f64 / TICK_RATE;
                     if let Ok(p) = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                         let cap = (window * TICK_RATE).ceil() as usize + 1;
                         b.trail.push(p);
@@ -324,7 +324,7 @@ impl Sim {
             if self.world.sym_field_matches(b, "team", "player-body") {
                 continue; // the player rides a channel; never field-culled
             }
-            let tau = (tick - b.birth) as f64 / TICK_RATE;
+            let tau = self.world.entities.tau(i, tick);
             let keep = match b.dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => match dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,

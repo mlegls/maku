@@ -80,7 +80,7 @@
 
         let sig = SigEnv::default();
         let b = &sim.world.entities[0];
-        assert_eq!(b.birth, 0);
+        assert_eq!(sim.world.entities.birth(0), Some(0));
         assert_eq!(b.render_projector.style.family, "gem");
         assert_eq!(b.render_projector.style.color, "yellow");
         let p = dyn_figure_pose(&b.dyn_figure, 1.0, &b.state, &sig).unwrap();
@@ -91,8 +91,7 @@
         assert_eq!(sim.world.entities[1].render_projector.style.color, "orange");
         assert_eq!(sim.world.entities[4].render_projector.style.color, "purple");
 
-        let b5 = &sim.world.entities[5];
-        assert_eq!(b5.birth, 8);
+        assert_eq!(sim.world.entities.birth(5), Some(8));
     }
 
     #[test]
@@ -120,8 +119,8 @@
         }
         assert_eq!(sa.world.entities.len(), sb.world.entities.len());
         let sig = SigEnv::default();
-        for (a, b) in sa.world.entities.iter().zip(sb.world.entities.iter()) {
-            assert_eq!(a.birth, b.birth);
+        for (i, (a, b)) in sa.world.entities.iter().zip(sb.world.entities.iter()).enumerate() {
+            assert_eq!(sa.world.entities.birth(i), sb.world.entities.birth(i));
             let pa = dyn_figure_pose(&a.dyn_figure, 0.7, &a.state, &sig).unwrap();
             let pb = dyn_figure_pose(&b.dyn_figure, 0.7, &b.state, &sig).unwrap();
             assert!(
@@ -185,7 +184,7 @@
         for (i, (x, y)) in a.world.entities.iter().zip(b.world.entities.iter()).enumerate() {
             assert_eq!(a.world.entities.generation(i), b.world.entities.generation(i));
             assert_eq!(a.world.entities.is_alive(i), b.world.entities.is_alive(i));
-            let tau = (a.world.tick - x.birth) as f64 / TICK_RATE;
+            let tau = a.world.entities.tau(i, a.world.tick);
             let px = dyn_figure_pose(&x.dyn_figure, tau, &x.state, &a.ctx.sig).unwrap();
             let py = dyn_figure_pose(&y.dyn_figure, tau, &y.state, &b.ctx.sig).unwrap();
             assert!(
@@ -765,7 +764,7 @@
             sim.step().unwrap();
         }
         let b = &sim.world.entities[0];
-        let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
+        let tau = sim.world.entities.tau(0, sim.world.tick);
         let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sim.ctx.sig).unwrap();
         let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
         assert!((p.x - mid).abs() < 0.03 && p.y.abs() < 1e-9, "mid-move pose: {:?}", p);
@@ -774,7 +773,7 @@
             sim.step().unwrap();
         }
         let b = &sim.world.entities[0];
-        let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
+        let tau = sim.world.entities.tau(0, sim.world.tick);
         let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sim.ctx.sig).unwrap();
         assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
     }
@@ -1323,9 +1322,15 @@
             }
             v => panic!("bad channel: {:?}", v),
         }
-        let b = sim.world.entities.iter().find(|b| b.render_projector.style.family == "amulet").unwrap();
+        let (i, b) = sim
+            .world
+            .entities
+            .iter()
+            .enumerate()
+            .find(|(_, b)| b.render_projector.style.family == "amulet")
+            .unwrap();
         let sig = sim.ctx.sig.clone();
-        let tau = (sim.world.tick - b.birth) as f64 / TICK_RATE;
+        let tau = sim.world.entities.tau(i, sim.world.tick);
         let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
@@ -1368,10 +1373,15 @@
         // b waits 30 ticks from ITS start: nothing through tick 129
         assert_eq!(live_family_count(&sim, "y"), 0);
         sim.step().unwrap(); // the step processing tick 130 = add(100) + 30
-        let ys: Vec<_> =
-            sim.world.entities.iter().filter(|b| b.render_projector.style.family == "y").collect();
+        let ys: Vec<_> = sim
+            .world
+            .entities
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.render_projector.style.family == "y")
+            .collect();
         assert_eq!(ys.len(), 3);
-        assert_eq!(ys[0].birth, 130, "b's clock anchored at the add tick");
+        assert_eq!(sim.world.entities.birth(ys[0].0), Some(130), "b's clock anchored at the add tick");
         // a kept its own cadence meanwhile (volleys at ticks 0, 60, 120)
         assert_eq!(live_family_count(&sim, "x"), 6);
     }

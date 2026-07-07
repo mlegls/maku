@@ -129,7 +129,7 @@ impl Sim {
                 colliders.push(Vec::new());
                 continue;
             }
-            let tau = (tick - b.birth) as f64 / TICK_RATE;
+            let tau = self.world.entities.tau(i, tick);
             let p = dyn_figure_pose(&b.dyn_figure, tau, &b.state, &sig)?;
             pos.push(Some((p.x, p.y)));
             let scale = self.sample_sig(&b.render_projector.sigs.scale, tau, 1.0);
