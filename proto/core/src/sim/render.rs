@@ -68,7 +68,7 @@ impl Sim {
                 }
                 FigureDynRepr::Curve { .. } => {
                     let alpha = self.sample_sig(&b.sigs.opacity, tau, 1.0);
-                    for data in eval_render_list(b, &b.renderers, tau, sig) {
+                    for data in eval_render_list(b, &b.render_projector, tau, sig) {
                         match data {
                             RenderData::None => {}
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {

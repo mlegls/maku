@@ -90,7 +90,7 @@ fn materialize_colliders(
     scale: f64,
     symbols: &mut SymbolTable,
 ) -> Result<Vec<ColliderData>, String> {
-    let mut defs = materialize_collider_defs(&b.colliders, tau, &b.state, sig, symbols)
+    let mut defs = materialize_collider_defs(&b.collider_projector, tau, &b.state, sig, symbols)
         .map_err(|e| format!("colliders: {}", e))?;
     if matches!(b.dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         if let Some(projection) = first_render_projection(b, tau, sig) {

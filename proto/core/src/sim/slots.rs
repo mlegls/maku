@@ -20,7 +20,7 @@ pub fn sample_curve_frac(
 }
 
 pub(crate) fn first_render_projection(b: &Entity, tau: f64, sig: &SigEnv) -> Option<CurveRenderSlot> {
-    materialize_render_defs(&b.renderers, tau, &b.state, sig)
+    materialize_render_defs(&b.render_projector, tau, &b.state, sig)
         .ok()?
         .first()
         .cloned()
@@ -88,14 +88,14 @@ fn sample_curve_projection(
 }
 
 pub fn materialize_collider_defs(
-    lists: &[ColliderSpecList],
+    projector: &ColliderProjector,
     tau: f64,
     state: &MotionState,
     sig: &SigEnv,
     symbols: &mut SymbolTable,
 ) -> Result<Vec<DynCollider>, String> {
     let mut out = Vec::new();
-    for list in lists {
+    for list in projector.iter() {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
         out.extend(as_stable_collider_slots(&dynlike, symbols)?);
@@ -104,13 +104,13 @@ pub fn materialize_collider_defs(
 }
 
 pub fn materialize_render_defs(
-    lists: &[RenderSpecList],
+    projector: &RenderProjector,
     tau: f64,
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Vec<DynRender>, String> {
     let mut out = Vec::new();
-    for list in lists {
+    for list in projector.iter() {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
         out.extend(as_stable_render_slots(&dynlike)?);
@@ -238,11 +238,11 @@ pub fn eval_render_slot(
 
 pub fn eval_render_list(
     b: &Entity,
-    lists: &[RenderSpecList],
+    projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
 ) -> Vec<RenderData> {
-    let slots = materialize_render_defs(lists, tau, &b.state, sig).unwrap_or_default();
+    let slots = materialize_render_defs(projector, tau, &b.state, sig).unwrap_or_default();
     slots
         .iter()
         .flat_map(|slot| eval_render_slot(b, slot, tau, sig))

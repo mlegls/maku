@@ -255,21 +255,21 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             cols.iter().map(|(k, v)| (k.clone(), axis_num(v, e, i))).collect()
         })
         .collect();
-    let shared_colliders: Rc<[ColliderSpecList]> = explicit_colliders.into();
-    let shared_renderers: Rc<[RenderSpecList]> = explicit_renderers.into();
+    let shared_collider_specs: Rc<[ColliderSpecList]> = explicit_colliders.into();
+    let shared_render_specs: Rc<[RenderSpecList]> = explicit_renderers.into();
     let entities = elems
         .into_iter()
         .zip(styles)
         .zip(sigs)
         .zip(cols)
         .map(|(((e, style), sigs), cols)| {
-            let mut colliders = shared_colliders.iter().cloned().collect::<Vec<_>>();
-            colliders.push(e.colliders);
+            let mut collider_specs = shared_collider_specs.iter().cloned().collect::<Vec<_>>();
+            collider_specs.push(e.collider_specs);
             if let Some(radius) = hitbox {
-                apply_primary_hitbox(&mut colliders, radius);
+                apply_primary_hitbox(&mut collider_specs, radius);
             }
-            let mut renderers = shared_renderers.iter().cloned().collect::<Vec<_>>();
-            renderers.push(e.renderers);
+            let mut render_specs = shared_render_specs.iter().cloned().collect::<Vec<_>>();
+            render_specs.push(e.render_specs);
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
@@ -278,8 +278,8 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 team: team.clone(),
                 cols,
                 triggers: triggers.clone(),
-                colliders: colliders.into(),
-                renderers: renderers.into(),
+                collider_projector: collider_specs.into(),
+                render_projector: render_specs.into(),
                 expose: expose.clone(),
             }
         })
@@ -473,8 +473,8 @@ pub(crate) fn flatten_elems(
             };
             out.push(SpawnElem {
                 dyn_figure,
-                colliders,
-                renderers,
+                collider_specs: colliders,
+                render_specs: renderers,
                 cache_policy,
                 path: path.clone(),
             });
@@ -483,8 +483,8 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: DynFigure::pose(as_dyn(other)?),
-                colliders: empty_spec_list(),
-                renderers: empty_spec_list(),
+                collider_specs: empty_spec_list(),
+                render_specs: empty_spec_list(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });

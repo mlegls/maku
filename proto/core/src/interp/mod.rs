@@ -238,8 +238,8 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
-    pub colliders: ColliderSpecList,
-    pub renderers: RenderSpecList,
+    pub collider_specs: ColliderSpecList,
+    pub render_specs: RenderSpecList,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
 }
@@ -356,8 +356,8 @@ pub struct EntitySpec {
     pub team: Option<Rc<str>>,
     pub cols: Vec<(Rc<str>, f64)>,
     pub triggers: Rc<[TriggerRule]>,
-    pub colliders: Rc<[ColliderSpecList]>,
-    pub renderers: Rc<[RenderSpecList]>,
+    pub collider_projector: ColliderProjector,
+    pub render_projector: RenderProjector,
     pub expose: Rc<[(Rc<str>, Rc<str>)]>,
 }
 
@@ -1940,8 +1940,8 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     state: MotionState::new(),
                     scanned,
                     sigs: spec.sigs.clone(),
-                    colliders: spec.colliders.clone(),
-                    renderers: spec.renderers.clone(),
+                    collider_projector: spec.collider_projector.clone(),
+                    render_projector: spec.render_projector.clone(),
                     cols: col_slots,
                     triggers: spec.triggers.clone(),
                     prev_pos: None,

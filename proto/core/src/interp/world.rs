@@ -139,6 +139,12 @@ pub type DynRender = Dyn<RenderData>;
 /// is realized for the current tick.
 pub type ColliderSpecList = DynLike;
 pub type RenderSpecList = DynLike;
+/// Bridge representation of a collider projector: source-level spec lists
+/// that lower against the entity's current figure into realized collider rows.
+pub type ColliderProjector = Rc<[ColliderSpecList]>;
+/// Bridge representation of a render projector: source-level spec lists
+/// that lower against the entity's current figure into realized render rows.
+pub type RenderProjector = Rc<[RenderSpecList]>;
 
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
 #[derive(Debug, Clone)]
@@ -179,12 +185,12 @@ pub struct Entity {
     pub state: MotionState,
     pub scanned: bool,
     pub sigs: RenderSigs,
-    /// Collider slots — archetype data, Rc-shared across a spawn's
-    /// elements. Layers are opaque core routing keys; slots evaluate each
-    /// tick into collision data or nothing.
-    pub colliders: Rc<[ColliderSpecList]>,
-    /// Render slots — archetype data, Rc-shared across a spawn's elements.
-    pub renderers: Rc<[RenderSpecList]>,
+    /// Collider projector — archetype data, Rc-shared across a spawn's
+    /// elements. Layers are opaque core routing keys; specs evaluate each
+    /// tick against the current figure into collision rows or nothing.
+    pub collider_projector: ColliderProjector,
+    /// Render projector — archetype data, Rc-shared across a spawn's elements.
+    pub render_projector: RenderProjector,
     /// User-defined numeric columns in World's dense column layout. hp is
     /// not special — it is just another named source column assigned to a
     /// slot by the world.

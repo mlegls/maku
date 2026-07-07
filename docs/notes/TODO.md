@@ -559,6 +559,12 @@ language.md.
       :name)` actions and trigger events store `Symbol` internally, while
       `Sim::events_vec`, `Sim::with_events`, and host APIs resolve names back
       to strings at the boundary.
+  2v.9. ~~Rename entity collider/render storage as projectors.~~ Done as a
+      bridge; entities now carry `collider_projector` and `render_projector`
+      fields (`Rc<[ColliderSpecList]>` / `Rc<[RenderSpecList]>` aliases)
+      while per-element spawn fragments are named `collider_specs` /
+      `render_specs`. Realized `ColliderData` / `RenderData` remain
+      boundary rows.
   2w. ~~Give `DynLike` the target data shape.~~ Done as a bridge:
       `DynLike` is now `Atom(DataAtom) | Dyn(DynVal) | List | Map`, with
       map keys and leaves going through concrete atoms for `Num`, `Kw`,

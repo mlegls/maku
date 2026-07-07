@@ -332,7 +332,7 @@ impl Sim {
                     }
                 },
                 FigureDynRepr::Curve { .. } => {
-                    let render_slots = materialize_render_defs(&b.renderers, tau, &b.state, &sig)
+                    let render_slots = materialize_render_defs(&b.render_projector, tau, &b.state, &sig)
                         .ok()
                         .unwrap_or_default();
                     let render_live = render_slots
@@ -341,7 +341,7 @@ impl Sim {
                         .map(|projection| tau <= projection.activity.warn + projection.activity.active);
                     let collider_live = || {
                         let mut slots = materialize_collider_defs(
-                            &b.colliders,
+                            &b.collider_projector,
                             tau,
                             &b.state,
                             &sig,
