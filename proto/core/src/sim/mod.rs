@@ -240,17 +240,18 @@ impl Sim {
     pub(crate) fn motion_readers(&self, row: usize) -> MotionReaders {
         let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
         let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
-        let node_ids = Rc::new(
+        let node_ids = Rc::new(std::cell::RefCell::new(
             self.world
                 .entities
                 .motion_schema(row)
                 .map(|schema| schema.node_ids.clone())
                 .unwrap_or_default(),
-        );
+        ));
         MotionReaders {
             n2: Rc::new(move |key| dense_n2.get(&key).copied()),
             dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
             node_ids,
+            stable_required: true,
         }
     }
 
@@ -307,7 +308,9 @@ impl Sim {
                 };
                 step_dyn_figure_in(&dyn_figure, tau, dt, &mut motion)?;
                 for (_, value) in &dyn_writes {
-                    self.world.entities.extend_motion_schema_with_dyn(i, value);
+                    for (ptr, id) in self.world.entities.extend_motion_schema_with_dyn(i, value) {
+                        readers.node_ids.borrow_mut().insert(ptr, id);
+                    }
                 }
                 for (key, value) in n2_writes {
                     self.world.entities.set_state_n2(i, key, value);

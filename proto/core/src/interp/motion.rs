@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::edn::Form;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -146,7 +147,8 @@ pub type DynReader = Rc<dyn Fn(MotionStateKey) -> Option<DynPose>>;
 pub struct MotionReaders {
     pub n2: N2Reader,
     pub dyns: DynReader,
-    pub node_ids: Rc<HashMap<usize, MotionNodeId>>,
+    pub node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>,
+    pub stable_required: bool,
 }
 
 impl MotionReaders {
@@ -154,7 +156,8 @@ impl MotionReaders {
         MotionReaders {
             n2: Rc::new(|_| None),
             dyns: Rc::new(|_| None),
-            node_ids: Rc::new(HashMap::new()),
+            node_ids: Rc::new(RefCell::new(HashMap::new())),
+            stable_required: false,
         }
     }
 }
@@ -221,21 +224,25 @@ pub(crate) fn site_key(base: usize, counter: usize) -> usize {
 }
 
 pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
-    readers
-        .node_ids
-        .get(&ptr)
-        .copied()
-        .map(MotionStateKey::Node)
-        .unwrap_or(MotionStateKey::NodePtr(ptr))
+    if let Some(id) = readers.node_ids.borrow().get(&ptr).copied() {
+        return MotionStateKey::Node(id);
+    }
+    assert!(
+        !readers.stable_required,
+        "dense motion reader missing stable node id for pointer {ptr:#x}"
+    );
+    MotionStateKey::NodePtr(ptr)
 }
 
 pub(crate) fn lazy_state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
-    readers
-        .node_ids
-        .get(&ptr)
-        .copied()
-        .map(|base| MotionStateKey::LazyStage { base })
-        .unwrap_or(MotionStateKey::LazyStagePtr { base: ptr })
+    if let Some(base) = readers.node_ids.borrow().get(&ptr).copied() {
+        return MotionStateKey::LazyStage { base };
+    }
+    assert!(
+        !readers.stable_required,
+        "dense motion reader missing stable lazy-stage id for pointer {ptr:#x}"
+    );
+    MotionStateKey::LazyStagePtr { base: ptr }
 }
 
 pub(crate) fn shortest_arc(from: f64, to: f64) -> f64 {
@@ -509,6 +516,47 @@ pub fn collect_pose_state(d: &DynPose, schema: &mut MotionStateSchema) {
     collect_node_state(d.node(), schema);
 }
 
+fn seed_reader_pose_nodes(d: &DynPose, readers: &MotionReaders) {
+    let mut node_ids = readers.node_ids.borrow_mut();
+    let mut next = node_ids.values().map(|id| id.0).max().map(|id| id + 1).unwrap_or(0);
+    seed_reader_node_ids(d.node(), &mut node_ids, &mut next);
+}
+
+fn seed_reader_node_ids(
+    node: &Rc<DynNode>,
+    node_ids: &mut HashMap<usize, MotionNodeId>,
+    next: &mut u32,
+) {
+    let ptr = Rc::as_ptr(node) as usize;
+    if let std::collections::hash_map::Entry::Vacant(entry) = node_ids.entry(ptr) {
+        entry.insert(MotionNodeId(*next));
+        *next += 1;
+    }
+    match &**node {
+        DynNode::Path { curve, .. } => seed_reader_node_ids(curve, node_ids, next),
+        DynNode::Stages { segs } => {
+            for seg in segs {
+                if let StageMake::Ready(d) = &seg.make {
+                    seed_reader_node_ids(d.node(), node_ids, next);
+                }
+            }
+        }
+        DynNode::Translate { child, .. } | DynNode::Clamp { child, .. } => {
+            seed_reader_node_ids(child, node_ids, next);
+        }
+        DynNode::Frame(a, b) => {
+            seed_reader_node_ids(a, node_ids, next);
+            seed_reader_node_ids(b, node_ids, next);
+        }
+        DynNode::Const(_)
+        | DynNode::Linear { .. }
+        | DynNode::Live { .. }
+        | DynNode::Vel { .. }
+        | DynNode::ClosedPt { .. }
+        | DynNode::RotExpr { .. } => {}
+    }
+}
+
 pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
     let base = Rc::as_ptr(node) as usize;
     let node_id = schema.intern_node(base);
@@ -728,7 +776,7 @@ pub(crate) fn read_scan_in(
 ) -> ScanShared {
     let dense_base = readers
         .as_ref()
-        .and_then(|readers| readers.node_ids.get(&base).copied());
+        .and_then(|readers| readers.node_ids.borrow().get(&base).copied());
     Rc::new(std::cell::RefCell::new(ScanIo {
         state: state.clone(),
         base,
@@ -1082,6 +1130,7 @@ pub fn step_motion_in(
                         let mut w = World::default();
                         let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
                         let dyn_pose = as_dyn(dv)?;
+                        seed_reader_pose_nodes(&dyn_pose, readers);
                         state.insert(key + 1, Cell::D(dyn_pose.clone()));
                         local_lazy_key = Some(key + 1);
                         write_dyn(lazy_state_key_for_node(key, readers), dyn_pose);
@@ -1227,7 +1276,7 @@ pub(crate) fn advance_sites_with_writes<T>(
 ) -> Result<(T, Vec<(MotionStateKey, [f64; 2])>), String> {
     let dense_base = readers
         .as_ref()
-        .and_then(|readers| readers.node_ids.get(&base).copied());
+        .and_then(|readers| readers.node_ids.borrow().get(&base).copied());
     let io = Rc::new(std::cell::RefCell::new(ScanIo {
         state: std::mem::take(state),
         base,

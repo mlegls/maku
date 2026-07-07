@@ -30,10 +30,9 @@ work.
     where possible, leaving row storage mostly indices plus dense state.
 - Replace store-owned trace sample vectors with dense/ring-buffer trace cache
   storage.
-- Remove pointer-keyed compatibility fallback from motion state. Dense entity
-  schemas now use stable lowered node ids, but legacy scratch evaluation still
-  uses pointer keys and same-tick lazy-stage writes can remap pointer keys
-  through the row schema.
+- Remove pointer-keyed compatibility fallback from legacy scratch motion
+  evaluation. Live entity stepping now requires stable lowered node ids, while
+  old direct evaluation and schema-remap bridges still accept pointer keys.
 - Lower lazy `stages` to a closed set of dyns at load time, or isolate it as
   an explicitly interpreted compatibility path. It currently extends dense
   schemas at runtime when a lazy segment is first constructed.

@@ -321,15 +321,20 @@ impl EntityStore {
         self.reset_motion_state(row);
     }
 
-    pub fn extend_motion_schema_with_dyn(&mut self, row: usize, dyn_pose: &DynPose) {
-        let Some(current) = self.motion_schema.get(row).cloned() else { return };
+    pub fn extend_motion_schema_with_dyn(&mut self, row: usize, dyn_pose: &DynPose) -> Vec<(usize, MotionNodeId)> {
+        let Some(current) = self.motion_schema.get(row).cloned() else { return Vec::new() };
+        let old_nodes = current.node_ptrs.len();
         let old_n2 = current.n2_keys.len();
         let old_dyn = current.dyn_keys.len();
         let mut next = (*current).clone();
         collect_pose_state(dyn_pose, &mut next);
         if next.n2_keys.len() == old_n2 && next.dyn_keys.len() == old_dyn {
-            return;
+            return Vec::new();
         }
+        let new_nodes = next.node_ptrs[old_nodes..]
+            .iter()
+            .filter_map(|ptr| next.node_ids.get(ptr).copied().map(|id| (*ptr, id)))
+            .collect::<Vec<_>>();
         if let Some(slot) = self.motion_schema.get_mut(row) {
             *slot = Rc::new(next.clone());
         }
@@ -344,6 +349,7 @@ impl EntityStore {
                 *cell = None;
             }
         }
+        new_nodes
     }
 
     pub fn state_n2(&self, row: usize, key: MotionStateKey) -> Option<[f64; 2]> {
