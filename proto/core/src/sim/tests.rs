@@ -702,6 +702,24 @@
     }
 
     #[test]
+    fn primitive_collider_can_read_entity_context_directly() {
+        const CARD: &str = r#"
+(defcontact [:damage :body] {:once :hit}
+  (fn [a b] (event :hit (:pos b))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0])
+           {:cols {:hitbox 0.3}}
+           (circle-collider {:layer :damage :r e.hitbox}))
+    (spawn (pose c[0.35 0])
+           (circle-collider {:layer :body :r 0.1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
+    }
+
+    #[test]
     fn cond_controls_projector_output() {
         const CARD: &str = r#"
 (defcollider appears-after [e ctx]

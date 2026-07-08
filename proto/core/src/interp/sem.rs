@@ -31,6 +31,8 @@ pub struct EntityContext {
 #[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
+    Circle { opts: Option<Form>, env: Env },
+    CapsuleChain { opts: Option<Form>, env: Env },
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     ColliderSum(Rc<[ColliderProjectorValue]>),
 }
@@ -56,6 +58,18 @@ impl ColliderProjectorValue {
     ) -> ColliderProjectorValue {
         ColliderProjectorValue {
             expr: ColliderProjectorExpr::Callable { params: params.into(), body, env },
+        }
+    }
+
+    pub(crate) fn circle(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
+        ColliderProjectorValue {
+            expr: ColliderProjectorExpr::Circle { opts, env },
+        }
+    }
+
+    pub(crate) fn capsule_chain(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
+        ColliderProjectorValue {
+            expr: ColliderProjectorExpr::CapsuleChain { opts, env },
         }
     }
 

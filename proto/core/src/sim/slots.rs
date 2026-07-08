@@ -111,6 +111,18 @@ fn sample_curve_projection(
     Some(pts)
 }
 
+fn bind_projector_context(env: &Env, e_view: Option<&Val>, ctx_view: Option<&Val>) -> Env {
+    let e_bound = e_view
+        .cloned()
+        .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+    let ctx_bound = ctx_view
+        .cloned()
+        .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+    env.clone()
+        .bind("e".into(), e_bound)
+        .bind("ctx".into(), ctx_bound)
+}
+
 pub fn materialize_collider_defs_into(
     projector: &ColliderProjector,
     tau: f64,
@@ -125,6 +137,14 @@ pub fn materialize_collider_defs_into(
         match &list.expr {
             ColliderProjectorExpr::Stable(slots) => {
                 out.extend(slots.iter().cloned());
+            }
+            ColliderProjectorExpr::Circle { opts, env } => {
+                let env = bind_projector_context(env, e_view, ctx_view);
+                out.push(materialize_circle_projector(opts, &env, sig, symbols)?);
+            }
+            ColliderProjectorExpr::CapsuleChain { opts, env } => {
+                let env = bind_projector_context(env, e_view, ctx_view);
+                out.push(materialize_capsule_chain_projector(opts, &env, sig, symbols)?);
             }
             ColliderProjectorExpr::Callable { params, body, env } => {
                 let e_bound = e_view
