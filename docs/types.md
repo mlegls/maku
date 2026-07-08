@@ -183,14 +183,16 @@ dynamic data lives; the meta slot binds the current figure as a reserved name
 alongside `t`, so fields can depend on per-tick geometry without needing a
 separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
 projector functions. A projector may read any typed meta field, the current
-figure, and `ProjectorContext` each tick. Time-dependent projector arguments use
-explicit context fields such as `ctx.t` or `ctx.age`; primitive projector
-constructors are not dyn-expecting slots and do not bind free `t`. The `m"..."`
-reader macro remains available inside projector code because it is only syntax.
-Direct dynamic collider/render row lists are not the public low-level surface.
-Purely local temporal behavior such as "this collider until age 0.5" can be
-expressed as a higher-order projector combinator rather than as a public meta
-switch.
+figure, and `ProjectorContext` each tick. Time-dependent projector arguments
+normally use explicit context fields such as `ctx.t` or `ctx.age`; primitive
+projector override fields are concrete projector expressions, not dyn slots. A
+free-`t` expression can still be defined inside projector code, but it remains a
+dyn-valued expression and must be explicitly applied/sampled before it can feed
+one of those concrete fields. The `m"..."` reader macro remains available
+inside projector code because it is only syntax. Direct dynamic collider/render
+row lists are not the public low-level surface. Purely local temporal behavior
+such as "this collider until age 0.5" can be expressed as a higher-order
+projector combinator rather than as a public meta switch.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
@@ -270,8 +272,8 @@ arbitrary runtime function.
 Collider constructors are typed constructors inside that pure body. Their
 argument records must have load-time-known shape so the elaborator can preserve
 the projector algebra, but each field value may be an arbitrary pure expression
-over `e` and `ctx`. These argument records are ordinary expressions, not
-dyn-expecting slots, so `ctx.t` is the local time source:
+over `e` and `ctx`. These argument records are ordinary concrete expressions,
+not dyn-expecting slots, so `ctx.t` is the usual local time source:
 
 ```edn
 (circle-collider {:radius m"2 * e.hitbox + 0.05 * ctx.t"
