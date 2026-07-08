@@ -45,7 +45,7 @@ pub(crate) fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
             };
             Ok((shape, items[1].clone()))
         }
-        DynLike::Atom(DynAtom::Data(DataAtom::Kw(shape))) => {
+        DynLike::Atom(DataAtom::Kw(shape)) => {
             Ok((shape.clone(), DynLike::Map(Rc::new(Vec::new()))))
         }
         _ => Err("shape: expected [:shape opts]".into()),
@@ -120,7 +120,7 @@ pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
         return Err("renderers: expected maps".into());
     }
     let shape_v = dynlike_map_get(v, "shape").unwrap_or_else(|| {
-        DynLike::Atom(DynAtom::Data(DataAtom::Kw("polyline".into())))
+        DynLike::Atom(DataAtom::Kw("polyline".into()))
     });
     let (shape, opts) = as_shape_spec(&shape_v)?;
     match shape.as_ref() {

@@ -151,7 +151,7 @@ at the volley origin and each one's motion is a `rot` frame whose angle
 
 ```clojure
 (control (ticks 5)
-         {:family :keine :where (where (> b.t 1))}
+         (where (* (= b.family :keine) (> b.t 1)))
          (fn [b]
            (let [th (angle-of b.vel)
                  r  (+ 1 (* (mag b.vel) b.t))   ; spawned at radius 1
@@ -190,13 +190,13 @@ cull:
 
 ```clojure
 (control (ticks 5)
-         {:family :gcircle :where (where (and (> b.t 3.2) (< b.k 0.5)))}
+         (where (* (= b.family :gcircle) (> b.t 3.2) (< b.k 0.5)))
          (fn [b]
            ((pose (pos b))
              ((rot b.ang)
                (spawn-bullet (linear p[2 0]) {:style {:family :keine :color :purple :variant :w}})))))
 (control (ticks 5)
-         {:family :gcircle :where (where (> b.t 3.2))}
+         (where (* (= b.family :gcircle) (> b.t 3.2)))
          (fn [b] (cull b)))
 ```
 

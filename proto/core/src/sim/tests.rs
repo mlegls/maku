@@ -978,13 +978,13 @@
   (par
     (ring-every 6 0.5 (linear p[2 0]))
     (fork (for [i inf :every (ticks 5)]
-      (manip {:where (where (> b.t 0.8))} (fn [b] (cull b)))))))
+      (manip (where (> b.t 0.8)) (fn [b] (cull b)))))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..200 {
             sim.step().unwrap();
         }
-        // rings keep spawning; the where-sugar control ages them out
+        // rings keep spawning; the predicate control ages them out
         let n = sim.world.entities.len();
         assert!(n >= 6 && n <= 18, "steady state through macro sugar: {}", n);
     }
@@ -999,7 +999,7 @@
     (spawn (circle 4 (linear c[0.5 0]))
            {:style {:family :seed} :cols {:ci (iota 4)}})
     (wait (ticks 2))
-    (manipulate {:family :seed :where (fn [b] (> b.ci 2.5))}
+    (manipulate (fn [b] (* (= b.family :seed) (> b.ci 2.5)))
       (fn [b]
         (seq
           (fork (seq (wait (ticks 10))
@@ -1040,7 +1040,7 @@
     (defvar probe 0)
     (export probe)
     (spawn (pose c[3 4]) {:style {:family :circle}})
-    (manipulate {:render.style.family :circle :where (fn [b] (> b.pos.y 1))}
+    (manipulate (fn [b] (* (= b.render.style.family :circle) (> b.pos.y 1)))
       (fn [b] (set! probe b.pos.y)))))
 (defpattern gather []
   (spawn ((rot m"(30 * iota(12)).[iota(3)]") (linear c[1 0]))))
@@ -1051,7 +1051,7 @@
         }
         assert!(
             matches!(sim.channel_val("probe"), Some(Val::Num(n)) if n == 4.0),
-            "handle field through :where and callback: {:?}",
+            "handle field through predicate query and callback: {:?}",
             sim.channel_val("probe")
         );
         let mut sim = Sim::load(CARD, Some("gather")).unwrap();

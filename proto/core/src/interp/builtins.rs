@@ -297,6 +297,32 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
                 None => args[0].clone(),
             };
             match (&subject, &args[1]) {
+            (Val::DynLike(d), Val::Arr(idxs)) => {
+                let DynLike::List(items) = &**d else {
+                    return Err(format!("nth: expected non-empty array, got {:?}", subject));
+                };
+                if items.is_empty() {
+                    return Err(format!("nth: expected non-empty array, got {:?}", subject));
+                }
+                let out = idxs
+                    .iter()
+                    .map(|i| {
+                        let k = i.num()? as i64;
+                        Ok(items[(k.rem_euclid(items.len() as i64)) as usize].clone())
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Val::DynLike(Rc::new(DynLike::List(out.into()))))
+            }
+            (Val::DynLike(d), i) => {
+                let DynLike::List(items) = &**d else {
+                    return Err(format!("nth: expected non-empty array, got {:?}", subject));
+                };
+                if items.is_empty() {
+                    return Err(format!("nth: expected non-empty array, got {:?}", subject));
+                }
+                let k = i.num()? as i64;
+                dynlike_to_structural_val(&items[(k.rem_euclid(items.len() as i64)) as usize])
+            }
             (Val::Arr(items), Val::Arr(idxs)) if !items.is_empty() => {
                 // broadcast: (nth xs (iota n))
                 let out = idxs

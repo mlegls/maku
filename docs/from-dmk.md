@@ -35,7 +35,7 @@ decode notes.
 | `poolcontrol(sel, reset)` | cancel the control's scope |
 | style selector `{{ "circle-*" }, { "red/w" }}` | query map `{:family :circle :color :red}`; arrays mean any-of |
 | `flipygt(4, _)` | `(remat b (linear c[b.vel.x (- 0 b.vel.y)]))` — the reflection written out |
-| `cull(y < -2)` | `:where (fn [b] (< b.pos.y -2))` + `(cull b)` |
+| `cull(y < -2)` | `(manip (fn [b] (< b.pos.y -2)) (fn [b] (cull b)))` |
 | `batch(pred, { … })` | a `seq` in the callback |
 | `restyleeffect(style, fx, _)` | `(set-style b {...})`, plus an effect spawn if wanted |
 | `sm(_, sync …)` | spawn directly in the callback, anchored by `((pose (pos b)) …)` |

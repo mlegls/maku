@@ -426,10 +426,23 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             }
         },
         Form::Vector(items) => {
-            let lifted = items
+            let lifted = match items
                 .iter()
                 .map(|i| eval_dynlike_form(i, env, ctx, world))
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(lifted) => lifted,
+                Err(err) => {
+                    let vals = items
+                        .iter()
+                        .map(|i| evaluate(i, env, ctx, world))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if vals.iter().any(val_contains_structural_dyn) {
+                        return Err(err);
+                    }
+                    return Ok(Val::arr(vals));
+                }
+            };
             if lifted.iter().any(DynLike::is_dynamic) {
                 Ok(Val::DynLike(Rc::new(DynLike::List(lifted.into()))))
             } else {
@@ -441,7 +454,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             }
         }
         Form::Map(kvs) => {
-            let pairs = kvs
+            let pairs = match kvs
                 .iter()
                 .map(|(k, v)| {
                     Ok((
@@ -449,7 +462,22 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                         eval_dynlike_form(v, env, ctx, world)?,
                     ))
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, String>>()
+            {
+                Ok(pairs) => pairs,
+                Err(err) => {
+                    let pairs = kvs
+                        .iter()
+                        .map(|(k, v)| Ok((evaluate(k, env, ctx, world)?, evaluate(v, env, ctx, world)?)))
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if pairs.iter().any(|(k, v)| {
+                        val_contains_structural_dyn(k) || val_contains_structural_dyn(v)
+                    }) {
+                        return Err(err);
+                    }
+                    return Ok(Val::Map(Rc::new(pairs)));
+                }
+            };
             if pairs.iter().any(|(_, v)| v.is_dynamic()) {
                 Ok(Val::DynLike(Rc::new(DynLike::Map(Rc::new(pairs)))))
             } else {
@@ -461,6 +489,17 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             }
         }
         Form::List(items) => evaluate_list(items, env, ctx, world),
+    }
+}
+
+fn val_contains_structural_dyn(v: &Val) -> bool {
+    match v {
+        Val::DynLike(_) | Val::Dyn(_) => true,
+        Val::Arr(items) => items.iter().any(val_contains_structural_dyn),
+        Val::Map(kvs) => kvs
+            .iter()
+            .any(|(k, v)| val_contains_structural_dyn(k) || val_contains_structural_dyn(v)),
+        _ => false,
     }
 }
 
@@ -589,8 +628,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let target = evaluate(&items[1], env, ctx, world)?;
                 let callback = evaluate(&items[2], env, ctx, world)?;
                 // Queries cut across birth structures (§9); handles are the
-                // degenerate case. Map queries are compatibility syntax;
-                // predicate functions and EntitySet row views are the target.
+                // degenerate case. Predicate functions and EntitySet row views
+                // are the target; map queries are data-only match specs.
                 if is_query_value(&target) {
                     return Ok(Val::Action(Rc::new(ActionV::Manipulate {
                         targets: Vec::new(),
@@ -1049,9 +1088,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             // World queries over the manipulate query language (§9): the
-            // target form is a predicate over entity views; compatibility
-            // {axes/:team/:where} maps are still accepted. These let the
-            // stdlib define $enemies / $nearest-enemy as card code.
+            // target form is a predicate over entity views; data-only map
+            // match specs are still accepted for shorthand.
             "count-entities" => {
                 let q = evaluate(&items[1], env, ctx, world)?;
                 let idxs = resolve_query(&q, ctx, world)?;
@@ -1352,9 +1390,7 @@ fn render_view(projector: &RenderProjector) -> Val {
     Val::Map(Rc::new(vec![(Val::Kw("style".into()), render_style_map(&projector.style))]))
 }
 
-/// Evaluate a manipulate query map against the world in canonical order:
-/// compatibility style axes / team match exactly (Kw) or any-of (Arr);
-/// :where is a pure fn over the entity view.
+/// Entity view passed to predicate queries and manipulate callbacks.
 /// The entity view contains current kinematic fields, `:render` namespaced
 /// renderer compatibility data, legacy flat style aliases, and columns.
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
@@ -1475,7 +1511,7 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
     Ok(out)
 }
 
-fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
+fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
     let Val::Map(kvs) = q else { return Err("query: expected a map".into()) };
     let get = |name: &str| {
         kvs.iter().find_map(|(k, v)| match k {
@@ -1487,8 +1523,7 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
     let reserved_query_key = |name: &str| {
         matches!(
             name,
-            "where"
-                | "team"
+            "team"
                 | "family"
                 | "color"
                 | "variant"
@@ -1510,7 +1545,6 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             get_any(&["render.style.variant", "variant"]),
             get("team"),
         );
-    let where_f = get("where");
     let kw_filters = kvs
         .iter()
         .filter_map(|(k, v)| {
@@ -1521,7 +1555,6 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
             Some((field.clone(), v.clone()))
         })
         .collect::<Vec<_>>();
-    let sig = ctx.sig.clone();
     let mut candidates: Vec<usize> = Vec::new();
     for (i, _) in world.entities.iter().enumerate() {
         let Some(render_projector) = world.entities.render_projector(i) else { continue };
@@ -1538,20 +1571,7 @@ fn resolve_map_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<us
         }
         candidates.push(i);
     }
-    let mut out = Vec::new();
-    for i in candidates {
-        let keep = match &where_f {
-            Some(f) => {
-                let view = entity_view(i, world, &sig)?;
-                truthy(&apply_fn(f.clone(), &[view], ctx, world, false)?)
-            }
-            None => true,
-        };
-        if keep {
-            out.push(i);
-        }
-    }
-    Ok(out)
+    Ok(candidates)
 }
 
 fn entity_index_value(v: Val, world: &World) -> Result<Vec<usize>, String> {

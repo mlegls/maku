@@ -33,31 +33,6 @@ impl DataAtom {
     }
 }
 
-/// Interpreter-local atom leaves for `DynLike`. `Data` is the future shared
-/// runtime atom subset; `Interp` preserves callbacks and other control values
-/// in static structure slots until typed IR can represent them explicitly.
-#[derive(Clone, Debug)]
-pub enum DynAtom {
-    Data(DataAtom),
-    Interp(Val),
-}
-
-impl DynAtom {
-    pub fn from_val(v: Val) -> DynAtom {
-        match DataAtom::from_val(v) {
-            Ok(data) => DynAtom::Data(data),
-            Err(v) => DynAtom::Interp(v),
-        }
-    }
-
-    pub fn to_val(&self) -> Val {
-        match self {
-            DynAtom::Data(data) => data.to_val(),
-            DynAtom::Interp(v) => v.clone(),
-        }
-    }
-}
-
 /// A value-level structure that can be lifted into a typed dyn at an
 /// expected boundary. This is not source syntax and not a typed `Dyn<T>` by
 /// itself: `DynLike::Dyn` keeps a deferred expression plus its environment,
@@ -66,7 +41,8 @@ impl DynAtom {
 /// arrays/maps.
 #[derive(Clone, Debug)]
 pub enum DynLike {
-    Atom(DynAtom),
+    Atom(DataAtom),
+    Pose(DynPose),
     Dyn(DynVal),
     List(Rc<[DynLike]>),
     Map(Rc<Vec<(DataAtom, DynLike)>>),
@@ -81,6 +57,7 @@ impl DynLike {
     pub fn is_dynamic(&self) -> bool {
         match self {
             DynLike::Atom(_) => false,
+            DynLike::Pose(_) => true,
             DynLike::Dyn(_) => true,
             DynLike::List(items) => items.iter().any(DynLike::is_dynamic),
             DynLike::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
@@ -90,6 +67,7 @@ impl DynLike {
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
         match self {
             DynLike::Atom(v) => Ok(v.to_val()),
+            DynLike::Pose(d) => eval_dyn(d, tau, state, sig).map(Val::Pose),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
                 eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, 0)), None)
             }
@@ -109,6 +87,7 @@ impl DynLike {
     pub fn from_val(v: Val) -> Result<DynLike, String> {
         match v {
             Val::DynLike(d) => Ok((*d).clone()),
+            Val::Dyn(d) => Ok(DynLike::Pose(d)),
             Val::Arr(items) => items
                 .iter()
                 .cloned()
@@ -125,7 +104,9 @@ impl DynLike {
                 })
                 .collect::<Result<Vec<_>, String>>()
                 .map(|pairs| DynLike::Map(Rc::new(pairs))),
-            other => Ok(DynLike::Atom(DynAtom::from_val(other))),
+            other => DataAtom::from_val(other)
+                .map(DynLike::Atom)
+                .map_err(|v| format!("unsupported dyn data atom: {:?}", v)),
         }
     }
 }
@@ -150,6 +131,24 @@ pub(crate) fn dynlike_to_val(v: &DynLike) -> Result<Val, String> {
         Ok(Val::DynLike(Rc::new(v.clone())))
     } else {
         v.eval(0.0, &MotionState::new(), &SigEnv::default())
+    }
+}
+
+pub(crate) fn dynlike_to_structural_val(v: &DynLike) -> Result<Val, String> {
+    match v {
+        DynLike::Atom(atom) => Ok(atom.to_val()),
+        DynLike::Pose(d) => Ok(Val::Dyn(d.clone())),
+        DynLike::Dyn(_) => Ok(Val::DynLike(Rc::new(v.clone()))),
+        DynLike::List(items) => items
+            .iter()
+            .map(dynlike_to_structural_val)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Val::arr),
+        DynLike::Map(kvs) => kvs
+            .iter()
+            .map(|(k, v)| Ok((k.to_val(), dynlike_to_structural_val(v)?)))
+            .collect::<Result<Vec<_>, String>>()
+            .map(|pairs| Val::Map(Rc::new(pairs))),
     }
 }
 
@@ -179,7 +178,7 @@ pub(crate) fn dynlike_map_get(m: &DynLike, key: &str) -> Option<DynLike> {
 
 pub(crate) fn dynlike_kw(v: &DynLike) -> Option<Rc<str>> {
     match v {
-        DynLike::Atom(DynAtom::Data(DataAtom::Kw(k))) => Some(k.clone()),
+        DynLike::Atom(DataAtom::Kw(k)) => Some(k.clone()),
         _ => None,
     }
 }
@@ -187,14 +186,14 @@ pub(crate) fn dynlike_kw(v: &DynLike) -> Option<Rc<str>> {
 pub(crate) fn as_dyn_num(v: &DynLike) -> Result<DynNum, String> {
     match v {
         DynLike::Dyn(DynVal::Expr { form, env }) => Ok(DynNum::num_expr(form.clone(), env.clone())),
-        DynLike::Atom(DynAtom::Data(DataAtom::Num(n))) => Ok(DynNum::num(*n)),
+        DynLike::Atom(DataAtom::Num(n)) => Ok(DynNum::num(*n)),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }
 
 pub(crate) fn as_static_num(v: &DynLike) -> Result<f64, String> {
     match v {
-        DynLike::Atom(DynAtom::Data(DataAtom::Num(n))) => Ok(*n),
+        DynLike::Atom(DataAtom::Num(n)) => Ok(*n),
         DynLike::Dyn(_) => Err("expected static number".into()),
         _ => Err(format!("expected number, got {:?}", v)),
     }

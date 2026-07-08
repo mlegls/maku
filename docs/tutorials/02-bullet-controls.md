@@ -72,19 +72,18 @@ now, and run the effect on each (`ex3-flip`):
 ```clojure
 (fork
   (for [i 480 :every (ticks 1)]              ; four seconds, every tick
-    (manip {:family :circle
-            :where (fn [b] (and (> b.pos.y 3) (> b.vel.y 0)))}
+    (manip (fn [b] (* (= b.family :circle) (> b.pos.y 3) (> b.vel.y 0)))
       (fn [b] (remat b (linear c[b.vel.x (- 0 b.vel.y)]))))))
 ```
 
 - `manip` runs *once*; to keep watching, loop it. A finite loop (480
   iterations) is the control's lifetime; `(until pred …)` is the
   event-driven stop.
-- The **query** selects by style fields plus an arbitrary predicate over
-  the bullet's *view*: `:pos`, `:vel`, `:t` (age), and any columns it
-  carries. Dotted symbols are accessor chains — `b.pos.y` — and work on
-  handles, views, and vectors alike. In `m"…"` strings you also get
-  indexing: `xs.[0]`, `xs.[0 1]` (gather), `xs.[iota(3)]`.
+- The **query** is a predicate over the bullet's *view*: `:pos`, `:vel`,
+  `:t` (age), style fields, and any columns it carries. Dotted symbols
+  are accessor chains — `b.pos.y` — and work on handles, views, and
+  vectors alike. In `m"…"` strings you also get indexing: `xs.[0]`,
+  `xs.[0 1]` (gather), `xs.[iota(3)]`.
 - The bounce is `remat` (*rematerialize*): `(remat b dyn)` swaps the
   bullet's motion for a new one anchored at its current position with a
   fresh local clock — here, straight-line motion with the vertical
@@ -93,13 +92,13 @@ now, and run the effect on each (`ex3-flip`):
 Note the predicate checks `(> b.vel.y 0)` — only bullets still moving up
 flip, so nothing re-flips forever above the line.
 
-Selection generalizes across styles — an array in a query field means
-*any of* (`ex4-select-cull`):
+Selection generalizes across styles with ordinary predicate composition
+(`ex4-select-cull`):
 
 ```clojure
-(manip {:family [:circle :star]
-        :color [:red :blue]
-        :where (fn [b] (< b.pos.y -2))}
+(manip (fn [b] (* (+ (= b.family :circle) (= b.family :star))
+                  (+ (= b.color :red) (= b.color :blue))
+                  (< b.pos.y -2)))
   (fn [b] (cull b)))
 ```
 
@@ -107,8 +106,8 @@ Circles and stars, in red or blue, below y = −2 — delete them. Green
 bullets of the same families sail past untouched.
 
 One footgun: bullets spawned without `:style` have an empty family, so a
-`{:family :circle}` query won't match them. Selection matches what the
-record actually says.
+predicate checking `(= b.family :circle)` won't match them. Selection
+matches what the record actually says.
 
 ## Which tool, when
 
