@@ -5,7 +5,7 @@
 //! interpreter and runtime are still being split apart.
 
 pub use super::{
-    ColliderProjector, Curve, CurveDomain, CurveEval, Dyn, DynFigure, DynKind, DynNum, DynPose,
-    EntityRef, EntityStore, Figure, FigureDynRepr, ParametricCurve, Pose, RenderProjector,
-    SampleSet, World, WorldFields,
+    ColliderProjector, Dyn, DynFigure, DynKind, DynNum, DynPose, EntityRef, EntityStore,
+    FigureDynRepr, RenderProjector, World, WorldFields,
 };
+pub use crate::model::{Curve, CurveDomain, CurveEval, Figure, ParametricCurve, Pose, SampleSet};

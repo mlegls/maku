@@ -3,7 +3,7 @@
 //! `CurveEval::Expr` is still the prototype interpreter representation; the
 //! target model is a typed function/program from `(t, u)` to `Pose`.
 
-use super::*;
+use crate::interp::DynPose;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
