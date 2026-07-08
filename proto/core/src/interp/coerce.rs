@@ -8,29 +8,16 @@
 use super::*;
 use std::rc::Rc;
 
-/// Atomic data values in the target runtime-data layer. `Legacy` is a
-/// temporary bridge for interpreter/control values and pre-refactor data
-/// atoms; typed dyn boundaries should consume the concrete variants first.
-#[derive(Clone, Debug)]
-pub enum DataAtom {
-    Num(f64),
-    Kw(Rc<str>),
-    Figure(Figure),
-    Handle(EntityRef),
-    Nothing,
-    Legacy(Val),
-}
-
 impl DataAtom {
-    pub fn from_val(v: Val) -> DataAtom {
+    pub fn from_val(v: Val) -> Result<DataAtom, Val> {
         match v {
-            Val::Num(n) => DataAtom::Num(n),
-            Val::Kw(k) => DataAtom::Kw(k),
-            Val::Pose(p) => DataAtom::Figure(Figure::Pose(p)),
-            Val::Figure(f) => DataAtom::Figure(f),
-            Val::Handle(id) => DataAtom::Handle(id),
-            Val::Nothing => DataAtom::Nothing,
-            other => DataAtom::Legacy(other),
+            Val::Num(n) => Ok(DataAtom::Num(n)),
+            Val::Kw(k) => Ok(DataAtom::Kw(k)),
+            Val::Pose(p) => Ok(DataAtom::Figure(Figure::Pose(p))),
+            Val::Figure(f) => Ok(DataAtom::Figure(f)),
+            Val::Handle(id) => Ok(DataAtom::Handle(id)),
+            Val::Nothing => Ok(DataAtom::Nothing),
+            other => Err(other),
         }
     }
 
@@ -42,7 +29,31 @@ impl DataAtom {
             DataAtom::Figure(f) => Val::Figure(f.clone()),
             DataAtom::Handle(id) => Val::Handle(*id),
             DataAtom::Nothing => Val::Nothing,
-            DataAtom::Legacy(v) => v.clone(),
+        }
+    }
+}
+
+/// Interpreter-local atom leaves for `DynLike`. `Data` is the future shared
+/// runtime atom subset; `Interp` preserves callbacks and other control values
+/// in static structure slots until typed IR can represent them explicitly.
+#[derive(Clone, Debug)]
+pub enum DynAtom {
+    Data(DataAtom),
+    Interp(Val),
+}
+
+impl DynAtom {
+    pub fn from_val(v: Val) -> DynAtom {
+        match DataAtom::from_val(v) {
+            Ok(data) => DynAtom::Data(data),
+            Err(v) => DynAtom::Interp(v),
+        }
+    }
+
+    pub fn to_val(&self) -> Val {
+        match self {
+            DynAtom::Data(data) => data.to_val(),
+            DynAtom::Interp(v) => v.clone(),
         }
     }
 }
@@ -55,7 +66,7 @@ impl DataAtom {
 /// arrays/maps.
 #[derive(Clone, Debug)]
 pub enum DynLike {
-    Atom(DataAtom),
+    Atom(DynAtom),
     Dyn(DynVal),
     List(Rc<[DynLike]>),
     Map(Rc<Vec<(DataAtom, DynLike)>>),
@@ -95,20 +106,32 @@ impl DynLike {
         }
     }
 
-    pub fn from_val(v: Val) -> DynLike {
+    pub fn from_val(v: Val) -> Result<DynLike, String> {
         match v {
-            Val::DynLike(d) => (*d).clone(),
-            Val::Arr(items) => DynLike::List(
-                items.iter().cloned().map(DynLike::from_val).collect::<Vec<_>>().into(),
-            ),
-            Val::Map(kvs) => DynLike::Map(Rc::new(
-                kvs.iter()
-                    .map(|(k, v)| (DataAtom::from_val(k.clone()), DynLike::from_val(v.clone())))
-                    .collect(),
-            )),
-            other => DynLike::Atom(DataAtom::from_val(other)),
+            Val::DynLike(d) => Ok((*d).clone()),
+            Val::Arr(items) => items
+                .iter()
+                .cloned()
+                .map(DynLike::from_val)
+                .collect::<Result<Vec<_>, _>>()
+                .map(|items| DynLike::List(items.into())),
+            Val::Map(kvs) => kvs
+                .iter()
+                .map(|(k, v)| {
+                    Ok((
+                        data_atom_from_key(k.clone())?,
+                        DynLike::from_val(v.clone())?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()
+                .map(|pairs| DynLike::Map(Rc::new(pairs))),
+            other => Ok(DynLike::Atom(DynAtom::from_val(other))),
         }
     }
+}
+
+pub(crate) fn data_atom_from_key(v: Val) -> Result<DataAtom, String> {
+    DataAtom::from_val(v).map_err(|v| format!("unsupported dyn map key: {:?}", v))
 }
 
 pub(crate) fn dynlike_arr(v: &DynLike) -> Option<Vec<DynLike>> {
@@ -156,7 +179,7 @@ pub(crate) fn dynlike_map_get(m: &DynLike, key: &str) -> Option<DynLike> {
 
 pub(crate) fn dynlike_kw(v: &DynLike) -> Option<Rc<str>> {
     match v {
-        DynLike::Atom(DataAtom::Kw(k)) => Some(k.clone()),
+        DynLike::Atom(DynAtom::Data(DataAtom::Kw(k))) => Some(k.clone()),
         _ => None,
     }
 }
@@ -164,14 +187,14 @@ pub(crate) fn dynlike_kw(v: &DynLike) -> Option<Rc<str>> {
 pub(crate) fn as_dyn_num(v: &DynLike) -> Result<DynNum, String> {
     match v {
         DynLike::Dyn(DynVal::Expr { form, env }) => Ok(DynNum::num_expr(form.clone(), env.clone())),
-        DynLike::Atom(DataAtom::Num(n)) => Ok(DynNum::num(*n)),
+        DynLike::Atom(DynAtom::Data(DataAtom::Num(n))) => Ok(DynNum::num(*n)),
         _ => Err(format!("expected number, got {:?}", v)),
     }
 }
 
 pub(crate) fn as_static_num(v: &DynLike) -> Result<f64, String> {
     match v {
-        DynLike::Atom(DataAtom::Num(n)) => Ok(*n),
+        DynLike::Atom(DynAtom::Data(DataAtom::Num(n))) => Ok(*n),
         DynLike::Dyn(_) => Err("expected static number".into()),
         _ => Err(format!("expected number, got {:?}", v)),
     }

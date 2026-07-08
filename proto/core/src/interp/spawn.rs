@@ -330,7 +330,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
 
 fn dynlike_num_from_dyn(d: &DynNum) -> DynLike {
     match d.repr() {
-        NumDynRepr::Const(n) => DynLike::Atom(DataAtom::Num(*n)),
+        NumDynRepr::Const(n) => DynLike::Atom(DynAtom::Data(DataAtom::Num(*n))),
         NumDynRepr::Expr { form, env } => {
             DynLike::Dyn(DynVal::Expr { form: form.clone(), env: env.clone() })
         }
@@ -338,11 +338,11 @@ fn dynlike_num_from_dyn(d: &DynNum) -> DynLike {
 }
 
 fn dynlike_kw_atom(name: &str) -> DynLike {
-    DynLike::Atom(DataAtom::Kw(name.into()))
+    DynLike::Atom(DynAtom::Data(DataAtom::Kw(name.into())))
 }
 
 fn dynlike_num(n: f64) -> DynLike {
-    DynLike::Atom(DataAtom::Num(n))
+    DynLike::Atom(DynAtom::Data(DataAtom::Num(n)))
 }
 
 fn dynlike_map(pairs: Vec<(&str, DynLike)>) -> DynLike {

@@ -741,12 +741,6 @@ impl Clone for EntityStore {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EntityRef {
-    pub row: usize,
-    pub generation: u32,
-}
-
 /// A standing rule over an entity's own columns: when `col <= leq` first
 /// becomes true (edge-triggered; the latch is itself a column, so it
 /// snapshots and scrubs), emit the event and optionally cull. The same

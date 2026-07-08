@@ -39,12 +39,16 @@ pub use card::*;
 pub use colliders::*;
 pub use coerce::*;
 pub use r#dyn::*;
-pub use crate::model::{ColName, ColliderData, CurveDomain, FieldName, Pose, RenderData, SampleSet, Symbol};
+pub use crate::model::{
+    ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, SampleSet, Symbol,
+};
 pub use motion::*;
 pub use renderers::*;
 pub(crate) use specs::*;
 pub(crate) use spawn::*;
 pub use world::*;
+
+pub type DataAtom = crate::model::DataAtom<DynPose>;
 
 /// A seq value: shared immutable backing + a window. rest/drop/take are
 /// O(1) pointer bumps (fat-pointer semantics — the compiled rep, used now);
@@ -441,7 +445,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 .iter()
                 .map(|(k, v)| {
                     Ok((
-                        DataAtom::from_val(evaluate(k, env, ctx, world)?),
+                        data_atom_from_key(evaluate(k, env, ctx, world)?)?,
                         eval_dynlike_form(v, env, ctx, world)?,
                     ))
                 })
@@ -476,7 +480,7 @@ fn eval_dynlike_form(
             .iter()
             .map(|(k, v)| {
                 Ok((
-                    DataAtom::from_val(evaluate(k, env, ctx, world)?),
+                    data_atom_from_key(evaluate(k, env, ctx, world)?)?,
                     eval_dynlike_form(v, env, ctx, world)?,
                 ))
             })
@@ -486,7 +490,7 @@ fn eval_dynlike_form(
             form: form.clone(),
             env: env.clone(),
         })),
-        form => evaluate(form, env, ctx, world).map(DynLike::from_val),
+        form => DynLike::from_val(evaluate(form, env, ctx, world)?),
     }
 }
 

@@ -121,7 +121,7 @@ pub fn materialize_collider_defs_into(
 ) -> Result<(), String> {
     for list in projector.specs.iter() {
         let val = list.eval(tau, state, sig)?;
-        let dynlike = DynLike::from_val(val);
+        let dynlike = DynLike::from_val(val)?;
         as_stable_collider_slots_into(&dynlike, symbols, out)?;
     }
     Ok(())
@@ -136,7 +136,7 @@ pub fn materialize_render_defs_into(
 ) -> Result<(), String> {
     for list in projector.specs.iter() {
         let val = list.eval(tau, state, sig)?;
-        let dynlike = DynLike::from_val(val);
+        let dynlike = DynLike::from_val(val)?;
         as_stable_render_slots_into(&dynlike, out)?;
     }
     Ok(())
