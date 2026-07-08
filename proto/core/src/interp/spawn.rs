@@ -22,7 +22,6 @@ const RESERVED_KW_FIELD_KEYS: &[&str] = &[
     "style",
     "cols",
     "triggers",
-    "damage",
     "hp",
     "expose",
     "hue",
@@ -299,22 +298,6 @@ fn build_entity_specs(
         }
         _ => Vec::new().into(),
     };
-    // :damage n | {:hit n ...} (DMK player() map) lowers to an ordinary
-    // numeric column read by Touhou contact rules.
-    if let Some(v) = map_get(meta_value, "damage") {
-        match v {
-            Val::Num(_) | Val::Arr(_) => cols.push(("damage".into(), v)),
-            Val::Map(kvs) => {
-                if let Some(hit) = kvs.iter().find_map(|(k, v)| match (k, v) {
-                    (Val::Kw(kw), Val::Num(_)) if &**kw == "hit" => Some(v.clone()),
-                    _ => None,
-                }) {
-                    cols.push(("damage".into(), hit));
-                }
-            }
-            _ => {}
-        }
-    }
     // :expose {$some-hp :hp}: publish this entity's column as a derived
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like

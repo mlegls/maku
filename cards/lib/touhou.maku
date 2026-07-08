@@ -33,22 +33,34 @@
 (defn primary-hitbox-radius* [metas default]
   (match metas
     [] default
-    [m & rest] (let [later (primary-hitbox-radius* rest default)
-                     here (get m :hitbox)]
-                 (if (nothing? here) later here))))
+    [m & rest] (let [here (get m :hitbox)
+                     next (if (nothing? here) default here)]
+                 (primary-hitbox-radius* rest next))))
+
+;; Touhou shots read a numeric :damage column in the contact rule. The public
+;; macro API accepts either :damage n or DMK-style :damage {:hit n ...}.
+(defn damage-value* [metas default]
+  (match metas
+    [] default
+    [m & rest] (let [d (get m :damage)
+                     hit (if (nothing? d) d (get d :hit))
+                     here (if (nothing? hit) d hit)
+                     next (if (nothing? here) default here)]
+                 (damage-value* rest next))))
 
 ;; hostile bullet: a damage core inside a graze ring
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
           (colliders {:layer :damage :r ~(primary-hitbox-radius* metas 0.12)}
                      {:layer :graze :r 0.35})
+          {:cols {:damage ~(damage-value* metas 1)}}
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
 (defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
           (colliders {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
-          {:team :player}
+          {:team :player :cols {:damage ~(damage-value* metas 1)}}
           ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
