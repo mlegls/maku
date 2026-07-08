@@ -30,6 +30,7 @@ mod r#dyn;
 pub mod model;
 mod motion;
 mod renderers;
+mod specs;
 mod spawn;
 mod world;
 
@@ -41,6 +42,7 @@ pub use r#dyn::*;
 pub use crate::model::{ColName, ColliderData, CurveDomain, FieldName, Pose, RenderData, SampleSet, Symbol};
 pub use motion::*;
 pub use renderers::*;
+pub(crate) use specs::*;
 pub(crate) use spawn::*;
 pub use world::*;
 
