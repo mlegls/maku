@@ -384,6 +384,25 @@
     }
 
     #[test]
+    fn collider_overrides_do_not_treat_keywords_as_entity_fields() {
+        const CARD: &str = r#"
+(defcollider hitbox-collider [e ctx]
+  (circle-collider {:layer :damage :r :hitbox}))
+(defpattern t []
+  (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} hitbox-collider))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        let err = match sim.step() {
+            Ok(_) => panic!("keyword radius override unexpectedly stepped"),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("expected number"),
+            "keyword radius override should be a type error, got {err}"
+        );
+    }
+
+    #[test]
     fn defcollider_requires_entity_and_context_params() {
         let err = match Sim::load(
             r#"

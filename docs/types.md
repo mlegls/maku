@@ -183,10 +183,14 @@ dynamic data lives; the meta slot binds the current figure as a reserved name
 alongside `t`, so fields can depend on per-tick geometry without needing a
 separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
 projector functions. A projector may read any typed meta field, the current
-figure, and `ProjectorContext` each tick. Time-dependent projector arguments
-normally use explicit context fields such as `ctx.t` or `ctx.age`; primitive
-projector override fields are concrete projector expressions, not dyn slots. A
-free-`t` expression can still be defined inside projector code, but it remains a
+figure, and `ProjectorContext` each tick. Primitive projector override fields
+expect concrete values of their declared field types in that already-bound
+`e`/`ctx` environment: `Num` for `:radius`/`:r`, `Kw` for `:layer`, etc.
+`(* e.hitbox 2)` is therefore a `Num`, not a hidden entity callback. There is
+no keyword-as-field-access shortcut in override maps; use `e.hitbox`, not
+`:hitbox`, when reading an entity field. Time-dependent projector arguments
+normally use explicit context fields such as `ctx.t` or `ctx.age`. A free-`t`
+expression can still be defined inside projector code, but it remains a
 dyn-valued expression and must be explicitly applied/sampled before it can feed
 one of those concrete fields. The `m"..."` reader macro remains available
 inside projector code because it is only syntax. Direct dynamic collider/render
@@ -271,9 +275,9 @@ arbitrary runtime function.
 
 Collider constructors are typed constructors inside that pure body. Their
 argument records must have load-time-known shape so the elaborator can preserve
-the projector algebra, but each field value may be an arbitrary pure expression
-over `e` and `ctx`. These argument records are ordinary concrete expressions,
-not dyn-expecting slots, so `ctx.t` is the usual local time source:
+the projector algebra, and each field value must check against the field's
+concrete type. These argument records are ordinary expressions over `e` and
+`ctx`, not dyn-expecting slots, so `ctx.t` is the usual local time source:
 
 ```edn
 (circle-collider {:radius m"2 * e.hitbox + 0.05 * ctx.t"
