@@ -52,11 +52,15 @@
 (defcollider graze-collider [e ctx]
   (circle-collider {:layer :graze :r 0.35}))
 
+(defcollider bullet-collider [e ctx]
+  (+ (circle-collider {:layer :damage :r e.hitbox})
+     (circle-collider {:layer :graze :r 0.35})))
+
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
-          (circle-collider {:layer :damage :r ~(primary-hitbox-radius* metas 0.12)})
-          (graze-collider)
-          {:cols {:damage ~(damage-value* metas 1)}}
+          (bullet-collider)
+          {:cols {:damage ~(damage-value* metas 1)
+                  :hitbox ~(primary-hitbox-radius* metas 0.12)}}
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
