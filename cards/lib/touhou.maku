@@ -9,8 +9,7 @@
 ;; The templates are macros, not functions, so the caller's literal meta
 ;; map passes through unevaluated — signal-valued tags (:scale :facing
 ;; :opacity :hue, §7) keep their forms. spawn merges meta maps per-key,
-;; later wins, so every default below is overridable at the call site;
-;; :hitbox resizes the primary collider without replacing the set.
+;; later wins, so every default below is overridable at the call site.
 ;;
 ;; Default radii assume the common sprite families (r 0.12 primary).
 ;; Bigger/smaller families pass :hitbox — star/gem 0.09, lstar/gglcircle
@@ -29,24 +28,34 @@
   (let [target (nearest-entity {:team :enemy} $player)]
     (if (nothing? target) (channel $nearest-enemy c[0 3]) target)))
 
+;; Compatibility helper while cards still pass :hitbox in meta. The genre
+;; templates own their collider radii directly; core's :hitbox support is only
+;; a fallback for raw low-level spawn calls and older cards.
+(defn meta-hitbox* [metas default]
+  (match metas
+    [] default
+    [m & rest] (let [later (meta-hitbox* rest default)
+                     here (get m :hitbox)]
+                 (if (nothing? here) later here))))
+
 ;; hostile bullet: a damage core inside a graze ring
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :damage :r 0.12}
+          (colliders {:layer :damage :r ~(meta-hitbox* metas 0.12)}
                      {:layer :graze :r 0.35})
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
 (defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :shot :r 0.12})
+          (colliders {:layer :shot :r ~(meta-hitbox* metas 0.12)})
           {:team :player}
           ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
 (defmacro spawn-enemy [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :hurt :r 0.3})
+          (colliders {:layer :hurt :r ~(meta-hitbox* metas 0.3)})
           {:team :enemy :hp 1
            :triggers [{:col :hp :leq 0 :event :died :cull true}]}
           ~@metas))
@@ -112,7 +121,7 @@
 ;; macro or bind $player itself.
 (defmacro spawn-player [dyn & metas]
   `(let [player (spawn ~dyn
-                       (colliders {:layer :player-hurt :r 0.06})
+                       (colliders {:layer :player-hurt :r ~(meta-hitbox* metas 0.06)})
                        {:team :player-body
                         :cols {:lives 3 :bombs 3 :graze 0 :hits 0}
                         :triggers [{:col :lives :leq 0 :event :game-over}]}
