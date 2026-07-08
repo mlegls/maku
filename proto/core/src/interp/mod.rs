@@ -97,7 +97,7 @@ pub enum Val {
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     DynLike(Rc<DynLike>),
-    Dyn(DynPose),
+    DynPose(DynPose),
     CurveV(Rc<ExtCurve>),
     /// A form as a value — what macros manipulate and quasiquote builds.
     FormV(Rc<Form>),
@@ -494,7 +494,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
 
 fn val_contains_structural_dyn(v: &Val) -> bool {
     match v {
-        Val::DynLike(_) | Val::Dyn(_) => true,
+        Val::DynLike(_) | Val::DynPose(_) => true,
         Val::Arr(items) => items.iter().any(val_contains_structural_dyn),
         Val::Map(kvs) => kvs
             .iter()
@@ -856,7 +856,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     match &fv {
                         // :world resets the ambient (escape the caller anchor)
                         Val::Kw(k) if &**k == "world" => ctx.ambient = Pose::IDENTITY,
-                        Val::Dyn(d) => {
+                        Val::DynPose(d) => {
                             let p = dyn_pose(d, 0.0, &MotionState::new(), &ctx.sig)
                                 .unwrap_or(Pose::IDENTITY);
                             ctx.ambient = ctx.ambient.compose(&p);
@@ -880,7 +880,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                             })),
                             other => other, // dyns: value composition has no anchor to strip
                         },
-                        Val::Dyn(d) => apply_dyn_frame(d.into_node(), val)?,
+                        Val::DynPose(d) => apply_dyn_frame(d.into_node(), val)?,
                         other => apply_frame_val(as_pose(other)?, val)?,
                     };
                 }
@@ -890,8 +890,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // (clamp lo hi dyn): position clamp, e.g. playfield walls
                 let lo = as_pose(evaluate(&items[1], env, ctx, world)?)?;
                 let hi = as_pose(evaluate(&items[2], env, ctx, world)?)?;
-                let child = as_dyn(evaluate(&items[3], env, ctx, world)?)?;
-                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Clamp {
+                let child = as_dyn_pose(evaluate(&items[3], env, ctx, world)?)?;
+                return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Clamp {
                     lo: (lo.x, lo.y),
                     hi: (hi.x, hi.y),
                     child: child.into_node(),
@@ -904,7 +904,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 if items.len() != 3 {
                     return Err(format!("{}: expected two components", s));
                 }
-                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::ClosedPt {
+                return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::ClosedPt {
                     a: items[1].clone(),
                     b: items[2].clone(),
                     polar: &**s == "polar",
@@ -952,7 +952,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // (pather window dyn): a trailing time-window of the
                 // trajectory, materialized as geometry (§6)
                 let window = evaluate(&items[1], env, ctx, world)?.num()?;
-                let dv = as_dyn(evaluate(&items[2], env, ctx, world)?)?;
+                let dv = as_dyn_pose(evaluate(&items[2], env, ctx, world)?)?;
                 return Ok(Val::CurveV(Rc::new(ExtCurve {
                     anchor: dv,
                     backing: CurveBacking::Trace { window },
@@ -963,7 +963,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 // dyn at a given time (and curve parameter) — pose with
                 // tangent heading. The entity-free version of on-laser: any
                 // shape can be sampled without spawning an entity.
-                let dv = as_dyn(evaluate(&items[1], env, ctx, world)?)?;
+                let dv = as_dyn_pose(evaluate(&items[1], env, ctx, world)?)?;
                 let tv = evaluate(&items[2], env, ctx, world)?.num()?;
                 let uv = match items.get(3) {
                     Some(uf) => Some(evaluate(uf, env, ctx, world)?.num()?),
@@ -1024,7 +1024,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                             Ok(cur)
                         } else {
                             match cur {
-                                Val::Pose(_) => Ok(Val::Dyn(DynPose::pose_node(
+                                Val::Pose(_) => Ok(Val::DynPose(DynPose::pose_node(
                                     Rc::new(DynNode::Live { channel: Rc::from(name) }),
                                 ))),
                                 v => Ok(v),
@@ -1070,7 +1070,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_t(&items[1]) => {
-                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::RotExpr {
+                return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::RotExpr {
                     form: items[1].clone(),
                     env: env.clone(),
                 }))));
@@ -1201,8 +1201,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 })));
             }
             "path" => {
-                let curve = as_dyn(evaluate(&items[1], env, ctx, world)?)?;
-                return Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Path {
+                let curve = as_dyn_pose(evaluate(&items[1], env, ctx, world)?)?;
+                return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Path {
                     curve: curve.into_node(),
                     progress: items[2].clone(),
                     env: env.clone(),
@@ -1285,7 +1285,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             apply_frame_val(p, child?)
         }
         // signal-valued frame (live channel, rot-expr): compose dyns
-        Val::Dyn(fd) => {
+        Val::DynPose(fd) => {
             if items.len() != 2 {
                 return Err("frame application takes exactly one child".into());
             }
@@ -1360,9 +1360,9 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             anchor: l.anchor.framed(frame),
             backing: l.backing.clone(),
         }))),
-        other => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+        other => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
             frame,
-            as_dyn(other)?.into_node(),
+            as_dyn_pose(other)?.into_node(),
         ))))),
     }
 }
@@ -2031,9 +2031,9 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             };
             let new_dyn = match &f {
                 Val::Fn { .. } | Val::Builtin(_) => {
-                    as_dyn(apply_fn(f.clone(), &[exit], ctx, world, false)?)?
+                    as_dyn_pose(apply_fn(f.clone(), &[exit], ctx, world, false)?)?
                 }
-                direct => as_dyn((*direct).clone())?,
+                direct => as_dyn_pose((*direct).clone())?,
             };
             // the new signal anchors at the snapped world pose (position +
             // exit heading) and runs on a fresh epoch: τ restarts at 0
@@ -2273,11 +2273,11 @@ fn as_pose(v: Val) -> Result<Pose, String> {
     }
 }
 
-fn as_dyn(v: Val) -> Result<DynPose, String> {
+fn as_dyn_pose(v: Val) -> Result<DynPose, String> {
     match v {
-        Val::Dyn(d) => Ok(d),
+        Val::DynPose(d) => Ok(d),
         Val::Pose(p) => Ok(DynPose::pose_node(Rc::new(DynNode::Const(p)))),
-        v => Err(format!("expected dyn, got {:?}", v)),
+        v => Err(format!("expected dyn pose, got {:?}", v)),
     }
 }
 
@@ -2299,8 +2299,8 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             backing: l.backing.clone(),
         }))),
         other => {
-            let d = as_dyn(other)?;
-            Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+            let d = as_dyn_pose(other)?;
+            Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
                 Rc::new(DynNode::Const(frame)),
                 d.into_node(),
             )))))
@@ -2650,7 +2650,7 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
         env: env.clone(),
     });
     match items.get(2) {
-        None => Ok(Val::Dyn(DynPose::pose_node(node))),
+        None => Ok(Val::DynPose(DynPose::pose_node(node))),
         Some(cf) => {
             // trailing-child sugar on dyn constructors
             let child = evaluate(cf, env, ctx, world)?;
@@ -2661,17 +2661,17 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
                     let out = kids
                         .iter()
                         .map(|k| {
-                            Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+                            Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
                                 node.clone(),
-                                as_dyn(k.clone())?.into_node(),
+                                as_dyn_pose(k.clone())?.into_node(),
                             )))))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
                     Ok(Val::arr(out))
                 }
-                other => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Frame(
+                other => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
                     node,
-                    as_dyn(other)?.into_node(),
+                    as_dyn_pose(other)?.into_node(),
                 ))))),
             }
         }
@@ -2684,7 +2684,7 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         Some(Form::Map(_)) => (None, 1),
         Some(_) => {
             let sv = evaluate(&items[1], env, ctx, world)?;
-            (Some(as_dyn(sv)?), 2)
+            (Some(as_dyn_pose(sv)?), 2)
         }
         None => return Err("laser: expected options".into()),
     };
@@ -2853,7 +2853,7 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         let v = evaluate(sig_form, env, ctx, world)?;
         let make = match v {
             Val::Fn { .. } => StageMake::Lazy(v),
-            other => StageMake::Ready(as_dyn(other)?),
+            other => StageMake::Ready(as_dyn_pose(other)?),
         };
         segs.push(StageSeg { term, make });
     }
@@ -2863,7 +2863,7 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     if matches!(segs[0].make, StageMake::Lazy(_)) {
         return Err("stages: first segment cannot be lazy (no exit yet)".into());
     }
-    Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Stages { segs }))))
+    Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Stages { segs }))))
 }
 #[cfg(test)]
 mod tests {
@@ -3039,7 +3039,7 @@ mod tests {
 
     #[test]
     fn frame_application_builds_dyn() {
-        let Val::Dyn(d) = ev("((rot 90) (linear c[4 0]))") else {
+        let Val::DynPose(d) = ev("((rot 90) (linear c[4 0]))") else {
             panic!("expected dyn")
         };
         let st = MotionState::new();
@@ -3049,7 +3049,7 @@ mod tests {
 
     #[test]
     fn closed_polar_dyn() {
-        let Val::Dyn(d) = ev("(polar m\"2*t\" m\"20*t\")") else { panic!() };
+        let Val::DynPose(d) = ev("(polar m\"2*t\" m\"20*t\")") else { panic!() };
         let st = MotionState::new();
         let p = dyn_pose(&d, 1.0, &st, &SigEnv::default()).unwrap();
         let (ex, ey) = (2.0 * (20f64).to_radians().cos(), 2.0 * (20f64).to_radians().sin());
@@ -3059,7 +3059,7 @@ mod tests {
 
     #[test]
     fn vel_integrates() {
-        let Val::Dyn(d) = ev("(vel c[4 0])") else { panic!() };
+        let Val::DynPose(d) = ev("(vel c[4 0])") else { panic!() };
         let mut st = MotionState::new();
         let dt = 1.0 / TICK_RATE;
         let sig = SigEnv::default();
@@ -3073,7 +3073,7 @@ mod tests {
 
     #[test]
     fn motion_state_schema_collects_node_slots() {
-        let Val::Dyn(d) = ev("(vel c[4 0])") else { panic!() };
+        let Val::DynPose(d) = ev("(vel c[4 0])") else { panic!() };
         let schema = collect_motion_state_schema(&DynFigure::pose(d));
         assert_eq!(schema.n2_keys.len(), 1, "vel has one numeric state slot");
         assert_eq!(schema.dyn_keys.len(), 0);
@@ -3081,7 +3081,7 @@ mod tests {
 
     #[test]
     fn motion_state_schema_collects_scan_sites() {
-        let Val::Dyn(d) = ev("(vel (cart m\"smooth(0.5, 4)\" m\"slew(10, 0, 90)\"))") else { panic!() };
+        let Val::DynPose(d) = ev("(vel (cart m\"smooth(0.5, 4)\" m\"slew(10, 0, 90)\"))") else { panic!() };
         let schema = collect_motion_state_schema(&DynFigure::pose(d));
         assert_eq!(schema.n2_keys.len(), 3, "vel plus smooth/slew state slots");
         assert!(schema
@@ -3113,7 +3113,7 @@ mod tests {
         // 200's guide: (vel c[..] (circle 7 (polar ...)))
         let Val::Arr(items) = ev("(vel c[1 0] (circle 7 (linear c[1 0])))") else { panic!() };
         assert_eq!(items.len(), 7);
-        assert!(matches!(&items[0], Val::Dyn(d) if is_scanned(d.node())));
+        assert!(matches!(&items[0], Val::DynPose(d) if is_scanned(d.node())));
     }
 
     #[test]

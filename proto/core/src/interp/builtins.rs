@@ -69,7 +69,7 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Val::arr(out))
         }
-        (Val::Pose(p), Val::Dyn(d)) | (Val::Dyn(d), Val::Pose(p)) => Ok(Val::Dyn(
+        (Val::Pose(p), Val::DynPose(d)) | (Val::DynPose(d), Val::Pose(p)) => Ok(Val::DynPose(
             DynPose::pose_node(Rc::new(DynNode::Translate {
                 dx: p.x,
                 dy: p.y,
@@ -259,7 +259,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
         "not" => Ok(mask(n(0)? == 0.0)),
         "linear" => match &args[0] {
-            Val::Pose(p) => Ok(Val::Dyn(DynPose::pose_node(Rc::new(DynNode::Linear {
+            Val::Pose(p) => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Linear {
                 vx: p.x,
                 vy: p.y,
             })))),

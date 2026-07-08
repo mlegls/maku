@@ -86,7 +86,7 @@ impl DynLike {
     pub fn from_val(v: Val) -> Result<DynLike, String> {
         match v {
             Val::DynLike(d) => Ok((*d).clone()),
-            Val::Dyn(d) => Ok(DynLike::Dyn(DynVal::Pose(d))),
+            Val::DynPose(d) => Ok(DynLike::Dyn(DynVal::Pose(d))),
             Val::Arr(items) => items
                 .iter()
                 .cloned()
@@ -136,7 +136,7 @@ pub(crate) fn dynlike_to_val(v: &DynLike) -> Result<Val, String> {
 pub(crate) fn dynlike_to_structural_val(v: &DynLike) -> Result<Val, String> {
     match v {
         DynLike::Atom(atom) => Ok(atom.to_val()),
-        DynLike::Dyn(DynVal::Pose(d)) => Ok(Val::Dyn(d.clone())),
+        DynLike::Dyn(DynVal::Pose(d)) => Ok(Val::DynPose(d.clone())),
         DynLike::Dyn(DynVal::Expr { .. }) => Ok(Val::DynLike(Rc::new(v.clone()))),
         DynLike::List(items) => items
             .iter()

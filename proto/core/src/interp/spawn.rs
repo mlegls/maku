@@ -523,7 +523,7 @@ pub(crate) fn flatten_elems(
         }
         other => {
             out.push(SpawnElem {
-                dyn_figure: DynFigure::pose(as_dyn(other)?),
+                dyn_figure: DynFigure::pose(as_dyn_pose(other)?),
                 collider_specs: empty_spec_list(),
                 render_specs: empty_spec_list(),
                 cache_policy: EntityCachePolicy::default(),

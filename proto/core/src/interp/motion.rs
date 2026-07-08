@@ -898,7 +898,7 @@ pub fn step_motion_in(
                         };
                         let mut w = World::default();
                         let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
-                        let dyn_pose = as_dyn(dv)?;
+                        let dyn_pose = as_dyn_pose(dv)?;
                         seed_reader_pose_nodes(&dyn_pose, readers);
                         state.insert(key + 1, Cell::D(dyn_pose.clone()));
                         local_lazy_key = Some(key + 1);
