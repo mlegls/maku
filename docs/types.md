@@ -66,15 +66,18 @@ Engine boundary types:
   selects its own typed record schema from the load-time render-kind registry.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
-- `MetaEnv`: lexical/projector view of `Meta`. By default it is the entity's
-  shared meta namespace, but higher-order adapters may rebind names or select a
-  subrecord for an imported projector.
-- `EntityContext`: per-tick execution context for projectors, including
-  entity-local age/`t`, tick, and handle identity.
+- `EntityView`: the same entity view shape used by query/manip callbacks:
+  handle identity plus entity-scoped data such as figure, pose, and meta
+  fields.
+- `MetaEnv`: lexical/projector view of an entity's meta. By default it is the
+  entity's shared meta namespace, but higher-order adapters may rebind names or
+  select a subrecord for an imported projector.
+- `ProjectorContext`: non-entity execution context for projectors, including
+  world tick, entity-local age/`t`, and extraction-pass parameters.
 - `ColliderProjector`: function value that projects
-  `(Figure, MetaEnv, EntityContext)` to `List<Collider>` each tick.
+  `(EntityView, ProjectorContext)` to `List<Collider>` each tick.
 - `RenderProjector`: function value that projects
-  `(Figure, MetaEnv, EntityContext)` to `List<RenderData<K>>` each tick.
+  `(EntityView, ProjectorContext)` to `List<RenderData<K>>` each tick.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
 - `Fn<A, B>`: pure function.
@@ -182,7 +185,7 @@ separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
 projector functions. A projector may read any typed meta field and the current
 figure each tick, then return literal collider/render rows. Direct dynamic
 collider/render row lists are not the public low-level surface. Projectors also
-receive `EntityContext`, so purely local temporal behavior such as "this
+receive `ProjectorContext`, so purely local temporal behavior such as "this
 collider until age 0.5" can be expressed as a higher-order projector combinator
 rather than as a public meta switch.
 
@@ -214,7 +217,7 @@ meta source data
 
 bullet-collider
   -> ColliderProjector
-  -> each tick: (Figure, MetaEnv, EntityContext) -> List<Collider>
+  -> each tick: (EntityView, ProjectorContext) -> List<Collider>
 ```
 
 The current interpreter still realizes dynamic bridge values per tick and
@@ -237,13 +240,13 @@ must preserve whether row count is fixed, bounded range-like, or truly dynamic.
 Projectors compose at the authoring level. For example:
 
 ```edn
-(defcollider bullet-collider [e]
+(defcollider bullet-collider [e ctx]
   (let [r e.hitbox
         graze (* 2 r)]
     (+ (circle-collider {:radius r :layer :enemy-hit})
        (circle-collider {:radius graze :layer :enemy-graze}))))
 
-(defcollider laser-collider [e]
+(defcollider laser-collider [e ctx]
   (capsule-chain-collider {:width e.width :layer e.layer}))
 ```
 
@@ -252,15 +255,16 @@ This recovers the expressiveness of directly returning collider lists while
 keeping all changing non-geometry inputs in meta.
 
 `defcollider` is top-level only. Its body is pure code in a scope containing an
-explicit entity view parameter such as `e` plus projector context. Because it
-cannot close over card-local mutable state, ordinary `let` is enough for
-sharing computed values; no special binding syntax is required. The body must
-elaborate to `ColliderProjector`, not to an arbitrary runtime function.
+explicit entity view parameter such as `e` and an explicit non-entity context
+parameter such as `ctx`. Because it cannot close over card-local mutable state,
+ordinary `let` is enough for sharing computed values; no special binding syntax
+is required. The body must elaborate to `ColliderProjector`, not to an
+arbitrary runtime function.
 
 Collider constructors are typed constructors inside that pure body. Their
 argument records must have load-time-known shape so the elaborator can preserve
 the projector algebra, but each field value may be an arbitrary pure expression
-over `e` and context:
+over `e` and `ctx`:
 
 ```edn
 (circle-collider {:radius (* 2 e.hitbox)

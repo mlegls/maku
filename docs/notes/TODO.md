@@ -82,10 +82,11 @@ work.
   Figure = Pose | Polyline | ParametricCurve | Composite...
   Dyn<F> = t -> F
   Meta = finite typed fields, possibly dyn and figure-dependent in spawn slots
+  EntityView = ordinary entity handle/view plus entity-scoped figure/meta data
   MetaEnv = projector view of Meta, defaulting to shared entity namespace
-  EntityContext = age/t, tick, handle identity
-  ColliderProjector = (Figure, MetaEnv, EntityContext) -> [Collider]
-  RenderProjector = (Figure, MetaEnv, EntityContext) -> [Render]
+  ProjectorContext = age/t, world tick, extraction-pass context
+  ColliderProjector = (EntityView, ProjectorContext) -> [Collider]
+  RenderProjector = (EntityView, ProjectorContext) -> [Render]
   Collider = literal collision row, not a figure-to-collider spec
   SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector] * RenderProjector
   ```
@@ -98,9 +99,10 @@ work.
   mesh rendering without changing source semantics.
 - Raw collider/render rows are boundary data returned by projectors, not normal
   entity slots. Source code should usually construct projector functions.
-- `defcollider` should elaborate top-level pure bodies over an explicit entity
-  view into a typed projector algebra. Constructor argument records have known
-  shape; their values may be pure expressions over the entity view/context.
+- `defcollider` should elaborate top-level pure bodies over explicit
+  `[entity-view projector-context]` parameters into a typed projector algebra.
+  Constructor argument records have known shape; their values may be pure
+  expressions over the entity view/context.
   Do not grow the current dynamic spec-list bridge into the final API.
 - Collider layer is universal core routing metadata:
   ```text
