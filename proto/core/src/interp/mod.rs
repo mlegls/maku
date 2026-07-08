@@ -36,7 +36,7 @@ pub(crate) use builtins::*;
 pub use card::*;
 pub use colliders::*;
 pub use r#dyn::*;
-pub use crate::model::{CurveDomain, Pose, SampleSet};
+pub use crate::model::{ColName, ColliderData, CurveDomain, FieldName, Pose, RenderData, SampleSet, Symbol};
 pub use motion::*;
 pub use renderers::*;
 pub(crate) use spawn::*;

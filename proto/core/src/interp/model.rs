@@ -8,4 +8,6 @@ pub use super::{
     ColliderProjector, Curve, CurveEval, Dyn, DynFigure, DynKind, DynNum, DynPose, EntityRef,
     EntityStore, Figure, FigureDynRepr, ParametricCurve, RenderProjector, World, WorldFields,
 };
-pub use crate::model::{CurveDomain, Pose, SampleSet};
+pub use crate::model::{
+    ColName, ColliderData, CurveDomain, FieldName, Pose, RenderData, SampleSet, Symbol,
+};

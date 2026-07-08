@@ -53,9 +53,10 @@ work.
 - Decide and implement core-vs-lib builtin stratification before the compiler
   pass. Specials are the IR; builtins are intrinsics.
 - Finish shared model extraction. `model::figure` is top-level and generic
-  over curve evaluators, while `interp` aliases it with `DynPose`. Built-in
-  collider/render cases still live under `interp` until their specs no longer
-  depend directly on interpreter `Dyn`/`DynLike`/`Env` types.
+  over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids
+  and runtime collider/render boundary rows live under `model`. Built-in
+  collider/render projector cases still live under `interp` until their specs
+  no longer depend directly on interpreter `Dyn`/`DynLike`/`Env` types.
 
 ## Data Model Targets
 

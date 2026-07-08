@@ -8,12 +8,6 @@ use std::rc::Rc;
 
 pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Symbol(pub u32);
-
-pub type ColName = Symbol;
-pub type FieldName = Symbol;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldKind {
     Num,
