@@ -2282,6 +2282,16 @@ fn as_dyn_pose(v: Val) -> Result<DynPose, String> {
     }
 }
 
+fn as_dyn_figure(v: Val) -> Result<DynFigure, String> {
+    match v {
+        Val::DynFigure(d) => Ok(d),
+        Val::DynPose(d) => Ok(DynFigure::pose(d)),
+        Val::Figure(f) => Ok(DynFigure::figure_const(f)),
+        Val::Pose(p) => Ok(DynFigure::pose_node(Rc::new(DynNode::Const(p)))),
+        v => Err(format!("expected dyn figure, got {:?}", v)),
+    }
+}
+
 fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
     match child {
         Val::Action(a) => Ok(Val::Action(Rc::new(ActionV::InFrame {
