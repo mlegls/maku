@@ -89,6 +89,21 @@ pub(crate) struct SpawnMetaInput {
     pub computed_pairs: Vec<(Val, Val)>,
 }
 
+/// Source-level spawn directives that are not entity meta values. Today this
+/// keeps literal meta maps because legacy signal tags and :expose are still
+/// recognized from raw forms; each directive should move here explicitly as
+/// the typed boundary is tightened.
+pub(crate) struct SpawnDirectives {
+    pub raw_meta_forms: Vec<Form>,
+}
+
+/// Spawn meta after merging evaluated map values, plus source directives kept
+/// out of the eventual `Dyn<Meta>` value.
+pub(crate) struct SpawnMetaPlan {
+    pub value: Val,
+    pub directives: SpawnDirectives,
+}
+
 /// Compositional expected types for the low-level spawn API. The current
 /// interpreter still stores bridge values in `SpawnSlots`, but these are the
 /// semantic targets the future elaborator should use.
@@ -127,8 +142,7 @@ pub(crate) struct SpawnSlots {
 /// `EntitySpec` construction.
 pub(crate) struct SpawnPlan {
     pub elems: Vec<SpawnElem>,
-    pub meta: Val,
-    pub meta_forms: Vec<Form>,
+    pub meta: SpawnMetaPlan,
     pub colliders: Vec<ColliderSpecList>,
     pub renderers: Vec<RenderSpecList>,
 }

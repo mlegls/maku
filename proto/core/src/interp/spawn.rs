@@ -145,12 +145,13 @@ fn merge_spawn_meta(
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<Val, String> {
+) -> Result<SpawnMetaPlan, String> {
     // Meta maps merge per-key with later maps winning. Literal maps are kept
     // as forms long enough for signal tags and :expose channel designators to
     // remain unevaluated; computed maps arrive as already-evaluated pairs.
     let mut pairs: Vec<(Val, Val)> = Vec::new();
-    for mf in meta.forms.iter().rev() {
+    let raw_meta_forms = meta.forms;
+    for mf in raw_meta_forms.iter().rev() {
         match mf {
             Form::Map(kvs) => {
                 for (k, v) in kvs.iter() {
@@ -172,7 +173,10 @@ fn merge_spawn_meta(
         }
     }
     pairs.extend(meta.computed_pairs);
-    Ok(Val::Map(Rc::new(pairs)))
+    Ok(SpawnMetaPlan {
+        value: Val::Map(Rc::new(pairs)),
+        directives: SpawnDirectives { raw_meta_forms },
+    })
 }
 
 fn plan_spawn(
@@ -182,7 +186,6 @@ fn plan_spawn(
     world: &mut World,
 ) -> Result<SpawnPlan, String> {
     debug_assert_eq!(slots.targets, SpawnSlotTypes::low_level());
-    let meta_forms = slots.meta.forms.clone();
     let meta = merge_spawn_meta(slots.meta, env, ctx, world)?;
     let mut elems = Vec::new();
     flatten_elems(slots.figure, &mut Vec::new(), &mut elems)?;
@@ -196,7 +199,6 @@ fn plan_spawn(
     Ok(SpawnPlan {
         elems,
         meta,
-        meta_forms,
         colliders: slots.colliders,
         renderers: slots.renderers,
     })
@@ -204,17 +206,18 @@ fn plan_spawn(
 
 fn build_entity_specs(
     elems: Vec<SpawnElem>,
-    meta: &Val,
-    meta_forms: &[Form],
+    meta: &SpawnMetaPlan,
     collider_slots: Vec<ColliderSpecList>,
     renderer_slots: Vec<RenderSpecList>,
     env: &Env,
     world: &mut World,
 ) -> Result<Vec<EntitySpec>, String> {
-    let styles = resolve_styles(meta, &elems)?;
-    let sigs = resolve_sigs(meta_forms, env, elems.len());
+    let meta_value = &meta.value;
+    let raw_meta_forms = &meta.directives.raw_meta_forms;
+    let styles = resolve_styles(meta_value, &elems)?;
+    let sigs = resolve_sigs(raw_meta_forms, env, elems.len());
     let mut sym_fields: Vec<(FieldName, Symbol)> = Vec::new();
-    if let Val::Map(kvs) = meta {
+    if let Val::Map(kvs) = meta_value {
         for (k, v) in kvs.iter() {
             let (Val::Kw(field), Val::Kw(value)) = (k, v) else {
                 continue;
@@ -242,10 +245,10 @@ fn build_entity_specs(
     // style axes (leading-axis / by-length / nested-structural) — per-entity
     // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
     let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
-    if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(meta, "hp") {
+    if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(meta_value, "hp") {
         cols.push(("hp".into(), v));
     }
-    if let Val::Map(kvs) = meta {
+    if let Val::Map(kvs) = meta_value {
         for (k, v) in kvs.iter() {
             let is_cols = matches!(k, Val::Kw(kw) if &**kw == "cols");
             if !is_cols {
@@ -262,7 +265,7 @@ fn build_entity_specs(
     }
     // triggers: data only — no synthesized rules (spawn-enemy in the lib
     // is where "hp ≤ 0 means death" lives)
-    let triggers: Rc<[TriggerRule]> = match map_get(meta, "triggers") {
+    let triggers: Rc<[TriggerRule]> = match map_get(meta_value, "triggers") {
         Some(Val::Arr(items)) => {
             let mut rules = Vec::new();
             for it in items.iter() {
@@ -299,7 +302,7 @@ fn build_entity_specs(
     };
     // :damage n | {:hit n ...} (DMK player() map) lowers to an ordinary
     // numeric column read by Touhou contact rules.
-    if let Some(v) = map_get(meta, "damage") {
+    if let Some(v) = map_get(meta_value, "damage") {
         match v {
             Val::Num(_) | Val::Arr(_) => cols.push(("damage".into(), v)),
             Val::Map(kvs) => {
@@ -313,7 +316,7 @@ fn build_entity_specs(
             _ => {}
         }
     }
-    let hitbox = match map_get(meta, "hitbox") {
+    let hitbox = match map_get(meta_value, "hitbox") {
         Some(Val::Num(n)) => Some(n),
         _ => None,
     };
@@ -321,7 +324,7 @@ fn build_entity_specs(
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
     // the keys of (with {$rank 0.5} …) — not reads).
-    let expose: Rc<[(ColName, Rc<str>)]> = parse_expose(meta_forms)
+    let expose: Rc<[(ColName, Rc<str>)]> = parse_expose(raw_meta_forms)
         .iter()
         .map(|(col, chan)| (world.intern_col(col.as_ref()), chan.clone()))
         .collect::<Vec<_>>()
@@ -388,7 +391,6 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     let entities = build_entity_specs(
         plan.elems,
         &plan.meta,
-        &plan.meta_forms,
         plan.colliders,
         plan.renderers,
         env,
