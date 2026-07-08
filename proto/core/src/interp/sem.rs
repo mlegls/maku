@@ -32,19 +32,19 @@ pub struct EntityContext {
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
-    ColliderSum(Rc<[ColliderProjectorSpec]>),
+    ColliderSum(Rc<[ColliderProjectorValue]>),
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
 /// checking for a collider slot.
 #[derive(Clone, Debug)]
-pub struct ColliderProjectorSpec {
+pub struct ColliderProjectorValue {
     pub(crate) expr: ColliderProjectorExpr,
 }
 
-impl ColliderProjectorSpec {
-    pub(crate) fn stable(slots: Vec<DynCollider>) -> ColliderProjectorSpec {
-        ColliderProjectorSpec {
+impl ColliderProjectorValue {
+    pub(crate) fn stable(slots: Vec<DynCollider>) -> ColliderProjectorValue {
+        ColliderProjectorValue {
             expr: ColliderProjectorExpr::Stable(slots.into()),
         }
     }
@@ -53,33 +53,30 @@ impl ColliderProjectorSpec {
         params: Vec<Rc<str>>,
         body: Rc<[Form]>,
         env: Env,
-    ) -> ColliderProjectorSpec {
-        ColliderProjectorSpec {
+    ) -> ColliderProjectorValue {
+        ColliderProjectorValue {
             expr: ColliderProjectorExpr::Callable { params: params.into(), body, env },
         }
     }
 
-    pub(crate) fn empty() -> ColliderProjectorSpec {
-        ColliderProjectorSpec::stable(Vec::new())
+    pub(crate) fn empty() -> ColliderProjectorValue {
+        ColliderProjectorValue::stable(Vec::new())
     }
 
-    pub(crate) fn plus(&self, rhs: &ColliderProjectorSpec) -> ColliderProjectorSpec {
+    pub(crate) fn plus(&self, rhs: &ColliderProjectorValue) -> ColliderProjectorValue {
         match (&self.expr, &rhs.expr) {
             (ColliderProjectorExpr::Stable(a), ColliderProjectorExpr::Stable(b)) => {
                 let mut slots = Vec::with_capacity(a.len() + b.len());
                 slots.extend(a.iter().cloned());
                 slots.extend(b.iter().cloned());
-                ColliderProjectorSpec::stable(slots)
+                ColliderProjectorValue::stable(slots)
             }
-            _ => ColliderProjectorSpec {
+            _ => ColliderProjectorValue {
                 expr: ColliderProjectorExpr::ColliderSum(vec![self.clone(), rhs.clone()].into()),
             },
         }
     }
 }
-
-/// Compatibility alias for older internal names while spawn lowering migrates.
-pub type ColliderSpecList = ColliderProjectorSpec;
 
 /// A source-level renderer projector expression after dyn-lifting and schema
 /// checking for a render slot. Dynamic lists are rechecked after per-tick
@@ -116,7 +113,7 @@ pub type RenderSpecList = RendererProjectorSpec;
 /// figure into realized collider rows during simulation.
 #[derive(Clone, Debug)]
 pub struct ColliderProjector {
-    pub specs: Rc<[ColliderProjectorSpec]>,
+    pub projectors: Rc<[ColliderProjectorValue]>,
 }
 
 /// Semantic render projector slot carried by a spawned entity. The style/sigs
@@ -179,7 +176,7 @@ impl SpawnSlotTypes {
 pub(crate) struct SpawnSlots {
     pub targets: SpawnSlotTypes,
     pub figure: Val,
-    pub colliders: Vec<ColliderProjectorSpec>,
+    pub colliders: Vec<ColliderProjectorValue>,
     pub renderers: Vec<RendererProjectorSpec>,
     pub meta: SpawnMetaInput,
 }
@@ -191,6 +188,6 @@ pub(crate) struct SpawnSlots {
 pub(crate) struct SpawnPlan {
     pub elems: Vec<SpawnElem>,
     pub meta: SpawnMetaPlan,
-    pub colliders: Vec<ColliderProjectorSpec>,
+    pub colliders: Vec<ColliderProjectorValue>,
     pub renderers: Vec<RendererProjectorSpec>,
 }

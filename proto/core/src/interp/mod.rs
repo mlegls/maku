@@ -95,7 +95,7 @@ pub enum Val {
     Kw(Rc<str>),
     Pose(Pose),
     Figure(Figure),
-    ColliderProjectorSpecs(Rc<ColliderProjectorSpec>),
+    ColliderProjector(Rc<ColliderProjectorValue>),
     RendererProjectorSpec(Rc<RendererProjectorSpec>),
     EntitySet(Rc<[usize]>),
     Arr(Seq),
@@ -156,7 +156,7 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
-    pub collider_projector_spec: ColliderProjectorSpec,
+    pub collider_projector_spec: ColliderProjectorValue,
     pub renderer_projector_spec: RendererProjectorSpec,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
@@ -656,8 +656,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 if items.len() < 3 {
                     return Err("defcollider: expected body".into());
                 }
-                return Ok(Val::ColliderProjectorSpecs(Rc::new(
-                    ColliderProjectorSpec::callable(params, items[2..].to_vec().into(), env.clone()),
+                return Ok(Val::ColliderProjector(Rc::new(
+                    ColliderProjectorValue::callable(params, items[2..].to_vec().into(), env.clone()),
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
@@ -1170,12 +1170,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 (f, _) => f,
             };
             apply_fn(f, &args, ctx, world, false)
-        }
-        Val::ColliderProjectorSpecs(_) => {
-            if items.len() != 1 {
-                return Err("collider projector: expected no arguments".into());
-            }
-            Ok(hv)
         }
         _ => Err(format!("cannot apply {:?}", hv)),
     }

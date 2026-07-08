@@ -121,7 +121,7 @@ pub fn materialize_collider_defs_into(
     symbols: &mut SymbolTable,
     out: &mut Vec<DynCollider>,
 ) -> Result<(), String> {
-    for list in projector.specs.iter() {
+    for list in projector.projectors.iter() {
         match &list.expr {
             ColliderProjectorExpr::Stable(slots) => {
                 out.extend(slots.iter().cloned());
@@ -150,9 +150,9 @@ pub fn materialize_collider_defs_into(
                 }
                 *symbols = run_world.symbols;
                 match last {
-                    Val::ColliderProjectorSpecs(spec) => {
+                    Val::ColliderProjector(spec) => {
                         materialize_collider_defs_into(
-                            &ColliderProjector { specs: vec![spec.as_ref().clone()].into() },
+                            &ColliderProjector { projectors: vec![spec.as_ref().clone()].into() },
                             tau,
                             state,
                             sig,
@@ -167,7 +167,7 @@ pub fn materialize_collider_defs_into(
             }
             ColliderProjectorExpr::ColliderSum(specs) => {
                 materialize_collider_defs_into(
-                    &ColliderProjector { specs: specs.clone() },
+                    &ColliderProjector { projectors: specs.clone() },
                     tau,
                     state,
                     sig,

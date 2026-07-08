@@ -373,7 +373,7 @@
   (fn [a b] (event :hit (:pos b))))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} (hitbox-collider))
+    (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} hitbox-collider)
     (spawn (pose c[0.35 0]) (circle-collider {:layer :body :r 0.1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -680,7 +680,7 @@
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[1 0])
-           (expanding-collider))))
+           expanding-collider)))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..30 {
@@ -712,7 +712,7 @@
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[0 0])
-           (appears-after))))
+           appears-after)))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..30 {

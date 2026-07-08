@@ -17,7 +17,7 @@ pub enum Type {
     RenderData(RenderKind),
     Meta,
     MetaEnv,
-    ColliderProjectorSpec,
+    ColliderProjector,
     RendererProjectorSpec(RenderKind),
     EntitySet,
     Action,
@@ -50,7 +50,7 @@ impl Type {
     }
 
     pub fn spawn_colliders() -> Type {
-        Type::list_of(Type::ColliderProjectorSpec)
+        Type::list_of(Type::ColliderProjector)
     }
 
     pub fn spawn_renderers() -> Type {
