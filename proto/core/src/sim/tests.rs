@@ -615,7 +615,7 @@
     }
 
     #[test]
-    fn structural_dyn_collider_fields() {
+    fn circle_collider_accepts_dynamic_radius() {
         const CARD: &str = r#"
 (defcontact [:expanding :body] {:once :hit} (fn [a b] (event :hit)))
 (defpattern p []
@@ -623,8 +623,7 @@
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[1 0])
-           (colliders {:layer :expanding
-                       :shape [:circle {:r m"t"}]}))))
+           (circle-collider {:layer :expanding :r m"t"}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..30 {
