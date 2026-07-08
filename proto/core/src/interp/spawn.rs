@@ -22,7 +22,6 @@ const RESERVED_KW_FIELD_KEYS: &[&str] = &[
     "style",
     "cols",
     "triggers",
-    "hp",
     "expose",
     "hue",
     "scale",
@@ -185,9 +184,7 @@ fn build_entity_specs(
             let field = world.field_sym(field.as_ref());
             let value = world.symbols.intern(value.as_ref());
             world.intern_sym_field_slot(field);
-            if let Some((_, existing)) = sym_fields.iter_mut().find(|(name, _)| *name == field) {
-                *existing = value;
-            } else {
+            if !sym_fields.iter().any(|(name, _)| *name == field) {
                 sym_fields.push((field, value));
             }
         }
@@ -202,11 +199,18 @@ fn build_entity_specs(
     // style axes (leading-axis / by-length / nested-structural) — per-entity
     // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
     let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
-    if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(meta_value, "hp") {
-        cols.push(("hp".into(), v));
-    }
+    let push_col = |cols: &mut Vec<(Rc<str>, Val)>, k: Rc<str>, v: Val| {
+        if !cols.iter().any(|(existing, _)| existing.as_ref() == k.as_ref()) {
+            cols.push((k, v));
+        }
+    };
     if let Val::Map(kvs) = meta_value {
         for (k, v) in kvs.iter() {
+            if let (Val::Kw(k), v @ (Val::Num(_) | Val::Arr(_))) = (k, v) {
+                if !is_reserved_sym_field_key(k.as_ref()) {
+                    push_col(&mut cols, k.as_ref().into(), v.clone());
+                }
+            }
             let is_cols = matches!(k, Val::Kw(kw) if &**kw == "cols");
             if !is_cols {
                 continue;
@@ -214,7 +218,7 @@ fn build_entity_specs(
             if let Val::Map(cs) = v {
                 for (k, v) in cs.iter() {
                     if let Val::Kw(k) = k {
-                        cols.push((k.as_ref().into(), v.clone()));
+                        push_col(&mut cols, k.as_ref().into(), v.clone());
                     }
                 }
             }

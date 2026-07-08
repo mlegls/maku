@@ -436,6 +436,23 @@
     }
 
     #[test]
+    fn defcollider_reads_top_level_numeric_meta() {
+        const CARD: &str = r#"
+(defcollider hitbox-collider [entity context]
+  (circle-collider {:layer :damage :r entity.hitbox}))
+(defcontact [:damage :body] {:once :hit}
+  (fn [a b] (event :hit (:pos b))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) {:hitbox 0.3} hitbox-collider)
+    (spawn (pose c[0.35 0]) (circle-collider {:layer :body :r 0.1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
+    }
+
+    #[test]
     fn collider_overrides_do_not_treat_keywords_as_entity_fields() {
         const CARD: &str = r#"
 (defcollider hitbox-collider [e ctx]
@@ -743,7 +760,7 @@
     }
 
     #[test]
-    fn touhou_laser_collider_reads_lifecycle_from_cols() {
+    fn touhou_laser_collider_reads_lifecycle_from_meta() {
         const CARD: &str = r#"
 (import "touhou")
 (defcontact [:beam :body] {:once :hit} (fn [a b] (event :hit)))
@@ -752,7 +769,7 @@
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.06}))
     (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
-           {:cols {:warn 0 :active 2 :u-max 6 :radius 0.06 :resolution 0.1}}
+           {:warn 0 :active 2 :u-max 6 :radius 0.06 :resolution 0.1}
            laser-collider)))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();

@@ -79,10 +79,28 @@ pub struct CircleProjectorSpec {
 }
 
 #[derive(Clone, Debug)]
+pub enum ProjectorSampleSet {
+    Values(Rc<[f64]>),
+    Step(ProjectorNum),
+}
+
+#[derive(Clone, Debug)]
+pub struct CapsuleChainProjectorSpec {
+    pub layer: Symbol,
+    pub radius: ProjectorNum,
+    pub sample_set: ProjectorSampleSet,
+    pub u_max: Option<ProjectorNum>,
+    pub fraction: Option<ProjectorNum>,
+    pub width: ProjectorNum,
+    pub env: Env,
+    pub scope: Option<ProjectorScope>,
+}
+
+#[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
     Circle(CircleProjectorSpec),
-    CapsuleChain { opts: Option<Form>, env: Env, scope: Option<ProjectorScope> },
+    CapsuleChain(CapsuleChainProjectorSpec),
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     Cond { clauses: Rc<[(Option<Form>, ColliderProjectorValue)]>, env: Env, scope: Option<ProjectorScope> },
     ColliderSum(Rc<[ColliderProjectorValue]>),
@@ -132,13 +150,11 @@ impl ColliderProjectorValue {
 
     pub(crate) fn capsule_chain(
         figure: FigureProjectorKind,
-        opts: Option<Form>,
-        env: Env,
-        scope: Option<ProjectorScope>,
+        spec: CapsuleChainProjectorSpec,
     ) -> ColliderProjectorValue {
         ColliderProjectorValue {
             figure,
-            expr: ColliderProjectorExpr::CapsuleChain { opts, env, scope },
+            expr: ColliderProjectorExpr::CapsuleChain(spec),
         }
     }
 

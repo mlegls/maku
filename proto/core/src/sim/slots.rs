@@ -150,9 +150,9 @@ pub fn materialize_collider_defs_into(
                 let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
                 out.push(materialize_circle_projector(spec, &env, sig)?);
             }
-            ColliderProjectorExpr::CapsuleChain { opts, env, scope } => {
-                let env = bind_projector_scope(env, scope.as_ref(), e_view, ctx_view);
-                out.push(materialize_capsule_chain_projector(opts, &env, sig, symbols)?);
+            ColliderProjectorExpr::CapsuleChain(spec) => {
+                let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
+                out.push(materialize_capsule_chain_projector(spec, &env, sig, symbols)?);
             }
             ColliderProjectorExpr::Callable { params, body, env } => {
                 let e_bound = e_view

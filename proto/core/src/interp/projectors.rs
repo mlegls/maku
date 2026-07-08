@@ -167,6 +167,110 @@ fn circle_projector_spec_from_form(
     })
 }
 
+fn projector_num_from_form(
+    name: &str,
+    opts: &Option<Form>,
+    keys: &[&str],
+    default: f64,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<ProjectorNum, String> {
+    match form_map_value(opts, keys) {
+        Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
+            Ok(ProjectorNum::Expr(form.clone()))
+        }
+        Some(form) => {
+            evaluate(form, env, ctx, world)
+                .and_then(|v| v.num())
+                .map(ProjectorNum::Const)
+                .map_err(|e| format!("{}: {}", name, e))
+        }
+        None => Ok(ProjectorNum::Const(default)),
+    }
+}
+
+fn optional_projector_num_from_form(
+    name: &str,
+    opts: &Option<Form>,
+    keys: &[&str],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Option<ProjectorNum>, String> {
+    match form_map_value(opts, keys) {
+        Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
+            Ok(Some(ProjectorNum::Expr(form.clone())))
+        }
+        Some(form) => {
+            evaluate(form, env, ctx, world)
+                .and_then(|v| v.num())
+                .map(ProjectorNum::Const)
+                .map(Some)
+                .map_err(|e| format!("{}: {}", name, e))
+        }
+        None => Ok(None),
+    }
+}
+
+fn static_samples_from_form(opts: &Option<Form>, env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Option<Rc<[f64]>>, String> {
+    let Some(form) = form_map_value(opts, &["samples"]) else {
+        return Ok(None);
+    };
+    let val = evaluate(form, env, ctx, world)?;
+    let Val::Arr(items) = val else {
+        return Err("capsule-chain-collider: :samples expects an array".into());
+    };
+    let mut out = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        out.push(item.num()?);
+    }
+    Ok(Some(out.into()))
+}
+
+fn capsule_chain_projector_spec_from_form(
+    opts: Option<Form>,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<CapsuleChainProjectorSpec, String> {
+    if opts.as_ref().is_some_and(|form| !matches!(form, Form::Map(_))) {
+        return Err("capsule-chain-collider: expected override map".into());
+    }
+    for key in ["warn", "active", "fill"] {
+        if form_map_value(&opts, &[key]).is_some() {
+            return Err(format!(
+                "capsule-chain-collider: :{} is laser policy; use :fraction in projector scope",
+                key
+            ));
+        }
+    }
+    let layer = static_kw_field("capsule-chain-collider", &opts, "layer", env, ctx, world)
+        .map(|k| world.symbols.intern(k.as_ref()))?;
+    let sample_set = match static_samples_from_form(&opts, env, ctx, world)? {
+        Some(samples) => ProjectorSampleSet::Values(samples),
+        None => ProjectorSampleSet::Step(projector_num_from_form(
+            "capsule-chain-collider",
+            &opts,
+            &["resolution"],
+            0.1,
+            env,
+            ctx,
+            world,
+        )?),
+    };
+    Ok(CapsuleChainProjectorSpec {
+        layer,
+        radius: projector_num_from_form("capsule-chain-collider", &opts, &["radius", "r"], 0.08, env, ctx, world)?,
+        sample_set,
+        u_max: optional_projector_num_from_form("capsule-chain-collider", &opts, &["u-max"], env, ctx, world)?,
+        fraction: optional_projector_num_from_form("capsule-chain-collider", &opts, &["fraction", "frac"], env, ctx, world)?,
+        width: projector_num_from_form("capsule-chain-collider", &opts, &["width"], 0.0, env, ctx, world)?,
+        env: env.clone(),
+        scope: ctx.projector_scope.clone(),
+    })
+}
+
 fn capsule_chain_projector_from_opts(opts: &DynLike, symbols: &mut SymbolTable) -> Result<DynCollider, String> {
     let layer = match dynlike_map_get(opts, "layer").and_then(|v| dynlike_kw(&v)) {
         Some(k) => symbols.intern(k.as_ref()),
@@ -195,7 +299,7 @@ pub(crate) fn materialize_circle_projector(
 }
 
 pub(crate) fn materialize_capsule_chain_projector(
-    opts: &Option<Form>,
+    spec: &CapsuleChainProjectorSpec,
     env: &Env,
     sig: &SigEnv,
     symbols: &mut SymbolTable,
@@ -204,8 +308,33 @@ pub(crate) fn materialize_capsule_chain_projector(
     run_ctx.sig = sig.clone();
     let mut run_world = World::default();
     run_world.symbols = symbols.clone();
-    let opts = eval_opts("capsule-chain-collider", opts.as_ref(), env, &mut run_ctx, &mut run_world)?;
-    let slot = capsule_chain_projector_from_opts(&opts, &mut run_world.symbols)?;
+    let mut eval_num = |n: &ProjectorNum| -> Result<f64, String> {
+        match n {
+            ProjectorNum::Const(n) => Ok(*n),
+            ProjectorNum::Expr(form) => evaluate(form, env, &mut run_ctx, &mut run_world)?.num(),
+        }
+    };
+    let sample_set = match &spec.sample_set {
+        ProjectorSampleSet::Values(samples) => SampleSet::Values(samples.clone()),
+        ProjectorSampleSet::Step(resolution) => SampleSet::Step {
+            resolution: eval_num(resolution)?,
+        },
+    };
+    let slot = CapsuleChainSlot {
+        sample_set,
+        u_max_sig: spec.u_max.as_ref().map(|n| eval_num(n).map(DynNum::num)).transpose()?,
+        width: eval_num(&spec.width)?,
+        activity: SlotActivity {
+            warn: 0.0,
+            active: f64::INFINITY,
+            hot_frac_sig: spec
+                .fraction
+                .as_ref()
+                .map(|n| eval_num(n).map(DynNum::num))
+                .transpose()?,
+        },
+    };
+    let slot = DynCollider::collider_capsule_chain(spec.layer, DynNum::num(eval_num(&spec.radius)?), slot);
     *symbols = run_world.symbols;
     Ok(slot)
 }
@@ -287,23 +416,21 @@ pub(crate) fn sf_capsule_chain_collider(
     {
         return Err("capsule-chain-collider: entity/context overrides require a projector scope".into());
     }
-    if let Some(scope) = &ctx.projector_scope {
+    if let Some(scope) = ctx.projector_scope.clone() {
+        let spec = capsule_chain_projector_spec_from_form(opts_form, env, ctx, world)?;
         return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
             scope.figure,
-            opts_form,
-            env.clone(),
-            Some(scope.clone()),
+            spec,
         ))));
     }
     if opts_form
         .as_ref()
         .is_some_and(|form| contains_bound_projector_context(form, ctx.projector_scope.as_ref()))
     {
+        let spec = capsule_chain_projector_spec_from_form(opts_form, env, ctx, world)?;
         return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
             FigureProjectorKind::Pose,
-            opts_form,
-            env.clone(),
-            ctx.projector_scope.clone(),
+            spec,
         ))));
     }
     let opts = eval_opts("capsule-chain-collider", opts_form.as_ref(), env, ctx, world)?;
