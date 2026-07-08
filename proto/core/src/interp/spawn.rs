@@ -36,7 +36,7 @@ fn is_reserved_sym_field_key(key: &str) -> bool {
 
 fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
     match items.len() {
-        0 => Ok(empty_spec_list()),
+        0 => Ok(empty_projector_spec_list()),
         1 => {
             let one = eval_dynlike_form(&items[0], env, ctx, world)?;
             match one {
@@ -59,7 +59,7 @@ pub(crate) fn sf_colliders(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    Ok(Val::ColliderProjectorSpecs(Rc::new(as_collider_spec_list(
+    Ok(Val::ColliderProjectorSpecs(Rc::new(as_collider_projector_spec(
         &specs,
         &mut world.symbols,
     )?)))
@@ -72,7 +72,7 @@ pub(crate) fn sf_renderers(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    Ok(Val::RendererProjectorSpec(Rc::new(as_render_spec_list(&specs)?)))
+    Ok(Val::RendererProjectorSpec(Rc::new(as_renderer_projector_spec(&specs)?)))
 }
 
 pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {

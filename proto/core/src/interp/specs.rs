@@ -101,11 +101,11 @@ pub(crate) fn as_stable_collider_slots_into(
     Ok(())
 }
 
-pub(crate) fn empty_spec_list() -> DynLike {
+pub(crate) fn empty_projector_spec_list() -> DynLike {
     DynLike::List(Vec::new().into())
 }
 
-pub(crate) fn as_collider_spec_list(
+pub(crate) fn as_collider_projector_spec(
     v: &DynLike,
     symbols: &mut SymbolTable,
 ) -> Result<ColliderProjectorSpec, String> {
@@ -150,7 +150,7 @@ pub(crate) fn as_stable_render_slots_into(
     Ok(())
 }
 
-pub(crate) fn as_render_spec_list(v: &DynLike) -> Result<RendererProjectorSpec, String> {
+pub(crate) fn as_renderer_projector_spec(v: &DynLike) -> Result<RendererProjectorSpec, String> {
     if !v.is_dynamic() {
         as_stable_render_slots(v)?;
     }
