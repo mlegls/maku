@@ -110,9 +110,9 @@ pub(crate) fn as_collider_projector_spec(
     symbols: &mut SymbolTable,
 ) -> Result<ColliderProjectorSpec, String> {
     if !v.is_dynamic() {
-        as_stable_collider_slots(v, symbols)?;
+        return Ok(ColliderProjectorSpec::stable(as_stable_collider_slots(v, symbols)?));
     }
-    Ok(ColliderProjectorSpec::checked(v.clone()))
+    Ok(ColliderProjectorSpec::legacy_dynamic(v.clone()))
 }
 
 pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {

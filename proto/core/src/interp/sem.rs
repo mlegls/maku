@@ -25,30 +25,37 @@ pub struct EntityContext {
     pub entity: Option<EntityRef>,
 }
 
+/// Collider projector algebra currently supported by the interpreter.
+/// `Stable` is already a typed projector list; `LegacyDynamic` preserves the
+/// old dynamic bridge until dynamic projector constructors are elaborated.
+#[derive(Clone, Debug)]
+pub enum ColliderProjectorExpr {
+    Stable(Rc<[DynCollider]>),
+    LegacyDynamic(DynLike),
+}
+
 /// A source-level collider projector expression after dyn-lifting and schema
-/// checking for a collider slot. Dynamic lists are rechecked after per-tick
-/// realization until the typed layer can represent their element schema.
+/// checking for a collider slot.
 #[derive(Clone, Debug)]
 pub struct ColliderProjectorSpec {
-    pub(crate) expr: DynLike,
+    pub(crate) expr: ColliderProjectorExpr,
 }
 
 impl ColliderProjectorSpec {
-    pub(crate) fn checked(expr: DynLike) -> ColliderProjectorSpec {
-        ColliderProjectorSpec { expr }
+    pub(crate) fn stable(slots: Vec<DynCollider>) -> ColliderProjectorSpec {
+        ColliderProjectorSpec {
+            expr: ColliderProjectorExpr::Stable(slots.into()),
+        }
+    }
+
+    pub(crate) fn legacy_dynamic(expr: DynLike) -> ColliderProjectorSpec {
+        ColliderProjectorSpec {
+            expr: ColliderProjectorExpr::LegacyDynamic(expr),
+        }
     }
 
     pub(crate) fn empty() -> ColliderProjectorSpec {
-        ColliderProjectorSpec::checked(DynLike::List(Vec::new().into()))
-    }
-
-    pub(crate) fn eval(
-        &self,
-        tau: f64,
-        state: &MotionState,
-        sig: &SigEnv,
-    ) -> Result<Val, String> {
-        self.expr.eval(tau, state, sig)
+        ColliderProjectorSpec::stable(Vec::new())
     }
 }
 

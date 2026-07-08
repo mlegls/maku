@@ -120,9 +120,16 @@ pub fn materialize_collider_defs_into(
     out: &mut Vec<DynCollider>,
 ) -> Result<(), String> {
     for list in projector.specs.iter() {
-        let val = list.eval(tau, state, sig)?;
-        let dynlike = DynLike::from_val(val)?;
-        as_stable_collider_slots_into(&dynlike, symbols, out)?;
+        match &list.expr {
+            ColliderProjectorExpr::Stable(slots) => {
+                out.extend(slots.iter().cloned());
+            }
+            ColliderProjectorExpr::LegacyDynamic(expr) => {
+                let val = expr.eval(tau, state, sig)?;
+                let dynlike = DynLike::from_val(val)?;
+                as_stable_collider_slots_into(&dynlike, symbols, out)?;
+            }
+        }
     }
     Ok(())
 }
