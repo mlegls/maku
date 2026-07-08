@@ -109,11 +109,10 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 Some(Form::Sym(s)) if &**s == "defcollider" => {
                     // (defcollider name [e ctx] body...)
                     //
-                    // First implementation slice: register a callable
-                    // projector value as (name). The parameter vector is
-                    // validated and reserved for entity/context binding,
-                    // but the body must be closed over ordinary top-level
-                    // defs for now.
+                    // Register a callable projector value as (name). The
+                    // body is deferred until collider materialization, where
+                    // `e` and `ctx` are bound to the current entity view and
+                    // projector context.
                     let name = match items.get(1) {
                         Some(Form::Sym(n)) => n.to_string(),
                         _ => return Err("defcollider: expected name".into()),
@@ -133,8 +132,13 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     if items.len() < 4 {
                         return Err("defcollider: expected body".into());
                     }
-                    let mut fnform = vec![Form::sym("fn"), Form::Vector(Vec::new().into())];
-                    fnform.extend(items[3..].iter().cloned());
+                    let mut projector = vec![Form::sym("__collider-projector")];
+                    projector.extend(items[3..].iter().cloned());
+                    let fnform = vec![
+                        Form::sym("fn"),
+                        Form::Vector(Vec::new().into()),
+                        Form::list(projector),
+                    ];
                     defs.insert(name, Form::list(fnform));
                 }
                 Some(Form::Sym(s)) if &**s == "defchannel" => {

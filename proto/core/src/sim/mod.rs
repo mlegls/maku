@@ -458,12 +458,20 @@ impl Sim {
                         let Some(projector) = self.world.entities.collider_projector(i).cloned() else {
                             return None;
                         };
+                        let e_view = entity_view(i, &self.world, &sig).ok()?;
+                        let ctx_view = Val::Map(std::rc::Rc::new(vec![
+                            (Val::Kw("age".into()), Val::Num(tau)),
+                            (Val::Kw("t".into()), Val::Num(tau)),
+                            (Val::Kw("tick".into()), Val::Num(tick as f64)),
+                        ]));
                         collider_slots.clear();
                         materialize_collider_defs_into(
                             &projector,
                             tau,
                             &state,
                             &sig,
+                            Some(&e_view),
+                            Some(&ctx_view),
                             &mut self.world.symbols,
                             &mut collider_slots,
                         )

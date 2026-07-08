@@ -365,6 +365,23 @@
     }
 
     #[test]
+    fn defcollider_can_read_entity_meta() {
+        const CARD: &str = r#"
+(defcollider hitbox-collider [e ctx]
+  (circle-collider {:layer :damage :r e.hitbox}))
+(defcontact [:damage :body] {:once :hit}
+  (fn [a b] (event :hit (:pos b))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} (hitbox-collider))
+    (spawn (pose c[0.35 0]) (circle-collider {:layer :body :r 0.1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
+    }
+
+    #[test]
     fn defcollider_requires_entity_and_context_params() {
         let err = match Sim::load(
             r#"
@@ -2034,6 +2051,8 @@ fn variadic_macro_unquotes_inside_maps() {
         0.0,
         &MotionState::new(),
         &SigEnv::default(),
+        None,
+        None,
         &mut sim.world.symbols,
         &mut slots,
     )

@@ -32,6 +32,7 @@ pub struct EntityContext {
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
     LegacyDynamic(DynLike),
+    DeferredBody { body: Rc<[Form]>, env: Env },
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -51,6 +52,12 @@ impl ColliderProjectorSpec {
     pub(crate) fn legacy_dynamic(expr: DynLike) -> ColliderProjectorSpec {
         ColliderProjectorSpec {
             expr: ColliderProjectorExpr::LegacyDynamic(expr),
+        }
+    }
+
+    pub(crate) fn deferred_body(body: Rc<[Form]>, env: Env) -> ColliderProjectorSpec {
+        ColliderProjectorSpec {
+            expr: ColliderProjectorExpr::DeferredBody { body, env },
         }
     }
 

@@ -624,6 +624,14 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Action(Rc::new(ActionV::Event { name, pos })));
             }
             "defcontact" => return sf_defcontact(items, env, ctx, world),
+            "__collider-projector" => {
+                if items.len() < 2 {
+                    return Err("defcollider: expected body".into());
+                }
+                return Ok(Val::ColliderProjectorSpecs(Rc::new(
+                    ColliderProjectorSpec::deferred_body(items[1..].to_vec().into(), env.clone()),
+                )));
+            }
             "spawn" => return sf_spawn(items, env, ctx, world),
             "colliders" => return sf_colliders(items, env, ctx, world),
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),

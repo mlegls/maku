@@ -89,6 +89,8 @@ fn materialize_colliders_into(
     render_projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
+    e_view: &Val,
+    ctx_view: &Val,
     scale: f64,
     pose: Pose,
     trace: &[Pose],
@@ -100,7 +102,7 @@ fn materialize_colliders_into(
 ) -> Result<(), String> {
     let state = MotionState::new();
     defs.clear();
-    materialize_collider_defs_into(projector, tau, &state, sig, symbols, defs)
+    materialize_collider_defs_into(projector, tau, &state, sig, Some(e_view), Some(ctx_view), symbols, defs)
         .map_err(|e| format!("colliders: {}", e))?;
     let curve_slot = if matches!(dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
         first_render_projection_into(render_projector, tau, sig, render_defs).map(
@@ -199,12 +201,20 @@ impl Sim {
                 .ok_or_else(|| format!("colliders: missing render projector for row {i}"))?
                 .clone();
             let start = self.collider_scratch.begin_row();
+            let e_view = entity_view(i, &self.world, &sig)?;
+            let ctx_view = Val::Map(std::rc::Rc::new(vec![
+                (Val::Kw("age".into()), Val::Num(tau)),
+                (Val::Kw("t".into()), Val::Num(tau)),
+                (Val::Kw("tick".into()), Val::Num(tick as f64)),
+            ]));
             materialize_colliders_into(
                 &dyn_figure,
                 &collider_projector,
                 &render_projector,
                 tau,
                 &sig,
+                &e_view,
+                &ctx_view,
                 scale,
                 p,
                 trace,
