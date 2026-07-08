@@ -100,9 +100,6 @@ pub(crate) fn add2(a: Val, b: Val) -> Result<Val, String> {
                 child: d.into_node(),
             })),
         )),
-        (Val::ColliderProjector(a), Val::ColliderProjector(b)) => {
-            Ok(Val::ColliderProjector(Rc::new(a.plus(&b))))
-        }
         (a @ (Val::Num(_) | Val::Arr(_)), b @ (Val::Num(_) | Val::Arr(_))) => {
             num_bin(a, b, |x, y| x + y)
         }

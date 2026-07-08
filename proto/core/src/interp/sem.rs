@@ -63,17 +63,27 @@ impl ColliderProjectorValue {
         ColliderProjectorValue::stable(Vec::new())
     }
 
-    pub(crate) fn plus(&self, rhs: &ColliderProjectorValue) -> ColliderProjectorValue {
-        match (&self.expr, &rhs.expr) {
-            (ColliderProjectorExpr::Stable(a), ColliderProjectorExpr::Stable(b)) => {
-                let mut slots = Vec::with_capacity(a.len() + b.len());
-                slots.extend(a.iter().cloned());
-                slots.extend(b.iter().cloned());
-                ColliderProjectorValue::stable(slots)
+    pub(crate) fn compose(projectors: Vec<ColliderProjectorValue>) -> ColliderProjectorValue {
+        let mut flat: Vec<ColliderProjectorValue> = Vec::new();
+        for projector in projectors {
+            match &projector.expr {
+                ColliderProjectorExpr::ColliderSum(items) => {
+                    flat.extend(items.iter().cloned());
+                }
+                _ => flat.push(projector),
             }
-            _ => ColliderProjectorValue {
-                expr: ColliderProjectorExpr::ColliderSum(vec![self.clone(), rhs.clone()].into()),
-            },
+        }
+        if flat.iter().all(|p| matches!(p.expr, ColliderProjectorExpr::Stable(_))) {
+            let mut slots = Vec::new();
+            for projector in flat {
+                let ColliderProjectorExpr::Stable(items) = projector.expr else { unreachable!() };
+                slots.extend(items.iter().cloned());
+            }
+            ColliderProjectorValue::stable(slots)
+        } else {
+            ColliderProjectorValue {
+                expr: ColliderProjectorExpr::ColliderSum(flat.into()),
+            }
         }
     }
 }

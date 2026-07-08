@@ -53,8 +53,9 @@
   (circle-collider {:layer :graze :r 0.35}))
 
 (defcollider bullet-collider [e ctx]
-  (+ (circle-collider {:layer :damage :r e.hitbox})
-     (circle-collider {:layer :graze :r 0.35})))
+  (colliders
+    (circle-collider {:layer :damage :r e.hitbox})
+    (circle-collider {:layer :graze :r 0.35})))
 
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn

@@ -320,7 +320,7 @@
     }
 
     #[test]
-    fn plus_composes_collider_projectors() {
+    fn colliders_composes_projectors() {
         const CARD: &str = r#"
 (defcontact [:zap :zappable]
   (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
@@ -329,8 +329,9 @@
 (defpattern t []
   (seq
     (spawn (pose c[0 0])
-      (+ (circle-collider {:layer :zap :r 0.05})
-         (circle-collider {:layer :graze :r 0.3})))
+      (colliders
+        (circle-collider {:layer :zap :r 0.05})
+        (circle-collider {:layer :graze :r 0.3})))
     (spawn (pose c[0.2 0]) (circle-collider {:layer :zappable :r 0.05}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -345,8 +346,9 @@
     fn defcollider_registers_named_projector() {
         const CARD: &str = r#"
 (defcollider bullet-collider [e ctx]
-  (+ (circle-collider {:layer :zap :r 0.05})
-     (circle-collider {:layer :graze :r 0.3})))
+  (colliders
+    (circle-collider {:layer :zap :r 0.05})
+    (circle-collider {:layer :graze :r 0.3})))
 (defcontact [:zap :zappable]
   (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
 (defcontact [:graze :zappable] {:once :grazed}

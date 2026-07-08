@@ -243,8 +243,9 @@ Projectors compose at the authoring level. For example:
 (defcollider bullet-collider [e ctx]
   (let [r e.hitbox
         graze (* 2 r)]
-    (+ (circle-collider {:radius r :layer :enemy-hit})
-       (circle-collider {:radius graze :layer :enemy-graze}))))
+    (colliders
+      (circle-collider {:radius r :layer :enemy-hit})
+      (circle-collider {:radius graze :layer :enemy-graze}))))
 
 (defcollider laser-collider [e ctx]
   (capsule-chain-collider {:width e.width :layer e.layer}))
