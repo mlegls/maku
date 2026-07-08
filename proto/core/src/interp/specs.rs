@@ -52,67 +52,8 @@ pub(crate) fn as_shape_spec(v: &DynLike) -> Result<(Rc<str>, DynLike), String> {
     }
 }
 
-pub(crate) fn as_collider(v: &DynLike, symbols: &mut SymbolTable) -> Result<DynCollider, String> {
-    if !matches!(v, DynLike::Map(_)) {
-        return Err("colliders: expected maps".into());
-    }
-    let layer = match dynlike_map_get(v, "layer").and_then(|v| dynlike_kw(&v)) {
-        Some(k) => symbols.intern(k.as_ref()),
-        _ => return Err("colliders: missing :layer".into()),
-    };
-    if let Some(shape_v) = dynlike_map_get(v, "shape") {
-        let (shape, opts) = as_shape_spec(&shape_v)?;
-        return match shape.as_ref() {
-            "circle" => Ok(DynCollider::collider_circle(
-                layer,
-                dynlike_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
-            )),
-            "capsule-chain" => Ok(DynCollider::collider_capsule_chain(
-                layer,
-                dynlike_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?,
-                as_capsule_chain_slot(&opts)?,
-            )),
-            _ => Err(format!("colliders: unknown shape :{}", shape)),
-        };
-    }
-    match dynlike_map_get(v, "r") {
-        Some(r) => Ok(DynCollider::collider_circle(layer, as_dyn_num(&r)?)),
-        _ => Err("colliders: missing :r or :shape".into()),
-    }
-}
-
-pub(crate) fn as_stable_collider_slots(
-    v: &DynLike,
-    symbols: &mut SymbolTable,
-) -> Result<Vec<DynCollider>, String> {
-    let mut out = Vec::new();
-    as_stable_collider_slots_into(v, symbols, &mut out)?;
-    Ok(out)
-}
-
-pub(crate) fn as_stable_collider_slots_into(
-    v: &DynLike,
-    symbols: &mut SymbolTable,
-    out: &mut Vec<DynCollider>,
-) -> Result<(), String> {
-    for v in as_dynlike_list(v, "colliders")? {
-        out.push(as_collider(&v, symbols)?);
-    }
-    Ok(())
-}
-
 pub(crate) fn empty_projector_spec_list() -> DynLike {
     DynLike::List(Vec::new().into())
-}
-
-pub(crate) fn as_collider_projector_spec(
-    v: &DynLike,
-    symbols: &mut SymbolTable,
-) -> Result<ColliderProjectorSpec, String> {
-    if !v.is_dynamic() {
-        return Ok(ColliderProjectorSpec::stable(as_stable_collider_slots(v, symbols)?));
-    }
-    Ok(ColliderProjectorSpec::legacy_dynamic(v.clone()))
 }
 
 pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {

@@ -52,19 +52,6 @@ fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     }
 }
 
-pub(crate) fn sf_colliders(
-    items: &[Form],
-    env: &Env,
-    ctx: &mut Ctx,
-    world: &mut World,
-) -> Result<Val, String> {
-    let specs = spec_args(&items[1..], env, ctx, world)?;
-    Ok(Val::ColliderProjectorSpecs(Rc::new(as_collider_projector_spec(
-        &specs,
-        &mut world.symbols,
-    )?)))
-}
-
 pub(crate) fn sf_circle_collider(
     items: &[Form],
     env: &Env,

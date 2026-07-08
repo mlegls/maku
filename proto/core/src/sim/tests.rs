@@ -672,13 +672,15 @@
     #[test]
     fn circle_collider_accepts_dynamic_radius() {
         const CARD: &str = r#"
+(defcollider expanding-collider [e ctx]
+  (circle-collider {:layer :expanding :r ctx.t}))
 (defcontact [:expanding :body] {:once :hit} (fn [a b] (event :hit)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[1 0])
-           (circle-collider {:layer :expanding :r m"t"}))))
+           (expanding-collider))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..30 {
@@ -698,17 +700,18 @@
     }
 
     #[test]
-    fn dynamic_whole_collider_list() {
+    fn active_when_controls_projector_output() {
         const CARD: &str = r#"
+(defcollider appears-after [e ctx]
+  (active-when (> ctx.t 0.5)
+    (circle-collider {:layer :appears :r 0.1})))
 (defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[0 0])
-           (colliders (if (> t 0.5)
-                        [{:layer :appears :shape [:circle {:r 0.1}]}]
-                        [])))))
+           (appears-after))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..30 {

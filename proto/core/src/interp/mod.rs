@@ -633,7 +633,18 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
-            "colliders" => return sf_colliders(items, env, ctx, world),
+            "active-when" => {
+                if items.len() != 3 {
+                    return Err("active-when: expected predicate and collider projector".into());
+                }
+                let child = evaluate(&items[2], env, ctx, world)?;
+                let Val::ColliderProjectorSpecs(child) = child else {
+                    return Err(format!("active-when: expected collider projector, got {:?}", child));
+                };
+                return Ok(Val::ColliderProjectorSpecs(Rc::new(
+                    ColliderProjectorSpec::active_when(items[1].clone(), env.clone(), child.as_ref().clone()),
+                )));
+            }
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),
             "capsule-chain-collider" => return sf_capsule_chain_collider(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),

@@ -26,13 +26,14 @@ pub struct EntityContext {
 }
 
 /// Collider projector algebra currently supported by the interpreter.
-/// `Stable` is already a typed projector list; `LegacyDynamic` preserves the
-/// old dynamic bridge until dynamic projector constructors are elaborated.
+/// Stable constructor slots are the fast path; deferred/composed projectors
+/// are evaluated against `(e, ctx)` during collider materialization.
 #[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
-    LegacyDynamic(DynLike),
     DeferredBody { body: Rc<[Form]>, env: Env },
+    Sum(Rc<[ColliderProjectorSpec]>),
+    ActiveWhen { pred: Form, env: Env, child: Rc<ColliderProjectorSpec> },
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -49,12 +50,6 @@ impl ColliderProjectorSpec {
         }
     }
 
-    pub(crate) fn legacy_dynamic(expr: DynLike) -> ColliderProjectorSpec {
-        ColliderProjectorSpec {
-            expr: ColliderProjectorExpr::LegacyDynamic(expr),
-        }
-    }
-
     pub(crate) fn deferred_body(body: Rc<[Form]>, env: Env) -> ColliderProjectorSpec {
         ColliderProjectorSpec {
             expr: ColliderProjectorExpr::DeferredBody { body, env },
@@ -65,20 +60,32 @@ impl ColliderProjectorSpec {
         ColliderProjectorSpec::stable(Vec::new())
     }
 
-    pub(crate) fn plus(&self, rhs: &ColliderProjectorSpec) -> Result<ColliderProjectorSpec, String> {
+    pub(crate) fn active_when(
+        pred: Form,
+        env: Env,
+        child: ColliderProjectorSpec,
+    ) -> ColliderProjectorSpec {
+        ColliderProjectorSpec {
+            expr: ColliderProjectorExpr::ActiveWhen { pred, env, child: Rc::new(child) },
+        }
+    }
+
+    pub(crate) fn plus(&self, rhs: &ColliderProjectorSpec) -> ColliderProjectorSpec {
         match (&self.expr, &rhs.expr) {
             (ColliderProjectorExpr::Stable(a), ColliderProjectorExpr::Stable(b)) => {
                 let mut slots = Vec::with_capacity(a.len() + b.len());
                 slots.extend(a.iter().cloned());
                 slots.extend(b.iter().cloned());
-                Ok(ColliderProjectorSpec::stable(slots))
+                ColliderProjectorSpec::stable(slots)
             }
-            _ => Err("+: dynamic collider projector composition is not lowered yet".into()),
+            _ => ColliderProjectorSpec {
+                expr: ColliderProjectorExpr::Sum(vec![self.clone(), rhs.clone()].into()),
+            },
         }
     }
 }
 
-/// Compatibility alias for the current `(colliders ...)` bridge surface.
+/// Compatibility alias for older internal names while spawn lowering migrates.
 pub type ColliderSpecList = ColliderProjectorSpec;
 
 /// A source-level renderer projector expression after dyn-lifting and schema

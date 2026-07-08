@@ -126,11 +126,6 @@ pub fn materialize_collider_defs_into(
             ColliderProjectorExpr::Stable(slots) => {
                 out.extend(slots.iter().cloned());
             }
-            ColliderProjectorExpr::LegacyDynamic(expr) => {
-                let val = expr.eval(tau, state, sig)?;
-                let dynlike = DynLike::from_val(val)?;
-                as_stable_collider_slots_into(&dynlike, symbols, out)?;
-            }
             ColliderProjectorExpr::DeferredBody { body, env } => {
                 let e_bound = e_view
                     .cloned()
@@ -164,6 +159,47 @@ pub fn materialize_collider_defs_into(
                         )?;
                     }
                     other => return Err(format!("defcollider: expected collider projector, got {:?}", other)),
+                }
+            }
+            ColliderProjectorExpr::Sum(specs) => {
+                materialize_collider_defs_into(
+                    &ColliderProjector { specs: specs.clone() },
+                    tau,
+                    state,
+                    sig,
+                    e_view,
+                    ctx_view,
+                    symbols,
+                    out,
+                )?;
+            }
+            ColliderProjectorExpr::ActiveWhen { pred, env, child } => {
+                let e_bound = e_view
+                    .cloned()
+                    .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+                let ctx_bound = ctx_view
+                    .cloned()
+                    .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+                let env = env.clone()
+                    .bind("e".into(), e_bound.clone())
+                    .bind("ctx".into(), ctx_bound.clone());
+                let mut run_ctx = Ctx::default();
+                run_ctx.sig = sig.clone();
+                let mut run_world = World::default();
+                run_world.symbols = symbols.clone();
+                let enabled = truthy_pub(&evaluate(pred, &env, &mut run_ctx, &mut run_world)?);
+                *symbols = run_world.symbols;
+                if enabled {
+                    materialize_collider_defs_into(
+                        &ColliderProjector { specs: vec![child.as_ref().clone()].into() },
+                        tau,
+                        state,
+                        sig,
+                        Some(&e_bound),
+                        Some(&ctx_bound),
+                        symbols,
+                        out,
+                    )?;
                 }
             }
         }
