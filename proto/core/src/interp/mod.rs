@@ -26,6 +26,7 @@ mod builtins;
 mod card;
 mod colliders;
 mod coerce;
+mod engine;
 mod r#dyn;
 pub mod model;
 mod motion;
@@ -623,66 +624,8 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "spawn" => return sf_spawn(items, env, ctx, world),
             "colliders" => return sf_colliders(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),
-            "matches" => return sf_matches(items, env),
-            // "manip" is the surface name; "manipulate" kept as an alias
-            "manip" | "manipulate" => {
-                let target = evaluate(&items[1], env, ctx, world)?;
-                let callback = evaluate(&items[2], env, ctx, world)?;
-                // Queries cut across birth structures (§9); handles are the
-                // degenerate case. Predicate functions and EntitySet row views
-                // are the target; map queries are data-only match specs.
-                if is_query_value(&target) {
-                    return Ok(Val::Action(Rc::new(ActionV::Manipulate {
-                        targets: Vec::new(),
-                        query: Some(target),
-                        callback,
-                    })));
-                }
-                let mut targets = Vec::new();
-                collect_handles(&target, &mut targets)?;
-                return Ok(Val::Action(Rc::new(ActionV::Manipulate {
-                    targets,
-                    query: None,
-                    callback,
-                })));
-            }
-            "remat" => {
-                // (remat b dyn) or (remat b (fn [exit] dyn)): snap
-                // {:pos :vel :t}, swap the motion signal, rebase the epoch —
-                // the §9 event mechanism. C⁰ holds by construction (the new
-                // dyn anchors at the snapped pose). The direct form suits
-                // immediate remats (handles expose the view, so b.vel.x
-                // reads the same numbers exit carries); the callback form
-                // matches stages, where the boundary is in the future.
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("remat: expected bullet handle".into());
-                };
-                let f = evaluate(&items[2], env, ctx, world)?;
-                return Ok(Val::Action(Rc::new(ActionV::Remat { target: id, f })));
-            }
-            "set-col" => {
-                // (set-col b :name v) — columns are writable per-entity data
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("set-col: expected bullet handle".into());
-                };
-                let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
-                    return Err("set-col: expected keyword column name".into());
-                };
-                let val = evaluate(&items[3], env, ctx, world)?.num()?;
-                return Ok(Val::Action(Rc::new(ActionV::SetCol {
-                    target: id,
-                    col: world.intern_col(col.as_ref()),
-                    val,
-                })));
-            }
-            "set-style" => {
-                // restyle = pool migration (§7): style is ir, changing it
-                // is an event-level operation, never a signal
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("set-style: expected bullet handle".into());
-                };
-                let style = evaluate(&items[2], env, ctx, world)?;
-                return Ok(Val::Action(Rc::new(ActionV::SetStyle { target: id, style })));
+            name if engine::is_special(name) => {
+                return engine::special(name, items, env, ctx, world).map(|v| v.unwrap());
             }
             "inline" => {
                 // adapter: run the embedded pattern IN the caller's cell
@@ -809,35 +752,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let cell = evaluate(&items[1], env, ctx, world)?.num()? as u64;
                 ctx.sig.cells.borrow_mut().insert(cell, ("#race".to_string(), Val::Num(1.0)));
                 return Ok(Val::Nothing);
-            }
-            "cull" => {
-                // (cull): clear all hostile fire (bomb semantics);
-                // (cull handle): cull one bullet
-                if items.len() == 1 {
-                    return Ok(Val::Action(Rc::new(ActionV::CullHostile)));
-                }
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("cull: expected bullet handle".into());
-                };
-                return Ok(Val::Action(Rc::new(ActionV::Cull { target: id })));
-            }
-            "pos" => {
-                // (pos b): the bullet's current world position — world read.
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("pos: expected bullet handle".into());
-                };
-                let Some(i) = world.find(id) else {
-                    return Err("pos: dead handle".into());
-                };
-                let dyn_figure = world
-                    .entities
-                    .dyn_figure(i)
-                    .ok_or_else(|| format!("pos: missing dyn figure for row {i}"))?;
-                let tau = world.entities.tau(i, world.tick);
-                let readers = entity_motion_readers(i, world);
-                let state = MotionState::new();
-                let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &ctx.sig, &readers))?;
-                return Ok(Val::Pose(Pose::point(p.x, p.y)));
             }
             "in-frame" => {
                 // frames form a monoid: (in-frame f1 f2 body) folds as
@@ -981,37 +895,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     None => Ok(Val::Pose(dyn_pose(&dv, tv, &st, &ctx.sig)?)),
                 };
             }
-            "on-laser" => {
-                // (on-laser b u): pose (position + tangent heading) of the
-                // point at parameter u along a live laser — subfiring
-                let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                    return Err("on-laser: expected laser handle".into());
-                };
-                let u = evaluate(&items[2], env, ctx, world)?.num()?;
-                let Some(i) = world.find(id) else {
-                    return Ok(Val::Pose(Pose::IDENTITY)); // dead handle: no-op pose
-                };
-                let dyn_figure = world
-                    .entities
-                    .dyn_figure(i)
-                    .ok_or_else(|| format!("on-laser: missing dyn figure for row {i}"))?;
-                let Some(curve) = dyn_figure.curve() else {
-                    return Err("on-laser: not a laser".into());
-                };
-                let tau = world.entities.tau(i, world.tick);
-                let readers = entity_motion_readers(i, world);
-                let state = MotionState::new();
-                let mctx = MotionEvalCtx::new(&state, &ctx.sig, &readers);
-                let anchor = dyn_figure_pose_in(dyn_figure, tau, mctx)?;
-                let at = |uu: f64| -> Result<Pose, String> {
-                    let local = eval_curve_pose(&curve.eval, tau, uu, &state, &ctx.sig)?;
-                    Ok(anchor.compose(&local))
-                };
-                let p0 = at(u)?;
-                let p1 = at(u + 0.01)?;
-                let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
-                return Ok(Val::Pose(Pose::oriented(p0.x, p0.y, th)));
-            }
             "live" => {
                 // in a scan context: the channel's current value (class b/d);
                 // at control level: a live pose signal usable as a frame
@@ -1087,97 +970,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     0.0,
                     world_ang - ctx.ambient.angle_or(0.0),
                 )));
-            }
-            // World queries over the manipulate query language (§9): the
-            // target form is a predicate over entity views; data-only map
-            // match specs are still accepted for shorthand.
-            "count-entities" => {
-                let q = evaluate(&items[1], env, ctx, world)?;
-                let idxs = resolve_query(&q, ctx, world)?;
-                return Ok(Val::Num(idxs.len() as f64));
-            }
-            "sum-entities" => {
-                // (sum-entities query :col): the column summed over matches
-                // (absent reads 0). Counters live on entities now; this is
-                // how the stdlib publishes totals ($graze across every
-                // player body) without caring which entity took the contact.
-                let q = evaluate(&items[1], env, ctx, world)?;
-                let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
-                    return Err("sum-entities: expected a keyword column".into());
-                };
-                let idxs = resolve_query(&q, ctx, world)?;
-                let mut total = 0.0;
-                for i in idxs {
-                    total += world.col_get_at(i, &col).unwrap_or(0.0);
-                }
-                return Ok(Val::Num(total));
-            }
-            "entities-where" => {
-                let q = evaluate(&items[1], env, ctx, world)?;
-                let idxs = resolve_query(&q, ctx, world)?;
-                return Ok(Val::EntitySet(idxs.into()));
-            }
-            "entity-pos" => {
-                let target = evaluate(&items[1], env, ctx, world)?;
-                return entity_field_value(target, "pos", world, &ctx.sig);
-            }
-            "entity-col" => {
-                let target = evaluate(&items[1], env, ctx, world)?;
-                let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
-                    return Err("entity-col: expected a keyword column".into());
-                };
-                return entity_col_value(target, &col, world);
-            }
-            "nearest-entity" => {
-                // (nearest-entity query to): position of the nearest match,
-                // or nothing when none — a defchannel yielding nothing
-                // leaves the channel untouched (mock fallbacks survive)
-                let q = evaluate(&items[1], env, ctx, world)?;
-                let (tx, ty) = match evaluate(&items[2], env, ctx, world)? {
-                    Val::Pose(p) => (p.x, p.y),
-                    v => return Err(format!("nearest-entity: expected a point, got {:?}", v)),
-                };
-                let idxs = resolve_query(&q, ctx, world)?;
-                let sig = ctx.sig.clone();
-                let mut best: Option<(f64, (f64, f64))> = None;
-                for i in idxs {
-                    let Some(dyn_figure) = world.entities.dyn_figure(i) else { continue };
-                    let tau = world.entities.tau(i, world.tick);
-                    let readers = entity_motion_readers(i, world);
-                    let state = MotionState::new();
-                    let Ok(p) = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) else { continue };
-                    let d2 = (p.x - tx).powi(2) + (p.y - ty).powi(2);
-                    if best.map(|(bd, _)| d2 < bd).unwrap_or(true) {
-                        best = Some((d2, (p.x, p.y)));
-                    }
-                }
-                return Ok(match best {
-                    Some((_, (x, y))) => Val::Pose(Pose::point(x, y)),
-                    None => Val::Nothing,
-                });
-            }
-            "export" => {
-                let Form::Sym(name) = &items[1] else {
-                    return Err("export: expected a cell name".into());
-                };
-                let scope = cell_scope(env).ok_or("export: no cell scope")?;
-                return Ok(Val::Action(Rc::new(ActionV::Export { scope, name: name.clone() })));
-            }
-            "bind-channel!" => {
-                let Some(Form::Sym(n)) = items.get(1) else {
-                    return Err("bind-channel!: expected a $channel name".into());
-                };
-                let Some(name) = n.strip_prefix('$') else {
-                    return Err("bind-channel!: name must start with $".into());
-                };
-                let Some(expr) = items.get(2) else {
-                    return Err(format!("bind-channel! ${}: expected an expression", name));
-                };
-                return Ok(Val::Action(Rc::new(ActionV::BindChannel {
-                    name: Rc::from(name),
-                    expr: expr.clone(),
-                    env: env.clone(),
-                })));
             }
             "defvar" => {
                 let Some(Form::Sym(name)) = items.get(1) else {

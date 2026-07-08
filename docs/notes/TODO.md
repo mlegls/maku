@@ -58,8 +58,16 @@ work.
   typed dynamic value, not a data atom; the target is still plain `Figure`
   values lifted through `Dyn<Figure>`, with `linear` and friends represented
   as optimized `Dyn<Pose>` constructors that lift to figure dynamics.
-- Decide and implement core-vs-lib builtin stratification before the compiler
-  pass. Specials are the IR; builtins are intrinsics.
+- Continue core-vs-lib builtin stratification before the compiler pass.
+  Current interpreter categories:
+  - `interp/builtins/math.rs`: deterministic numeric intrinsics;
+  - `interp/builtins/array.rs`: sequence/control-like value operations;
+  - `interp/builtins/language.rs`: form/value inspection for macros;
+  - `interp/builtins/geometry.rs`: primitive pose/dyn figure constructors;
+  - `interp/engine.rs`: engine-facing special forms that need `World`,
+    handles, rows, channels, or action construction.
+  Specials are the IR; pure builtins are intrinsics. Anything expressible in
+  `.maku` without hot-path or boundary semantics should move toward lib code.
 - Finish shared model extraction. `model::figure` is top-level and generic
   over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids,
   entity handles, primitive data atoms, and runtime collider/render boundary
