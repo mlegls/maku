@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::edn::Form;
+use crate::interp::types::Type;
 use std::rc::Rc;
 
 /// A source-level collider slot expression after dyn-lifting and schema
@@ -88,11 +89,46 @@ pub(crate) struct SpawnMetaInput {
     pub computed_pairs: Vec<(Val, Val)>,
 }
 
+/// Compositional expected types for the low-level spawn API. The current
+/// interpreter still stores bridge values in `SpawnSlots`, but these are the
+/// semantic targets the future elaborator should use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SpawnSlotTypes {
+    pub figure: Type,
+    pub colliders: Type,
+    pub renderers: Type,
+    pub meta: Type,
+}
+
+impl SpawnSlotTypes {
+    pub(crate) fn low_level() -> SpawnSlotTypes {
+        SpawnSlotTypes {
+            figure: Type::spawn_figure(),
+            colliders: Type::spawn_colliders(),
+            renderers: Type::spawn_renderers(),
+            meta: Type::spawn_meta(),
+        }
+    }
+}
+
 /// Slot-aware spawn inputs after ordinary argument evaluation, before entity
 /// flattening and backend lowering.
 pub(crate) struct SpawnSlots {
+    pub targets: SpawnSlotTypes,
     pub figure: Val,
     pub colliders: Vec<ColliderSpecList>,
     pub renderers: Vec<RenderSpecList>,
     pub meta: SpawnMetaInput,
+}
+
+/// Lowered spawn plan after slot normalization, meta/directive preservation,
+/// figure flattening, and per-element rand instantiation. This is still
+/// interpreter-facing, but it separates semantic slot planning from final
+/// `EntitySpec` construction.
+pub(crate) struct SpawnPlan {
+    pub elems: Vec<SpawnElem>,
+    pub meta: Val,
+    pub meta_forms: Vec<Form>,
+    pub colliders: Vec<ColliderSpecList>,
+    pub renderers: Vec<RenderSpecList>,
 }

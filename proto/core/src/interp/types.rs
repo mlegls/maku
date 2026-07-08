@@ -29,6 +29,36 @@ pub enum Type {
     Var(TypeVar),
 }
 
+impl Type {
+    pub fn dyn_of(value: Type) -> Type {
+        Type::Dyn { class: None, value: Box::new(value) }
+    }
+
+    pub fn list_of(value: Type) -> Type {
+        Type::List(Box::new(value))
+    }
+
+    pub fn dyn_list_of(value: Type) -> Type {
+        Type::dyn_of(Type::list_of(value))
+    }
+
+    pub fn spawn_figure() -> Type {
+        Type::dyn_of(Type::Figure)
+    }
+
+    pub fn spawn_colliders() -> Type {
+        Type::dyn_list_of(Type::ColliderData)
+    }
+
+    pub fn spawn_renderers() -> Type {
+        Type::dyn_list_of(Type::RenderData)
+    }
+
+    pub fn spawn_meta() -> Type {
+        Type::dyn_of(Type::Meta)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldType {
     pub name: String,
@@ -43,10 +73,6 @@ pub enum ExpectedType {
     Any,
     Exact(Type),
     DynOf(Type),
-    SpawnFigure,
-    SpawnColliders,
-    SpawnRenderers,
-    SpawnMeta,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -129,6 +129,7 @@ fn normalize_spawn_input(
         }
     }
     Ok(SpawnSlots {
+        targets: SpawnSlotTypes::low_level(),
         figure,
         colliders,
         renderers,
@@ -172,6 +173,33 @@ fn merge_spawn_meta(
     }
     pairs.extend(meta.computed_pairs);
     Ok(Val::Map(Rc::new(pairs)))
+}
+
+fn plan_spawn(
+    slots: SpawnSlots,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<SpawnPlan, String> {
+    debug_assert_eq!(slots.targets, SpawnSlotTypes::low_level());
+    let meta_forms = slots.meta.forms.clone();
+    let meta = merge_spawn_meta(slots.meta, env, ctx, world)?;
+    let mut elems = Vec::new();
+    flatten_elems(slots.figure, &mut Vec::new(), &mut elems)?;
+    // rand in signal expressions is an ir constant per element (§5): clone the
+    // motion tree per element, substituting rand calls with drawn constants
+    for e in elems.iter_mut() {
+        if dyn_figure_has_rand(&e.dyn_figure) {
+            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, world);
+        }
+    }
+    Ok(SpawnPlan {
+        elems,
+        meta,
+        meta_forms,
+        colliders: slots.colliders,
+        renderers: slots.renderers,
+    })
 }
 
 fn build_entity_specs(
@@ -356,23 +384,13 @@ fn build_entity_specs(
 
 pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let slots = normalize_spawn_input(items, env, ctx, world)?;
-    let meta_forms = slots.meta.forms.clone();
-    let meta = merge_spawn_meta(slots.meta, env, ctx, world)?;
-    let mut elems = Vec::new();
-    flatten_elems(slots.figure, &mut Vec::new(), &mut elems)?;
-    // rand in signal expressions is an ir constant per element (§5): clone the
-    // motion tree per element, substituting rand calls with drawn constants
-    for e in elems.iter_mut() {
-        if dyn_figure_has_rand(&e.dyn_figure) {
-            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, world);
-        }
-    }
+    let plan = plan_spawn(slots, env, ctx, world)?;
     let entities = build_entity_specs(
-        elems,
-        &meta,
-        &meta_forms,
-        slots.colliders,
-        slots.renderers,
+        plan.elems,
+        &plan.meta,
+        &plan.meta_forms,
+        plan.colliders,
+        plan.renderers,
         env,
         world,
     )?;
