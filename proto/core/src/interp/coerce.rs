@@ -42,7 +42,6 @@ impl DataAtom {
 #[derive(Clone, Debug)]
 pub enum DynLike {
     Atom(DataAtom),
-    Pose(DynPose),
     Dyn(DynVal),
     List(Rc<[DynLike]>),
     Map(Rc<Vec<(DataAtom, DynLike)>>),
@@ -50,6 +49,7 @@ pub enum DynLike {
 
 #[derive(Clone, Debug)]
 pub enum DynVal {
+    Pose(DynPose),
     Expr { form: Form, env: Env },
 }
 
@@ -57,7 +57,6 @@ impl DynLike {
     pub fn is_dynamic(&self) -> bool {
         match self {
             DynLike::Atom(_) => false,
-            DynLike::Pose(_) => true,
             DynLike::Dyn(_) => true,
             DynLike::List(items) => items.iter().any(DynLike::is_dynamic),
             DynLike::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
@@ -67,7 +66,7 @@ impl DynLike {
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
         match self {
             DynLike::Atom(v) => Ok(v.to_val()),
-            DynLike::Pose(d) => eval_dyn(d, tau, state, sig).map(Val::Pose),
+            DynLike::Dyn(DynVal::Pose(d)) => eval_dyn(d, tau, state, sig).map(Val::Pose),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
                 eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, 0)), None)
             }
@@ -87,7 +86,7 @@ impl DynLike {
     pub fn from_val(v: Val) -> Result<DynLike, String> {
         match v {
             Val::DynLike(d) => Ok((*d).clone()),
-            Val::Dyn(d) => Ok(DynLike::Pose(d)),
+            Val::Dyn(d) => Ok(DynLike::Dyn(DynVal::Pose(d))),
             Val::Arr(items) => items
                 .iter()
                 .cloned()
@@ -137,8 +136,8 @@ pub(crate) fn dynlike_to_val(v: &DynLike) -> Result<Val, String> {
 pub(crate) fn dynlike_to_structural_val(v: &DynLike) -> Result<Val, String> {
     match v {
         DynLike::Atom(atom) => Ok(atom.to_val()),
-        DynLike::Pose(d) => Ok(Val::Dyn(d.clone())),
-        DynLike::Dyn(_) => Ok(Val::DynLike(Rc::new(v.clone()))),
+        DynLike::Dyn(DynVal::Pose(d)) => Ok(Val::Dyn(d.clone())),
+        DynLike::Dyn(DynVal::Expr { .. }) => Ok(Val::DynLike(Rc::new(v.clone()))),
         DynLike::List(items) => items
             .iter()
             .map(dynlike_to_structural_val)

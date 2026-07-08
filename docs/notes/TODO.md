@@ -54,6 +54,10 @@ work.
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR
   targets, not scattered Rust conversions over raw values.
+- Collapse the remaining pose/figure asymmetry. `DynLike::Dyn(Pose)` is a
+  typed dynamic value, not a data atom; the target is still plain `Figure`
+  values lifted through `Dyn<Figure>`, with `linear` and friends represented
+  as optimized `Dyn<Pose>` constructors that lift to figure dynamics.
 - Decide and implement core-vs-lib builtin stratification before the compiler
   pass. Specials are the IR; builtins are intrinsics.
 - Finish shared model extraction. `model::figure` is top-level and generic
