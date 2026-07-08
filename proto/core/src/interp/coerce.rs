@@ -1,0 +1,112 @@
+//! Explicit value-to-dyn coercion machinery.
+//!
+//! This stays interpreter-local for now because deferred dyn values carry
+//! interpreter forms and environments. The important boundary is that
+//! language coercions are centralized as explicit branches, rather than hidden
+//! behind Rust conversion traits.
+
+use super::*;
+use std::rc::Rc;
+
+/// Atomic data values in the target runtime-data layer. `Legacy` is a
+/// temporary bridge for interpreter/control values and pre-refactor data
+/// atoms; typed dyn boundaries should consume the concrete variants first.
+#[derive(Clone, Debug)]
+pub enum DataAtom {
+    Num(f64),
+    Kw(Rc<str>),
+    Figure(Figure),
+    Handle(EntityRef),
+    Nothing,
+    Legacy(Val),
+}
+
+impl DataAtom {
+    pub fn from_val(v: Val) -> DataAtom {
+        match v {
+            Val::Num(n) => DataAtom::Num(n),
+            Val::Kw(k) => DataAtom::Kw(k),
+            Val::Pose(p) => DataAtom::Figure(Figure::Pose(p)),
+            Val::Figure(f) => DataAtom::Figure(f),
+            Val::Handle(id) => DataAtom::Handle(id),
+            Val::Nothing => DataAtom::Nothing,
+            other => DataAtom::Legacy(other),
+        }
+    }
+
+    pub fn to_val(&self) -> Val {
+        match self {
+            DataAtom::Num(n) => Val::Num(*n),
+            DataAtom::Kw(k) => Val::Kw(k.clone()),
+            DataAtom::Figure(Figure::Pose(p)) => Val::Pose(*p),
+            DataAtom::Figure(f) => Val::Figure(f.clone()),
+            DataAtom::Handle(id) => Val::Handle(*id),
+            DataAtom::Nothing => Val::Nothing,
+            DataAtom::Legacy(v) => v.clone(),
+        }
+    }
+}
+
+/// A value-level structure that can be lifted into a typed dyn at an
+/// expected boundary. This is not source syntax and not a typed `Dyn<T>` by
+/// itself: `DynLike::Dyn` keeps a deferred expression plus its environment,
+/// while typed boundaries such as spawn interpret the structure with `as_*`
+/// schema checks. Ordinary static structures still evaluate to ordinary
+/// arrays/maps.
+#[derive(Clone, Debug)]
+pub enum DynLike {
+    Atom(DataAtom),
+    Dyn(DynVal),
+    List(Rc<[DynLike]>),
+    Map(Rc<Vec<(DataAtom, DynLike)>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum DynVal {
+    Expr { form: Form, env: Env },
+}
+
+impl DynLike {
+    pub fn is_dynamic(&self) -> bool {
+        match self {
+            DynLike::Atom(_) => false,
+            DynLike::Dyn(_) => true,
+            DynLike::List(items) => items.iter().any(DynLike::is_dynamic),
+            DynLike::Map(kvs) => kvs.iter().any(|(_, v)| v.is_dynamic()),
+        }
+    }
+
+    pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
+        match self {
+            DynLike::Atom(v) => Ok(v.to_val()),
+            DynLike::Dyn(DynVal::Expr { form, env }) => {
+                eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, 0)), None)
+            }
+            DynLike::List(items) => items
+                .iter()
+                .map(|v| v.eval(tau, state, sig))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Val::arr),
+            DynLike::Map(kvs) => kvs
+                .iter()
+                .map(|(k, v)| Ok((k.to_val(), v.eval(tau, state, sig)?)))
+                .collect::<Result<Vec<_>, String>>()
+                .map(|pairs| Val::Map(Rc::new(pairs))),
+        }
+    }
+
+    pub fn from_val(v: Val) -> DynLike {
+        match v {
+            Val::DynLike(d) => (*d).clone(),
+            Val::Arr(items) => DynLike::List(
+                items.iter().cloned().map(DynLike::from_val).collect::<Vec<_>>().into(),
+            ),
+            Val::Map(kvs) => DynLike::Map(Rc::new(
+                kvs.iter()
+                    .map(|(k, v)| (DataAtom::from_val(k.clone()), DynLike::from_val(v.clone())))
+                    .collect(),
+            )),
+            other => DynLike::Atom(DataAtom::from_val(other)),
+        }
+    }
+}

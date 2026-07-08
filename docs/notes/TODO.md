@@ -50,6 +50,10 @@ work.
 - Compile dyn evaluation to a flat program with fixed scratch storage. The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
+- Keep dyn coercions as explicit language-semantic branches while the
+  interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
+  bridge; a future trait-style coercion surface should be over typed IR
+  targets, not scattered Rust conversions over raw values.
 - Decide and implement core-vs-lib builtin stratification before the compiler
   pass. Specials are the IR; builtins are intrinsics.
 - Finish shared model extraction. `model::figure` is top-level and generic
