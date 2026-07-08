@@ -593,6 +593,28 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 if (items.len() - 1) % 2 != 0 {
                     return Err("cond: expected predicate/value pairs".into());
                 }
+                let mut projector_clauses = Vec::new();
+                let mut all_projectors = true;
+                for pair in items[1..].chunks(2) {
+                    let pred = match &pair[0] {
+                        Form::Kw(k) if &**k == "else" => None,
+                        pred => Some(pred.clone()),
+                    };
+                    match evaluate(&pair[1], env, ctx, world) {
+                        Ok(Val::ColliderProjector(projector)) => {
+                            projector_clauses.push((pred, projector.as_ref().clone()));
+                        }
+                        Ok(_) | Err(_) => {
+                            all_projectors = false;
+                            break;
+                        }
+                    }
+                }
+                if all_projectors {
+                    return Ok(Val::ColliderProjector(Rc::new(
+                        ColliderProjectorValue::cond(projector_clauses, env.clone()),
+                    )));
+                }
                 for pair in items[1..].chunks(2) {
                     let enabled = match &pair[0] {
                         Form::Kw(k) if &**k == "else" => true,

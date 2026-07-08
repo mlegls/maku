@@ -751,6 +751,36 @@
         );
     }
 
+    #[test]
+    fn low_level_cond_controls_projector_output() {
+        const CARD: &str = r#"
+(defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0])
+           (circle-collider {:layer :body :r 0.05}))
+    (spawn (pose c[0 0])
+           (cond
+             (> ctx.t 0.5) (circle-collider {:layer :appears :r 0.1})
+             :else (circle-collider {:layer :cold :r 0.01})))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.events_vec().iter().all(|e| &*e.name != "hit"),
+            "projector-level cond should keep the cold branch before the predicate"
+        );
+        for _ in 0..60 {
+            sim.step().unwrap();
+        }
+        assert!(
+            sim.events_vec().iter().any(|e| &*e.name == "hit"),
+            "projector-level cond should materialize the first matching branch"
+        );
+    }
+
     /// The duel-card bug: aim inside an expression-level frame must aim
     /// FROM that frame's position (the frame is ambient for its body),
     /// not from the world origin. Player just below the source → entities

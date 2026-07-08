@@ -34,6 +34,7 @@ pub enum ColliderProjectorExpr {
     Circle { opts: Option<Form>, env: Env },
     CapsuleChain { opts: Option<Form>, env: Env },
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
+    Cond { clauses: Rc<[(Option<Form>, ColliderProjectorValue)]>, env: Env },
     ColliderSum(Rc<[ColliderProjectorValue]>),
 }
 
@@ -70,6 +71,15 @@ impl ColliderProjectorValue {
     pub(crate) fn capsule_chain(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
         ColliderProjectorValue {
             expr: ColliderProjectorExpr::CapsuleChain { opts, env },
+        }
+    }
+
+    pub(crate) fn cond(
+        clauses: Vec<(Option<Form>, ColliderProjectorValue)>,
+        env: Env,
+    ) -> ColliderProjectorValue {
+        ColliderProjectorValue {
+            expr: ColliderProjectorExpr::Cond { clauses: clauses.into(), env },
         }
     }
 

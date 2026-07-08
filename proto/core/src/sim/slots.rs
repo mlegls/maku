@@ -185,6 +185,42 @@ pub fn materialize_collider_defs_into(
                     other => return Err(format!("defcollider: expected collider projector, got {:?}", other)),
                 }
             }
+            ColliderProjectorExpr::Cond { clauses, env } => {
+                let e_bound = e_view
+                    .cloned()
+                    .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+                let ctx_bound = ctx_view
+                    .cloned()
+                    .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+                let env = env.clone()
+                    .bind("e".into(), e_bound.clone())
+                    .bind("ctx".into(), ctx_bound.clone());
+                let mut run_ctx = Ctx::default();
+                run_ctx.sig = sig.clone();
+                let mut run_world = World::default();
+                run_world.symbols = symbols.clone();
+                for (pred, child) in clauses.iter() {
+                    let enabled = match pred {
+                        Some(pred) => truthy_pub(&evaluate(pred, &env, &mut run_ctx, &mut run_world)?),
+                        None => true,
+                    };
+                    if enabled {
+                        *symbols = run_world.symbols;
+                        materialize_collider_defs_into(
+                            &ColliderProjector { projectors: vec![child.clone()].into() },
+                            tau,
+                            state,
+                            sig,
+                            Some(&e_bound),
+                            Some(&ctx_bound),
+                            symbols,
+                            out,
+                        )?;
+                        return Ok(());
+                    }
+                }
+                *symbols = run_world.symbols;
+            }
             ColliderProjectorExpr::ColliderSum(specs) => {
                 materialize_collider_defs_into(
                     &ColliderProjector { projectors: specs.clone() },
