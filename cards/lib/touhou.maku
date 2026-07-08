@@ -29,8 +29,8 @@
     (if (nothing? target) (channel $nearest-enemy c[0 3]) target)))
 
 ;; Compatibility helper while cards still pass :hitbox in meta. The genre
-;; templates own their collider radii directly; core's :hitbox support is only
-;; a fallback for raw low-level spawn calls and older cards.
+;; templates own their collider radii directly; raw low-level spawn has no
+;; :hitbox behavior.
 (defn meta-hitbox* [metas default]
   (match metas
     [] default

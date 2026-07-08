@@ -22,7 +22,6 @@ const RESERVED_KW_FIELD_KEYS: &[&str] = &[
     "style",
     "cols",
     "triggers",
-    "hitbox",
     "damage",
     "hp",
     "expose",
@@ -316,10 +315,6 @@ fn build_entity_specs(
             _ => {}
         }
     }
-    let hitbox = match map_get(meta_value, "hitbox") {
-        Some(Val::Num(n)) => Some(n),
-        _ => None,
-    };
     // :expose {$some-hp :hp}: publish this entity's column as a derived
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
@@ -333,8 +328,6 @@ fn build_entity_specs(
     // an entity with no colliders is inert to the contact pass (scenery);
     // what a "bullet" or "enemy" carries is the library's business
     // (spawn-bullet/spawn-enemy in lib/touhou.maku).
-    // :hitbox r resizes the PRIMARY (first) collider — the generic knob
-    // that lets a template's default collider set fit a bigger sprite.
     let mut explicit_colliders = collider_slots;
     let mut explicit_renderers = renderer_slots;
     if explicit_colliders.is_empty() {
@@ -361,9 +354,6 @@ fn build_entity_specs(
         .map(|(((e, style), sigs), cols)| {
             let mut collider_specs = shared_collider_specs.iter().cloned().collect::<Vec<_>>();
             collider_specs.push(e.collider_specs);
-            if let Some(radius) = hitbox {
-                apply_primary_hitbox(&mut collider_specs, radius);
-            }
             let mut render_specs = shared_render_specs.iter().cloned().collect::<Vec<_>>();
             render_specs.push(e.render_specs);
             EntitySpec {
@@ -457,80 +447,6 @@ fn curve_projection_spec(
         "shape",
         DynLike::List(vec![dynlike_kw_atom("polyline"), dynlike_map(opts)].into()),
     )])
-}
-
-fn data_kw_is(k: &DataAtom, name: &str) -> bool {
-    matches!(k, DataAtom::Kw(kw) if &**kw == name)
-}
-
-fn dynlike_map_set(m: &DynLike, key: &str, val: DynLike) -> DynLike {
-    let DynLike::Map(kvs) = m else {
-        return m.clone();
-    };
-    let mut out = Vec::with_capacity(kvs.len() + 1);
-    let mut replaced = false;
-    for (k, v) in kvs.iter() {
-        if !replaced && data_kw_is(k, key) {
-            out.push((k.clone(), val.clone()));
-            replaced = true;
-        } else {
-            out.push((k.clone(), v.clone()));
-        }
-    }
-    if !replaced {
-        out.push((DataAtom::Kw(key.into()), val));
-    }
-    DynLike::Map(Rc::new(out))
-}
-
-fn replace_circle_spec_radius(spec: &DynLike, radius: f64) -> Option<DynLike> {
-    if !matches!(spec, DynLike::Map(_)) {
-        return None;
-    }
-    let radius = dynlike_num(radius);
-    if let Some(shape_v) = dynlike_map_get(spec, "shape") {
-        let Ok((shape, opts)) = as_shape_spec(&shape_v) else {
-            return None;
-        };
-        if shape.as_ref() != "circle" {
-            return None;
-        }
-        let opts = dynlike_map_set(&opts, "r", radius);
-        let shape = DynLike::List(vec![dynlike_kw_atom("circle"), opts].into());
-        return Some(dynlike_map_set(spec, "shape", shape));
-    }
-    if dynlike_map_get(spec, "r").is_some() {
-        return Some(dynlike_map_set(spec, "r", radius));
-    }
-    None
-}
-
-fn replace_primary_hitbox_spec(list: &DynLike, radius: f64) -> Option<DynLike> {
-    let DynLike::List(items) = list else {
-        return None;
-    };
-    let mut out = Vec::with_capacity(items.len());
-    let mut replaced = false;
-    for item in items.iter() {
-        if !replaced {
-            if let Some(next) = replace_circle_spec_radius(item, radius) {
-                out.push(next);
-                replaced = true;
-                continue;
-            }
-        }
-        out.push(item.clone());
-    }
-    replaced.then(|| DynLike::List(out.into()))
-}
-
-fn apply_primary_hitbox(lists: &mut [ColliderSpecList], radius: f64) {
-    for list in lists.iter_mut() {
-        if let Some(next) = replace_primary_hitbox_spec(&list.expr, radius) {
-            *list = ColliderSpecList::checked(next);
-            break;
-        }
-    }
 }
 
 pub(crate) fn flatten_elems(
