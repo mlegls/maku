@@ -48,6 +48,16 @@
                      next (if (nothing? here) default here)]
                  (damage-value* rest next))))
 
+(defn value-or [x d] (if (nothing? x) d x))
+
+(defn laser-hot-fraction [e ctx]
+  (let [warn (value-or e.warn 0)
+        active (value-or e.active inf)
+        fill (value-or e.fill 1)]
+    (if (< ctx.t warn)
+      0
+      (if (> ctx.t (+ warn active)) 0 fill))))
+
 ;; hostile bullet: a damage core inside a graze ring
 (defcollider :pose graze-collider [e ctx]
   (circle-collider {:layer :graze :r 0.35}))
@@ -56,6 +66,17 @@
   (colliders
     (circle-collider {:layer :damage :r e.hitbox})
     (circle-collider {:layer :graze :r 0.35})))
+
+(defcollider :parametric laser-collider [e ctx]
+  (let [frac (laser-hot-fraction e ctx)]
+    (if (< frac 0.000001)
+      (colliders)
+      (capsule-chain-collider {:layer :beam
+                               :r (value-or e.radius (value-or e.r 0.08))
+                               :u-max (value-or e.u-max 10)
+                               :resolution (value-or e.resolution 0.1)
+                               :fraction frac
+                               :width 0}))))
 
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
@@ -80,7 +101,7 @@
           ~@metas))
 
 ;; a col read that defaults when the column is absent
-(defn col-or [x d] (if (nothing? x) d x))
+(defn col-or [x d] (value-or x d))
 (defn hp-of [b] (col-or (:hp b) 0))
 
 ;; boss: an enemy WITH A PHASE MACHINE — that is the whole difference.

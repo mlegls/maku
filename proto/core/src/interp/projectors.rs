@@ -59,6 +59,7 @@ pub(crate) fn contains_legacy_projector_context(form: &Form) -> bool {
         Some(&ProjectorScope {
             entity: "e".into(),
             context: "ctx".into(),
+            figure: FigureProjectorKind::Pose,
         }),
     )
 }
@@ -215,6 +216,16 @@ pub(crate) fn sf_colliders(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Val, String> {
+    if items.len() == 1 {
+        let figure = ctx
+            .projector_scope
+            .as_ref()
+            .map(|scope| scope.figure)
+            .unwrap_or(FigureProjectorKind::Pose);
+        return Ok(Val::ColliderProjector(Rc::new(
+            ColliderProjectorValue::stable_for(figure, Vec::new()),
+        )));
+    }
     let mut projectors = Vec::new();
     for item in &items[1..] {
         match evaluate(item, env, ctx, world)? {
@@ -238,6 +249,13 @@ pub(crate) fn sf_circle_collider(
     world: &mut World,
 ) -> Result<Val, String> {
     let opts_form = opts_form(items, "circle-collider")?;
+    if ctx
+        .projector_scope
+        .as_ref()
+        .is_some_and(|scope| scope.figure != FigureProjectorKind::Pose)
+    {
+        return Err("circle-collider: requires a :pose projector scope".into());
+    }
     if ctx.projector_scope.is_none()
         && opts_form.as_ref().is_some_and(contains_legacy_projector_context)
     {
@@ -269,11 +287,20 @@ pub(crate) fn sf_capsule_chain_collider(
     {
         return Err("capsule-chain-collider: entity/context overrides require a projector scope".into());
     }
+    if let Some(scope) = &ctx.projector_scope {
+        return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
+            scope.figure,
+            opts_form,
+            env.clone(),
+            Some(scope.clone()),
+        ))));
+    }
     if opts_form
         .as_ref()
         .is_some_and(|form| contains_bound_projector_context(form, ctx.projector_scope.as_ref()))
     {
         return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
+            FigureProjectorKind::Pose,
             opts_form,
             env.clone(),
             ctx.projector_scope.clone(),

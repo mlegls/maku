@@ -384,18 +384,36 @@
     }
 
     #[test]
-    fn defcollider_rejects_unsupported_figure_type() {
+    fn defcollider_accepts_parametric_figure_type() {
         const CARD: &str = r#"
+(defcontact [:beam :body] {:once :hit}
+  (fn [a b] (event :hit)))
 (defcollider :parametric laser-collider [e ctx]
+  (capsule-chain-collider {:layer :beam :r 0.1}))
+(defpattern t []
+  (par
+    (spawn (pose c[0 0]) (circle-collider {:layer :body :r 0.06}))
+    (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+           laser-collider)))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
+    }
+
+    #[test]
+    fn defcollider_rejects_unknown_figure_type() {
+        const CARD: &str = r#"
+(defcollider :polyline laser-collider [e ctx]
   (capsule-chain-collider {:layer :beam :r 0.1}))
 (defpattern t [] (spawn (pose c[0 0]) laser-collider))
 "#;
-        let err = match Sim::load(CARD, Some("t")) {
-            Ok(_) => panic!("unsupported defcollider figure type unexpectedly loaded"),
-            Err(err) => err,
+        let Err(err) = Sim::load(CARD, Some("t")) else {
+            assert!(false, "unknown defcollider figure type unexpectedly loaded");
+            return;
         };
         assert!(
-            err.contains("unsupported figure type :parametric"),
+            err.contains("unsupported figure type :polyline"),
             "expected unsupported figure type error, got {err}"
         );
     }
@@ -721,6 +739,27 @@
         assert!(
             sim.render().iter().any(|r| matches!(r, RenderItem::Polyline { active: true, .. })),
             "explicit polyline renderer produced a render item"
+        );
+    }
+
+    #[test]
+    fn touhou_laser_collider_reads_lifecycle_from_cols() {
+        const CARD: &str = r#"
+(import "touhou")
+(defcontact [:beam :body] {:once :hit} (fn [a b] (event :hit)))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0])
+           (circle-collider {:layer :body :r 0.06}))
+    (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+           {:cols {:warn 0 :active 2 :u-max 6 :radius 0.06 :resolution 0.1}}
+           laser-collider)))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(
+            sim.events_vec().iter().any(|e| &*e.name == "hit"),
+            "touhou laser-collider should project an active capsule chain"
         );
     }
 

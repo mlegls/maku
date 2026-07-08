@@ -726,6 +726,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 ctx.projector_scope = Some(ProjectorScope {
                     entity: e_name.clone(),
                     context: ctx_name.clone(),
+                    figure,
                 });
                 let mut last = Val::Nothing;
                 for form in projector_items[body_idx..].iter() {

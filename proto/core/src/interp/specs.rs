@@ -21,6 +21,15 @@ pub(crate) fn as_sample_set(opts: &DynLike) -> Result<SampleSet, String> {
 }
 
 pub(crate) fn as_slot_activity(opts: &DynLike) -> Result<SlotActivity, String> {
+    if let Some(frac) = dynlike_map_get(opts, "fraction")
+        .or_else(|| dynlike_map_get(opts, "frac"))
+    {
+        return Ok(SlotActivity {
+            warn: 0.0,
+            active: f64::INFINITY,
+            hot_frac_sig: Some(as_dyn_num(&frac)?),
+        });
+    }
     Ok(SlotActivity {
         warn: dynlike_map_as_static_num(opts, "warn", 0.0)?,
         active: dynlike_map_as_static_num(opts, "active", f64::INFINITY)?,

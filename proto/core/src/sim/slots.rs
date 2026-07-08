@@ -174,6 +174,7 @@ pub fn materialize_collider_defs_into(
                     (Some(entity), Some(context)) => Some(ProjectorScope {
                         entity: entity.clone(),
                         context: context.clone(),
+                        figure: list.figure,
                     }),
                     _ => None,
                 };

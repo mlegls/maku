@@ -29,6 +29,7 @@ pub struct EntityContext {
 pub struct ProjectorScope {
     pub entity: Rc<str>,
     pub context: Rc<str>,
+    pub figure: FigureProjectorKind,
 }
 
 /// Collider projector algebra currently supported by the interpreter.
@@ -37,14 +38,16 @@ pub struct ProjectorScope {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FigureProjectorKind {
     Pose,
+    Parametric,
 }
 
 impl FigureProjectorKind {
     pub(crate) fn from_defcollider_keyword(name: &str) -> Result<FigureProjectorKind, String> {
         match name {
             "pose" => Ok(FigureProjectorKind::Pose),
+            "parametric" => Ok(FigureProjectorKind::Parametric),
             other => Err(format!(
-                "defcollider: unsupported figure type :{} (only :pose is implemented)",
+                "defcollider: unsupported figure type :{}",
                 other
             )),
         }
@@ -53,6 +56,7 @@ impl FigureProjectorKind {
     pub(crate) fn name(self) -> &'static str {
         match self {
             FigureProjectorKind::Pose => "pose",
+            FigureProjectorKind::Parametric => "parametric",
         }
     }
 }
@@ -94,8 +98,15 @@ pub struct ColliderProjectorValue {
 
 impl ColliderProjectorValue {
     pub(crate) fn stable(slots: Vec<DynCollider>) -> ColliderProjectorValue {
+        ColliderProjectorValue::stable_for(FigureProjectorKind::Pose, slots)
+    }
+
+    pub(crate) fn stable_for(
+        figure: FigureProjectorKind,
+        slots: Vec<DynCollider>,
+    ) -> ColliderProjectorValue {
         ColliderProjectorValue {
-            figure: FigureProjectorKind::Pose,
+            figure,
             expr: ColliderProjectorExpr::Stable(slots.into()),
         }
     }
@@ -120,12 +131,13 @@ impl ColliderProjectorValue {
     }
 
     pub(crate) fn capsule_chain(
+        figure: FigureProjectorKind,
         opts: Option<Form>,
         env: Env,
         scope: Option<ProjectorScope>,
     ) -> ColliderProjectorValue {
         ColliderProjectorValue {
-            figure: FigureProjectorKind::Pose,
+            figure,
             expr: ColliderProjectorExpr::CapsuleChain { opts, env, scope },
         }
     }
