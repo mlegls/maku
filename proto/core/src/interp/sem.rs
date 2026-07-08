@@ -51,10 +51,26 @@ impl FigureProjectorKind {
     }
 }
 
+/// Concrete numeric expression for a primitive projector override. This is not
+/// a dyn slot: any expression is evaluated in the projector's already-bound
+/// `e`/`ctx` environment and must produce a number for the current tick.
+#[derive(Clone, Debug)]
+pub enum ProjectorNum {
+    Const(f64),
+    Expr(Form),
+}
+
+#[derive(Clone, Debug)]
+pub struct CircleProjectorSpec {
+    pub layer: Symbol,
+    pub radius: ProjectorNum,
+    pub env: Env,
+}
+
 #[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
-    Circle { opts: Option<Form>, env: Env },
+    Circle(CircleProjectorSpec),
     CapsuleChain { opts: Option<Form>, env: Env },
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     Cond { clauses: Rc<[(Option<Form>, ColliderProjectorValue)]>, env: Env },
@@ -89,10 +105,10 @@ impl ColliderProjectorValue {
         }
     }
 
-    pub(crate) fn circle(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
+    pub(crate) fn circle(spec: CircleProjectorSpec) -> ColliderProjectorValue {
         ColliderProjectorValue {
             figure: FigureProjectorKind::Pose,
-            expr: ColliderProjectorExpr::Circle { opts, env },
+            expr: ColliderProjectorExpr::Circle(spec),
         }
     }
 

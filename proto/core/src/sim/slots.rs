@@ -138,9 +138,9 @@ pub fn materialize_collider_defs_into(
             ColliderProjectorExpr::Stable(slots) => {
                 out.extend(slots.iter().cloned());
             }
-            ColliderProjectorExpr::Circle { opts, env } => {
-                let env = bind_projector_context(env, e_view, ctx_view);
-                out.push(materialize_circle_projector(opts, &env, sig, symbols)?);
+            ColliderProjectorExpr::Circle(spec) => {
+                let env = bind_projector_context(&spec.env, e_view, ctx_view);
+                out.push(materialize_circle_projector(spec, &env, sig)?);
             }
             ColliderProjectorExpr::CapsuleChain { opts, env } => {
                 let env = bind_projector_context(env, e_view, ctx_view);

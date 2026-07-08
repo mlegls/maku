@@ -69,6 +69,71 @@ fn circle_projector_from_opts(opts: &DynLike, symbols: &mut SymbolTable) -> Resu
     Ok(DynCollider::collider_circle(layer, radius))
 }
 
+fn static_kw_field(
+    name: &str,
+    opts: &Option<Form>,
+    key: &str,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Rc<str>, String> {
+    let Some(Form::Map(kvs)) = opts else {
+        return Err(format!("{}: expected override map", name));
+    };
+    for (k, v) in kvs.iter() {
+        let Form::Kw(kw) = k else {
+            continue;
+        };
+        if &**kw != key {
+            continue;
+        }
+        return match evaluate(v, env, ctx, world)? {
+            Val::Kw(k) => Ok(k),
+            other => Err(format!("{}: expected keyword for :{}, got {:?}", name, key, other)),
+        };
+    }
+    Err(format!("{}: missing :{}", name, key))
+}
+
+fn form_map_value<'a>(opts: &'a Option<Form>, keys: &[&str]) -> Option<&'a Form> {
+    let Some(Form::Map(kvs)) = opts else {
+        return None;
+    };
+    for (k, v) in kvs.iter() {
+        let Form::Kw(kw) = k else {
+            continue;
+        };
+        if keys.iter().any(|key| *key == &**kw) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn circle_projector_spec_from_form(
+    opts: Option<Form>,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<CircleProjectorSpec, String> {
+    if opts.as_ref().is_some_and(|form| !matches!(form, Form::Map(_))) {
+        return Err("circle-collider: expected override map".into());
+    }
+    let layer = static_kw_field("circle-collider", &opts, "layer", env, ctx, world)
+        .map(|k| world.symbols.intern(k.as_ref()))?;
+    let radius = match form_map_value(&opts, &["radius", "r"]) {
+        Some(form) if contains_projector_context(form) => {
+            ProjectorNum::Expr(form.clone())
+        }
+        Some(form) => {
+            let radius = evaluate(form, env, ctx, world)?.num()?;
+            ProjectorNum::Const(radius)
+        }
+        None => ProjectorNum::Const(0.08),
+    };
+    Ok(CircleProjectorSpec { layer, radius, env: env.clone() })
+}
+
 fn capsule_chain_projector_from_opts(opts: &DynLike, symbols: &mut SymbolTable) -> Result<DynCollider, String> {
     let layer = match dynlike_map_get(opts, "layer").and_then(|v| dynlike_kw(&v)) {
         Some(k) => symbols.intern(k.as_ref()),
@@ -80,19 +145,20 @@ fn capsule_chain_projector_from_opts(opts: &DynLike, symbols: &mut SymbolTable) 
 }
 
 pub(crate) fn materialize_circle_projector(
-    opts: &Option<Form>,
+    spec: &CircleProjectorSpec,
     env: &Env,
     sig: &SigEnv,
-    symbols: &mut SymbolTable,
 ) -> Result<DynCollider, String> {
     let mut run_ctx = Ctx::default();
     run_ctx.sig = sig.clone();
     let mut run_world = World::default();
-    run_world.symbols = symbols.clone();
-    let opts = eval_opts("circle-collider", opts.as_ref(), env, &mut run_ctx, &mut run_world)?;
-    let slot = circle_projector_from_opts(&opts, &mut run_world.symbols)?;
-    *symbols = run_world.symbols;
-    Ok(slot)
+    let radius = match &spec.radius {
+        ProjectorNum::Const(n) => *n,
+        ProjectorNum::Expr(form) => {
+            evaluate(form, env, &mut run_ctx, &mut run_world)?.num()?
+        }
+    };
+    Ok(DynCollider::collider_circle_const(spec.layer, radius))
 }
 
 pub(crate) fn materialize_capsule_chain_projector(
@@ -141,10 +207,8 @@ pub(crate) fn sf_circle_collider(
 ) -> Result<Val, String> {
     let opts_form = opts_form(items, "circle-collider")?;
     if opts_form.as_ref().is_some_and(contains_projector_context) {
-        return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::circle(
-            opts_form,
-            env.clone(),
-        ))));
+        let spec = circle_projector_spec_from_form(opts_form, env, ctx, world)?;
+        return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::circle(spec))));
     }
     let opts = eval_opts("circle-collider", opts_form.as_ref(), env, ctx, world)?;
     let slot = circle_projector_from_opts(&opts, &mut world.symbols)?;
