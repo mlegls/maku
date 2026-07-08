@@ -1991,6 +1991,11 @@ fn qq(f: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Form, Str
             Ok(Form::list(qq_seq(items, env, ctx, world)?))
         }
         Form::Vector(items) => Ok(Form::Vector(qq_seq(items, env, ctx, world)?.into())),
+        Form::Map(kvs) => kvs
+            .iter()
+            .map(|(k, v)| Ok((qq(k, env, ctx, world)?, qq(v, env, ctx, world)?)))
+            .collect::<Result<Vec<_>, String>>()
+            .map(|pairs| Form::Map(pairs.into())),
         other => Ok(other.clone()),
     }
 }

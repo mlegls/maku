@@ -1924,6 +1924,53 @@ fn variadic_macro_processes_clauses() {
     assert_eq!(sim.world.entities.len(), 3, "one spawn per clause");
 }
 
+/// Quasiquote must walk map values too: genre helpers need variadic macro
+/// rest args as ordinary macro-time values inside collider/meta maps.
+#[test]
+fn variadic_macro_unquotes_inside_maps() {
+    const CARD: &str = r#"
+(defn meta-hitbox [metas default]
+  (match metas
+    [] default
+    [m & rest] (let [later (meta-hitbox rest default)
+                     here (get m :hitbox)]
+                 (if (nothing? here) later here))))
+(defmacro bullet [dyn & metas]
+  `(spawn ~dyn
+          (colliders {:layer :damage :r ~(meta-hitbox metas 0.12)})
+          ~@metas))
+(defpattern p []
+  (bullet (pose c[0 0]) {:hitbox 0.4}))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let row = sim
+        .world
+        .entities
+        .iter()
+        .enumerate()
+        .find(|(i, _)| sim.world.entities.is_alive(*i))
+        .map(|(i, _)| i)
+        .unwrap();
+    let projector = sim.world.entities.collider_projector(row).unwrap();
+    let mut slots = Vec::new();
+    crate::sim::slots::materialize_collider_defs_into(
+        projector,
+        0.0,
+        &MotionState::new(),
+        &SigEnv::default(),
+        &mut sim.world.symbols,
+        &mut slots,
+    )
+    .unwrap();
+    let (_, radius) = slots.iter().find_map(|slot| match slot.slot().shape {
+        ColliderSlotShape::Circle { ref radius } => Some((slot, radius)),
+        _ => None,
+    }).unwrap();
+    let r = eval_dyn(radius, 0.0, &MotionState::new(), &SigEnv::default()).unwrap();
+    assert!((r - 0.4).abs() < 1e-6, "rest arg helper unquoted into map");
+}
+
 /// `when`/`unless` are prelude macros now (autoimported): a false
 /// condition means the no-op action, in any action position.
 #[test]
