@@ -109,37 +109,37 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 Some(Form::Sym(s)) if &**s == "defcollider" => {
                     // (defcollider name [e ctx] body...)
                     //
-                    // Register a callable projector value as (name). The
-                    // body is deferred until collider materialization, where
-                    // `e` and `ctx` are bound to the current entity view and
+                    // Register a callable projector value. The body is
+                    // deferred until collider materialization, where `e` and
+                    // `ctx` are bound to the current entity view and
                     // projector context.
                     let name = match items.get(1) {
                         Some(Form::Sym(n)) => n.to_string(),
                         _ => return Err("defcollider: expected name".into()),
                     };
-                    match items.get(2) {
+                    let params: Vec<Form> = match items.get(2) {
                         Some(Form::Vector(ps)) if ps.len() == 2 => {
-                            let ok = matches!((&ps[0], &ps[1]), (Form::Sym(e), Form::Sym(ctx)) if &**e == "e" && &**ctx == "ctx");
-                            if !ok {
-                                return Err("defcollider: expected parameter vector [e ctx]".into());
-                            }
+                            ps.iter()
+                                .map(|p| match p {
+                                    Form::Sym(_) => Ok(p.clone()),
+                                    _ => Err("defcollider: params must be symbols".to_string()),
+                                })
+                                .collect::<Result<_, _>>()?
                         }
                         Some(Form::Vector(_)) => {
-                            return Err("defcollider: expected parameter vector [e ctx]".into());
+                            return Err("defcollider: expected two parameters".into());
                         }
                         _ => return Err("defcollider: expected parameter vector".into()),
-                    }
+                    };
                     if items.len() < 4 {
                         return Err("defcollider: expected body".into());
                     }
-                    let mut projector = vec![Form::sym("__collider-projector")];
-                    projector.extend(items[3..].iter().cloned());
-                    let fnform = vec![
-                        Form::sym("fn"),
-                        Form::Vector(Vec::new().into()),
-                        Form::list(projector),
+                    let mut projector = vec![
+                        Form::sym("__collider-projector"),
+                        Form::Vector(params.into()),
                     ];
-                    defs.insert(name, Form::list(fnform));
+                    projector.extend(items[3..].iter().cloned());
+                    defs.insert(name, Form::list(projector));
                 }
                 Some(Form::Sym(s)) if &**s == "defchannel" => {
                     // (defchannel $name expr): a per-tick derived channel.

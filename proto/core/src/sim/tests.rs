@@ -353,7 +353,7 @@
   (fn [a b] (event :grazed (:pos b))))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) (bullet-collider))
+    (spawn (pose c[0 0]) bullet-collider)
     (spawn (pose c[0.2 0]) (circle-collider {:layer :zappable :r 0.05}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -367,8 +367,8 @@
     #[test]
     fn defcollider_can_read_entity_meta() {
         const CARD: &str = r#"
-(defcollider hitbox-collider [e ctx]
-  (circle-collider {:layer :damage :r e.hitbox}))
+(defcollider hitbox-collider [entity context]
+  (circle-collider {:layer :damage :r entity.hitbox}))
 (defcontact [:damage :body] {:once :hit}
   (fn [a b] (event :hit (:pos b))))
 (defpattern t []
@@ -393,7 +393,7 @@
             Ok(_) => panic!("bad defcollider unexpectedly loaded"),
             Err(err) => err,
         };
-        assert!(err.contains("defcollider: expected parameter vector [e ctx]"), "{err}");
+        assert!(err.contains("defcollider: expected two parameters"), "{err}");
     }
 
     #[test]

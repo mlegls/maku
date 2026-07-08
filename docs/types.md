@@ -205,7 +205,7 @@ Example:
 ```edn
 (spawn fig
   {:radius m"0.1 + 0.02*t" :layer :enemy-hit}
-  (bullet-collider)
+  bullet-collider
   (touhou-renderer))
 ```
 

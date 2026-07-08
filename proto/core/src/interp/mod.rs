@@ -643,11 +643,21 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "defcontact" => return sf_defcontact(items, env, ctx, world),
             "__collider-projector" => {
-                if items.len() < 2 {
+                let Some(Form::Vector(ps)) = items.get(1) else {
+                    return Err("defcollider: expected parameter vector".into());
+                };
+                let params = ps
+                    .iter()
+                    .map(|p| match p {
+                        Form::Sym(n) => Ok(n.clone()),
+                        _ => Err("defcollider: bad parameter".to_string()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if items.len() < 3 {
                     return Err("defcollider: expected body".into());
                 }
                 return Ok(Val::ColliderProjectorSpecs(Rc::new(
-                    ColliderProjectorSpec::deferred_body(items[1..].to_vec().into(), env.clone()),
+                    ColliderProjectorSpec::callable(params, items[2..].to_vec().into(), env.clone()),
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
@@ -1160,6 +1170,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 (f, _) => f,
             };
             apply_fn(f, &args, ctx, world, false)
+        }
+        Val::ColliderProjectorSpecs(_) => {
+            if items.len() != 1 {
+                return Err("collider projector: expected no arguments".into());
+            }
+            Ok(hv)
         }
         _ => Err(format!("cannot apply {:?}", hv)),
     }

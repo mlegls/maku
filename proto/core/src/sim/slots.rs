@@ -126,16 +126,20 @@ pub fn materialize_collider_defs_into(
             ColliderProjectorExpr::Stable(slots) => {
                 out.extend(slots.iter().cloned());
             }
-            ColliderProjectorExpr::DeferredBody { body, env } => {
+            ColliderProjectorExpr::Callable { params, body, env } => {
                 let e_bound = e_view
                     .cloned()
                     .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
                 let ctx_bound = ctx_view
                     .cloned()
                     .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
-                let env = env.clone()
-                    .bind("e".into(), e_bound.clone())
-                    .bind("ctx".into(), ctx_bound.clone());
+                let mut env = env.clone();
+                if let Some(param) = params.first() {
+                    env = env.bind(param.clone(), e_bound.clone());
+                }
+                if let Some(param) = params.get(1) {
+                    env = env.bind(param.clone(), ctx_bound.clone());
+                }
                 let mut run_ctx = Ctx::default();
                 run_ctx.sig = sig.clone();
                 let mut run_world = World::default();

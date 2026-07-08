@@ -58,7 +58,7 @@
 
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
-          (bullet-collider)
+          bullet-collider
           {:cols {:damage ~(damage-value* metas 1)
                   :hitbox ~(primary-hitbox-radius* metas 0.12)}}
           ~@metas))

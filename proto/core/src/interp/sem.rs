@@ -31,7 +31,7 @@ pub struct EntityContext {
 #[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
-    DeferredBody { body: Rc<[Form]>, env: Env },
+    Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
     ColliderSum(Rc<[ColliderProjectorSpec]>),
 }
 
@@ -49,9 +49,13 @@ impl ColliderProjectorSpec {
         }
     }
 
-    pub(crate) fn deferred_body(body: Rc<[Form]>, env: Env) -> ColliderProjectorSpec {
+    pub(crate) fn callable(
+        params: Vec<Rc<str>>,
+        body: Rc<[Form]>,
+        env: Env,
+    ) -> ColliderProjectorSpec {
         ColliderProjectorSpec {
-            expr: ColliderProjectorExpr::DeferredBody { body, env },
+            expr: ColliderProjectorExpr::Callable { params: params.into(), body, env },
         }
     }
 
