@@ -182,12 +182,15 @@ The figure and meta slots are the dynamic slots. Meta is where non-positional
 dynamic data lives; the meta slot binds the current figure as a reserved name
 alongside `t`, so fields can depend on per-tick geometry without needing a
 separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
-projector functions. A projector may read any typed meta field and the current
-figure each tick, then return literal collider/render rows. Direct dynamic
-collider/render row lists are not the public low-level surface. Projectors also
-receive `ProjectorContext`, so purely local temporal behavior such as "this
-collider until age 0.5" can be expressed as a higher-order projector combinator
-rather than as a public meta switch.
+projector functions. A projector may read any typed meta field, the current
+figure, and `ProjectorContext` each tick. Time-dependent projector arguments use
+explicit context fields such as `ctx.t` or `ctx.age`; primitive projector
+constructors are not dyn-expecting slots and do not bind free `t`. The `m"..."`
+reader macro remains available inside projector code because it is only syntax.
+Direct dynamic collider/render row lists are not the public low-level surface.
+Purely local temporal behavior such as "this collider until age 0.5" can be
+expressed as a higher-order projector combinator rather than as a public meta
+switch.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
@@ -217,13 +220,15 @@ meta source data
 
 bullet-collider
   -> ColliderProjector
-  -> each tick: (EntityView, ProjectorContext) -> List<Collider>
+  -> extraction: source projector specs over (EntityView, ProjectorContext)
+  -> each tick: List<Collider>
 ```
 
 The current interpreter still realizes dynamic bridge values per tick and
 checks them at the simulation boundary. The target is to elaborate projector
-functions directly, with dynamic data evaluated through figure and meta fields
-per tick and literal colliders returned from the function.
+functions directly, with dynamic data evaluated through figure, meta, and
+context fields per tick; literal colliders are emitted by extraction rather
+than returned as ordinary `.maku` values.
 
 Two projector output cases must classify differently:
 
@@ -251,9 +256,9 @@ Projectors compose at the authoring level. For example:
   (capsule-chain-collider {:width e.width :layer e.layer}))
 ```
 
-The `+` combinator means concatenation/parallel projection of collider rows.
-This recovers the expressiveness of directly returning collider lists while
-keeping all changing non-geometry inputs in meta.
+`colliders` means concatenation/parallel projection of collider projector
+specs. This recovers the expressiveness of directly composing collider
+behavior while keeping all changing non-geometry inputs in meta.
 
 `defcollider` is top-level only. Its body is pure code in a scope containing an
 explicit entity view parameter such as `e` and an explicit non-entity context
@@ -265,10 +270,11 @@ arbitrary runtime function.
 Collider constructors are typed constructors inside that pure body. Their
 argument records must have load-time-known shape so the elaborator can preserve
 the projector algebra, but each field value may be an arbitrary pure expression
-over `e` and `ctx`:
+over `e` and `ctx`. These argument records are ordinary expressions, not
+dyn-expecting slots, so `ctx.t` is the local time source:
 
 ```edn
-(circle-collider {:radius (* 2 e.hitbox)
+(circle-collider {:radius m"2 * e.hitbox + 0.05 * ctx.t"
                   :layer :enemy-graze})
 ```
 

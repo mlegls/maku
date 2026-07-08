@@ -675,7 +675,7 @@
     fn circle_collider_accepts_dynamic_radius() {
         const CARD: &str = r#"
 (defcollider expanding-collider [e ctx]
-  (circle-collider {:layer :expanding :r ctx.t}))
+  (circle-collider {:layer :expanding :r m"ctx.t"}))
 (defcontact [:expanding :body] {:once :hit} (fn [a b] (event :hit)))
 (defpattern p []
   (par
@@ -690,14 +690,14 @@
         }
         assert!(
             sim.events_vec().iter().all(|e| &*e.name != "hit"),
-            "radius is still too small before the dyn field grows"
+            "radius is still too small before local projector time grows"
         );
         for _ in 0..120 {
             sim.step().unwrap();
         }
         assert!(
             sim.events_vec().iter().any(|e| &*e.name == "hit"),
-            "dynamic radius inside a collider structure is sampled at collision time"
+            "time-dependent radius inside a projector is sampled at collision time"
         );
     }
 
