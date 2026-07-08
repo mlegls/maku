@@ -33,8 +33,8 @@ recognition are not properties of the parser or the SoA runtime layout.
 - `Symbol` — interned keyword-like atoms. String syntax is source/host-boundary syntax; runtime comparisons and storage use interned symbols.
 - `Pose` = `(x, y, theta?)`. `theta = none` is a point whose facing is unspecified and may be derived by consumers that need one (curve tangents, motion direction); `theta = some angle` is an explicit frame orientation, including explicit `0`. Surface literals `c[x y]`, `p[r θ]` (§11) construct point-poses, while `(rot θ)` constructs an orientation. `(still)` names the identity pose, the unit of frame composition.
 - `Figure` = `Pose | Curve | Composite ...`. A point bullet is not a primitive category; it is an entity whose figure currently evaluates to a pose. A laser/path is not a primitive category; it is an entity whose figure currently evaluates to a curve or projected samples. User-facing Touhou names such as bullet, shot, enemy, player, boss, and laser are library constructors.
-- `ColliderData` — boundary data consumed by core collision: `none`, circle, capsule/polyline chains, and later analytic curve colliders. Collider layer is universal routing metadata on collider data, not gameplay state.
-- `RenderData<K>` — boundary data exposed to the host or a rendering crate for a registered render kind `K`. Rendering vocabulary is open: the kind selects a typed field schema. Core fixes the projection/transport boundary and registry/manifest mechanism, not sprite family/color semantics.
+- `ColliderData` — boundary data consumed by core collision: `none`, circle, capsule/polyline chains, and later analytic curve colliders. Collider layer is universal routing metadata on collider data, not gameplay state. Source code normally names collider projectors, not raw collider rows.
+- `RenderData<K>` — boundary data exposed to the host or a rendering crate for a registered render kind `K`. Rendering vocabulary is open: the kind selects a typed field schema. Core fixes the projection/transport boundary and registry/manifest mechanism, not sprite family/color semantics. Source code normally names renderer projectors, not raw render rows.
 - `Meta` — finite typed fields attached to entity rows. Source field names are interned at load/reschema time into typed matrices, not allocated dynamically per entity.
 - `EntityRef` — stable handle with generation. Returned by `spawn`, consumed by `manip`/`manipulate`, and safe across row reuse.
 - `EntitySet` — ephemeral vector of live row indices from `entities-where`; stable only for the tick/view that produced it.
@@ -46,9 +46,9 @@ The target low-level entity model is:
 
 ```text
 Entity = Dyn<Figure>
-       * Dyn<[ColliderData]>
-       * Dyn<[RenderData<K>]>
        * Dyn<Meta>
+       * [ColliderProjectorSpec]
+       * RendererProjectorSpec
 ```
 
 This is the semantic model. The runtime representation is a row in dense SoA storage: dyn programs/function pointers, typed meta matrices, sampled pose buffers, collider/render work buffers, and cold projector/spec data. Per-entity hot state draws only from fixed typed storage so scanned state packs into columns and steps vectorize pool-at-a-time. Control-layer values may be richer, but anything retained across ticks must lower to the fixed runtime universe.
@@ -229,30 +229,31 @@ in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE
 
 **[spec]**
 
-- `(spawn figure colliders renderers meta)` is the **low-level entity constructor**. It is an action (never a signal), and it returns `EntityRef` handles in the same broadcast shape as the spawned elements.
+- `(spawn figure meta colliders renderer)` is the **low-level entity constructor**. It is an action (never a signal), and it returns `EntityRef` handles in the same broadcast shape as the spawned elements.
 
   ```edn
   (spawn
     (pose c[0 0])
-    (colliders {:layer :enemy-hurt :shape :circle :r 0.25})
-    (renderers (:sprite {:family :orb :color :red}))
-    {:team :enemy :hp 10})
+    {:team :enemy :hp 10 :radius 0.25 :style {:family :orb :color :red}}
+    (bullet-collider)
+    (touhou-renderer))
   ```
 
   Type targets:
 
   ```text
-  figure    : Dyn<Figure>
-  colliders : Dyn<[ColliderData]>
-  renderers : Dyn<[RenderData<K>]>
-  meta      : Dyn<Meta>
+  figure   : Dyn<Figure>
+  meta     : Dyn<Meta>
+  colliders : ColliderProjectorSpec | [ColliderProjectorSpec]
+  renderer : RendererProjectorSpec
   ```
 
-  Static values lift to constant dyns. Structures with dyn-valued fields lift recursively to a dyn of the whole structure: `{:r m"0.1 + 0.05*t"}` is a dynamic collider list when placed in the collider slot, and a normal map elsewhere. A value is first coerced to the target structural shape (`Dyn<List>` / `Dyn<Map>`), then interpreted at the typed boundary as collider/render/meta data; the generic dyn coercion is not specific to spawn.
-- Compatibility/current surface: `(spawn dyn meta...)` remains accepted while the prototype migrates. Multiple meta maps merge per-key with later maps winning; `:cols` maps deep-merge per column. A map containing `:colliders` or `:renderers`, or explicit `(colliders ...)` / `(renderers ...)` arguments, lowers toward the four-slot form. The target docs should be read as the destination API; Touhou library helpers own friendly names such as `bullet`, `shot`, `enemy`, `player`, `boss`, and `laser`.
-- `colliders` is convenience syntax for constructing a collider-data list. `(colliders c0 c1)` and `(colliders [c0 c1])` are equivalent. Empty list means no collision. `none` is a collider variant, not option/maybe semantics, so functions returning colliders can disable collision without changing type.
-- `renderers` is convenience syntax for constructing render boundary data. A renderer row is kind-indexed: the kind (`:sprite`, `:polyline`, `:mesh`, etc.) selects a registered schema, and the remaining fields are checked against that schema. Core does not prescribe kind meanings beyond registry, manifest, extraction order, and typed transport. A host-facing renderer may consume positions + metadata, while a rendering crate may lower high-level kinds to lower-level mesh/triangle kinds. There may be zero or more render rows, but a single renderer is the common case.
-- Render kinds are negotiated like channels: the card's kind manifest is derivable from renderer specs, and the host/render stack declares support or degradation. The prototype's `:style` map and `:hue`/`:scale`/`:facing`/`:opacity` tags are transitional sugar for a stock Touhou/DMK-like `:sprite` kind; target renderer fields are ordinary dyn-valued fields inside that kind's record.
+  Static values lift to constant dyns. Structures with dyn-valued fields lift recursively to a dyn of the whole structure: `{:radius m"0.1 + 0.05*t"}` is a dynamic meta record in the meta slot and a normal map elsewhere. The meta slot also binds the current per-tick figure under a reserved name, analogous to `t`, so fields may depend on the sampled figure without introducing a separate `Figure -> Dyn` type.
+- Compatibility/current surface: `(spawn dyn meta...)` remains accepted while the prototype migrates. Multiple meta maps merge per-key with later maps winning; `:cols` maps deep-merge per column. A map containing `:colliders` or `:renderers`, or explicit `(colliders ...)` / `(renderers ...)` arguments, lowers toward the target projector form. The target docs should be read as the destination API; Touhou library helpers own friendly names such as `bullet`, `shot`, `enemy`, `player`, `boss`, and `laser`.
+- `defcollider` declares a static projector from `(Figure, Meta)` to collision rows. Dynamic collider behavior is expressed by dynamic meta fields and dynamic figures, not by mutating the projector identity. Empty collision and disappearing collision are ordinary projector results; `none` remains a collider variant, not option/maybe semantics, so projector combinators can disable a branch without changing type.
+- `defrenderer` declares a static projector from `(Figure, Meta)` to render rows. A render row is kind-indexed: the kind (`:sprite`, `:polyline`, `:mesh`, etc.) selects a registered schema, and the remaining fields are checked against that schema. Core does not prescribe kind meanings beyond registry, manifest, extraction order, and typed transport. Render-affecting values such as style, scale, opacity, palette, or batch keys live in meta if cards or hosts need to observe/manipulate them.
+- Projectors are ordinary composable values at the authoring level. A Touhou bullet can use `(defcollider bullet-collider (+ hit-collider graze-collider))`; a laser can use a projector that samples a curve figure into capsule chains, with width/active state/layer read from meta. This preserves the expressive power of direct `Dyn<[ColliderData]>` while keeping non-positional dynamic state in one place.
+- Render kinds are negotiated like channels: the card's kind manifest is derivable from renderer specs, and the host/render stack declares support or degradation. The prototype's `:style` map and `:hue`/`:scale`/`:facing`/`:opacity` tags are transitional sugar for a stock Touhou/DMK-like `:sprite` projector; target renderer fields are ordinary dyn-valued meta fields read by that projector.
 - The anchor frame is the figure dyn's root composed with the lexically distributed ambient frame (§4). `let` defers action-valued bindings to scheduler reach-time: in `((pose P) (let [stars (spawn …)] …))` the spawn executes when the `let` is reached, inside the ambient frame the distribution law owes it; pure bindings are unaffected.
 - Handles are generation-safe. The control layer may hold them; dead handles are no-ops for culling/manipulation and errors only for explicit reads that promise liveness. `manip` accepts a handle where it accepts an entity set/query. `entities-where` returns row indices, not handles; those are ephemeral views (§9).
 - **Express only what renders/collides/exports runtime rows.** Emitter anchors, bases, guide trajectories live as unexpressed signal data; only expressed entities consume row slots, collision work, and render export buffers. DMK's `guideempty2` subsystem dissolves into `in-frame` with an unexpressed dyn — a level of the frame tree that renders nothing and consumes nothing. Extraction (§10) is only needed when a guide trajectory crosses an action-tree boundary.
@@ -263,7 +264,7 @@ in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE
 
 ## 7. Meta
 
-**[spec]** `meta` is a finite typed record; **any field may be signal-valued** when the receiving slot expects `Dyn<Meta>`. Constant fields are the degenerate dyn. Fields interact with capture like everything else (snap vs live), and gameplay-meaningful values (hp, team, graze-state, damage records) are ordinary entity fields addressable by query (§9).
+**[spec]** `meta` is a finite typed record; **any field may be signal-valued** when the receiving slot expects `Dyn<Meta>`. Constant fields are the degenerate dyn. In the spawn meta slot, `t` and the current figure are reserved slot-bound names, so a field can be a function of entity-local time and per-tick geometry. Fields interact with capture like everything else (snap vs live), and gameplay-meaningful values (hp, team, graze-state, damage records) are ordinary entity fields addressable by query (§9).
 
 - Source-level field names are flat and unified. There is no long-term split between arbitrary `cols` and `meta`; storage may keep numeric, symbol, handle, and pose fields in separate typed matrices, but source field access is one mechanism.
 - Render-affecting fields are not core vocabulary by default. A renderer projector or host profile may interpret fields such as `:hue`, `:scale`, `:facing`, `:opacity`, `:family`, `:color`, or `:variant`, but those meanings live in renderer specs/library/host config. Core only preserves typed data and the render projection boundary.
@@ -323,7 +324,7 @@ in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE
 
 ### Colliders and contact effects **[spec]**
 
-- **Colliders are dynamic projector results, not entity kinds**: semantically an entity has `Dyn<[ColliderData]>`. Most cards use constant collider lists; expanding circles, warn/hot phases, disabling collision, and curve-sampled capsule chains are ordinary dyn collider values. Layer is universal routing metadata on every collider. An empty list or `none` collider means inert to the contact pass. Teams are ordinary meta fields only.
+- **Colliders are projector results, not entity kinds**: semantically an entity has collider projectors that evaluate `(Figure, Meta) -> [ColliderData]` each tick. Most cards use constant-shape projectors such as `bullet-collider`; expanding circles, warn/hot phases, disabling collision, and curve-sampled capsule chains are expressed by dynamic figure/meta inputs read by the projector. Layer is universal routing metadata on every collider. An empty list or `none` collider means inert to the contact pass. Teams are ordinary meta fields only.
 - **The engine supplies no genre defaults** — what a Touhou "bullet" carries (`:damage` core + `:graze` ring), an "enemy" (`:hurt`), or a "player" (`:player-hurt`) is library knowledge in `lib/touhou.maku`. `:hitbox r` is library sugar over the primary collider spec, not a core field.
 - **Contact rules are card data plus card code**: `(defcontact [:a-layer :b-layer] opts? (fn [a b] …))` registers a World-snapshotted rule. Re-registering the same pair replaces it. Detection is engine-side and hot: rules run in registration order; for each rule, A entities are enumerated by ascending bullet index, then B entities by ascending index, then collider pairs. Dead/posless entities and `i == j` are skipped; duplicate contacts from multiple colliders are allowed. The A side is shape-aware (point center, active laser capsule-chain hot prefix, pather trail) and the B side is a point; overlap is `d2 < (a.r*a.scale + b.r*b.scale)^2`.
 - **Prefilters are data; contacts are code**: `{:once :col}` skips when A already has the latch column and, after the callback fires, engine-sets that column to `1`. `{:skip-if [:a|:b :col :gt|:lt :tick|number]}` reads the chosen side's column (missing = 0) at resolve time and skips when the comparison holds. Resolution re-checks aliveness, then runs the callback with handles and instant actions enabled; handles expose `:pos`, `:vel`, `:t`, `:tick`, `:kind`, style axes, `:team`, columns, and `:damage` when present. `(event :name pos?)` emits an event; a point-pose second argument supplies the event position, while existing non-position payloads remain ordinary outbound events. Reactions stay control-layer (`wait-for`, derived channels such as `$graze`/`$enemies`); the engine knows detection, not damage/graze/shot semantics.
@@ -424,7 +425,7 @@ Arithmetic `+ - * /` is variadic (n-ary fold; unary `-`/`/` negate/reciprocate) 
 13. Trigger predicate generality (§9): the prototype fires on single-column `≤` crossings only; upward crossings, multi-column predicates, and rate conditions are open.
 14. Import namespacing (§10): textual include-once suffices now; a namespace/alias story if cross-card collisions start hurting.
 
-Settled since the first draft (see cards/translations/NOTES.md for the record): snap-by-default boundary + `live` marker; construction-vs-reference of scans (`shared` nodes); scanned-state limits (fixed runtime rows + indexed typed fields); entity semantics as `Dyn<Figure> * Dyn<[ColliderData]> * Dyn<[RenderData]> * Dyn<Meta>`; style/render vocabulary as host/library policy; phase transitions (`phases` + scoped goto); iteration/vocabulary surface (EDN, `m""`, units, `dotimes` seq bindings, formation/stream stock). Settled by the prototype: let-deferral of action bindings (F17); frames stop at lambdas (F18); difficulty is the rank channel + pure loops fold inline (F19); derived channels (F20); def-resolution hygiene under slot binding. Settled by the gameplay/host sprint: dynamic collider data + layer tags + contact-time callbacks (§9); fields + edge-triggers dissolving hp/death/lives/phases-gates (§9); the player as card content and the channel-mediated host contract (§9); `until` scope cancellation and `clamp` with integrator-state semantics (§8); frames ambient at every level + variadic `in-frame` + `:world` (§4); imports (§10); raw-input channels on the tape (replays include the keyboard). Settled by the stdlib extraction: the engine's genre knowledge (bullet/enemy collider sets, the hp-1 default, the death trigger, `invuln`, the stock rig, and Touhou hit/graze/shot contact rules) is *library card code* — authored in cards/lib/, compile-time embedded, imported by bare name (§10); `spawn` targets figure/collider/render/meta slots, with compatibility sugar during migration, and contact semantics are registered with `defcontact`.
+Settled since the first draft (see cards/translations/NOTES.md for the record): snap-by-default boundary + `live` marker; construction-vs-reference of scans (`shared` nodes); scanned-state limits (fixed runtime rows + indexed typed fields); entity semantics as `Dyn<Figure> * Dyn<Meta> * collider/render projectors`; style/render vocabulary as host/library policy; phase transitions (`phases` + scoped goto); iteration/vocabulary surface (EDN, `m""`, units, `dotimes` seq bindings, formation/stream stock). Settled by the prototype: let-deferral of action bindings (F17); frames stop at lambdas (F18); difficulty is the rank channel + pure loops fold inline (F19); derived channels (F20); def-resolution hygiene under slot binding. Settled by the gameplay/host sprint: collider projectors + layer tags + contact-time callbacks (§9); fields + edge-triggers dissolving hp/death/lives/phases-gates (§9); the player as card content and the channel-mediated host contract (§9); `until` scope cancellation and `clamp` with integrator-state semantics (§8); frames ambient at every level + variadic `in-frame` + `:world` (§4); imports (§10); raw-input channels on the tape (replays include the keyboard). Settled by the stdlib extraction: the engine's genre knowledge (bullet/enemy collider sets, the hp-1 default, the death trigger, `invuln`, the stock rig, and Touhou hit/graze/shot contact rules) is *library card code* — authored in cards/lib/, compile-time embedded, imported by bare name (§10); `spawn` targets figure/meta/projector slots, with compatibility sugar during migration, and contact semantics are registered with `defcontact`.
 
 ---
 

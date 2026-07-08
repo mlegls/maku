@@ -16,6 +16,8 @@ pub enum Type {
     ColliderData,
     RenderData(RenderKind),
     Meta,
+    ColliderProjectorSpec,
+    RendererProjectorSpec(RenderKind),
     EntitySet,
     Action,
     List(Box<Type>),
@@ -47,11 +49,11 @@ impl Type {
     }
 
     pub fn spawn_colliders() -> Type {
-        Type::dyn_list_of(Type::ColliderData)
+        Type::list_of(Type::ColliderProjectorSpec)
     }
 
     pub fn spawn_renderers() -> Type {
-        Type::dyn_list_of(Type::RenderData(RenderKind::Any))
+        Type::RendererProjectorSpec(RenderKind::Any)
     }
 
     pub fn spawn_meta() -> Type {

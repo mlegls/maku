@@ -81,9 +81,10 @@ work.
   ```text
   Figure = Pose | Polyline | ParametricCurve | Composite...
   Dyn<F> = t -> F
-  ColliderProjector = Figure, t -> [Collider]
-  RenderProjector = Figure, t -> [Render]
-  SpawnedObject = Dyn<Figure> * ColliderProjector * RenderProjector * Meta
+  Meta = finite typed fields, possibly dyn and figure-dependent in spawn slots
+  ColliderProjector = (Figure, Meta) -> [Collider]
+  RenderProjector = (Figure, Meta) -> [Render]
+  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjectorSpec] * RenderProjectorSpec
   ```
 - Spawned objects are retained as row ids into SoA stores, not as an `Entity`
   row struct.

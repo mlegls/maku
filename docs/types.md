@@ -64,6 +64,10 @@ Engine boundary types:
   selects its own typed record schema from the load-time render-kind registry.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
+- `ColliderProjectorSpec`: static policy that projects `(Figure, Meta)` to
+  `List<ColliderData>` each tick.
+- `RendererProjectorSpec`: static policy that projects `(Figure, Meta)` to
+  `List<RenderData<K>>` each tick.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
 - `Fn<A, B>`: pure function.
@@ -93,9 +97,9 @@ The target low-level entity model is:
 
 ```text
 Entity = Dyn<Figure>
-       * Dyn<List<ColliderData>>
-       * Dyn<List<RenderData<K>>>
        * Dyn<Meta>
+       * List<ColliderProjectorSpec>
+       * RendererProjectorSpec
 ```
 
 Storage may be SoA, AoS, compiled buffers, or interpreter objects. That choice
@@ -156,56 +160,82 @@ path would have existed.
 The `spawn` slots provide the clearest example:
 
 ```text
-(spawn figure colliders renderers meta)
+(spawn figure meta colliders renderer)
 
 figure    expects Dyn<Figure>
-colliders expects Dyn<List<ColliderData>>
-renderers expects Dyn<List<RenderData<K>>>
 meta      expects Dyn<Meta>
+colliders expects ColliderProjectorSpec or List<ColliderProjectorSpec>
+renderer  expects RendererProjectorSpec
 ```
 
-A literal or computed list in the collider slot is first dyn-lifted as
-ordinary structure. Then that typed structure is checked against the
-`ColliderData` schema. The same list elsewhere remains ordinary list data.
+The figure and meta slots are the dynamic slots. Meta is where non-positional
+dynamic data lives; the meta slot binds the current figure as a reserved name
+alongside `t`, so fields can depend on per-tick geometry without needing a
+separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
+static projectors. A projector may read any typed meta field and the current
+figure each tick, so direct dynamic collider/render rows are not needed as the
+public low-level surface.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
-`Dyn<Figure>`, `Dyn<List<ColliderData>>`, `Dyn<List<RenderData<K>>>`, and
-`Dyn<Meta>`.
+`Dyn<Figure>`, `Dyn<Meta>`, `List<ColliderProjectorSpec>`, and
+`RendererProjectorSpec`.
 
 ## Schema Checking
 
-Collider and render construction are schema checks over typed structure, not
-parser forms and not runtime maps.
+Collider and render projectors are schema checks over typed structure, not
+parser forms and not runtime maps. Raw `ColliderData` and `RenderData<K>` are
+boundary rows produced by projectors; they are not the normal authoring
+surface.
 
 Example:
 
 ```edn
-(colliders {:layer :enemy-hit :shape [:circle {:r m"0.1 + 0.02*t"}]})
+(spawn fig
+  {:radius m"0.1 + 0.02*t" :layer :enemy-hit}
+  (bullet-collider)
+  (touhou-renderer))
 ```
 
 At the semantic boundary:
 
 ```text
-Record/List source data
-  -> Dyn<List<ColliderData>>
+meta source data
+  -> Dyn<Meta>
+
+bullet-collider
+  -> ColliderProjectorSpec
+  -> each tick: (Figure, Meta) -> List<ColliderData>
 ```
 
 The current interpreter still realizes some dynamic specs per tick and checks
-them at the simulation boundary. The target is to perform all static schema
-work during elaboration, with only genuinely dynamic numeric fields evaluated
-per tick.
+them at the simulation boundary. The target is to perform all static projector
+schema work during elaboration, with dynamic data evaluated through figure and
+meta fields per tick.
 
 Two cases must classify differently:
 
-- static list shape with dynamic fields, e.g. one circle whose radius is
-  `m"0.1 + t"`: fixed collider count, vectorizable per field;
-- dynamic list shape, e.g. a function that returns zero, one, or many
-  colliders over time: collider count itself changes, so the backend needs
-  per-tick list realization or a lowered equivalent.
+- static projector shape with dynamic fields, e.g. one bullet circle whose
+  radius is `meta.radius(t)`: fixed collider count, vectorizable per field;
+- dynamic projector output, e.g. a laser projector that returns no hot capsules
+  during warn time and a sampled capsule chain during active time: row count
+  changes, so the backend needs per-tick range realization or a lowered
+  equivalent.
 
-Both can have type `Dyn<List<ColliderData>>`; the representation classifier
-must preserve the distinction.
+Both are produced by `ColliderProjectorSpec`; the representation classifier
+must preserve whether row count is fixed, bounded range-like, or truly dynamic.
+
+Projectors compose at the authoring level. For example:
+
+```edn
+(defcollider bullet-collider (+ hit-collider graze-collider))
+(defcollider laser-collider
+  (capsule-chain-collider {:width :width :layer :enemy-laser}))
+```
+
+The `+` combinator means concatenation/parallel projection of collider rows.
+This recovers the expressiveness of directly returning collider lists while
+keeping all changing non-geometry inputs in meta.
 
 Meta is the same kind of typed boundary. The current interpreter's
 `SpawnMetaInput` still carries raw source forms because `:expose` channel
@@ -234,11 +264,13 @@ library-defined render fields. Stock kinds such as `:sprite`/`:dot` and
 `:polyline` may ship with the engine for the prototype and debug hosts, but
 they are registered profiles rather than universal language semantics.
 
-Dynamic renderer fields are ordinary dyn-valued record fields. For example,
-the current compatibility tags `:hue`, `:scale`, `:facing`, and `:opacity`
-should become fields of a stock `:sprite` render kind, sequenced by the normal
-`Record{field: Dyn<T>} => Dyn<Record{field: T}>` coercion instead of sampled by
-special render-side tags.
+Dynamic renderer inputs are ordinary dyn-valued meta fields. For example, the
+current compatibility tags `:hue`, `:scale`, `:facing`, and `:opacity` should
+become fields read by a stock `:sprite` renderer projector, sequenced through
+the normal `Record{field: Dyn<T>} => Dyn<Record{field: T}>` meta coercion
+instead of sampled by special render-side tags. The renderer projector itself
+is not dyn and is not manipulated directly; changing render behavior over time
+means changing figure/meta inputs or rematerializing with a different projector.
 
 ## Representation Classification
 
