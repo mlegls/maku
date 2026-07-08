@@ -237,14 +237,38 @@ must preserve whether row count is fixed, bounded range-like, or truly dynamic.
 Projectors compose at the authoring level. For example:
 
 ```edn
-(defcollider bullet-collider (+ hit-collider graze-collider))
-(defcollider laser-collider
-  (capsule-chain-collider {:width :width :layer :enemy-laser}))
+(defcollider bullet-collider [e]
+  (let [r e.hitbox
+        graze (* 2 r)]
+    (+ (circle-collider {:radius r :layer :enemy-hit})
+       (circle-collider {:radius graze :layer :enemy-graze}))))
+
+(defcollider laser-collider [e]
+  (capsule-chain-collider {:width e.width :layer e.layer}))
 ```
 
 The `+` combinator means concatenation/parallel projection of collider rows.
 This recovers the expressiveness of directly returning collider lists while
 keeping all changing non-geometry inputs in meta.
+
+`defcollider` is top-level only. Its body is pure code in a scope containing an
+explicit entity view parameter such as `e` plus projector context. Because it
+cannot close over card-local mutable state, ordinary `let` is enough for
+sharing computed values; no special binding syntax is required. The body must
+elaborate to `ColliderProjector`, not to an arbitrary runtime function.
+
+Collider constructors are typed constructors inside that pure body. Their
+argument records must have load-time-known shape so the elaborator can preserve
+the projector algebra, but each field value may be an arbitrary pure expression
+over `e` and context:
+
+```edn
+(circle-collider {:radius (* 2 e.hitbox)
+                  :layer :enemy-graze})
+```
+
+This elaborates to a circle-projector node whose `radius` expression is visible
+to lowering, not to an opaque map-returning closure.
 
 Projectors intentionally share the entity meta namespace. That lets hit,
 graze, render, query, and host-exposed behavior agree on fields such as

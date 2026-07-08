@@ -98,6 +98,10 @@ work.
   mesh rendering without changing source semantics.
 - Raw collider/render rows are boundary data returned by projectors, not normal
   entity slots. Source code should usually construct projector functions.
+- `defcollider` should elaborate top-level pure bodies over an explicit entity
+  view into a typed projector algebra. Constructor argument records have known
+  shape; their values may be pure expressions over the entity view/context.
+  Do not grow the current dynamic spec-list bridge into the final API.
 - Collider layer is universal core routing metadata:
   ```text
   Collider = None | Circle { layer, center, radius }
