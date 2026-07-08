@@ -58,7 +58,9 @@ Structured values:
 
 Engine boundary types:
 
-- `ColliderData`: typed collision boundary rows, including `none`.
+- `Collider` / `ColliderData`: typed literal collision boundary rows,
+  including `none`. These are returned by collider projectors; they are not
+  the projector functions themselves.
 - `RenderData<K>`: typed render boundary rows for a registered render kind
   `K`. Unlike `ColliderData`, this is not a single closed schema: each kind
   selects its own typed record schema from the load-time render-kind registry.
@@ -69,9 +71,9 @@ Engine boundary types:
   subrecord for an imported projector.
 - `EntityContext`: per-tick execution context for projectors, including
   entity-local age/`t`, tick, and handle identity.
-- `ColliderProjectorSpec`: static policy that projects
-  `(Figure, MetaEnv, EntityContext)` to `List<ColliderData>` each tick.
-- `RendererProjectorSpec`: static policy that projects
+- `ColliderProjector`: function value that projects
+  `(Figure, MetaEnv, EntityContext)` to `List<Collider>` each tick.
+- `RenderProjector`: function value that projects
   `(Figure, MetaEnv, EntityContext)` to `List<RenderData<K>>` each tick.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
@@ -103,8 +105,8 @@ The target low-level entity model is:
 ```text
 Entity = Dyn<Figure>
        * Dyn<Meta>
-       * List<ColliderProjectorSpec>
-       * RendererProjectorSpec
+       * List<ColliderProjector>
+       * RenderProjector
 ```
 
 Storage may be SoA, AoS, compiled buffers, or interpreter objects. That choice
@@ -169,31 +171,31 @@ The `spawn` slots provide the clearest example:
 
 figure    expects Dyn<Figure>
 meta      expects Dyn<Meta>
-colliders expects ColliderProjectorSpec or List<ColliderProjectorSpec>
-renderer  expects RendererProjectorSpec
+colliders expects ColliderProjector or List<ColliderProjector>
+renderer  expects RenderProjector
 ```
 
 The figure and meta slots are the dynamic slots. Meta is where non-positional
 dynamic data lives; the meta slot binds the current figure as a reserved name
 alongside `t`, so fields can depend on per-tick geometry without needing a
 separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
-static projectors. A projector may read any typed meta field and the current
-figure each tick, so direct dynamic collider/render rows are not needed as the
-public low-level surface. Projectors also receive `EntityContext`, so purely
-local temporal behavior such as "this collider until age 0.5" can be expressed
-as a higher-order projector combinator rather than as a public meta switch.
+projector functions. A projector may read any typed meta field and the current
+figure each tick, then return literal collider/render rows. Direct dynamic
+collider/render row lists are not the public low-level surface. Projectors also
+receive `EntityContext`, so purely local temporal behavior such as "this
+collider until age 0.5" can be expressed as a higher-order projector combinator
+rather than as a public meta switch.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
-`Dyn<Figure>`, `Dyn<Meta>`, `List<ColliderProjectorSpec>`, and
-`RendererProjectorSpec`.
+`Dyn<Figure>`, `Dyn<Meta>`, `List<ColliderProjector>`, and
+`RenderProjector`.
 
 ## Schema Checking
 
-Collider and render projectors are schema checks over typed structure, not
-parser forms and not runtime maps. Raw `ColliderData` and `RenderData<K>` are
-boundary rows produced by projectors; they are not the normal authoring
-surface.
+Collider and render projectors are functions over typed inputs, not parser
+forms and not runtime maps. Raw `Collider` and `RenderData<K>` are boundary
+rows produced by projectors; they are not the normal authoring surface.
 
 Example:
 
@@ -211,14 +213,14 @@ meta source data
   -> Dyn<Meta>
 
 bullet-collider
-  -> ColliderProjectorSpec
-  -> each tick: (Figure, MetaEnv, EntityContext) -> List<ColliderData>
+  -> ColliderProjector
+  -> each tick: (Figure, MetaEnv, EntityContext) -> List<Collider>
 ```
 
-The current interpreter still realizes some dynamic specs per tick and checks
-them at the simulation boundary. The target is to perform all static projector
-schema work during elaboration, with dynamic data evaluated through figure and
-meta fields per tick.
+The current interpreter still realizes dynamic bridge values per tick and
+checks them at the simulation boundary. The target is to elaborate projector
+functions directly, with dynamic data evaluated through figure and meta fields
+per tick and literal colliders returned from the function.
 
 Two projector output cases must classify differently:
 
@@ -229,7 +231,7 @@ Two projector output cases must classify differently:
   changes, so the backend needs per-tick range realization or a lowered
   equivalent.
 
-Both are produced by `ColliderProjectorSpec`; the representation classifier
+Both are produced by `ColliderProjector`; the representation classifier
 must preserve whether row count is fixed, bounded range-like, or truly dynamic.
 
 Projectors compose at the authoring level. For example:

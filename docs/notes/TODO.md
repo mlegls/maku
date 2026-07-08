@@ -86,7 +86,8 @@ work.
   EntityContext = age/t, tick, handle identity
   ColliderProjector = (Figure, MetaEnv, EntityContext) -> [Collider]
   RenderProjector = (Figure, MetaEnv, EntityContext) -> [Render]
-  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjectorSpec] * RenderProjectorSpec
+  Collider = literal collision row, not a figure-to-collider spec
+  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector] * RenderProjector
   ```
 - Spawned objects are retained as row ids into SoA stores, not as an `Entity`
   row struct.
@@ -95,8 +96,8 @@ work.
 - Sampling is not intrinsic to figures. It belongs to collider/render slots or
   authoring helpers. Parametric curves may later use analytic collision or
   mesh rendering without changing source semantics.
-- Raw collider/render rows are boundary data, not normal authoring objects.
-  Source code should usually construct specs/projectors.
+- Raw collider/render rows are boundary data returned by projectors, not normal
+  entity slots. Source code should usually construct projector functions.
 - Collider layer is universal core routing metadata:
   ```text
   Collider = None | Circle { layer, center, radius }
