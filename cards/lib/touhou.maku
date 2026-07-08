@@ -49,10 +49,13 @@
                  (damage-value* rest next))))
 
 ;; hostile bullet: a damage core inside a graze ring
+(defcollider graze-collider [e ctx]
+  (circle-collider {:layer :graze :r 0.35}))
+
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :damage :r ~(primary-hitbox-radius* metas 0.12)})
-          (circle-collider {:layer :graze :r 0.35})
+          (graze-collider)
           {:cols {:damage ~(damage-value* metas 1)}}
           ~@metas))
 
