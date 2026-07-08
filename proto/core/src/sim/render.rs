@@ -58,6 +58,7 @@ impl Sim {
             patterns: self.ctx.patterns.clone(),
             macros: self.ctx.macros.clone(),
             deferred: Vec::new(),
+            projector_scope: None,
         };
         let mut w = World::default();
         match evaluate(&h.form, &env, &mut ctx, &mut w) {

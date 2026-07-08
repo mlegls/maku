@@ -364,6 +364,10 @@ pub struct Ctx {
     /// DMK's temporal-control-at-a-bullet case): collected here, adopted as
     /// child tasks by the executing task's scope after the instant returns.
     pub deferred: Vec<Rc<ActionV>>,
+    /// Bound while elaborating/evaluating a collider projector body. Primitive
+    /// projector constructors may reference only these names for entity-local
+    /// and per-tick context data.
+    pub projector_scope: Option<ProjectorScope>,
 }
 
 impl Default for Ctx {
@@ -375,6 +379,7 @@ impl Default for Ctx {
             patterns: Rc::new(HashMap::new()),
             macros: Rc::new(HashMap::new()),
             deferred: Vec::new(),
+            projector_scope: None,
         }
     }
 }
@@ -510,54 +515,6 @@ fn val_contains_structural_dyn(v: &Val) -> bool {
     }
 }
 
-fn rewrite_projector_aliases(form: &Form, e_name: &Rc<str>, ctx_name: &Rc<str>) -> Form {
-    fn rewrite_sym(sym: &Rc<str>, e_name: &Rc<str>, ctx_name: &Rc<str>) -> Rc<str> {
-        if sym == e_name {
-            return "e".into();
-        }
-        if sym == ctx_name {
-            return "ctx".into();
-        }
-        if let Some(rest) = sym.strip_prefix(&format!("{}.", e_name)) {
-            return format!("e.{}", rest).into();
-        }
-        if let Some(rest) = sym.strip_prefix(&format!("{}.", ctx_name)) {
-            return format!("ctx.{}", rest).into();
-        }
-        sym.clone()
-    }
-
-    match form {
-        Form::Sym(s) => Form::Sym(rewrite_sym(s, e_name, ctx_name)),
-        Form::List(items) => Form::List(
-            items
-                .iter()
-                .map(|item| rewrite_projector_aliases(item, e_name, ctx_name))
-                .collect::<Vec<_>>()
-                .into(),
-        ),
-        Form::Vector(items) => Form::Vector(
-            items
-                .iter()
-                .map(|item| rewrite_projector_aliases(item, e_name, ctx_name))
-                .collect::<Vec<_>>()
-                .into(),
-        ),
-        Form::Map(kvs) => Form::Map(
-            kvs.iter()
-                .map(|(k, v)| {
-                    (
-                        rewrite_projector_aliases(k, e_name, ctx_name),
-                        rewrite_projector_aliases(v, e_name, ctx_name),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .into(),
-        ),
-        other => other.clone(),
-    }
-}
-
 fn eval_dynlike_form(
     form: &Form,
     env: &Env,
@@ -666,8 +623,20 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     if projector_clauses.iter().any(|(_, p)| p.figure != figure) {
                         return Err("cond: collider projector branches must use the same figure type".into());
                     }
+                    if ctx.projector_scope.is_none()
+                        && projector_clauses
+                            .iter()
+                            .any(|(pred, _)| pred.as_ref().is_some_and(contains_legacy_projector_context))
+                    {
+                        return Err("cond: entity/context predicates require a projector scope".into());
+                    }
                     return Ok(Val::ColliderProjector(Rc::new(
-                        ColliderProjectorValue::cond(figure, projector_clauses, env.clone()),
+                        ColliderProjectorValue::cond(
+                            figure,
+                            projector_clauses,
+                            env.clone(),
+                            ctx.projector_scope.clone(),
+                        ),
                     )));
                 }
                 for pair in items[1..].chunks(2) {
@@ -753,14 +722,22 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let (Some(Form::Sym(e_name)), Some(Form::Sym(ctx_name))) = (ps.get(0), ps.get(1)) else {
                     return Ok(fallback);
                 };
+                let previous_scope = ctx.projector_scope.clone();
+                ctx.projector_scope = Some(ProjectorScope {
+                    entity: e_name.clone(),
+                    context: ctx_name.clone(),
+                });
                 let mut last = Val::Nothing;
                 for form in projector_items[body_idx..].iter() {
-                    let form = rewrite_projector_aliases(form, e_name, ctx_name);
-                    match evaluate(&form, env, ctx, world) {
+                    match evaluate(form, env, ctx, world) {
                         Ok(v) => last = v,
-                        Err(_) => return Ok(fallback),
+                        Err(_) => {
+                            ctx.projector_scope = previous_scope;
+                            return Ok(fallback);
+                        }
                     }
                 }
+                ctx.projector_scope = previous_scope;
                 return match last {
                     Val::ColliderProjector(ref projector) if projector.figure == figure => Ok(last),
                     _ => Ok(fallback),

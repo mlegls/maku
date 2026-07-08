@@ -25,15 +25,42 @@ fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
     }
 }
 
-fn contains_projector_context(form: &Form) -> bool {
+pub(crate) fn contains_bound_projector_context(form: &Form, scope: Option<&ProjectorScope>) -> bool {
+    fn sym_matches(sym: &Rc<str>, name: &str) -> bool {
+        sym.as_ref() == name
+            || sym
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('.'))
+    }
+    let Some(scope) = scope else {
+        return false;
+    };
     match form {
-        Form::Sym(s) => &**s == "e" || s.starts_with("e.") || &**s == "ctx" || s.starts_with("ctx."),
-        Form::List(items) | Form::Vector(items) => items.iter().any(contains_projector_context),
+        Form::Sym(s) => {
+            sym_matches(s, scope.entity.as_ref())
+                || sym_matches(s, scope.context.as_ref())
+        }
+        Form::List(items) | Form::Vector(items) => items
+            .iter()
+            .any(|item| contains_bound_projector_context(item, Some(scope))),
         Form::Map(kvs) => kvs
             .iter()
-            .any(|(k, v)| contains_projector_context(k) || contains_projector_context(v)),
+            .any(|(k, v)| {
+                contains_bound_projector_context(k, Some(scope))
+                    || contains_bound_projector_context(v, Some(scope))
+            }),
         _ => false,
     }
+}
+
+pub(crate) fn contains_legacy_projector_context(form: &Form) -> bool {
+    contains_bound_projector_context(
+        form,
+        Some(&ProjectorScope {
+            entity: "e".into(),
+            context: "ctx".into(),
+        }),
+    )
 }
 
 fn opts_form(items: &[Form], name: &str) -> Result<Option<Form>, String> {
@@ -122,7 +149,7 @@ fn circle_projector_spec_from_form(
     let layer = static_kw_field("circle-collider", &opts, "layer", env, ctx, world)
         .map(|k| world.symbols.intern(k.as_ref()))?;
     let radius = match form_map_value(&opts, &["radius", "r"]) {
-        Some(form) if contains_projector_context(form) => {
+        Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
             ProjectorNum::Expr(form.clone())
         }
         Some(form) => {
@@ -131,7 +158,12 @@ fn circle_projector_spec_from_form(
         }
         None => ProjectorNum::Const(0.08),
     };
-    Ok(CircleProjectorSpec { layer, radius, env: env.clone() })
+    Ok(CircleProjectorSpec {
+        layer,
+        radius,
+        env: env.clone(),
+        scope: ctx.projector_scope.clone(),
+    })
 }
 
 fn capsule_chain_projector_from_opts(opts: &DynLike, symbols: &mut SymbolTable) -> Result<DynCollider, String> {
@@ -206,7 +238,15 @@ pub(crate) fn sf_circle_collider(
     world: &mut World,
 ) -> Result<Val, String> {
     let opts_form = opts_form(items, "circle-collider")?;
-    if opts_form.as_ref().is_some_and(contains_projector_context) {
+    if ctx.projector_scope.is_none()
+        && opts_form.as_ref().is_some_and(contains_legacy_projector_context)
+    {
+        return Err("circle-collider: entity/context overrides require a projector scope".into());
+    }
+    if opts_form
+        .as_ref()
+        .is_some_and(|form| contains_bound_projector_context(form, ctx.projector_scope.as_ref()))
+    {
         let spec = circle_projector_spec_from_form(opts_form, env, ctx, world)?;
         return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::circle(spec))));
     }
@@ -224,10 +264,19 @@ pub(crate) fn sf_capsule_chain_collider(
     world: &mut World,
 ) -> Result<Val, String> {
     let opts_form = opts_form(items, "capsule-chain-collider")?;
-    if opts_form.as_ref().is_some_and(contains_projector_context) {
+    if ctx.projector_scope.is_none()
+        && opts_form.as_ref().is_some_and(contains_legacy_projector_context)
+    {
+        return Err("capsule-chain-collider: entity/context overrides require a projector scope".into());
+    }
+    if opts_form
+        .as_ref()
+        .is_some_and(|form| contains_bound_projector_context(form, ctx.projector_scope.as_ref()))
+    {
         return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
             opts_form,
             env.clone(),
+            ctx.projector_scope.clone(),
         ))));
     }
     let opts = eval_opts("capsule-chain-collider", opts_form.as_ref(), env, ctx, world)?;

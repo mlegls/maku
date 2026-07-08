@@ -755,7 +755,7 @@
     }
 
     #[test]
-    fn primitive_collider_can_read_entity_context_directly() {
+    fn primitive_collider_outside_projector_cannot_read_entity_context() {
         const CARD: &str = r#"
 (defcontact [:damage :body] {:once :hit}
   (fn [a b] (event :hit (:pos b))))
@@ -768,8 +768,11 @@
            (circle-collider {:layer :body :r 0.1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        sim.step().unwrap();
-        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
+        let Err(err) = sim.step() else {
+            assert!(false, "spawn-level primitive unexpectedly captured entity context");
+            return;
+        };
+        assert!(err.contains("projector scope"), "{err}");
     }
 
     #[test]
@@ -805,7 +808,7 @@
     }
 
     #[test]
-    fn low_level_cond_controls_projector_output() {
+    fn spawn_level_cond_cannot_capture_projector_context() {
         const CARD: &str = r#"
 (defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
 (defpattern p []
@@ -818,20 +821,11 @@
              :else (circle-collider {:layer :cold :r 0.01})))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        for _ in 0..30 {
-            sim.step().unwrap();
-        }
-        assert!(
-            sim.events_vec().iter().all(|e| &*e.name != "hit"),
-            "projector-level cond should keep the cold branch before the predicate"
-        );
-        for _ in 0..60 {
-            sim.step().unwrap();
-        }
-        assert!(
-            sim.events_vec().iter().any(|e| &*e.name == "hit"),
-            "projector-level cond should materialize the first matching branch"
-        );
+        let Err(err) = sim.step() else {
+            assert!(false, "spawn-level cond unexpectedly captured projector context");
+            return;
+        };
+        assert!(err.contains("projector scope"), "{err}");
     }
 
     /// The duel-card bug: aim inside an expression-level frame must aim

@@ -111,7 +111,15 @@ fn sample_curve_projection(
     Some(pts)
 }
 
-fn bind_projector_context(env: &Env, e_view: Option<&Val>, ctx_view: Option<&Val>) -> Env {
+fn bind_projector_scope(
+    env: &Env,
+    scope: Option<&ProjectorScope>,
+    e_view: Option<&Val>,
+    ctx_view: Option<&Val>,
+) -> Env {
+    let Some(scope) = scope else {
+        return env.clone();
+    };
     let e_bound = e_view
         .cloned()
         .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
@@ -119,8 +127,8 @@ fn bind_projector_context(env: &Env, e_view: Option<&Val>, ctx_view: Option<&Val
         .cloned()
         .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
     env.clone()
-        .bind("e".into(), e_bound)
-        .bind("ctx".into(), ctx_bound)
+        .bind(scope.entity.clone(), e_bound)
+        .bind(scope.context.clone(), ctx_bound)
 }
 
 pub fn materialize_collider_defs_into(
@@ -139,11 +147,11 @@ pub fn materialize_collider_defs_into(
                 out.extend(slots.iter().cloned());
             }
             ColliderProjectorExpr::Circle(spec) => {
-                let env = bind_projector_context(&spec.env, e_view, ctx_view);
+                let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
                 out.push(materialize_circle_projector(spec, &env, sig)?);
             }
-            ColliderProjectorExpr::CapsuleChain { opts, env } => {
-                let env = bind_projector_context(env, e_view, ctx_view);
+            ColliderProjectorExpr::CapsuleChain { opts, env, scope } => {
+                let env = bind_projector_scope(env, scope.as_ref(), e_view, ctx_view);
                 out.push(materialize_capsule_chain_projector(opts, &env, sig, symbols)?);
             }
             ColliderProjectorExpr::Callable { params, body, env } => {
@@ -162,6 +170,13 @@ pub fn materialize_collider_defs_into(
                 }
                 let mut run_ctx = Ctx::default();
                 run_ctx.sig = sig.clone();
+                run_ctx.projector_scope = match (params.first(), params.get(1)) {
+                    (Some(entity), Some(context)) => Some(ProjectorScope {
+                        entity: entity.clone(),
+                        context: context.clone(),
+                    }),
+                    _ => None,
+                };
                 let mut run_world = World::default();
                 run_world.symbols = symbols.clone();
                 let mut last = Val::Nothing;
@@ -185,18 +200,17 @@ pub fn materialize_collider_defs_into(
                     other => return Err(format!("defcollider: expected collider projector, got {:?}", other)),
                 }
             }
-            ColliderProjectorExpr::Cond { clauses, env } => {
+            ColliderProjectorExpr::Cond { clauses, env, scope } => {
                 let e_bound = e_view
                     .cloned()
                     .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
                 let ctx_bound = ctx_view
                     .cloned()
                     .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
-                let env = env.clone()
-                    .bind("e".into(), e_bound.clone())
-                    .bind("ctx".into(), ctx_bound.clone());
+                let env = bind_projector_scope(env, scope.as_ref(), Some(&e_bound), Some(&ctx_bound));
                 let mut run_ctx = Ctx::default();
                 run_ctx.sig = sig.clone();
+                run_ctx.projector_scope = scope.clone();
                 let mut run_world = World::default();
                 run_world.symbols = symbols.clone();
                 for (pred, child) in clauses.iter() {

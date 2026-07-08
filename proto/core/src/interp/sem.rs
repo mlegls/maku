@@ -25,6 +25,12 @@ pub struct EntityContext {
     pub entity: Option<EntityRef>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ProjectorScope {
+    pub entity: Rc<str>,
+    pub context: Rc<str>,
+}
+
 /// Collider projector algebra currently supported by the interpreter.
 /// Stable constructor slots are the fast path; deferred/composed projectors
 /// are evaluated against `(e, ctx)` during collider materialization.
@@ -65,15 +71,16 @@ pub struct CircleProjectorSpec {
     pub layer: Symbol,
     pub radius: ProjectorNum,
     pub env: Env,
+    pub scope: Option<ProjectorScope>,
 }
 
 #[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
     Circle(CircleProjectorSpec),
-    CapsuleChain { opts: Option<Form>, env: Env },
+    CapsuleChain { opts: Option<Form>, env: Env, scope: Option<ProjectorScope> },
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
-    Cond { clauses: Rc<[(Option<Form>, ColliderProjectorValue)]>, env: Env },
+    Cond { clauses: Rc<[(Option<Form>, ColliderProjectorValue)]>, env: Env, scope: Option<ProjectorScope> },
     ColliderSum(Rc<[ColliderProjectorValue]>),
 }
 
@@ -112,10 +119,14 @@ impl ColliderProjectorValue {
         }
     }
 
-    pub(crate) fn capsule_chain(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
+    pub(crate) fn capsule_chain(
+        opts: Option<Form>,
+        env: Env,
+        scope: Option<ProjectorScope>,
+    ) -> ColliderProjectorValue {
         ColliderProjectorValue {
             figure: FigureProjectorKind::Pose,
-            expr: ColliderProjectorExpr::CapsuleChain { opts, env },
+            expr: ColliderProjectorExpr::CapsuleChain { opts, env, scope },
         }
     }
 
@@ -123,10 +134,11 @@ impl ColliderProjectorValue {
         figure: FigureProjectorKind,
         clauses: Vec<(Option<Form>, ColliderProjectorValue)>,
         env: Env,
+        scope: Option<ProjectorScope>,
     ) -> ColliderProjectorValue {
         ColliderProjectorValue {
             figure,
-            expr: ColliderProjectorExpr::Cond { clauses: clauses.into(), env },
+            expr: ColliderProjectorExpr::Cond { clauses: clauses.into(), env, scope },
         }
     }
 

@@ -506,6 +506,7 @@ pub fn eval_sig(
         patterns: Rc::new(HashMap::new()),
         macros: Rc::new(HashMap::new()),
         deferred: Vec::new(),
+        projector_scope: None,
     };
     let mut w = World::default(); // signals never touch the world (§2)
     evaluate(form, &e, &mut ctx, &mut w)
@@ -895,6 +896,7 @@ pub fn step_motion_in(
                             patterns: Rc::new(HashMap::new()),
                             macros: Rc::new(HashMap::new()),
                             deferred: Vec::new(),
+                            projector_scope: None,
                         };
                         let mut w = World::default();
                         let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
