@@ -61,11 +61,12 @@ Engine boundary types:
 - `Collider` / `ColliderData`: typed literal collision boundary rows,
   including `none`. These are emitted by extraction from collider projectors;
   they are not the opaque projector values themselves.
-- `RenderData<K>`: typed render boundary rows for a registered render kind
+- `RenderData<K>`: the typed render boundary row for a registered render kind
   `K`. Unlike `ColliderData`, this is not a single closed schema: each kind
   selects its own typed record schema from the load-time render-kind registry.
   Source code may construct render rows directly when a renderer slot expects
-  them.
+  them. Each entity emits exactly one render row; use a `:none` kind for no
+  render output.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
 - `EntityView`: the same entity view shape used by query/manip callbacks:
@@ -80,7 +81,7 @@ Engine boundary types:
   primitive projector constructors and projector combinators. Extraction lowers
   it with `(EntityView, ProjectorContext)` to `List<Collider>` each tick.
 - `RenderProjector`: typed pure function or projector expression lowered by
-  extraction with `(EntityView, ProjectorContext)` to `List<RenderData<K>>` each
+  extraction with `(EntityView, ProjectorContext)` to one `RenderData<K>` each
   tick. Unlike `ColliderProjector`, render rows are open schema data, so this
   does not have to be an opaque primitive-only value.
 - `EntitySet`: ephemeral row-index view.
@@ -220,7 +221,7 @@ normal authoring surface.
 Render rows are different: render kinds are open, host/library-registered
 schemas, and card code may construct schema-checked map-like `RenderData<K>`
 directly when a renderer slot expects it. A `defrenderer` can therefore be a
-normal function over `e`/`ctx` that returns `RenderData<K>` or a list of rows.
+normal function over `e`/`ctx` that returns one `RenderData<K>` row.
 Stock renderer helpers are conveniences for common projections from figure/meta
 to those rows, not the only way to get render data.
 
@@ -334,6 +335,17 @@ derivable from renderer specs after macro/import expansion. Hosts and optional
 rendering crates declare which kinds they implement; unsupported kinds fail at
 load unless a declared degradation path is available.
 
+Each entity has exactly one render row. To render nothing, return a row whose
+kind is `:none`. To expose several visual parts, define a schema with enough
+fields for the maximum shape, such as `:aux-sprite-1`/`:aux-sprite-2` or a
+nested record, rather than returning multiple rows.
+
+Render schemas merge by field key, not by key/type pairs: if two renderers
+contribute the same key with incompatible types, card load fails. Imported
+renderers with conflicting field names can be adapted by a builtin projection
+operator that renames fields, selects a subset of fields, or both before schema
+merge.
+
 Core owns the render slot boundary, registry/manifest mechanics, typed row
 transport, and deterministic extraction order. It does not own sprite family
 semantics, texture/material binding, palette interpretation, or the meaning of
@@ -361,9 +373,11 @@ For structures:
 - unstructured lists remain list data;
 - records lower to fixed field layouts;
 - entity meta fields lower to typed matrices in `WorldFields`.
-- render rows lower to per-kind column buffers, optionally bucketed by an
-  interned batch key. Range kinds such as polylines/meshes use shared
-  vertex/index pools plus row ranges.
+- render rows lower to per-kind, per-field column buffers, optionally bucketed
+  by an interned batch key. Because there is exactly one render row per entity,
+  fixed-width fields can be entity-indexed directly. Variable-size payload
+  fields such as mesh vertices or polyline points are represented as fields
+  containing offsets/ranges into shared pools, not as multiple render rows.
 
 This pass may choose optimized representations such as specialized linear
 motion, dense motion-state slots, shared curve sampling caches, or compiled

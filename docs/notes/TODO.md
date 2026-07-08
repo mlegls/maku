@@ -88,7 +88,7 @@ work.
   ColliderProjector = opaque source value lowered by extraction with
                       (EntityView, ProjectorContext) -> [Collider]
   RenderProjector = typed function/projector lowered by extraction with
-                    (EntityView, ProjectorContext) -> [RenderData<K>]
+                    (EntityView, ProjectorContext) -> RenderData<K>
   Collider = literal collision row, not a figure-to-collider spec
   SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector] * RenderProjector
   ```
@@ -103,7 +103,10 @@ work.
   slots. Source code should construct opaque collider projector values through
   builtin primitive constructors and combinators. Render rows are open
   schema-checked host-facing data and may be constructed directly by renderer
-  code.
+  code, but each entity emits exactly one row. No-render is `:kind :none`;
+  multiple visual parts are encoded as fields in a maximal schema. Render
+  schemas merge by key with exact type compatibility, and imported conflicting
+  schemas should be adapted by a builtin field rename/pick operator.
 - `defcollider` should become `defn` plus an expected return type
   `ColliderProjector | [ColliderProjector]`. Constructor argument records have
   known shape; their values are concrete typed expressions over the entity
