@@ -65,6 +65,7 @@ pub struct Sim {
     tasks: Vec<Task>,
     ctx: Ctx,
     collider_scratch: ColliderScratch,
+    render_scratch: render::RenderScratch,
     /// (defchannel $name expr) rules from the loaded card (stdlib included),
     /// evaluated once per tick at the end of refresh_channels.
     card_channels: Vec<(Rc<str>, Form)>,
@@ -137,6 +138,7 @@ impl Clone for Sim {
             tasks: self.tasks.clone(),
             ctx,
             collider_scratch: ColliderScratch::default(),
+            render_scratch: render::RenderScratch::default(),
             card_channels: self.card_channels.clone(),
         }
     }
@@ -193,6 +195,7 @@ impl Sim {
             tasks: vec![task],
             ctx,
             collider_scratch: ColliderScratch::default(),
+            render_scratch: render::RenderScratch::default(),
             card_channels: card.channels,
         })
     }
@@ -281,6 +284,7 @@ impl Sim {
             tasks: vec![task],
             ctx,
             collider_scratch: ColliderScratch::default(),
+            render_scratch: render::RenderScratch::default(),
             card_channels: card.channels.clone(),
         })
     }

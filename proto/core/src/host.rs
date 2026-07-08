@@ -350,8 +350,8 @@ impl Instance {
         self.session.tick()
     }
 
-    pub fn render(&self) -> Vec<RenderItem> {
-        self.session.sim.as_ref().map(|s| s.render()).unwrap_or_default()
+    pub fn render(&mut self) -> Vec<RenderItem> {
+        self.session.sim.as_mut().map(|s| s.render()).unwrap_or_default()
     }
 
     pub fn channel(&self, name: &str) -> Option<Val> {

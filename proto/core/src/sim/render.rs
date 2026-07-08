@@ -6,8 +6,8 @@ pub enum RenderItem {
     Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64, alpha: f64 },
 }
 
-#[derive(Default)]
-struct RenderScratch {
+#[derive(Clone, Default)]
+pub(super) struct RenderScratch {
     rows: Vec<RenderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynRender>,
@@ -73,10 +73,10 @@ impl Sim {
         self.sample_sig(&projector.sigs.hue, tau, 0.0)
     }
 
-    pub fn render(&self) -> Vec<RenderItem> {
+    pub fn render(&mut self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
-        let mut scratch = RenderScratch::default();
+        let mut scratch = std::mem::take(&mut self.render_scratch);
         scratch.clear_for_entities(self.world.entities.len());
         for (i, _) in self.world.entities.iter().enumerate() {
             if !self.world.entities.is_alive(i) {
@@ -150,6 +150,7 @@ impl Sim {
                 }
             }
         }
+        self.render_scratch = scratch;
         out
     }
 }

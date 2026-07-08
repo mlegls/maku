@@ -178,7 +178,7 @@ impl Maku {
     /// Pose entities: [x, y, radius_world, r, g, b, a]* (colors 0–1, hue
     /// pre-applied — every host renders identical colors; :scale is
     /// pre-applied to the radius, :opacity arrives as a).
-    pub fn dots(&self) -> Vec<f32> {
+    pub fn dots(&mut self) -> Vec<f32> {
         let mut out = Vec::new();
         for item in self.inst.render() {
             if let RenderItem::Dot { x, y, style, hue, scale, alpha, .. } = item {
@@ -198,7 +198,7 @@ impl Maku {
     }
 
     /// Lasers/pathers: [active, r, g, b, a, n, x1, y1, … xn, yn]* repeated.
-    pub fn beams(&self) -> Vec<f32> {
+    pub fn beams(&mut self) -> Vec<f32> {
         let mut out = Vec::new();
         for item in self.inst.render() {
             if let RenderItem::Polyline { pts, style, active, hue, alpha } = item {
