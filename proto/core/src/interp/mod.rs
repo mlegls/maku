@@ -31,6 +31,7 @@ mod r#dyn;
 pub mod model;
 mod motion;
 mod renderers;
+mod sem;
 mod specs;
 mod spawn;
 mod world;
@@ -45,6 +46,7 @@ pub use crate::model::{
 };
 pub use motion::*;
 pub use renderers::*;
+pub use sem::*;
 pub(crate) use specs::*;
 pub(crate) use spawn::*;
 pub use world::*;
@@ -92,8 +94,8 @@ pub enum Val {
     Kw(Rc<str>),
     Pose(Pose),
     Figure(Figure),
-    ColliderSpecs(Rc<DynLike>),
-    RenderSpecs(Rc<DynLike>),
+    ColliderSpecs(Rc<ColliderSpecList>),
+    RenderSpecs(Rc<RenderSpecList>),
     EntitySet(Rc<[usize]>),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),

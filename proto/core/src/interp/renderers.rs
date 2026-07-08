@@ -21,31 +21,6 @@ impl DynKind for RenderData {
 
 pub type DynRender = Dyn<RenderData>;
 
-/// Source-level collider/render metadata carried as generic dyn-like data.
-/// Typed projection happens at the collision/render boundary after this data
-/// is realized for the current tick.
-pub type ColliderSpecList = DynLike;
-pub type RenderSpecList = DynLike;
-
-/// Bridge representation of a collider projector: source-level spec lists
-/// that lower against the entity's current figure into realized collider rows.
-#[derive(Clone, Debug)]
-pub struct ColliderProjector {
-    pub specs: Rc<[ColliderSpecList]>,
-}
-
-/// Bridge representation of a render projector: source-level spec lists
-/// that lower against the entity's current figure into realized render rows.
-#[derive(Clone, Debug)]
-pub struct RenderProjector {
-    pub specs: Rc<[RenderSpecList]>,
-    /// Compatibility host style. This belongs to the current default renderer,
-    /// not to entity semantics.
-    pub style: Style,
-    /// Compatibility render/collider modifier signals from legacy meta tags.
-    pub sigs: RenderSigs,
-}
-
 /// A signal-valued meta tag sampled at render time (e.g. :hue).
 #[derive(Debug, Clone)]
 pub struct MetaSig {

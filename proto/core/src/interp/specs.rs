@@ -112,7 +112,7 @@ pub(crate) fn as_collider_spec_list(
     if !v.is_dynamic() {
         as_stable_collider_slots(v, symbols)?;
     }
-    Ok(v.clone())
+    Ok(ColliderSpecList::checked(v.clone()))
 }
 
 pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
@@ -154,5 +154,5 @@ pub(crate) fn as_render_spec_list(v: &DynLike) -> Result<RenderSpecList, String>
     if !v.is_dynamic() {
         as_stable_render_slots(v)?;
     }
-    Ok(v.clone())
+    Ok(RenderSpecList::checked(v.clone()))
 }

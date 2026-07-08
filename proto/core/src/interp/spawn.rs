@@ -36,18 +36,6 @@ fn is_reserved_sym_field_key(key: &str) -> bool {
     RESERVED_KW_FIELD_KEYS.contains(&key)
 }
 
-struct SpawnMetaInput {
-    forms: Vec<Form>,
-    computed_pairs: Vec<(Val, Val)>,
-}
-
-struct SpawnSlots {
-    figure: Val,
-    colliders: Vec<ColliderSpecList>,
-    renderers: Vec<RenderSpecList>,
-    meta: SpawnMetaInput,
-}
-
 fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
     match items.len() {
         0 => Ok(empty_spec_list()),
@@ -73,8 +61,10 @@ pub(crate) fn sf_colliders(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    as_collider_spec_list(&specs, &mut world.symbols)?;
-    Ok(Val::ColliderSpecs(Rc::new(specs)))
+    Ok(Val::ColliderSpecs(Rc::new(as_collider_spec_list(
+        &specs,
+        &mut world.symbols,
+    )?)))
 }
 
 pub(crate) fn sf_renderers(
@@ -84,8 +74,7 @@ pub(crate) fn sf_renderers(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    as_render_spec_list(&specs)?;
-    Ok(Val::RenderSpecs(Rc::new(specs)))
+    Ok(Val::RenderSpecs(Rc::new(as_render_spec_list(&specs)?)))
 }
 
 pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
@@ -132,8 +121,8 @@ fn normalize_spawn_input(
             continue;
         }
         match evaluate(item, env, ctx, world)? {
-            Val::ColliderSpecs(specs) => colliders.push((*specs).clone()),
-            Val::RenderSpecs(specs) => renderers.push((*specs).clone()),
+            Val::ColliderSpecs(specs) => colliders.push(specs.as_ref().clone()),
+            Val::RenderSpecs(specs) => renderers.push(specs.as_ref().clone()),
             Val::Map(kvs) => computed_meta_pairs.extend(kvs.iter().cloned()),
             Val::DynLike(d) => computed_meta_pairs.extend(dynlike_meta_pairs(&d)?),
             _ => {}
@@ -318,10 +307,10 @@ fn build_entity_specs(
     let mut explicit_colliders = collider_slots;
     let mut explicit_renderers = renderer_slots;
     if explicit_colliders.is_empty() {
-        explicit_colliders.push(empty_spec_list());
+        explicit_colliders.push(ColliderSpecList::empty());
     }
     if explicit_renderers.is_empty() {
-        explicit_renderers.push(empty_spec_list());
+        explicit_renderers.push(RenderSpecList::empty());
     }
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(ColName, f64)>> = elems
@@ -517,8 +506,8 @@ fn replace_primary_hitbox_spec(list: &DynLike, radius: f64) -> Option<DynLike> {
 
 fn apply_primary_hitbox(lists: &mut [ColliderSpecList], radius: f64) {
     for list in lists.iter_mut() {
-        if let Some(next) = replace_primary_hitbox_spec(list, radius) {
-            *list = next;
+        if let Some(next) = replace_primary_hitbox_spec(&list.expr, radius) {
+            *list = ColliderSpecList::checked(next);
             break;
         }
     }
@@ -560,15 +549,15 @@ pub(crate) fn flatten_elems(
                     );
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
-                        empty_spec_list(),
-                        DynLike::List(vec![projection].into()),
+                        ColliderSpecList::empty(),
+                        RenderSpecList::checked(DynLike::List(vec![projection].into())),
                         EntityCachePolicy::default(),
                     )
                 }
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
-                    empty_spec_list(),
-                    empty_spec_list(),
+                    ColliderSpecList::empty(),
+                    RenderSpecList::empty(),
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },
@@ -586,8 +575,8 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: as_dyn_figure(other)?,
-                collider_specs: empty_spec_list(),
-                render_specs: empty_spec_list(),
+                collider_specs: ColliderSpecList::empty(),
+                render_specs: RenderSpecList::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });
