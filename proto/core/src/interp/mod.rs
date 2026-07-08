@@ -24,13 +24,18 @@ use std::rc::Rc;
 
 mod builtins;
 mod card;
+mod colliders;
+pub mod model;
 mod motion;
+mod renderers;
 mod spawn;
 mod world;
 
 pub(crate) use builtins::*;
 pub use card::*;
+pub use colliders::*;
 pub use motion::*;
+pub use renderers::*;
 pub(crate) use spawn::*;
 pub use world::*;
 
