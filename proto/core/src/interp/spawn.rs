@@ -36,12 +36,16 @@ fn is_reserved_sym_field_key(key: &str) -> bool {
     RESERVED_KW_FIELD_KEYS.contains(&key)
 }
 
-struct SpawnInput {
+struct SpawnMetaInput {
+    forms: Vec<Form>,
+    computed_pairs: Vec<(Val, Val)>,
+}
+
+struct SpawnSlots {
     figure: Val,
-    meta_forms: Vec<Form>,
-    computed_meta_pairs: Vec<(Val, Val)>,
-    collider_specs: Vec<ColliderSpecList>,
-    renderer_specs: Vec<RenderSpecList>,
+    colliders: Vec<ColliderSpecList>,
+    renderers: Vec<RenderSpecList>,
+    meta: SpawnMetaInput,
 }
 
 fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
@@ -116,37 +120,38 @@ fn normalize_spawn_input(
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<SpawnInput, String> {
+) -> Result<SpawnSlots, String> {
     let figure = evaluate(&items[1], env, ctx, world)?;
     let mut meta_forms = Vec::new();
     let mut computed_meta_pairs: Vec<(Val, Val)> = Vec::new();
-    let mut collider_specs = Vec::new();
-    let mut renderer_specs = Vec::new();
+    let mut colliders = Vec::new();
+    let mut renderers = Vec::new();
     for item in &items[2..] {
         if matches!(item, Form::Map(_)) {
             meta_forms.push(item.clone());
             continue;
         }
         match evaluate(item, env, ctx, world)? {
-            Val::ColliderSpecs(specs) => collider_specs.push((*specs).clone()),
-            Val::RenderSpecs(specs) => renderer_specs.push((*specs).clone()),
+            Val::ColliderSpecs(specs) => colliders.push((*specs).clone()),
+            Val::RenderSpecs(specs) => renderers.push((*specs).clone()),
             Val::Map(kvs) => computed_meta_pairs.extend(kvs.iter().cloned()),
             Val::DynLike(d) => computed_meta_pairs.extend(dynlike_meta_pairs(&d)?),
             _ => {}
         }
     }
-    Ok(SpawnInput {
+    Ok(SpawnSlots {
         figure,
-        meta_forms,
-        computed_meta_pairs,
-        collider_specs,
-        renderer_specs,
+        colliders,
+        renderers,
+        meta: SpawnMetaInput {
+            forms: meta_forms,
+            computed_pairs: computed_meta_pairs,
+        },
     })
 }
 
 fn merge_spawn_meta(
-    metas: &[Form],
-    computed_meta_pairs: Vec<(Val, Val)>,
+    meta: SpawnMetaInput,
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
@@ -155,7 +160,7 @@ fn merge_spawn_meta(
     // as forms long enough for signal tags and :expose channel designators to
     // remain unevaluated; computed maps arrive as already-evaluated pairs.
     let mut pairs: Vec<(Val, Val)> = Vec::new();
-    for mf in metas.iter().rev() {
+    for mf in meta.forms.iter().rev() {
         match mf {
             Form::Map(kvs) => {
                 for (k, v) in kvs.iter() {
@@ -176,32 +181,23 @@ fn merge_spawn_meta(
             }
         }
     }
-    pairs.extend(computed_meta_pairs);
+    pairs.extend(meta.computed_pairs);
     Ok(Val::Map(Rc::new(pairs)))
 }
 
-pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
-    let input = normalize_spawn_input(items, env, ctx, world)?;
-    let meta = merge_spawn_meta(
-        &input.meta_forms,
-        input.computed_meta_pairs,
-        env,
-        ctx,
-        world,
-    )?;
-    let mut elems = Vec::new();
-    flatten_elems(input.figure, &mut Vec::new(), &mut elems)?;
-    // rand in signal expressions is an ir constant per element (§5): clone the
-    // motion tree per element, substituting rand calls with drawn constants
-    for e in elems.iter_mut() {
-        if dyn_figure_has_rand(&e.dyn_figure) {
-            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, world);
-        }
-    }
-    let styles = resolve_styles(&meta, &elems)?;
-    let sigs = resolve_sigs(&input.meta_forms, env, elems.len());
+fn build_entity_specs(
+    elems: Vec<SpawnElem>,
+    meta: &Val,
+    meta_forms: &[Form],
+    collider_slots: Vec<ColliderSpecList>,
+    renderer_slots: Vec<RenderSpecList>,
+    env: &Env,
+    world: &mut World,
+) -> Result<Vec<EntitySpec>, String> {
+    let styles = resolve_styles(meta, &elems)?;
+    let sigs = resolve_sigs(meta_forms, env, elems.len());
     let mut sym_fields: Vec<(FieldName, Symbol)> = Vec::new();
-    if let Val::Map(kvs) = &meta {
+    if let Val::Map(kvs) = meta {
         for (k, v) in kvs.iter() {
             let (Val::Kw(field), Val::Kw(value)) = (k, v) else {
                 continue;
@@ -229,10 +225,10 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // style axes (leading-axis / by-length / nested-structural) — per-entity
     // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
     let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
-    if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(&meta, "hp") {
+    if let Some(v @ (Val::Num(_) | Val::Arr(_))) = map_get(meta, "hp") {
         cols.push(("hp".into(), v));
     }
-    if let Val::Map(kvs) = &meta {
+    if let Val::Map(kvs) = meta {
         for (k, v) in kvs.iter() {
             let is_cols = matches!(k, Val::Kw(kw) if &**kw == "cols");
             if !is_cols {
@@ -249,7 +245,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     }
     // triggers: data only — no synthesized rules (spawn-enemy in the lib
     // is where "hp ≤ 0 means death" lives)
-    let triggers: Rc<[TriggerRule]> = match map_get(&meta, "triggers") {
+    let triggers: Rc<[TriggerRule]> = match map_get(meta, "triggers") {
         Some(Val::Arr(items)) => {
             let mut rules = Vec::new();
             for it in items.iter() {
@@ -286,7 +282,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     };
     // :damage n | {:hit n ...} (DMK player() map) lowers to an ordinary
     // numeric column read by Touhou contact rules.
-    if let Some(v) = map_get(&meta, "damage") {
+    if let Some(v) = map_get(meta, "damage") {
         match v {
             Val::Num(_) | Val::Arr(_) => cols.push(("damage".into(), v)),
             Val::Map(kvs) => {
@@ -300,7 +296,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             _ => {}
         }
     }
-    let hitbox = match map_get(&meta, "hitbox") {
+    let hitbox = match map_get(meta, "hitbox") {
         Some(Val::Num(n)) => Some(n),
         _ => None,
     };
@@ -308,7 +304,7 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // channel — the declarative form of "sim-computed world fact" (§3).
     // Parsed from the RAW form ($names here are channel designators, like
     // the keys of (with {$rank 0.5} …) — not reads).
-    let expose: Rc<[(ColName, Rc<str>)]> = parse_expose(&input.meta_forms)
+    let expose: Rc<[(ColName, Rc<str>)]> = parse_expose(meta_forms)
         .iter()
         .map(|(col, chan)| (world.intern_col(col.as_ref()), chan.clone()))
         .collect::<Vec<_>>()
@@ -319,8 +315,8 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // (spawn-bullet/spawn-enemy in lib/touhou.maku).
     // :hitbox r resizes the PRIMARY (first) collider — the generic knob
     // that lets a template's default collider set fit a bigger sprite.
-    let mut explicit_colliders = input.collider_specs;
-    let mut explicit_renderers = input.renderer_specs;
+    let mut explicit_colliders = collider_slots;
+    let mut explicit_renderers = renderer_slots;
     if explicit_colliders.is_empty() {
         explicit_colliders.push(empty_spec_list());
     }
@@ -366,6 +362,31 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
         })
         .collect();
+    Ok(entities)
+}
+
+pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let slots = normalize_spawn_input(items, env, ctx, world)?;
+    let meta_forms = slots.meta.forms.clone();
+    let meta = merge_spawn_meta(slots.meta, env, ctx, world)?;
+    let mut elems = Vec::new();
+    flatten_elems(slots.figure, &mut Vec::new(), &mut elems)?;
+    // rand in signal expressions is an ir constant per element (§5): clone the
+    // motion tree per element, substituting rand calls with drawn constants
+    for e in elems.iter_mut() {
+        if dyn_figure_has_rand(&e.dyn_figure) {
+            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, world);
+        }
+    }
+    let entities = build_entity_specs(
+        elems,
+        &meta,
+        &meta_forms,
+        slots.colliders,
+        slots.renderers,
+        env,
+        world,
+    )?;
     Ok(Val::Action(Rc::new(ActionV::Spawn { entities })))
 }
 
