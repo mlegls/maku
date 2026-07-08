@@ -9,21 +9,37 @@ use crate::edn::Form;
 use crate::interp::types::Type;
 use std::rc::Rc;
 
-/// A source-level collider slot expression after dyn-lifting and schema
+/// Projector-local view of entity meta. Today this is implicit in the
+/// interpreter's field lookup path; the explicit type names the target boundary
+/// where projector adapters can rebind names or select submaps.
+#[derive(Clone, Debug, Default)]
+pub struct MetaEnv;
+
+/// Per-tick context supplied to collider/render projectors. The current
+/// interpreter passes age/tick separately; this type names the target argument
+/// for higher-order projector combinators.
+#[derive(Clone, Debug)]
+pub struct EntityContext {
+    pub age: f64,
+    pub tick: u64,
+    pub entity: Option<EntityRef>,
+}
+
+/// A source-level collider projector expression after dyn-lifting and schema
 /// checking for a collider slot. Dynamic lists are rechecked after per-tick
 /// realization until the typed layer can represent their element schema.
 #[derive(Clone, Debug)]
-pub struct ColliderSpecList {
+pub struct ColliderProjectorSpec {
     pub(crate) expr: DynLike,
 }
 
-impl ColliderSpecList {
-    pub(crate) fn checked(expr: DynLike) -> ColliderSpecList {
-        ColliderSpecList { expr }
+impl ColliderProjectorSpec {
+    pub(crate) fn checked(expr: DynLike) -> ColliderProjectorSpec {
+        ColliderProjectorSpec { expr }
     }
 
-    pub(crate) fn empty() -> ColliderSpecList {
-        ColliderSpecList::checked(DynLike::List(Vec::new().into()))
+    pub(crate) fn empty() -> ColliderProjectorSpec {
+        ColliderProjectorSpec::checked(DynLike::List(Vec::new().into()))
     }
 
     pub(crate) fn eval(
@@ -36,21 +52,24 @@ impl ColliderSpecList {
     }
 }
 
-/// A source-level render slot expression after dyn-lifting and schema checking
-/// for a render slot. Dynamic lists are rechecked after per-tick realization
-/// until the typed layer can represent their element schema.
+/// Compatibility alias for the current `(colliders ...)` bridge surface.
+pub type ColliderSpecList = ColliderProjectorSpec;
+
+/// A source-level renderer projector expression after dyn-lifting and schema
+/// checking for a render slot. Dynamic lists are rechecked after per-tick
+/// realization until the typed layer can represent their element schema.
 #[derive(Clone, Debug)]
-pub struct RenderSpecList {
+pub struct RendererProjectorSpec {
     pub(crate) expr: DynLike,
 }
 
-impl RenderSpecList {
-    pub(crate) fn checked(expr: DynLike) -> RenderSpecList {
-        RenderSpecList { expr }
+impl RendererProjectorSpec {
+    pub(crate) fn checked(expr: DynLike) -> RendererProjectorSpec {
+        RendererProjectorSpec { expr }
     }
 
-    pub(crate) fn empty() -> RenderSpecList {
-        RenderSpecList::checked(DynLike::List(Vec::new().into()))
+    pub(crate) fn empty() -> RendererProjectorSpec {
+        RendererProjectorSpec::checked(DynLike::List(Vec::new().into()))
     }
 
     pub(crate) fn eval(
@@ -62,13 +81,16 @@ impl RenderSpecList {
         self.expr.eval(tau, state, sig)
     }
 }
+
+/// Compatibility alias for the current `(renderers ...)` bridge surface.
+pub type RenderSpecList = RendererProjectorSpec;
 
 /// Semantic collider projector slot carried by a spawned entity. It is still a
 /// bridge representation: the interpreter lowers specs against the current
 /// figure into realized collider rows during simulation.
 #[derive(Clone, Debug)]
 pub struct ColliderProjector {
-    pub specs: Rc<[ColliderSpecList]>,
+    pub specs: Rc<[ColliderProjectorSpec]>,
 }
 
 /// Semantic render projector slot carried by a spawned entity. The style/sigs
@@ -76,7 +98,7 @@ pub struct ColliderProjector {
 /// specs as that boundary becomes explicit.
 #[derive(Clone, Debug)]
 pub struct RenderProjector {
-    pub specs: Rc<[RenderSpecList]>,
+    pub specs: Rc<[RendererProjectorSpec]>,
     pub style: Style,
     pub sigs: RenderSigs,
 }
@@ -131,8 +153,8 @@ impl SpawnSlotTypes {
 pub(crate) struct SpawnSlots {
     pub targets: SpawnSlotTypes,
     pub figure: Val,
-    pub colliders: Vec<ColliderSpecList>,
-    pub renderers: Vec<RenderSpecList>,
+    pub colliders: Vec<ColliderProjectorSpec>,
+    pub renderers: Vec<RendererProjectorSpec>,
     pub meta: SpawnMetaInput,
 }
 
@@ -143,6 +165,6 @@ pub(crate) struct SpawnSlots {
 pub(crate) struct SpawnPlan {
     pub elems: Vec<SpawnElem>,
     pub meta: SpawnMetaPlan,
-    pub colliders: Vec<ColliderSpecList>,
-    pub renderers: Vec<RenderSpecList>,
+    pub colliders: Vec<ColliderProjectorSpec>,
+    pub renderers: Vec<RendererProjectorSpec>,
 }

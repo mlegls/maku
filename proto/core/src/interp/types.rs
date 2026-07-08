@@ -16,6 +16,7 @@ pub enum Type {
     ColliderData,
     RenderData(RenderKind),
     Meta,
+    MetaEnv,
     ColliderProjectorSpec,
     RendererProjectorSpec(RenderKind),
     EntitySet,
