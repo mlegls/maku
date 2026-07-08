@@ -342,6 +342,44 @@
     }
 
     #[test]
+    fn defcollider_registers_named_projector() {
+        const CARD: &str = r#"
+(defcollider bullet-collider [e ctx]
+  (+ (circle-collider {:layer :zap :r 0.05})
+     (circle-collider {:layer :graze :r 0.3})))
+(defcontact [:zap :zappable]
+  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
+(defcontact [:graze :zappable] {:once :grazed}
+  (fn [a b] (event :grazed (:pos b))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) (bullet-collider))
+    (spawn (pose c[0.2 0]) (circle-collider {:layer :zappable :r 0.05}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 0);
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "grazed").count(), 1);
+    }
+
+    #[test]
+    fn defcollider_requires_entity_and_context_params() {
+        let err = match Sim::load(
+            r#"
+(defcollider bad [e] (circle-collider {:layer :zap :r 0.1}))
+(defpattern t [] (spawn (pose c[0 0]) (bad)))
+"#,
+            Some("t"),
+        ) {
+            Ok(_) => panic!("bad defcollider unexpectedly loaded"),
+            Err(err) => err,
+        };
+        assert!(err.contains("defcollider: expected parameter vector [e ctx]"), "{err}");
+    }
+
+    #[test]
     fn defcontact_once_latch() {
         const CARD: &str = r#"
 (defcontact [:zap :zappable] {:once :latched}

@@ -106,6 +106,37 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         defs.insert(n.to_string(), Form::list(fnform));
                     }
                 }
+                Some(Form::Sym(s)) if &**s == "defcollider" => {
+                    // (defcollider name [e ctx] body...)
+                    //
+                    // First implementation slice: register a callable
+                    // projector value as (name). The parameter vector is
+                    // validated and reserved for entity/context binding,
+                    // but the body must be closed over ordinary top-level
+                    // defs for now.
+                    let name = match items.get(1) {
+                        Some(Form::Sym(n)) => n.to_string(),
+                        _ => return Err("defcollider: expected name".into()),
+                    };
+                    match items.get(2) {
+                        Some(Form::Vector(ps)) if ps.len() == 2 => {
+                            let ok = matches!((&ps[0], &ps[1]), (Form::Sym(e), Form::Sym(ctx)) if &**e == "e" && &**ctx == "ctx");
+                            if !ok {
+                                return Err("defcollider: expected parameter vector [e ctx]".into());
+                            }
+                        }
+                        Some(Form::Vector(_)) => {
+                            return Err("defcollider: expected parameter vector [e ctx]".into());
+                        }
+                        _ => return Err("defcollider: expected parameter vector".into()),
+                    }
+                    if items.len() < 4 {
+                        return Err("defcollider: expected body".into());
+                    }
+                    let mut fnform = vec![Form::sym("fn"), Form::Vector(Vec::new().into())];
+                    fnform.extend(items[3..].iter().cloned());
+                    defs.insert(name, Form::list(fnform));
+                }
                 Some(Form::Sym(s)) if &**s == "defchannel" => {
                     // (defchannel $name expr): a per-tick derived channel.
                     // Redefinition replaces (imports first, card later —
