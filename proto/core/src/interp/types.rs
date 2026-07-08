@@ -14,7 +14,7 @@ pub enum Type {
     Curve,
     Figure,
     ColliderData,
-    RenderData,
+    RenderData(RenderKind),
     Meta,
     EntitySet,
     Action,
@@ -51,7 +51,7 @@ impl Type {
     }
 
     pub fn spawn_renderers() -> Type {
-        Type::dyn_list_of(Type::RenderData)
+        Type::dyn_list_of(Type::RenderData(RenderKind::Any))
     }
 
     pub fn spawn_meta() -> Type {
@@ -63,6 +63,18 @@ impl Type {
 pub struct FieldType {
     pub name: String,
     pub ty: Type,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RenderKind {
+    Any,
+    Named(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenderKindSchema {
+    pub kind: RenderKind,
+    pub fields: Vec<FieldType>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

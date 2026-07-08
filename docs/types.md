@@ -59,7 +59,9 @@ Structured values:
 Engine boundary types:
 
 - `ColliderData`: typed collision boundary rows, including `none`.
-- `RenderData`: typed render boundary rows or host-facing render metadata.
+- `RenderData<K>`: typed render boundary rows for a registered render kind
+  `K`. Unlike `ColliderData`, this is not a single closed schema: each kind
+  selects its own typed record schema from the load-time render-kind registry.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
 - `EntitySet`: ephemeral row-index view.
@@ -92,7 +94,7 @@ The target low-level entity model is:
 ```text
 Entity = Dyn<Figure>
        * Dyn<List<ColliderData>>
-       * Dyn<List<RenderData>>
+       * Dyn<List<RenderData<K>>>
        * Dyn<Meta>
 ```
 
@@ -158,7 +160,7 @@ The `spawn` slots provide the clearest example:
 
 figure    expects Dyn<Figure>
 colliders expects Dyn<List<ColliderData>>
-renderers expects Dyn<List<RenderData>>
+renderers expects Dyn<List<RenderData<K>>>
 meta      expects Dyn<Meta>
 ```
 
@@ -168,7 +170,7 @@ ordinary structure. Then that typed structure is checked against the
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
-`Dyn<Figure>`, `Dyn<List<ColliderData>>`, `Dyn<List<RenderData>>`, and
+`Dyn<Figure>`, `Dyn<List<ColliderData>>`, `Dyn<List<RenderData<K>>>`, and
 `Dyn<Meta>`.
 
 ## Schema Checking
@@ -211,6 +213,33 @@ designators and legacy signal tags are directives, not ordinary `Meta` values.
 Target elaboration should separate those directives from the `Dyn<Meta>` value
 the entity stores.
 
+Render schemas are the open counterpart to collider schemas. A render row is
+typed by a kind discriminator plus that kind's registered record schema:
+
+```text
+RenderKind : Kw * RecordSchema
+RenderData<K> = record checked against schema(K)
+```
+
+The kind is not an ordinary peer field such as `:mode`; it selects the schema
+that gives the remaining fields meaning. A card's render-kind manifest is
+derivable from renderer specs after macro/import expansion. Hosts and optional
+rendering crates declare which kinds they implement; unsupported kinds fail at
+load unless a declared degradation path is available.
+
+Core owns the render slot boundary, registry/manifest mechanics, typed row
+transport, and deterministic extraction order. It does not own sprite family
+semantics, texture/material binding, palette interpretation, or the meaning of
+library-defined render fields. Stock kinds such as `:sprite`/`:dot` and
+`:polyline` may ship with the engine for the prototype and debug hosts, but
+they are registered profiles rather than universal language semantics.
+
+Dynamic renderer fields are ordinary dyn-valued record fields. For example,
+the current compatibility tags `:hue`, `:scale`, `:facing`, and `:opacity`
+should become fields of a stock `:sprite` render kind, sequenced by the normal
+`Record{field: Dyn<T>} => Dyn<Record{field: T}>` coercion instead of sampled by
+special render-side tags.
+
 ## Representation Classification
 
 After type elaboration, a separate pass chooses execution/storage classes.
@@ -223,6 +252,9 @@ For structures:
 - unstructured lists remain list data;
 - records lower to fixed field layouts;
 - entity meta fields lower to typed matrices in `WorldFields`.
+- render rows lower to per-kind column buffers, optionally bucketed by an
+  interned batch key. Range kinds such as polylines/meshes use shared
+  vertex/index pools plus row ranges.
 
 This pass may choose optimized representations such as specialized linear
 motion, dense motion-state slots, shared curve sampling caches, or compiled

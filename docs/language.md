@@ -34,7 +34,7 @@ recognition are not properties of the parser or the SoA runtime layout.
 - `Pose` = `(x, y, theta?)`. `theta = none` is a point whose facing is unspecified and may be derived by consumers that need one (curve tangents, motion direction); `theta = some angle` is an explicit frame orientation, including explicit `0`. Surface literals `c[x y]`, `p[r θ]` (§11) construct point-poses, while `(rot θ)` constructs an orientation. `(still)` names the identity pose, the unit of frame composition.
 - `Figure` = `Pose | Curve | Composite ...`. A point bullet is not a primitive category; it is an entity whose figure currently evaluates to a pose. A laser/path is not a primitive category; it is an entity whose figure currently evaluates to a curve or projected samples. User-facing Touhou names such as bullet, shot, enemy, player, boss, and laser are library constructors.
 - `ColliderData` — boundary data consumed by core collision: `none`, circle, capsule/polyline chains, and later analytic curve colliders. Collider layer is universal routing metadata on collider data, not gameplay state.
-- `RenderData` — boundary data exposed to the host or a rendering crate: points, polylines, meshes, sprite/style records, or opaque host metadata. Rendering vocabulary is pluggable; core only fixes the projection boundary.
+- `RenderData<K>` — boundary data exposed to the host or a rendering crate for a registered render kind `K`. Rendering vocabulary is open: the kind selects a typed field schema. Core fixes the projection/transport boundary and registry/manifest mechanism, not sprite family/color semantics.
 - `Meta` — finite typed fields attached to entity rows. Source field names are interned at load/reschema time into typed matrices, not allocated dynamically per entity.
 - `EntityRef` — stable handle with generation. Returned by `spawn`, consumed by `manip`/`manipulate`, and safe across row reuse.
 - `EntitySet` — ephemeral vector of live row indices from `entities-where`; stable only for the tick/view that produced it.
@@ -47,7 +47,7 @@ The target low-level entity model is:
 ```text
 Entity = Dyn<Figure>
        * Dyn<[ColliderData]>
-       * Dyn<[RenderData]>
+       * Dyn<[RenderData<K>]>
        * Dyn<Meta>
 ```
 
@@ -235,7 +235,7 @@ in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE
   (spawn
     (pose c[0 0])
     (colliders {:layer :enemy-hurt :shape :circle :r 0.25})
-    (renderers {:mode :sprite :family :orb :color :red})
+    (renderers (:sprite {:family :orb :color :red}))
     {:team :enemy :hp 10})
   ```
 
@@ -244,14 +244,15 @@ in-frame : Signal Pose → … → Signal Pose → Signal Pose   -- pointwise SE
   ```text
   figure    : Dyn<Figure>
   colliders : Dyn<[ColliderData]>
-  renderers : Dyn<[RenderData]>
+  renderers : Dyn<[RenderData<K>]>
   meta      : Dyn<Meta>
   ```
 
   Static values lift to constant dyns. Structures with dyn-valued fields lift recursively to a dyn of the whole structure: `{:r m"0.1 + 0.05*t"}` is a dynamic collider list when placed in the collider slot, and a normal map elsewhere. A value is first coerced to the target structural shape (`Dyn<List>` / `Dyn<Map>`), then interpreted at the typed boundary as collider/render/meta data; the generic dyn coercion is not specific to spawn.
 - Compatibility/current surface: `(spawn dyn meta...)` remains accepted while the prototype migrates. Multiple meta maps merge per-key with later maps winning; `:cols` maps deep-merge per column. A map containing `:colliders` or `:renderers`, or explicit `(colliders ...)` / `(renderers ...)` arguments, lowers toward the four-slot form. The target docs should be read as the destination API; Touhou library helpers own friendly names such as `bullet`, `shot`, `enemy`, `player`, `boss`, and `laser`.
 - `colliders` is convenience syntax for constructing a collider-data list. `(colliders c0 c1)` and `(colliders [c0 c1])` are equivalent. Empty list means no collision. `none` is a collider variant, not option/maybe semantics, so functions returning colliders can disable collision without changing type.
-- `renderers` is convenience syntax for constructing render boundary data. Core does not prescribe renderer vocabulary beyond the data boundary; a host-facing renderer may consume positions + metadata, while a rendering crate may lower to meshes. There may be zero or more render rows, but a single renderer is the common case.
+- `renderers` is convenience syntax for constructing render boundary data. A renderer row is kind-indexed: the kind (`:sprite`, `:polyline`, `:mesh`, etc.) selects a registered schema, and the remaining fields are checked against that schema. Core does not prescribe kind meanings beyond registry, manifest, extraction order, and typed transport. A host-facing renderer may consume positions + metadata, while a rendering crate may lower high-level kinds to lower-level mesh/triangle kinds. There may be zero or more render rows, but a single renderer is the common case.
+- Render kinds are negotiated like channels: the card's kind manifest is derivable from renderer specs, and the host/render stack declares support or degradation. The prototype's `:style` map and `:hue`/`:scale`/`:facing`/`:opacity` tags are transitional sugar for a stock Touhou/DMK-like `:sprite` kind; target renderer fields are ordinary dyn-valued fields inside that kind's record.
 - The anchor frame is the figure dyn's root composed with the lexically distributed ambient frame (§4). `let` defers action-valued bindings to scheduler reach-time: in `((pose P) (let [stars (spawn …)] …))` the spawn executes when the `let` is reached, inside the ambient frame the distribution law owes it; pure bindings are unaffected.
 - Handles are generation-safe. The control layer may hold them; dead handles are no-ops for culling/manipulation and errors only for explicit reads that promise liveness. `manip` accepts a handle where it accepts an entity set/query. `entities-where` returns row indices, not handles; those are ephemeral views (§9).
 - **Express only what renders/collides/exports runtime rows.** Emitter anchors, bases, guide trajectories live as unexpressed signal data; only expressed entities consume row slots, collision work, and render export buffers. DMK's `guideempty2` subsystem dissolves into `in-frame` with an unexpressed dyn — a level of the frame tree that renders nothing and consumes nothing. Extraction (§10) is only needed when a guide trajectory crosses an action-tree boundary.
