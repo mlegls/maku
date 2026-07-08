@@ -32,8 +32,8 @@ pub struct EntityContext {
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
     DeferredBody { body: Rc<[Form]>, env: Env },
-    Sum(Rc<[ColliderProjectorSpec]>),
-    ActiveWhen { pred: Form, env: Env, child: Rc<ColliderProjectorSpec> },
+    ColliderSum(Rc<[ColliderProjectorSpec]>),
+    ColliderActiveCond { clauses: Rc<[(Option<Form>, ColliderProjectorSpec)]>, env: Env },
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -60,13 +60,12 @@ impl ColliderProjectorSpec {
         ColliderProjectorSpec::stable(Vec::new())
     }
 
-    pub(crate) fn active_when(
-        pred: Form,
+    pub(crate) fn active_cond(
+        clauses: Vec<(Option<Form>, ColliderProjectorSpec)>,
         env: Env,
-        child: ColliderProjectorSpec,
     ) -> ColliderProjectorSpec {
         ColliderProjectorSpec {
-            expr: ColliderProjectorExpr::ActiveWhen { pred, env, child: Rc::new(child) },
+            expr: ColliderProjectorExpr::ColliderActiveCond { clauses: clauses.into(), env },
         }
     }
 
@@ -79,7 +78,7 @@ impl ColliderProjectorSpec {
                 ColliderProjectorSpec::stable(slots)
             }
             _ => ColliderProjectorSpec {
-                expr: ColliderProjectorExpr::Sum(vec![self.clone(), rhs.clone()].into()),
+                expr: ColliderProjectorExpr::ColliderSum(vec![self.clone(), rhs.clone()].into()),
             },
         }
     }

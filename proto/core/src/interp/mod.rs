@@ -633,16 +633,30 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
-            "active-when" => {
-                if items.len() != 3 {
-                    return Err("active-when: expected predicate and collider projector".into());
+            "active-cond" => {
+                if items.len() < 2 {
+                    return Err("active-cond: expected at least one clause".into());
                 }
-                let child = evaluate(&items[2], env, ctx, world)?;
-                let Val::ColliderProjectorSpecs(child) = child else {
-                    return Err(format!("active-when: expected collider projector, got {:?}", child));
-                };
+                let mut clauses = Vec::new();
+                for clause in &items[1..] {
+                    let Form::Vector(parts) = clause else {
+                        return Err("active-cond: clauses must be [pred projector] vectors".into());
+                    };
+                    if parts.len() != 2 {
+                        return Err("active-cond: clauses must have predicate and projector".into());
+                    }
+                    let pred = match &parts[0] {
+                        Form::Kw(k) if &**k == "else" => None,
+                        other => Some(other.clone()),
+                    };
+                    let child = evaluate(&parts[1], env, ctx, world)?;
+                    let Val::ColliderProjectorSpecs(child) = child else {
+                        return Err(format!("active-cond: expected collider projector, got {:?}", child));
+                    };
+                    clauses.push((pred, child.as_ref().clone()));
+                }
                 return Ok(Val::ColliderProjectorSpecs(Rc::new(
-                    ColliderProjectorSpec::active_when(items[1].clone(), env.clone(), child.as_ref().clone()),
+                    ColliderProjectorSpec::active_cond(clauses, env.clone()),
                 )));
             }
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),
