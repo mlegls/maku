@@ -64,12 +64,15 @@ Engine boundary types:
   selects its own typed record schema from the load-time render-kind registry.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
+- `MetaEnv`: lexical/projector view of `Meta`. By default it is the entity's
+  shared meta namespace, but higher-order adapters may rebind names or select a
+  subrecord for an imported projector.
 - `EntityContext`: per-tick execution context for projectors, including
   entity-local age/`t`, tick, and handle identity.
 - `ColliderProjectorSpec`: static policy that projects
-  `(Figure, Meta, EntityContext)` to `List<ColliderData>` each tick.
+  `(Figure, MetaEnv, EntityContext)` to `List<ColliderData>` each tick.
 - `RendererProjectorSpec`: static policy that projects
-  `(Figure, Meta, EntityContext)` to `List<RenderData<K>>` each tick.
+  `(Figure, MetaEnv, EntityContext)` to `List<RenderData<K>>` each tick.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
 - `Fn<A, B>`: pure function.
@@ -177,8 +180,8 @@ separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
 static projectors. A projector may read any typed meta field and the current
 figure each tick, so direct dynamic collider/render rows are not needed as the
 public low-level surface. Projectors also receive `EntityContext`, so purely
-local temporal behavior such as "this collider until age 0.5" does not need a
-public meta switch.
+local temporal behavior such as "this collider until age 0.5" can be expressed
+as a higher-order projector combinator rather than as a public meta switch.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
@@ -209,7 +212,7 @@ meta source data
 
 bullet-collider
   -> ColliderProjectorSpec
-  -> each tick: (Figure, Meta, EntityContext) -> List<ColliderData>
+  -> each tick: (Figure, MetaEnv, EntityContext) -> List<ColliderData>
 ```
 
 The current interpreter still realizes some dynamic specs per tick and checks
@@ -217,10 +220,10 @@ them at the simulation boundary. The target is to perform all static projector
 schema work during elaboration, with dynamic data evaluated through figure and
 meta fields per tick.
 
-Two cases must classify differently:
+Two projector output cases must classify differently:
 
-- static projector shape with dynamic fields, e.g. one bullet circle whose
-  radius is `meta.radius(t)`: fixed collider count, vectorizable per field;
+- static projector shape with dynamic meta reads, e.g. one bullet circle whose
+  radius is `meta.radius(t)`: fixed collider count, vectorizable per output column;
 - dynamic projector output, e.g. a laser projector that returns no hot capsules
   during warn time and a sampled capsule chain during active time: row count
   changes, so the backend needs per-tick range realization or a lowered
@@ -245,8 +248,10 @@ Projectors intentionally share the entity meta namespace. That lets hit,
 graze, render, query, and host-exposed behavior agree on fields such as
 `:radius`, `:style`, or `:scale`. To avoid collisions when importing
 projectors from another library, authors can either store a subrecord in meta
-and pass that map as the projector's field base, or use a field-renaming
-adapter that rewrites the projector's field reads to local names.
+and evaluate the projector under that sub-environment, or use a namespace
+adapter that rebinds names in the meta environment seen by the projector.
+Colliders themselves do not have author-visible fields in this model; operators
+compose or adapt projector functions.
 
 Meta is the same kind of typed boundary. The current interpreter's
 `SpawnMetaInput` still carries raw source forms because `:expose` channel
