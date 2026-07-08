@@ -598,9 +598,8 @@
     (spawn (pose c[0 0])
            (colliders {:layer :body :shape [:circle {:r 0.06}]}))
     (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
-           (colliders {:layer :beam
-                       :shape [:capsule-chain {:r 0.06 :width 1 :resolution 0.1
-                                                :warn 0 :active 2}]})
+           (capsule-chain-collider {:layer :beam :r 0.06 :width 1 :resolution 0.1
+                                    :warn 0 :active 2})
            (renderers {:shape [:polyline {:resolution 0.1 :warn 0 :active 2}]}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();

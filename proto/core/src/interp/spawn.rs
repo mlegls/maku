@@ -92,6 +92,34 @@ pub(crate) fn sf_circle_collider(
     ]))))
 }
 
+pub(crate) fn sf_capsule_chain_collider(
+    items: &[Form],
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Val, String> {
+    if items.len() > 2 {
+        return Err("capsule-chain-collider: expected optional override map".into());
+    }
+    let opts = if items.len() == 2 {
+        eval_dynlike_form(&items[1], env, ctx, world)?
+    } else {
+        DynLike::Map(Rc::new(Vec::new()))
+    };
+    if !matches!(opts, DynLike::Map(_)) {
+        return Err("capsule-chain-collider: expected override map".into());
+    }
+    let layer = match dynlike_map_get(&opts, "layer").and_then(|v| dynlike_kw(&v)) {
+        Some(k) => world.symbols.intern(k.as_ref()),
+        None => return Err("capsule-chain-collider: missing :layer".into()),
+    };
+    let radius = dynlike_map_as_dyn_num_any(&opts, &["radius", "r"], 0.08)?;
+    let slot = as_capsule_chain_slot(&opts)?;
+    Ok(Val::ColliderProjectorSpecs(Rc::new(ColliderProjectorSpec::stable(vec![
+        DynCollider::collider_capsule_chain(layer, radius, slot),
+    ]))))
+}
+
 pub(crate) fn sf_renderers(
     items: &[Form],
     env: &Env,
