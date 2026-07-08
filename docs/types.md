@@ -59,11 +59,13 @@ Structured values:
 Engine boundary types:
 
 - `Collider` / `ColliderData`: typed literal collision boundary rows,
-  including `none`. These are returned by collider projectors; they are not
-  the projector functions themselves.
+  including `none`. These are emitted by extraction from collider projectors;
+  they are not the opaque projector values themselves.
 - `RenderData<K>`: typed render boundary rows for a registered render kind
   `K`. Unlike `ColliderData`, this is not a single closed schema: each kind
   selects its own typed record schema from the load-time render-kind registry.
+  Source code may construct render rows directly when a renderer slot expects
+  them.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
 - `EntityView`: the same entity view shape used by query/manip callbacks:
@@ -74,10 +76,13 @@ Engine boundary types:
   select a subrecord for an imported projector.
 - `ProjectorContext`: non-entity execution context for projectors, including
   world tick, entity-local age/`t`, and extraction-pass parameters.
-- `ColliderProjector`: function value that projects
-  `(EntityView, ProjectorContext)` to `List<Collider>` each tick.
-- `RenderProjector`: function value that projects
-  `(EntityView, ProjectorContext)` to `List<RenderData<K>>` each tick.
+- `ColliderProjector`: opaque source value produced only by registered
+  primitive projector constructors and projector combinators. Extraction lowers
+  it with `(EntityView, ProjectorContext)` to `List<Collider>` each tick.
+- `RenderProjector`: typed pure function or projector expression lowered by
+  extraction with `(EntityView, ProjectorContext)` to `List<RenderData<K>>` each
+  tick. Unlike `ColliderProjector`, render rows are open schema data, so this
+  does not have to be an opaque primitive-only value.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
 - `Fn<A, B>`: pure function.
@@ -205,9 +210,19 @@ these compositional targets. The convergence target is ordinary expected types:
 
 ## Schema Checking
 
-Collider and render projectors are functions over typed inputs, not parser
-forms and not runtime maps. Raw `Collider` and `RenderData<K>` are boundary
-rows produced by projectors; they are not the normal authoring surface.
+Collider projectors are opaque source values, not parser forms and not runtime
+maps. They are produced by normal typed function calls such as
+`circle-collider`, but their result type cannot be constructed by user code
+except through registered primitive constructors and combinators. Raw
+`Collider` rows are boundary rows produced by extraction; they are not the
+normal authoring surface.
+
+Render rows are different: render kinds are open, host/library-registered
+schemas, and card code may construct schema-checked map-like `RenderData<K>`
+directly when a renderer slot expects it. A `defrenderer` can therefore be a
+normal function over `e`/`ctx` that returns `RenderData<K>` or a list of rows.
+Stock renderer helpers are conveniences for common projections from figure/meta
+to those rows, not the only way to get render data.
 
 Example:
 
@@ -270,8 +285,11 @@ behavior while keeping all changing non-geometry inputs in meta.
 explicit entity view parameter such as `e` and an explicit non-entity context
 parameter such as `ctx`. Because it cannot close over card-local mutable state,
 ordinary `let` is enough for sharing computed values; no special binding syntax
-is required. The body must elaborate to `ColliderProjector`, not to an
-arbitrary runtime function.
+is required. Semantically this is `defn` with an expected return type of
+`ColliderProjector | List<ColliderProjector>`; the special form is surface
+sugar for that typed definition. User code can branch, parameterize, and
+compose projectors, but it cannot define a new primitive collider projector kind
+without registering a builtin.
 
 Collider constructors are typed constructors inside that pure body. Their
 argument records must have load-time-known shape so the elaborator can preserve
@@ -294,7 +312,7 @@ projectors from another library, authors can either store a subrecord in meta
 and evaluate the projector under that sub-environment, or use a namespace
 adapter that rebinds names in the meta environment seen by the projector.
 Colliders themselves do not have author-visible fields in this model; operators
-compose or adapt projector functions.
+compose or adapt opaque projector values.
 
 Meta is the same kind of typed boundary. The current interpreter's
 `SpawnMetaInput` still carries raw source forms because `:expose` channel

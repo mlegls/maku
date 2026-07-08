@@ -85,8 +85,10 @@ work.
   EntityView = ordinary entity handle/view plus entity-scoped figure/meta data
   MetaEnv = projector view of Meta, defaulting to shared entity namespace
   ProjectorContext = age/t, world tick, extraction-pass context
-  ColliderProjector = (EntityView, ProjectorContext) -> [Collider]
-  RenderProjector = (EntityView, ProjectorContext) -> [Render]
+  ColliderProjector = opaque source value lowered by extraction with
+                      (EntityView, ProjectorContext) -> [Collider]
+  RenderProjector = typed function/projector lowered by extraction with
+                    (EntityView, ProjectorContext) -> [RenderData<K>]
   Collider = literal collision row, not a figure-to-collider spec
   SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector] * RenderProjector
   ```
@@ -97,12 +99,16 @@ work.
 - Sampling is not intrinsic to figures. It belongs to collider/render slots or
   authoring helpers. Parametric curves may later use analytic collision or
   mesh rendering without changing source semantics.
-- Raw collider/render rows are boundary data returned by projectors, not normal
-  entity slots. Source code should usually construct projector functions.
-- `defcollider` should elaborate top-level pure bodies over explicit
-  `[entity-view projector-context]` parameters into a typed projector algebra.
-  Constructor argument records have known shape; their values may be pure
-  expressions over the entity view/context.
+- Raw collider rows are boundary data emitted by extraction, not normal entity
+  slots. Source code should construct opaque collider projector values through
+  builtin primitive constructors and combinators. Render rows are open
+  schema-checked host-facing data and may be constructed directly by renderer
+  code.
+- `defcollider` should become `defn` plus an expected return type
+  `ColliderProjector | [ColliderProjector]`. Constructor argument records have
+  known shape; their values are concrete typed expressions over the entity
+  view/context. User code can compose/wrap/branch projectors, but cannot define
+  a new primitive projector kind without a builtin registration.
   Do not grow the current dynamic spec-list bridge into the final API.
 - Collider layer is universal core routing metadata:
   ```text
