@@ -50,6 +50,7 @@ pub enum DynLike {
 #[derive(Clone, Debug)]
 pub enum DynVal {
     Pose(DynPose),
+    Figure(DynFigure),
     Expr { form: Form, env: Env },
 }
 
@@ -67,6 +68,7 @@ impl DynLike {
         match self {
             DynLike::Atom(v) => Ok(v.to_val()),
             DynLike::Dyn(DynVal::Pose(d)) => eval_dyn(d, tau, state, sig).map(Val::Pose),
+            DynLike::Dyn(DynVal::Figure(d)) => eval_dyn(d, tau, state, sig).map(Val::Figure),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
                 eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, 0)), None)
             }
@@ -87,6 +89,7 @@ impl DynLike {
         match v {
             Val::DynLike(d) => Ok((*d).clone()),
             Val::DynPose(d) => Ok(DynLike::Dyn(DynVal::Pose(d))),
+            Val::DynFigure(d) => Ok(DynLike::Dyn(DynVal::Figure(d))),
             Val::Arr(items) => items
                 .iter()
                 .cloned()
@@ -137,6 +140,7 @@ pub(crate) fn dynlike_to_structural_val(v: &DynLike) -> Result<Val, String> {
     match v {
         DynLike::Atom(atom) => Ok(atom.to_val()),
         DynLike::Dyn(DynVal::Pose(d)) => Ok(Val::DynPose(d.clone())),
+        DynLike::Dyn(DynVal::Figure(d)) => Ok(Val::DynFigure(d.clone())),
         DynLike::Dyn(DynVal::Expr { .. }) => Ok(Val::DynLike(Rc::new(v.clone()))),
         DynLike::List(items) => items
             .iter()

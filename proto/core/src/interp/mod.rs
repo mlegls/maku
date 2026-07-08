@@ -98,6 +98,7 @@ pub enum Val {
     Map(Rc<Vec<(Val, Val)>>),
     DynLike(Rc<DynLike>),
     DynPose(DynPose),
+    DynFigure(DynFigure),
     CurveV(Rc<ExtCurve>),
     /// A form as a value — what macros manipulate and quasiquote builds.
     FormV(Rc<Form>),
@@ -494,7 +495,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
 
 fn val_contains_structural_dyn(v: &Val) -> bool {
     match v {
-        Val::DynLike(_) | Val::DynPose(_) => true,
+        Val::DynLike(_) | Val::DynPose(_) | Val::DynFigure(_) => true,
         Val::Arr(items) => items.iter().any(val_contains_structural_dyn),
         Val::Map(kvs) => kvs
             .iter()

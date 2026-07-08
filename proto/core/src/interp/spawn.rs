@@ -521,6 +521,16 @@ pub(crate) fn flatten_elems(
             });
             Ok(())
         }
+        Val::DynFigure(dyn_figure) => {
+            out.push(SpawnElem {
+                dyn_figure,
+                collider_specs: empty_spec_list(),
+                render_specs: empty_spec_list(),
+                cache_policy: EntityCachePolicy::default(),
+                path: path.clone(),
+            });
+            Ok(())
+        }
         other => {
             out.push(SpawnElem {
                 dyn_figure: DynFigure::pose(as_dyn_pose(other)?),
