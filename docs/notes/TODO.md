@@ -82,20 +82,26 @@ work.
   Figure = Pose | Polyline | ParametricCurve | Composite...
   Dyn<F> = t -> F
   Meta = finite typed fields, possibly dyn and figure-dependent in spawn slots
-  EntityView = ordinary entity handle/view plus entity-scoped figure/meta data
+  EntityView<F> = ordinary entity handle/view plus entity-scoped meta and
+                  figure-specific fields/getters
   MetaEnv = projector view of Meta, defaulting to shared entity namespace
   ProjectorContext = age/t, world tick, extraction-pass context
-  ColliderProjector = opaque source value lowered by extraction with
-                      (EntityView, ProjectorContext) -> [Collider]
-  RenderProjector = typed function/projector lowered by extraction with
-                    (EntityView, ProjectorContext) -> RenderData<K>
+  ColliderProjector<F> = opaque source value lowered by extraction with
+                         (EntityView<F>, ProjectorContext) -> [Collider]
+  RenderProjector<F, K> = typed function/projector lowered by extraction with
+                          (EntityView<F>, ProjectorContext) -> RenderData<K>
   Collider = literal collision row, not a figure-to-collider spec
-  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector] * RenderProjector
+  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector<F>] * RenderProjector<F, K>
   ```
 - Spawned objects are retained as row ids into SoA stores, not as an `Entity`
   row struct.
 - Pose is `(x, y, theta?)`; `theta = none` means facing is unspecified, while
   `theta = some 0` is an explicit zero angle.
+- Projectors are specialized by core figure type. Target surface can use
+  `(defcollider :pose ...)`, `(defcollider :parametric ...)`,
+  `(defrenderer :pose ...)`, etc.; the annotation selects the static shape of
+  `e` and the extraction loop. Curve-specific render/collider fields stay in
+  curve-specific loops/buffers and do not bloat pointlike entities.
 - Sampling is not intrinsic to figures. It belongs to collider/render slots or
   authoring helpers. Parametric curves may later use analytic collision or
   mesh rendering without changing source semantics.
@@ -109,10 +115,11 @@ work.
   type compatibility, and imported conflicting schemas should be adapted by a
   builtin field rename/pick operator.
 - `defcollider` should become `defn` plus an expected return type
-  `ColliderProjector | [ColliderProjector]`. Constructor argument records have
-  known shape; their values are concrete typed expressions over the entity
-  view/context. User code can compose/wrap/branch projectors, but cannot define
-  a new primitive projector kind without a builtin registration.
+  `ColliderProjector<F> | [ColliderProjector<F>]`. Constructor argument records
+  have known shape; their values are concrete typed expressions over the typed
+  entity view/context. User code can compose/wrap/branch projectors for the
+  same figure type, but cannot define a new primitive projector kind without a
+  builtin registration.
   Do not grow the current dynamic spec-list bridge into the final API.
 - Collider layer is universal core routing metadata:
   ```text

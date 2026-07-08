@@ -69,21 +69,21 @@ Engine boundary types:
   encoded by fields chosen by that schema, not by a language-reserved kind.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
-- `EntityView`: the same entity view shape used by query/manip callbacks:
-  handle identity plus entity-scoped data such as figure, pose, and meta
-  fields.
+- `EntityView<F>`: the same entity view shape used by query/manip callbacks,
+  specialized by the entity's core figure variant `F`: handle identity plus
+  entity-scoped meta and the figure-specific fields/getters for `F`.
 - `MetaEnv`: lexical/projector view of an entity's meta. By default it is the
   entity's shared meta namespace, but higher-order adapters may rebind names or
   select a subrecord for an imported projector.
 - `ProjectorContext`: non-entity execution context for projectors, including
   world tick, entity-local age/`t`, and extraction-pass parameters.
-- `ColliderProjector`: opaque source value produced only by registered
+- `ColliderProjector<F>`: opaque source value produced only by registered
   primitive projector constructors and projector combinators. Extraction lowers
-  it with `(EntityView, ProjectorContext)` to `List<Collider>` each tick.
-- `RenderProjector`: typed pure function or projector expression lowered by
-  extraction with `(EntityView, ProjectorContext)` to one `RenderData<K>` each
-  tick. Unlike `ColliderProjector`, render rows are open schema data, so this
-  does not have to be an opaque primitive-only value.
+  it with `(EntityView<F>, ProjectorContext)` to `List<Collider>` each tick.
+- `RenderProjector<F, K>`: typed pure function or projector expression lowered
+  by extraction with `(EntityView<F>, ProjectorContext)` to one `RenderData<K>`
+  each tick. Unlike `ColliderProjector<F>`, render rows are open schema data, so
+  this does not have to be an opaque primitive-only value.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
 - `Fn<A, B>`: pure function.
@@ -114,8 +114,8 @@ The target low-level entity model is:
 ```text
 Entity = Dyn<Figure>
        * Dyn<Meta>
-       * List<ColliderProjector>
-       * RenderProjector
+       * List<ColliderProjector<F>>
+       * RenderProjector<F, K>
 ```
 
 Storage may be SoA, AoS, compiled buffers, or interpreter objects. That choice
@@ -180,8 +180,8 @@ The `spawn` slots provide the clearest example:
 
 figure    expects Dyn<Figure>
 meta      expects Dyn<Meta>
-colliders expects ColliderProjector or List<ColliderProjector>
-renderer  expects RenderProjector
+colliders expects ColliderProjector<F> or List<ColliderProjector<F>>
+renderer  expects RenderProjector<F, K>
 ```
 
 The figure and meta slots are the dynamic slots. Meta is where non-positional
@@ -206,8 +206,8 @@ projector combinator rather than as a public meta switch.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
-`Dyn<Figure>`, `Dyn<Meta>`, `List<ColliderProjector>`, and
-`RenderProjector`.
+`Dyn<Figure>`, `Dyn<Meta>`, `List<ColliderProjector<F>>`, and
+`RenderProjector<F, K>`.
 
 ## Schema Checking
 
@@ -241,8 +241,8 @@ meta source data
   -> Dyn<Meta>
 
 bullet-collider
-  -> ColliderProjector
-  -> extraction: source projector specs over (EntityView, ProjectorContext)
+  -> ColliderProjector<Pose>
+  -> extraction: source projector specs over (EntityView<Pose>, ProjectorContext)
   -> each tick: List<Collider>
 ```
 
@@ -261,7 +261,7 @@ Two projector output cases must classify differently:
   changes, so the backend needs per-tick range realization or a lowered
   equivalent.
 
-Both are produced by `ColliderProjector`; the representation classifier
+Both are produced by `ColliderProjector<F>`; the representation classifier
 must preserve whether row count is fixed, bounded range-like, or truly dynamic.
 
 Projectors compose at the authoring level. For example:
@@ -287,8 +287,11 @@ explicit entity view parameter such as `e` and an explicit non-entity context
 parameter such as `ctx`. Because it cannot close over card-local mutable state,
 ordinary `let` is enough for sharing computed values; no special binding syntax
 is required. Semantically this is `defn` with an expected return type of
-`ColliderProjector | List<ColliderProjector>`; the special form is surface
-sugar for that typed definition. User code can branch, parameterize, and
+`ColliderProjector<F> | List<ColliderProjector<F>>`; the special form is
+surface sugar for that typed definition. The optional figure type annotation on
+the definition, e.g. `(defcollider :pose name [e ctx] ...)` or
+`(defcollider :parametric name [e ctx] ...)`, selects the shape of `e` and the
+extraction loop that will run it. User code can branch, parameterize, and
 compose projectors, but it cannot define a new primitive collider projector kind
 without registering a builtin.
 
@@ -296,7 +299,10 @@ Collider constructors are typed constructors inside that pure body. Their
 argument records must have load-time-known shape so the elaborator can preserve
 the projector algebra, and each field value must check against the field's
 concrete type. These argument records are ordinary expressions over `e` and
-`ctx`, not dyn-expecting slots, so `ctx.t` is the usual local time source:
+`ctx`, not dyn-expecting slots, so `ctx.t` is the usual local time source. The
+available figure accessors depend on `F`: a pose projector may read pose fields,
+while a parametric-curve projector may read curve/domain/sampling helpers that
+do not exist on pointlike entities.
 
 ```edn
 (circle-collider {:radius m"2 * e.hitbox + 0.05 * ctx.t"
