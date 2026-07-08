@@ -25,6 +25,8 @@ use std::rc::Rc;
 mod builtins;
 mod card;
 mod colliders;
+mod r#dyn;
+mod figure;
 pub mod model;
 mod motion;
 mod renderers;
@@ -34,6 +36,8 @@ mod world;
 pub(crate) use builtins::*;
 pub use card::*;
 pub use colliders::*;
+pub use r#dyn::*;
+pub use figure::*;
 pub use motion::*;
 pub use renderers::*;
 pub(crate) use spawn::*;
@@ -1691,8 +1695,8 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             .dyn_figure(i)
             .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?
             .repr() {
-            crate::interp::motion::FigureDynRepr::Pose(_) => "point",
-            crate::interp::motion::FigureDynRepr::Curve { .. } => "curve",
+            FigureDynRepr::Pose(_) => "point",
+            FigureDynRepr::Curve { .. } => "curve",
         }
         .into())),
         "family" => Ok(Val::Kw(world

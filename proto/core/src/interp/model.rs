@@ -5,6 +5,7 @@
 //! interpreter and runtime are still being split apart.
 
 pub use super::{
-    ColliderProjector, Dyn, DynFigure, DynKind, DynNum, DynPose, EntityRef, EntityStore, Figure,
-    FigureDynRepr, Pose, RenderProjector, World, WorldFields,
+    ColliderProjector, Curve, CurveDomain, CurveEval, Dyn, DynFigure, DynKind, DynNum, DynPose,
+    EntityRef, EntityStore, Figure, FigureDynRepr, ParametricCurve, Pose, RenderProjector,
+    SampleSet, World, WorldFields,
 };
