@@ -367,6 +367,40 @@
     }
 
     #[test]
+    fn defcollider_accepts_explicit_pose_figure_type() {
+        const CARD: &str = r#"
+(defcollider :pose hitbox-collider [e ctx]
+  (circle-collider {:layer :damage :r e.hitbox}))
+(defcontact [:damage :body] {:once :hit}
+  (fn [a b] (event :hit (:pos b))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} hitbox-collider)
+    (spawn (pose c[0.35 0]) (circle-collider {:layer :body :r 0.1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
+    }
+
+    #[test]
+    fn defcollider_rejects_unsupported_figure_type() {
+        const CARD: &str = r#"
+(defcollider :parametric laser-collider [e ctx]
+  (capsule-chain-collider {:layer :beam :r 0.1}))
+(defpattern t [] (spawn (pose c[0 0]) laser-collider))
+"#;
+        let err = match Sim::load(CARD, Some("t")) {
+            Ok(_) => panic!("unsupported defcollider figure type unexpectedly loaded"),
+            Err(err) => err,
+        };
+        assert!(
+            err.contains("unsupported figure type :parametric"),
+            "expected unsupported figure type error, got {err}"
+        );
+    }
+
+    #[test]
     fn defcollider_can_read_entity_meta() {
         const CARD: &str = r#"
 (defcollider hitbox-collider [entity context]

@@ -129,7 +129,7 @@ pub(crate) fn sf_colliders(
         }
     }
     Ok(Val::ColliderProjector(Rc::new(
-        ColliderProjectorValue::compose(projectors),
+        ColliderProjectorValue::compose(projectors)?,
     )))
 }
 

@@ -1,6 +1,7 @@
 //! Card loading: top-level defs, defns, defpatterns (callable).
 
 use crate::edn::Form;
+use super::FigureProjectorKind;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -108,15 +109,25 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 }
                 Some(Form::Sym(s)) if &**s == "defcollider" => {
                     // (defcollider name [e ctx] body...)
+                    // (defcollider :pose name [e ctx] body...)
                     //
                     // Register a collider projector value. Evaluation first
                     // tries to elaborate the body into the projector algebra;
                     // unsupported forms fall back to the callable bridge.
-                    let name = match items.get(1) {
+                    let (figure, name_idx) = match items.get(1) {
+                        Some(Form::Kw(k)) => {
+                            let figure = FigureProjectorKind::from_defcollider_keyword(k)?;
+                            (figure, 2)
+                        }
+                        _ => (FigureProjectorKind::Pose, 1),
+                    };
+                    let name = match items.get(name_idx) {
                         Some(Form::Sym(n)) => n.to_string(),
                         _ => return Err("defcollider: expected name".into()),
                     };
-                    let params: Vec<Form> = match items.get(2) {
+                    let params_idx = name_idx + 1;
+                    let body_idx = name_idx + 2;
+                    let params: Vec<Form> = match items.get(params_idx) {
                         Some(Form::Vector(ps)) if ps.len() == 2 => {
                             ps.iter()
                                 .map(|p| match p {
@@ -130,14 +141,15 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         }
                         _ => return Err("defcollider: expected parameter vector".into()),
                     };
-                    if items.len() < 4 {
+                    if items.len() <= body_idx {
                         return Err("defcollider: expected body".into());
                     }
                     let mut projector = vec![
                         Form::sym("__collider-projector"),
+                        Form::Kw(figure.name().into()),
                         Form::Vector(params.into()),
                     ];
-                    projector.extend(items[3..].iter().cloned());
+                    projector.extend(items[body_idx..].iter().cloned());
                     let form = Form::list(vec![Form::sym("__defcollider"), Form::list(projector)]);
                     defs.insert(name, form);
                 }

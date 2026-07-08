@@ -28,6 +28,29 @@ pub struct EntityContext {
 /// Collider projector algebra currently supported by the interpreter.
 /// Stable constructor slots are the fast path; deferred/composed projectors
 /// are evaluated against `(e, ctx)` during collider materialization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FigureProjectorKind {
+    Pose,
+}
+
+impl FigureProjectorKind {
+    pub(crate) fn from_defcollider_keyword(name: &str) -> Result<FigureProjectorKind, String> {
+        match name {
+            "pose" => Ok(FigureProjectorKind::Pose),
+            other => Err(format!(
+                "defcollider: unsupported figure type :{} (only :pose is implemented)",
+                other
+            )),
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            FigureProjectorKind::Pose => "pose",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
@@ -42,43 +65,51 @@ pub enum ColliderProjectorExpr {
 /// checking for a collider slot.
 #[derive(Clone, Debug)]
 pub struct ColliderProjectorValue {
+    pub(crate) figure: FigureProjectorKind,
     pub(crate) expr: ColliderProjectorExpr,
 }
 
 impl ColliderProjectorValue {
     pub(crate) fn stable(slots: Vec<DynCollider>) -> ColliderProjectorValue {
         ColliderProjectorValue {
+            figure: FigureProjectorKind::Pose,
             expr: ColliderProjectorExpr::Stable(slots.into()),
         }
     }
 
     pub(crate) fn callable(
+        figure: FigureProjectorKind,
         params: Vec<Rc<str>>,
         body: Rc<[Form]>,
         env: Env,
     ) -> ColliderProjectorValue {
         ColliderProjectorValue {
+            figure,
             expr: ColliderProjectorExpr::Callable { params: params.into(), body, env },
         }
     }
 
     pub(crate) fn circle(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
         ColliderProjectorValue {
+            figure: FigureProjectorKind::Pose,
             expr: ColliderProjectorExpr::Circle { opts, env },
         }
     }
 
     pub(crate) fn capsule_chain(opts: Option<Form>, env: Env) -> ColliderProjectorValue {
         ColliderProjectorValue {
+            figure: FigureProjectorKind::Pose,
             expr: ColliderProjectorExpr::CapsuleChain { opts, env },
         }
     }
 
     pub(crate) fn cond(
+        figure: FigureProjectorKind,
         clauses: Vec<(Option<Form>, ColliderProjectorValue)>,
         env: Env,
     ) -> ColliderProjectorValue {
         ColliderProjectorValue {
+            figure,
             expr: ColliderProjectorExpr::Cond { clauses: clauses.into(), env },
         }
     }
@@ -87,9 +118,20 @@ impl ColliderProjectorValue {
         ColliderProjectorValue::stable(Vec::new())
     }
 
-    pub(crate) fn compose(projectors: Vec<ColliderProjectorValue>) -> ColliderProjectorValue {
+    pub(crate) fn compose(projectors: Vec<ColliderProjectorValue>) -> Result<ColliderProjectorValue, String> {
         let mut flat: Vec<ColliderProjectorValue> = Vec::new();
+        let figure = projectors
+            .first()
+            .map(|p| p.figure)
+            .unwrap_or(FigureProjectorKind::Pose);
         for projector in projectors {
+            if projector.figure != figure {
+                return Err(format!(
+                    "collider projector kind mismatch: :{} vs :{}",
+                    figure.name(),
+                    projector.figure.name()
+                ));
+            }
             match &projector.expr {
                 ColliderProjectorExpr::ColliderSum(items) => {
                     flat.extend(items.iter().cloned());
@@ -103,11 +145,12 @@ impl ColliderProjectorValue {
                 let ColliderProjectorExpr::Stable(items) = projector.expr else { unreachable!() };
                 slots.extend(items.iter().cloned());
             }
-            ColliderProjectorValue::stable(slots)
+            Ok(ColliderProjectorValue::stable(slots))
         } else {
-            ColliderProjectorValue {
+            Ok(ColliderProjectorValue {
+                figure,
                 expr: ColliderProjectorExpr::ColliderSum(flat.into()),
-            }
+            })
         }
     }
 }

@@ -659,8 +659,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     }
                 }
                 if all_projectors {
+                    let figure = projector_clauses
+                        .first()
+                        .map(|(_, p)| p.figure)
+                        .unwrap_or(FigureProjectorKind::Pose);
+                    if projector_clauses.iter().any(|(_, p)| p.figure != figure) {
+                        return Err("cond: collider projector branches must use the same figure type".into());
+                    }
                     return Ok(Val::ColliderProjector(Rc::new(
-                        ColliderProjectorValue::cond(projector_clauses, env.clone()),
+                        ColliderProjectorValue::cond(figure, projector_clauses, env.clone()),
                     )));
                 }
                 for pair in items[1..].chunks(2) {
@@ -728,7 +735,16 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 if &**head != "__collider-projector" {
                     return Ok(fallback);
                 }
-                let Some(Form::Vector(ps)) = projector_items.get(1) else {
+                let (figure, params_idx, body_idx) = match projector_items.get(1) {
+                    Some(Form::Kw(k)) => {
+                        let Ok(figure) = FigureProjectorKind::from_defcollider_keyword(k) else {
+                            return Ok(fallback);
+                        };
+                        (figure, 2, 3)
+                    }
+                    _ => (FigureProjectorKind::Pose, 1, 2),
+                };
+                let Some(Form::Vector(ps)) = projector_items.get(params_idx) else {
                     return Ok(fallback);
                 };
                 if ps.len() != 2 {
@@ -738,7 +754,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     return Ok(fallback);
                 };
                 let mut last = Val::Nothing;
-                for form in projector_items[2..].iter() {
+                for form in projector_items[body_idx..].iter() {
                     let form = rewrite_projector_aliases(form, e_name, ctx_name);
                     match evaluate(&form, env, ctx, world) {
                         Ok(v) => last = v,
@@ -746,12 +762,20 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     }
                 }
                 return match last {
-                    Val::ColliderProjector(_) => Ok(last),
+                    Val::ColliderProjector(ref projector) if projector.figure == figure => Ok(last),
                     _ => Ok(fallback),
                 };
             }
             "__collider-projector" => {
-                let Some(Form::Vector(ps)) = items.get(1) else {
+                let (figure, params_idx, body_idx) = match items.get(1) {
+                    Some(Form::Kw(k)) => (
+                        FigureProjectorKind::from_defcollider_keyword(k)?,
+                        2,
+                        3,
+                    ),
+                    _ => (FigureProjectorKind::Pose, 1, 2),
+                };
+                let Some(Form::Vector(ps)) = items.get(params_idx) else {
                     return Err("defcollider: expected parameter vector".into());
                 };
                 let params = ps
@@ -761,11 +785,11 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                         _ => Err("defcollider: bad parameter".to_string()),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                if items.len() < 3 {
+                if items.len() <= body_idx {
                     return Err("defcollider: expected body".into());
                 }
                 return Ok(Val::ColliderProjector(Rc::new(
-                    ColliderProjectorValue::callable(params, items[2..].to_vec().into(), env.clone()),
+                    ColliderProjectorValue::callable(figure, params, items[body_idx..].to_vec().into(), env.clone()),
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),

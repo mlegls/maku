@@ -49,10 +49,10 @@
                  (damage-value* rest next))))
 
 ;; hostile bullet: a damage core inside a graze ring
-(defcollider graze-collider [e ctx]
+(defcollider :pose graze-collider [e ctx]
   (circle-collider {:layer :graze :r 0.35}))
 
-(defcollider bullet-collider [e ctx]
+(defcollider :pose bullet-collider [e ctx]
   (colliders
     (circle-collider {:layer :damage :r e.hitbox})
     (circle-collider {:layer :graze :r 0.35})))
