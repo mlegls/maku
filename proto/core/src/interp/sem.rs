@@ -33,7 +33,6 @@ pub enum ColliderProjectorExpr {
     Stable(Rc<[DynCollider]>),
     DeferredBody { body: Rc<[Form]>, env: Env },
     ColliderSum(Rc<[ColliderProjectorSpec]>),
-    ColliderActiveCond { clauses: Rc<[(Option<Form>, ColliderProjectorSpec)]>, env: Env },
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -58,15 +57,6 @@ impl ColliderProjectorSpec {
 
     pub(crate) fn empty() -> ColliderProjectorSpec {
         ColliderProjectorSpec::stable(Vec::new())
-    }
-
-    pub(crate) fn active_cond(
-        clauses: Vec<(Option<Form>, ColliderProjectorSpec)>,
-        env: Env,
-    ) -> ColliderProjectorSpec {
-        ColliderProjectorSpec {
-            expr: ColliderProjectorExpr::ColliderActiveCond { clauses: clauses.into(), env },
-        }
     }
 
     pub(crate) fn plus(&self, rhs: &ColliderProjectorSpec) -> ColliderProjectorSpec {

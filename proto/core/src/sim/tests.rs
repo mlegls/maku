@@ -700,12 +700,12 @@
     }
 
     #[test]
-    fn active_cond_controls_projector_output() {
+    fn cond_controls_projector_output() {
         const CARD: &str = r#"
 (defcollider appears-after [e ctx]
-  (active-cond
-    [(> ctx.t 0.5) (circle-collider {:layer :appears :r 0.1})]
-    [:else (circle-collider {:layer :cold :r 0.01})]))
+  (cond
+    (> ctx.t 0.5) (circle-collider {:layer :appears :r 0.1})
+    :else (circle-collider {:layer :cold :r 0.01})))
 (defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
 (defpattern p []
   (par

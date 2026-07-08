@@ -584,6 +584,24 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     Ok(Val::Nothing)
                 };
             }
+            "cond" => {
+                if items.len() < 2 {
+                    return Ok(Val::Nothing);
+                }
+                if (items.len() - 1) % 2 != 0 {
+                    return Err("cond: expected predicate/value pairs".into());
+                }
+                for pair in items[1..].chunks(2) {
+                    let enabled = match &pair[0] {
+                        Form::Kw(k) if &**k == "else" => true,
+                        pred => truthy(&evaluate(pred, env, ctx, world)?),
+                    };
+                    if enabled {
+                        return evaluate(&pair[1], env, ctx, world);
+                    }
+                }
+                return Ok(Val::Nothing);
+            }
             "let" => return sf_let(items, env, ctx, world),
             "fn" => {
                 let Some(Form::Vector(ps)) = items.get(1) else {
@@ -633,32 +651,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
-            "active-cond" => {
-                if items.len() < 2 {
-                    return Err("active-cond: expected at least one clause".into());
-                }
-                let mut clauses = Vec::new();
-                for clause in &items[1..] {
-                    let Form::Vector(parts) = clause else {
-                        return Err("active-cond: clauses must be [pred projector] vectors".into());
-                    };
-                    if parts.len() != 2 {
-                        return Err("active-cond: clauses must have predicate and projector".into());
-                    }
-                    let pred = match &parts[0] {
-                        Form::Kw(k) if &**k == "else" => None,
-                        other => Some(other.clone()),
-                    };
-                    let child = evaluate(&parts[1], env, ctx, world)?;
-                    let Val::ColliderProjectorSpecs(child) = child else {
-                        return Err(format!("active-cond: expected collider projector, got {:?}", child));
-                    };
-                    clauses.push((pred, child.as_ref().clone()));
-                }
-                return Ok(Val::ColliderProjectorSpecs(Rc::new(
-                    ColliderProjectorSpec::active_cond(clauses, env.clone()),
-                )));
-            }
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),
             "capsule-chain-collider" => return sf_capsule_chain_collider(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),
