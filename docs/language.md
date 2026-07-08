@@ -24,6 +24,11 @@ The translation exercise (every WebDemo script, a production boss spell card, an
 
 **[spec]** Small, closed runtime universe; source syntax may be richer, but typed/load-time lowering assigns every live field to a fixed representation before the card runs.
 
+See [types.md](types.md) for the target inference/elaboration pipeline. In
+short: semantic types are assigned before representation classification, so
+`Dyn<T>`, collider/render schema checks, and homogeneous vector/matrix
+recognition are not properties of the parser or the SoA runtime layout.
+
 - `Number` — one numeric type. Predicate masks, counts, indices, and enum-like words are schema uses of numbers/symbols, not separate source-level scalar types.
 - `Symbol` — interned keyword-like atoms. String syntax is source/host-boundary syntax; runtime comparisons and storage use interned symbols.
 - `Pose` = `(x, y, theta?)`. `theta = none` is a point whose facing is unspecified and may be derived by consumers that need one (curve tangents, motion direction); `theta = some angle` is an explicit frame orientation, including explicit `0`. Surface literals `c[x y]`, `p[r θ]` (§11) construct point-poses, while `(rot θ)` constructs an orientation. `(still)` names the identity pose, the unit of frame composition.

@@ -34,6 +34,7 @@ mod renderers;
 mod sem;
 mod specs;
 mod spawn;
+pub mod types;
 mod world;
 
 pub(crate) use builtins::*;
