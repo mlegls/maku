@@ -59,7 +59,7 @@ pub(crate) fn sf_colliders(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    Ok(Val::ColliderSpecs(Rc::new(as_collider_spec_list(
+    Ok(Val::ColliderProjectorSpecs(Rc::new(as_collider_spec_list(
         &specs,
         &mut world.symbols,
     )?)))
@@ -72,7 +72,7 @@ pub(crate) fn sf_renderers(
     world: &mut World,
 ) -> Result<Val, String> {
     let specs = spec_args(&items[1..], env, ctx, world)?;
-    Ok(Val::RenderSpecs(Rc::new(as_render_spec_list(&specs)?)))
+    Ok(Val::RendererProjectorSpec(Rc::new(as_render_spec_list(&specs)?)))
 }
 
 pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
@@ -119,8 +119,8 @@ fn normalize_spawn_input(
             continue;
         }
         match evaluate(item, env, ctx, world)? {
-            Val::ColliderSpecs(specs) => colliders.push(specs.as_ref().clone()),
-            Val::RenderSpecs(specs) => renderers.push(specs.as_ref().clone()),
+            Val::ColliderProjectorSpecs(specs) => colliders.push(specs.as_ref().clone()),
+            Val::RendererProjectorSpec(specs) => renderers.push(specs.as_ref().clone()),
             Val::Map(kvs) => computed_meta_pairs.extend(kvs.iter().cloned()),
             Val::DynLike(d) => computed_meta_pairs.extend(dynlike_meta_pairs(&d)?),
             _ => {}
@@ -205,8 +205,8 @@ fn plan_spawn(
 fn build_entity_specs(
     elems: Vec<SpawnElem>,
     meta: &SpawnMetaPlan,
-    collider_slots: Vec<ColliderSpecList>,
-    renderer_slots: Vec<RenderSpecList>,
+    collider_slots: Vec<ColliderProjectorSpec>,
+    renderer_slots: Vec<RendererProjectorSpec>,
     env: &Env,
     world: &mut World,
 ) -> Result<Vec<EntitySpec>, String> {
@@ -314,10 +314,10 @@ fn build_entity_specs(
     let mut explicit_colliders = collider_slots;
     let mut explicit_renderers = renderer_slots;
     if explicit_colliders.is_empty() {
-        explicit_colliders.push(ColliderSpecList::empty());
+        explicit_colliders.push(ColliderProjectorSpec::empty());
     }
     if explicit_renderers.is_empty() {
-        explicit_renderers.push(RenderSpecList::empty());
+        explicit_renderers.push(RendererProjectorSpec::empty());
     }
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(ColName, f64)>> = elems
@@ -327,8 +327,8 @@ fn build_entity_specs(
             cols.iter().map(|(k, v)| (world.intern_col(k.as_ref()), axis_num(v, e, i))).collect()
         })
         .collect();
-    let shared_collider_specs: Rc<[ColliderSpecList]> = explicit_colliders.into();
-    let shared_render_specs: Rc<[RenderSpecList]> = explicit_renderers.into();
+    let shared_collider_specs: Rc<[ColliderProjectorSpec]> = explicit_colliders.into();
+    let shared_render_specs: Rc<[RendererProjectorSpec]> = explicit_renderers.into();
     let entities = elems
         .into_iter()
         .zip(styles)
@@ -336,9 +336,9 @@ fn build_entity_specs(
         .zip(cols)
         .map(|(((e, style), sigs), cols)| {
             let mut collider_specs = shared_collider_specs.iter().cloned().collect::<Vec<_>>();
-            collider_specs.push(e.collider_specs);
+            collider_specs.push(e.collider_projector_spec);
             let mut render_specs = shared_render_specs.iter().cloned().collect::<Vec<_>>();
-            render_specs.push(e.render_specs);
+            render_specs.push(e.renderer_projector_spec);
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
@@ -468,15 +468,15 @@ pub(crate) fn flatten_elems(
                     );
                     (
                         DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
-                        ColliderSpecList::empty(),
-                        RenderSpecList::checked(DynLike::List(vec![projection].into())),
+                        ColliderProjectorSpec::empty(),
+                        RendererProjectorSpec::checked(DynLike::List(vec![projection].into())),
                         EntityCachePolicy::default(),
                     )
                 }
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
-                    ColliderSpecList::empty(),
-                    RenderSpecList::empty(),
+                    ColliderProjectorSpec::empty(),
+                    RendererProjectorSpec::empty(),
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },
@@ -484,8 +484,8 @@ pub(crate) fn flatten_elems(
             };
             out.push(SpawnElem {
                 dyn_figure,
-                collider_specs: colliders,
-                render_specs: renderers,
+                collider_projector_spec: colliders,
+                renderer_projector_spec: renderers,
                 cache_policy,
                 path: path.clone(),
             });
@@ -494,8 +494,8 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: as_dyn_figure(other)?,
-                collider_specs: ColliderSpecList::empty(),
-                render_specs: RenderSpecList::empty(),
+                collider_projector_spec: ColliderProjectorSpec::empty(),
+                renderer_projector_spec: RendererProjectorSpec::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
             });

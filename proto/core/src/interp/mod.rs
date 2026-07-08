@@ -95,8 +95,8 @@ pub enum Val {
     Kw(Rc<str>),
     Pose(Pose),
     Figure(Figure),
-    ColliderSpecs(Rc<ColliderSpecList>),
-    RenderSpecs(Rc<RenderSpecList>),
+    ColliderProjectorSpecs(Rc<ColliderProjectorSpec>),
+    RendererProjectorSpec(Rc<RendererProjectorSpec>),
     EntitySet(Rc<[usize]>),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
@@ -156,8 +156,8 @@ impl Val {
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
-    pub collider_specs: ColliderSpecList,
-    pub render_specs: RenderSpecList,
+    pub collider_projector_spec: ColliderProjectorSpec,
+    pub renderer_projector_spec: RendererProjectorSpec,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
 }
