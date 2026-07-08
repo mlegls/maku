@@ -320,6 +320,28 @@
     }
 
     #[test]
+    fn plus_composes_collider_projectors() {
+        const CARD: &str = r#"
+(defcontact [:zap :zappable]
+  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
+(defcontact [:graze :zappable] {:once :grazed}
+  (fn [a b] (event :grazed (:pos b))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0])
+      (+ (circle-collider {:layer :zap :r 0.05})
+         (circle-collider {:layer :graze :r 0.3})))
+    (spawn (pose c[0.2 0]) (circle-collider {:layer :zappable :r 0.05}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 0);
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "grazed").count(), 1);
+    }
+
+    #[test]
     fn defcontact_once_latch() {
         const CARD: &str = r#"
 (defcontact [:zap :zappable] {:once :latched}

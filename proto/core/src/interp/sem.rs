@@ -57,6 +57,18 @@ impl ColliderProjectorSpec {
     pub(crate) fn empty() -> ColliderProjectorSpec {
         ColliderProjectorSpec::stable(Vec::new())
     }
+
+    pub(crate) fn plus(&self, rhs: &ColliderProjectorSpec) -> Result<ColliderProjectorSpec, String> {
+        match (&self.expr, &rhs.expr) {
+            (ColliderProjectorExpr::Stable(a), ColliderProjectorExpr::Stable(b)) => {
+                let mut slots = Vec::with_capacity(a.len() + b.len());
+                slots.extend(a.iter().cloned());
+                slots.extend(b.iter().cloned());
+                Ok(ColliderProjectorSpec::stable(slots))
+            }
+            _ => Err("+: dynamic collider projector composition is not lowered yet".into()),
+        }
+    }
 }
 
 /// Compatibility alias for the current `(colliders ...)` bridge surface.
