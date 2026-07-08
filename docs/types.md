@@ -19,7 +19,8 @@ Form
 ```
 
 The parser only knows source syntax. Macro expansion rewrites syntax. Type
-elaboration assigns semantic meaning and applies expected-type coercions. The
+elaboration assigns semantic meaning, applies expected-type coercions, and
+infers semantic signal classes such as `Closed` vs `Scanned`. The later
 representation pass classifies equivalent semantic programs by execution
 strategy.
 
@@ -32,11 +33,15 @@ Core scalar atoms:
 - `Kw`: interned keyword/event/style atoms. String syntax is source or host
   boundary syntax; runtime comparison uses interned atoms.
 - `Handle`: generation-checked entity handle.
-- `Nothing`: explicit empty value.
+- `Nothing`: explicit empty value. It is not implicit nullability; a slot that
+  may be absent must say so with `Option<T>` or with a domain variant such as
+  `ColliderData::none`.
 
 Geometry:
 
 - `Pose`: `(x, y, theta?)`, where `theta = none` means unspecified facing.
+  This is `theta: Option<Num>`, not implicit `Nothing` inhabiting numeric
+  slots.
 - `Curve`: abstract 2D curve. Sampling is a projection choice.
 - `Figure`: `Pose | Curve | ...`.
 
@@ -48,6 +53,8 @@ Structured values:
 - `Vec<N, T>`: fixed-size homogeneous vector.
 - `Mat<R, C, T>`: fixed-size homogeneous matrix.
 - `Record{field: T, ...}`: finite known fields.
+- `Option<T>`: explicit absence/presence. Optional record fields elaborate to
+  this type or to a record-row schema with an explicit presence bit.
 
 Engine boundary types:
 
@@ -61,9 +68,24 @@ Engine boundary types:
 
 Time-varying values:
 
-- `Dyn<T>`: value of type `T` over entity-local time or another bound axis.
-  This is a semantic type. Closed/integrated/scanned is not normally a distinct
-  surface type.
+- `Dyn<T>`: value of type `T` over a slot-bound axis. The axis is not a free
+  type parameter: `t`, `u`, tunnel `s`, and ancestor clocks are bound by the
+  expecting slot, and named signal expressions rebind at the referencing slot
+  as described in `language.md` section 3. A `Dyn<T>` value cannot be floated
+  out with an unbound hidden axis.
+
+Signal class is an inferred semantic property of `Dyn<T>`:
+
+- `Const`: independent of the slot axis.
+- `Closed`: pure function of the slot-bound axes, evaluable at arbitrary axis
+  values.
+- `PiecewiseClosed`: static segment table of closed pieces.
+- `Integrated`: stateful integration with fixed state slots.
+- `Scanned`: general tick-advanced stateful signal with fixed state slots.
+
+Closedness is semantic because it determines whether arbitrary-axis evaluation
+is meaningful. Storage choices such as SoA layout, specialized linear motion,
+or interpreter enum cases are representation details layered after this.
 
 The target low-level entity model is:
 
@@ -89,14 +111,45 @@ Important coercions:
 T                         => Dyn<T>
 Pose                      => Figure
 List<T>                   => Array<T> / Vec<N, T> where context requires it
-Record{a: Dyn<T>, ...}    => Dyn<Record{a: T, ...}>
-List<Dyn<T> | T>          => Dyn<List<T>>
-Array<Dyn<T> | T>         => Dyn<Array<T>>
 ```
 
 These are typed rewrites, not Rust conversion traits. They should leave an
 explicit elaborated IR node so diagnostics and compiler lowering can see what
 happened.
+
+Coercion must be coherent: every legal derivation from the same source
+expression to the same expected type must denote the same value. The compiler
+therefore uses one canonical elaboration order:
+
+1. Apply non-dyn structural coercions required by the expected type, such as
+   `Pose => Figure`, `List<T> => Array<T>`, `List<T> => Vec<N, T>`, and
+   homogeneous vector/matrix recognition.
+2. Recursively elaborate each field or element under its expected element type.
+3. If `Dyn<S>` is expected, lift every non-dyn child to `Const`, then sequence
+   the structure into one `Dyn<S>`.
+4. Apply schema checks such as collider/render/meta conversion at the typed
+   slot boundary.
+
+So a `List<Num>` checked against `Dyn<Array<Num>>` is canonicalized as:
+
+```text
+list literal
+  -> Array<Num>
+  -> Dyn<Array<Num>> by lifting all elements to Const and sequencing once
+```
+
+Mixed dynamic structures are the same rule, not a union rule:
+
+```text
+[a b(t) c]
+  -> [Const(a) b(t) Const(c)]
+  -> sequence -> Dyn<List<T>>
+```
+
+Records follow the same rule: elaborate every field under its field type, lift
+non-dyn fields to `Const` when a `Dyn<Record{...}>` is expected, then sequence
+the whole record. The elaborated IR is deterministic even when a shorter proof
+path would have existed.
 
 The `spawn` slots provide the clearest example:
 
@@ -112,6 +165,11 @@ meta      expects Dyn<Meta>
 A literal or computed list in the collider slot is first dyn-lifted as
 ordinary structure. Then that typed structure is checked against the
 `ColliderData` schema. The same list elsewhere remains ordinary list data.
+
+The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
+these compositional targets. The convergence target is ordinary expected types:
+`Dyn<Figure>`, `Dyn<List<ColliderData>>`, `Dyn<List<RenderData>>`, and
+`Dyn<Meta>`.
 
 ## Schema Checking
 
@@ -136,17 +194,28 @@ them at the simulation boundary. The target is to perform all static schema
 work during elaboration, with only genuinely dynamic numeric fields evaluated
 per tick.
 
+Two cases must classify differently:
+
+- static list shape with dynamic fields, e.g. one circle whose radius is
+  `m"0.1 + t"`: fixed collider count, vectorizable per field;
+- dynamic list shape, e.g. a function that returns zero, one, or many
+  colliders over time: collider count itself changes, so the backend needs
+  per-tick list realization or a lowered equivalent.
+
+Both can have type `Dyn<List<ColliderData>>`; the representation classifier
+must preserve the distinction.
+
+Meta is the same kind of typed boundary. The current interpreter's
+`SpawnMetaInput` still carries raw source forms because `:expose` channel
+designators and legacy signal tags are directives, not ordinary `Meta` values.
+Target elaboration should separate those directives from the `Dyn<Meta>` value
+the entity stores.
+
 ## Representation Classification
 
 After type elaboration, a separate pass chooses execution/storage classes.
-
-For `Dyn<T>`:
-
-- `Const`: same value for all `t`.
-- `Closed`: pure function of bound axes, evaluable at arbitrary time.
-- `Integrated` / `Scanned`: tick-advanced stateful signal with fixed state
-  slots.
-- `PiecewiseClosed`: static segment table of closed pieces.
+It may use the semantic signal class, but it does not decide whether a dyn is
+closed, integrated, or scanned.
 
 For structures:
 

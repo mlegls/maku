@@ -23,7 +23,8 @@ pub enum Type {
     Vec { len: usize, elem: Box<Type> },
     Mat { rows: usize, cols: usize, elem: Box<Type> },
     Record(Vec<FieldType>),
-    Dyn(Box<Type>),
+    Option(Box<Type>),
+    Dyn { class: Option<DynClass>, value: Box<Type> },
     Fn { arg: Box<Type>, ret: Box<Type> },
     Var(TypeVar),
 }
