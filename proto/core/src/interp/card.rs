@@ -109,10 +109,9 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 Some(Form::Sym(s)) if &**s == "defcollider" => {
                     // (defcollider name [e ctx] body...)
                     //
-                    // Register a callable projector value. The body is
-                    // deferred until collider materialization, where `e` and
-                    // `ctx` are bound to the current entity view and
-                    // projector context.
+                    // Register a collider projector value. Evaluation first
+                    // tries to elaborate the body into the projector algebra;
+                    // unsupported forms fall back to the callable bridge.
                     let name = match items.get(1) {
                         Some(Form::Sym(n)) => n.to_string(),
                         _ => return Err("defcollider: expected name".into()),
@@ -139,7 +138,8 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         Form::Vector(params.into()),
                     ];
                     projector.extend(items[3..].iter().cloned());
-                    defs.insert(name, Form::list(projector));
+                    let form = Form::list(vec![Form::sym("__defcollider"), Form::list(projector)]);
+                    defs.insert(name, form);
                 }
                 Some(Form::Sym(s)) if &**s == "defchannel" => {
                     // (defchannel $name expr): a per-tick derived channel.

@@ -510,6 +510,54 @@ fn val_contains_structural_dyn(v: &Val) -> bool {
     }
 }
 
+fn rewrite_projector_aliases(form: &Form, e_name: &Rc<str>, ctx_name: &Rc<str>) -> Form {
+    fn rewrite_sym(sym: &Rc<str>, e_name: &Rc<str>, ctx_name: &Rc<str>) -> Rc<str> {
+        if sym == e_name {
+            return "e".into();
+        }
+        if sym == ctx_name {
+            return "ctx".into();
+        }
+        if let Some(rest) = sym.strip_prefix(&format!("{}.", e_name)) {
+            return format!("e.{}", rest).into();
+        }
+        if let Some(rest) = sym.strip_prefix(&format!("{}.", ctx_name)) {
+            return format!("ctx.{}", rest).into();
+        }
+        sym.clone()
+    }
+
+    match form {
+        Form::Sym(s) => Form::Sym(rewrite_sym(s, e_name, ctx_name)),
+        Form::List(items) => Form::List(
+            items
+                .iter()
+                .map(|item| rewrite_projector_aliases(item, e_name, ctx_name))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        Form::Vector(items) => Form::Vector(
+            items
+                .iter()
+                .map(|item| rewrite_projector_aliases(item, e_name, ctx_name))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        Form::Map(kvs) => Form::Map(
+            kvs.iter()
+                .map(|(k, v)| {
+                    (
+                        rewrite_projector_aliases(k, e_name, ctx_name),
+                        rewrite_projector_aliases(v, e_name, ctx_name),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        other => other.clone(),
+    }
+}
+
 fn eval_dynlike_form(
     form: &Form,
     env: &Env,
@@ -666,6 +714,42 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Action(Rc::new(ActionV::Event { name, pos })));
             }
             "defcontact" => return sf_defcontact(items, env, ctx, world),
+            "__defcollider" => {
+                let Some(projector_form) = items.get(1) else {
+                    return Err("defcollider: expected projector form".into());
+                };
+                let fallback = evaluate(projector_form, env, ctx, world)?;
+                let Form::List(projector_items) = projector_form else {
+                    return Ok(fallback);
+                };
+                let Some(Form::Sym(head)) = projector_items.first() else {
+                    return Ok(fallback);
+                };
+                if &**head != "__collider-projector" {
+                    return Ok(fallback);
+                }
+                let Some(Form::Vector(ps)) = projector_items.get(1) else {
+                    return Ok(fallback);
+                };
+                if ps.len() != 2 {
+                    return Ok(fallback);
+                }
+                let (Some(Form::Sym(e_name)), Some(Form::Sym(ctx_name))) = (ps.get(0), ps.get(1)) else {
+                    return Ok(fallback);
+                };
+                let mut last = Val::Nothing;
+                for form in projector_items[2..].iter() {
+                    let form = rewrite_projector_aliases(form, e_name, ctx_name);
+                    match evaluate(&form, env, ctx, world) {
+                        Ok(v) => last = v,
+                        Err(_) => return Ok(fallback),
+                    }
+                }
+                return match last {
+                    Val::ColliderProjector(_) => Ok(last),
+                    _ => Ok(fallback),
+                };
+            }
             "__collider-projector" => {
                 let Some(Form::Vector(ps)) = items.get(1) else {
                     return Err("defcollider: expected parameter vector".into());
@@ -2741,7 +2825,7 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::edn::read_one;
+    use crate::edn::{read_all, read_one};
 
     fn ev(src: &str) -> Val {
         let f = read_one(src).unwrap();
@@ -2751,6 +2835,24 @@ mod tests {
     fn ev_err(src: &str) -> String {
         let f = read_one(src).unwrap();
         evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap_err()
+    }
+
+    #[test]
+    fn defcollider_elaborates_simple_body_to_projector_algebra() {
+        let forms = read_all(
+            "(defcollider hitbox-collider [entity context]\n  \
+               (circle-collider {:layer :damage :r entity.hitbox}))"
+        ).unwrap();
+        let card = load_card(&forms).unwrap();
+        let form = card.defs.get("hitbox-collider").unwrap();
+        let val = evaluate(form, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap();
+        let Val::ColliderProjector(projector) = val else {
+            panic!("defcollider did not evaluate to a collider projector");
+        };
+        assert!(
+            matches!(projector.expr, ColliderProjectorExpr::Circle { .. }),
+            "simple defcollider should elaborate to the primitive projector algebra"
+        );
     }
 
     #[test]
