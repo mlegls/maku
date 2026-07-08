@@ -303,6 +303,23 @@
     }
 
     #[test]
+    fn circle_collider_constructor_projects() {
+        const CARD: &str = r#"
+(defcontact [:zap :zappable]
+  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
+    (spawn (pose c[0 0]) (colliders {:layer :zappable :r 0.2}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 1);
+    }
+
+    #[test]
     fn defcontact_once_latch() {
         const CARD: &str = r#"
 (defcontact [:zap :zappable] {:once :latched}

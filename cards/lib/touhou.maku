@@ -51,22 +51,22 @@
 ;; hostile bullet: a damage core inside a graze ring
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :damage :r ~(primary-hitbox-radius* metas 0.12)}
-                     {:layer :graze :r 0.35})
+          (circle-collider {:layer :damage :r ~(primary-hitbox-radius* metas 0.12)})
+          (circle-collider {:layer :graze :r 0.35})
           {:cols {:damage ~(damage-value* metas 1)}}
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
 (defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
+          (circle-collider {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
           {:team :player :cols {:damage ~(damage-value* metas 1)}}
           ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
 (defmacro spawn-enemy [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
+          (circle-collider {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
           {:team :enemy :hp 1
            :triggers [{:col :hp :leq 0 :event :died :cull true}]}
           ~@metas))
@@ -132,7 +132,7 @@
 ;; macro or bind $player itself.
 (defmacro spawn-player [dyn & metas]
   `(let [player (spawn ~dyn
-                       (colliders {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
+                       (circle-collider {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
                        {:team :player-body
                         :cols {:lives 3 :bombs 3 :graze 0 :hits 0}
                         :triggers [{:col :lives :leq 0 :event :game-over}]}

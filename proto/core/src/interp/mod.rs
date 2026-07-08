@@ -626,6 +626,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "defcontact" => return sf_defcontact(items, env, ctx, world),
             "spawn" => return sf_spawn(items, env, ctx, world),
             "colliders" => return sf_colliders(items, env, ctx, world),
+            "circle-collider" => return sf_circle_collider(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),
             name if engine::is_special(name) => {
                 return engine::special(name, items, env, ctx, world).map(|v| v.unwrap());
