@@ -823,10 +823,20 @@ pub(crate) fn as_collider(v: &DynLike, symbols: &mut SymbolTable) -> Result<DynC
 }
 
 pub(crate) fn as_stable_collider_slots(v: &DynLike, symbols: &mut SymbolTable) -> Result<Vec<DynCollider>, String> {
-    as_dynlike_list(v, "colliders")?
-        .iter()
-        .map(|v| as_collider(v, symbols))
-        .collect::<Result<Vec<_>, _>>()
+    let mut out = Vec::new();
+    as_stable_collider_slots_into(v, symbols, &mut out)?;
+    Ok(out)
+}
+
+pub(crate) fn as_stable_collider_slots_into(
+    v: &DynLike,
+    symbols: &mut SymbolTable,
+    out: &mut Vec<DynCollider>,
+) -> Result<(), String> {
+    for v in as_dynlike_list(v, "colliders")? {
+        out.push(as_collider(&v, symbols)?);
+    }
+    Ok(())
 }
 
 pub(crate) fn empty_spec_list() -> DynLike {
@@ -861,10 +871,19 @@ pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
 }
 
 pub(crate) fn as_stable_render_slots(v: &DynLike) -> Result<Vec<DynRender>, String> {
-    as_dynlike_list(v, "renderers")?
-        .iter()
-        .map(as_render)
-        .collect::<Result<Vec<_>, _>>()
+    let mut out = Vec::new();
+    as_stable_render_slots_into(v, &mut out)?;
+    Ok(out)
+}
+
+pub(crate) fn as_stable_render_slots_into(
+    v: &DynLike,
+    out: &mut Vec<DynRender>,
+) -> Result<(), String> {
+    for v in as_dynlike_list(v, "renderers")? {
+        out.push(as_render(&v)?);
+    }
+    Ok(())
 }
 
 fn as_render_spec_list(v: &DynLike) -> Result<RenderSpecList, String> {

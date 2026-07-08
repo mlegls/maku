@@ -30,9 +30,21 @@ pub(crate) fn first_render_projection(
     tau: f64,
     sig: &SigEnv,
 ) -> Option<CurveRenderSlot> {
+    let mut defs = Vec::new();
+    first_render_projection_into(projector, tau, sig, &mut defs)
+}
+
+pub(crate) fn first_render_projection_into(
+    projector: &RenderProjector,
+    tau: f64,
+    sig: &SigEnv,
+    defs: &mut Vec<DynRender>,
+) -> Option<CurveRenderSlot> {
     let state = MotionState::new();
-    materialize_render_defs(projector, tau, &state, sig)
-        .ok()?
+    defs.clear();
+    materialize_render_defs_into(projector, tau, &state, sig, defs)
+        .ok()?;
+    defs
         .first()
         .cloned()
         .map(|r| r.polyline().clone())
@@ -99,35 +111,35 @@ fn sample_curve_projection(
     Some(pts)
 }
 
-pub fn materialize_collider_defs(
+pub fn materialize_collider_defs_into(
     projector: &ColliderProjector,
     tau: f64,
     state: &MotionState,
     sig: &SigEnv,
     symbols: &mut SymbolTable,
-) -> Result<Vec<DynCollider>, String> {
-    let mut out = Vec::new();
+    out: &mut Vec<DynCollider>,
+) -> Result<(), String> {
     for list in projector.specs.iter() {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
-        out.extend(as_stable_collider_slots(&dynlike, symbols)?);
+        as_stable_collider_slots_into(&dynlike, symbols, out)?;
     }
-    Ok(out)
+    Ok(())
 }
 
-pub fn materialize_render_defs(
+pub fn materialize_render_defs_into(
     projector: &RenderProjector,
     tau: f64,
     state: &MotionState,
     sig: &SigEnv,
-) -> Result<Vec<DynRender>, String> {
-    let mut out = Vec::new();
+    out: &mut Vec<DynRender>,
+) -> Result<(), String> {
     for list in projector.specs.iter() {
         let val = list.eval(tau, state, sig)?;
         let dynlike = DynLike::from_val(val);
-        out.extend(as_stable_render_slots(&dynlike)?);
+        as_stable_render_slots_into(&dynlike, out)?;
     }
-    Ok(out)
+    Ok(())
 }
 
 /// A curve's hot fraction at age tau. Curves without :fill are hot in full
@@ -254,11 +266,15 @@ pub fn eval_render_list_into(
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
+    slots: &mut Vec<DynRender>,
     out: &mut Vec<RenderData>,
 ) {
     let state = MotionState::new();
-    let slots = materialize_render_defs(projector, tau, &state, sig).unwrap_or_default();
-    for slot in &slots {
+    slots.clear();
+    if materialize_render_defs_into(projector, tau, &state, sig, slots).is_err() {
+        return;
+    }
+    for slot in slots.iter() {
         eval_render_slot_into(dyn_figure, slot, tau, sig, out);
     }
 }

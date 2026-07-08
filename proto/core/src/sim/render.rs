@@ -10,12 +10,14 @@ pub enum RenderItem {
 struct RenderScratch {
     rows: Vec<RenderData>,
     ranges: Vec<std::ops::Range<usize>>,
+    defs: Vec<DynRender>,
 }
 
 impl RenderScratch {
     fn clear_for_entities(&mut self, len: usize) {
         self.rows.clear();
         self.ranges.clear();
+        self.defs.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }
@@ -124,7 +126,14 @@ impl Sim {
                 FigureDynRepr::Curve { .. } => {
                     let alpha = self.sample_sig(&render_projector.sigs.opacity, tau, 1.0);
                     let start = scratch.begin_row();
-                    eval_render_list_into(dyn_figure, render_projector, tau, sig, &mut scratch.rows);
+                    eval_render_list_into(
+                        dyn_figure,
+                        render_projector,
+                        tau,
+                        sig,
+                        &mut scratch.defs,
+                        &mut scratch.rows,
+                    );
                     scratch.finish_row(start);
                     for data in scratch.row(i) {
                         match data {

@@ -947,26 +947,6 @@ impl Dyn<ColliderData> {
     }
 }
 
-pub(crate) fn curve_capsule_slots(
-    slots: impl IntoIterator<Item = DynCollider>,
-    curve_slot: &CapsuleChainSlot,
-) -> Vec<DynCollider> {
-    slots
-        .into_iter()
-        .map(|collider| {
-            let slot = collider.slot();
-            match &slot.shape {
-                ColliderSlotShape::Circle { radius } => DynCollider::collider_capsule_chain(
-                    slot.layer.clone(),
-                    radius.clone(),
-                    curve_slot.clone(),
-                ),
-                ColliderSlotShape::CapsuleChain { .. } => collider,
-            }
-        })
-        .collect()
-}
-
 impl Dyn<RenderData> {
     pub fn render_polyline(slot: CurveRenderSlot) -> DynRender {
         Dyn { repr: RenderDynRepr::Polyline(slot) }

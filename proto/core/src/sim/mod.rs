@@ -18,7 +18,7 @@ pub use render::RenderItem;
 pub use slots::{sample_curve, sample_curve_frac};
 
 use exec::{new_task, step_task, Task, TF};
-use slots::{first_render_projection, materialize_collider_defs, materialize_render_defs};
+use slots::{materialize_collider_defs_into, materialize_render_defs_into};
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
 
@@ -74,12 +74,16 @@ pub struct Sim {
 struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
+    defs: Vec<DynCollider>,
+    render_defs: Vec<DynRender>,
 }
 
 impl ColliderScratch {
     fn clear_for_entities(&mut self, len: usize) {
         self.rows.clear();
         self.ranges.clear();
+        self.defs.clear();
+        self.render_defs.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }
@@ -412,6 +416,8 @@ impl Sim {
         // cull: off-playfield poses/traces; compatibility curves past their active window
         let tick = self.world.tick;
         let mut err = None;
+        let mut render_slots = Vec::new();
+        let mut collider_slots = Vec::new();
         for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
                 continue;
@@ -437,45 +443,45 @@ impl Sim {
                 }
                 FigureDynRepr::Curve { .. } => {
                     let state = MotionState::new();
-                    let render_slots = self
-                        .world
-                        .entities
-                        .render_projector(i)
-                        .and_then(|projector| materialize_render_defs(projector, tau, &state, &sig).ok())
-                        .unwrap_or_default();
-                    let render_live = render_slots
-                        .first()
+                    render_slots.clear();
+                    if let Some(projector) = self.world.entities.render_projector(i) {
+                        let _ = materialize_render_defs_into(projector, tau, &state, &sig, &mut render_slots);
+                    }
+                    let render_live = render_slots.first()
                         .map(DynRender::polyline)
                         .map(|projection| tau <= projection.activity.warn + projection.activity.active);
                     let collider_live = || {
-                        let Some(render_projector) = self.world.entities.render_projector(i).cloned() else {
-                            return None;
-                        };
                         let Some(projector) = self.world.entities.collider_projector(i).cloned() else {
                             return None;
                         };
-                        let mut slots = materialize_collider_defs(
+                        collider_slots.clear();
+                        materialize_collider_defs_into(
                             &projector,
                             tau,
                             &state,
                             &sig,
                             &mut self.world.symbols,
+                            &mut collider_slots,
                         )
                             .ok()?;
-                        if let Some(projection) = first_render_projection(&render_projector, tau, &sig) {
-                            let curve_slot = CapsuleChainSlot {
-                                sample_set: projection.sample_set,
-                                u_max_sig: projection.u_max_sig,
+                        let curve_slot = render_slots.first()
+                            .map(DynRender::polyline)
+                            .map(|projection| CapsuleChainSlot {
+                                sample_set: projection.sample_set.clone(),
+                                u_max_sig: projection.u_max_sig.clone(),
                                 width: projection.width,
-                                activity: projection.activity,
-                            };
-                            slots = curve_capsule_slots(slots, &curve_slot);
-                        }
-                        slots.iter().find_map(DynCollider::capsule_chain).map(
-                            |(_, projection, _)| {
-                                tau <= projection.activity.warn + projection.activity.active
-                            },
-                        )
+                                activity: projection.activity.clone(),
+                            });
+                        collider_slots.iter().find_map(|slot| match &slot.slot().shape {
+                            ColliderSlotShape::Circle { .. } => curve_slot
+                                .as_ref()
+                                .map(|projection| {
+                                    tau <= projection.activity.warn + projection.activity.active
+                                }),
+                            ColliderSlotShape::CapsuleChain { slot: projection, .. } => {
+                                Some(tau <= projection.activity.warn + projection.activity.active)
+                            }
+                        })
                     };
                     render_live.or_else(collider_live).unwrap_or(true)
                 }

@@ -1,5 +1,5 @@
 use super::*;
-use super::slots::{eval_collider_slot, first_render_projection, materialize_collider_defs};
+use super::slots::{eval_collider_slot, first_render_projection_into, materialize_collider_defs_into};
 
 /// Distance from a point to a polyline (capsule-chain narrow phase).
 fn dist_to_chain(p: (f64, f64), pts: &[(f64, f64)]) -> Option<f64> {
@@ -94,28 +94,48 @@ fn materialize_colliders_into(
     trace: &[Pose],
     traced: bool,
     symbols: &mut SymbolTable,
+    defs: &mut Vec<DynCollider>,
+    render_defs: &mut Vec<DynRender>,
     out: &mut Vec<ColliderData>,
 ) -> Result<(), String> {
     let state = MotionState::new();
-    let mut defs = materialize_collider_defs(projector, tau, &state, sig, symbols)
+    defs.clear();
+    materialize_collider_defs_into(projector, tau, &state, sig, symbols, defs)
         .map_err(|e| format!("colliders: {}", e))?;
-    if matches!(dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
-        if let Some(projection) = first_render_projection(render_projector, tau, sig) {
-            let curve_slot = CapsuleChainSlot {
+    let curve_slot = if matches!(dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
+        first_render_projection_into(render_projector, tau, sig, render_defs).map(
+            |projection| CapsuleChainSlot {
                 sample_set: projection.sample_set,
                 u_max_sig: projection.u_max_sig,
                 width: projection.width,
                 activity: projection.activity,
-            };
-            defs = curve_capsule_slots(defs, &curve_slot);
-        }
-    }
+            },
+        )
+    } else {
+        None
+    };
     out.extend(
-        defs.into_iter().map(|slot| {
+        defs.drain(..).map(|slot| {
+            let slot = match &curve_slot {
+                Some(curve_slot) => curve_capsule_slot(slot, curve_slot),
+                None => slot,
+            };
             eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced)
         }),
     );
     Ok(())
+}
+
+fn curve_capsule_slot(collider: DynCollider, curve_slot: &CapsuleChainSlot) -> DynCollider {
+    let slot = collider.slot();
+    match &slot.shape {
+        ColliderSlotShape::Circle { radius } => DynCollider::collider_capsule_chain(
+            slot.layer,
+            radius.clone(),
+            curve_slot.clone(),
+        ),
+        ColliderSlotShape::CapsuleChain { .. } => collider,
+    }
 }
 
 impl Sim {
@@ -190,6 +210,8 @@ impl Sim {
                 trace,
                 traced,
                 &mut self.world.symbols,
+                &mut self.collider_scratch.defs,
+                &mut self.collider_scratch.render_defs,
                 &mut self.collider_scratch.rows,
             )?;
             self.collider_scratch.finish_row(start);
