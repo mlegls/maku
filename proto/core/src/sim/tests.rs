@@ -229,7 +229,7 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         (colliders {:layer :player-hurt :r 0.06})
+         (circle-collider {:layer :player-hurt :r 0.06})
          {:team :player-body
           :cols {:lives 3 :graze 0 :hits 0}
           :expose {$graze :graze $hits :hits}
@@ -267,7 +267,7 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         (colliders {:layer :player-hurt :r 0.06})
+         (circle-collider {:layer :player-hurt :r 0.06})
          {:team :player-body
           :cols {:graze 0 :hits 0}
           :expose {$graze :graze $hits :hits}}))
@@ -292,8 +292,8 @@
   (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) (colliders {:layer :zap :r 0.2}))
-    (spawn (pose c[0 0]) (colliders {:layer :zappable :r 0.2}))))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         for _ in 0..3 {
@@ -310,7 +310,7 @@
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
-    (spawn (pose c[0 0]) (colliders {:layer :zappable :r 0.2}))))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         for _ in 0..3 {
@@ -348,8 +348,8 @@
   (fn [a b] (event :zapped (:pos a))))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) (colliders {:layer :zap :r 0.2}))
-    (spawn (pose c[0 0]) (colliders {:layer :zappable :r 0.2}))))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         for _ in 0..5 {
@@ -370,9 +370,9 @@
 (defcontact [:zap :zappable] {:skip-if [:b :shield :gt 0]}
   (fn [a b] (event :zapped (:pos b))))
 (defpattern t []
-  (let [a (spawn (pose c[0 0]) (colliders {:layer :zap :r 0.2}))
+  (let [a (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
         b (spawn (pose c[0 0]) {:cols {:shield 1}}
-                                (colliders {:layer :zappable :r 0.2}))]
+                                (circle-collider {:layer :zappable :r 0.2}))]
     (seq (wait 0.05) (set-col (first b) :shield 0))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -393,8 +393,8 @@
 (defcontact [:zap :zappable] (fn [a b] (event :second (:pos b))))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) (colliders {:layer :zap :r 0.2}))
-    (spawn (pose c[0 0]) (colliders {:layer :zappable :r 0.2}))))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         sim.step().unwrap();
@@ -442,7 +442,7 @@
 "#;
         let mut sess = Session::default();
         sess.rig = Some(
-            "(defpattern rig [] (spawn (live $player) (colliders {:layer :player-hurt :r 0.06}) {:team :player-body \
+            "(defpattern rig [] (spawn (live $player) (circle-collider {:layer :player-hurt :r 0.06}) {:team :player-body \
              :cols {:graze 0 :hits 0} :expose {$graze :graze $hits :hits}}))"
                 .into(),
         );
@@ -472,7 +472,7 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         (colliders {:layer :player-hurt :r 0.06})
+         (circle-collider {:layer :player-hurt :r 0.06})
          {:team :player-body
           :cols {:lives 2 :graze 0 :hits 0}
           :expose {$graze :graze $hits :hits}
@@ -560,7 +560,7 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         (colliders {:layer :player-hurt :r 0.06})
+         (circle-collider {:layer :player-hurt :r 0.06})
          {:team :player-body
           :cols {:graze 0 :hits 0}
           :expose {$graze :graze $hits :hits}}))
@@ -596,7 +596,7 @@
 (defpattern p []
   (par
     (spawn (pose c[0 0])
-           (colliders {:layer :body :shape [:circle {:r 0.06}]}))
+           (circle-collider {:layer :body :r 0.06}))
     (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
            (capsule-chain-collider {:layer :beam :r 0.06 :width 1 :resolution 0.1
                                     :warn 0 :active 2})
@@ -621,7 +621,7 @@
 (defpattern p []
   (par
     (spawn (pose c[0 0])
-           (colliders {:layer :body :shape [:circle {:r 0.05}]}))
+           (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[1 0])
            (colliders {:layer :expanding
                        :shape [:circle {:r m"t"}]}))))
@@ -650,7 +650,7 @@
 (defpattern p []
   (par
     (spawn (pose c[0 0])
-           (colliders {:layer :body :shape [:circle {:r 0.05}]}))
+           (circle-collider {:layer :body :r 0.05}))
     (spawn (pose c[0 0])
            (colliders (if (> t 0.5)
                         [{:layer :appears :shape [:circle {:r 0.1}]}]
@@ -774,7 +774,7 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         (colliders {:layer :player-hurt :r 0.06})
+         (circle-collider {:layer :player-hurt :r 0.06})
          {:team :player-body
           :cols {:graze 0 :hits 0}
           :expose {$graze :graze $hits :hits}}))
@@ -975,7 +975,7 @@
 (defpattern c []
   (let [h (spawn (clamp c[-2 -2] c[2 2]
                    (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
-                 (colliders {:layer :player-hurt :r 0.05})
+                 (circle-collider {:layer :player-hurt :r 0.05})
                  {:team :player-body
                   :cols {:pilot 1}})]
     (bind-channel! $player (:pos (nth h 0)))))
@@ -1529,14 +1529,14 @@
 (import "touhou")
 (defpattern rig []
   (spawn (live $player)
-         (colliders {:layer :player-hurt :r 0.06})
+         (circle-collider {:layer :player-hurt :r 0.06})
          {:team :player-body
           :cols {:graze 0 :hits 0}
           :expose {$graze :graze $hits :hits}}))
 (defpattern scaled [s 1]
   (par (rig)
        (spawn ((pose c[0.5 0]) (still))
-              (colliders {:layer :damage :r 0.1})
+              (circle-collider {:layer :damage :r 0.1})
               {:scale s})))
 "#;
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -1975,7 +1975,7 @@ fn variadic_macro_unquotes_inside_maps() {
                  (if (nothing? here) later here))))
 (defmacro bullet [dyn & metas]
   `(spawn ~dyn
-          (colliders {:layer :damage :r ~(meta-hitbox metas 0.12)})
+          (circle-collider {:layer :damage :r ~(meta-hitbox metas 0.12)})
           ~@metas))
 (defpattern p []
   (bullet (pose c[0 0]) {:hitbox 0.4}))
