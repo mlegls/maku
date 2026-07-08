@@ -66,6 +66,10 @@ pub fn eval_dyn<T: DynEval>(
 
 pub type DynNum = Dyn<f64>;
 pub type DynPose = Dyn<Pose>;
+pub type CurveEval = crate::model::CurveEval<DynPose>;
+pub type ParametricCurve = crate::model::ParametricCurve<DynPose>;
+pub type Curve = crate::model::Curve<DynPose>;
+pub type Figure = crate::model::Figure<DynPose>;
 pub type DynFigure = Dyn<Figure>;
 
 impl Dyn<f64> {

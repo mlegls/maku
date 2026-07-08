@@ -1,9 +1,5 @@
 //! Semantic geometry types.
-//!
-//! `CurveEval::Expr` is still the prototype interpreter representation; the
-//! target model is a typed function/program from `(t, u)` to `Pose`.
 
-use crate::interp::DynPose;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -63,28 +59,27 @@ pub enum SampleSet {
 }
 
 #[derive(Debug, Clone)]
-pub enum CurveEval {
+pub enum CurveEval<E> {
     /// Compatibility straight curve along the local +x axis.
     Straight,
-    /// Interpreter representation of eval: (t, u) -> Pose. This is a
-    /// prototype lowering detail; the semantic type is still u -> Pose.
-    Expr(DynPose),
+    /// Evaluator/program for `(t, u) -> Pose`, chosen by the frontend/backend.
+    Expr(E),
 }
 
 #[derive(Debug, Clone)]
-pub struct ParametricCurve {
-    pub eval: CurveEval,
+pub struct ParametricCurve<E> {
+    pub eval: CurveEval<E>,
     pub domain: CurveDomain,
 }
 
 #[derive(Debug, Clone)]
-pub struct Curve {
+pub struct Curve<E> {
     pub frame: Pose,
-    pub spec: ParametricCurve,
+    pub spec: ParametricCurve<E>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Figure {
+pub enum Figure<E> {
     Pose(Pose),
-    Curve(Curve),
+    Curve(Curve<E>),
 }
