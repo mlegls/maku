@@ -30,6 +30,7 @@ mod engine;
 mod r#dyn;
 pub mod model;
 mod motion;
+mod projectors;
 mod renderers;
 mod sem;
 mod specs;
@@ -46,6 +47,7 @@ pub use crate::model::{
     ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, SampleSet, Symbol,
 };
 pub use motion::*;
+pub(crate) use projectors::*;
 pub use renderers::*;
 pub use sem::*;
 pub(crate) use specs::*;
@@ -661,22 +663,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
-            "colliders" => {
-                let mut projectors = Vec::new();
-                for item in &items[1..] {
-                    match evaluate(item, env, ctx, world)? {
-                        Val::ColliderProjector(projector) => {
-                            projectors.push(projector.as_ref().clone());
-                        }
-                        other => {
-                            return Err(format!("colliders: expected collider projector, got {:?}", other));
-                        }
-                    }
-                }
-                return Ok(Val::ColliderProjector(Rc::new(
-                    ColliderProjectorValue::compose(projectors),
-                )));
-            }
+            "colliders" => return sf_colliders(items, env, ctx, world),
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),
             "capsule-chain-collider" => return sf_capsule_chain_collider(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),
