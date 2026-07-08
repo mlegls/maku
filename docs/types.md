@@ -65,8 +65,8 @@ Engine boundary types:
   `K`. Unlike `ColliderData`, this is not a single closed schema: each kind
   selects its own typed record schema from the load-time render-kind registry.
   Source code may construct render rows directly when a renderer slot expects
-  them. Each entity emits exactly one render row; use a `:none` kind for no
-  render output.
+  them. Each entity emits exactly one render row; nullable/no-render behavior is
+  encoded by fields chosen by that schema, not by a language-reserved kind.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
 - `EntityView`: the same entity view shape used by query/manip callbacks:
@@ -335,10 +335,12 @@ derivable from renderer specs after macro/import expansion. Hosts and optional
 rendering crates declare which kinds they implement; unsupported kinds fail at
 load unless a declared degradation path is available.
 
-Each entity has exactly one render row. To render nothing, return a row whose
-kind is `:none`. To expose several visual parts, define a schema with enough
-fields for the maximum shape, such as `:aux-sprite-1`/`:aux-sprite-2` or a
-nested record, rather than returning multiple rows.
+Each entity has exactly one render row. If a schema needs no-render or nullable
+behavior, it must define the field convention that expresses it, such as a
+host/profile-owned `:kind`, `:visible`, or `:enabled` field. The language does
+not reserve a no-render kind. To expose several visual parts, define a schema
+with enough fields for the maximum shape, such as `:aux-sprite-1`/`:aux-sprite-2`
+or a nested record, rather than returning multiple rows.
 
 Render schemas merge by field key, not by key/type pairs: if two renderers
 contribute the same key with incompatible types, card load fails. Imported
