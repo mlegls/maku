@@ -82,8 +82,9 @@ work.
   Figure = Pose | Polyline | ParametricCurve | Composite...
   Dyn<F> = t -> F
   Meta = finite typed fields, possibly dyn and figure-dependent in spawn slots
-  ColliderProjector = (Figure, Meta) -> [Collider]
-  RenderProjector = (Figure, Meta) -> [Render]
+  EntityContext = age/t, tick, handle identity
+  ColliderProjector = (Figure, Meta, EntityContext) -> [Collider]
+  RenderProjector = (Figure, Meta, EntityContext) -> [Render]
   SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjectorSpec] * RenderProjectorSpec
   ```
 - Spawned objects are retained as row ids into SoA stores, not as an `Entity`

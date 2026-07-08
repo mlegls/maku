@@ -64,10 +64,12 @@ Engine boundary types:
   selects its own typed record schema from the load-time render-kind registry.
 - `Meta`: finite record of entity fields. Field storage is selected at
   load/schema time, not allocated per tick.
-- `ColliderProjectorSpec`: static policy that projects `(Figure, Meta)` to
-  `List<ColliderData>` each tick.
-- `RendererProjectorSpec`: static policy that projects `(Figure, Meta)` to
-  `List<RenderData<K>>` each tick.
+- `EntityContext`: per-tick execution context for projectors, including
+  entity-local age/`t`, tick, and handle identity.
+- `ColliderProjectorSpec`: static policy that projects
+  `(Figure, Meta, EntityContext)` to `List<ColliderData>` each tick.
+- `RendererProjectorSpec`: static policy that projects
+  `(Figure, Meta, EntityContext)` to `List<RenderData<K>>` each tick.
 - `EntitySet`: ephemeral row-index view.
 - `Action`: inert control-layer effect description.
 - `Fn<A, B>`: pure function.
@@ -174,7 +176,9 @@ alongside `t`, so fields can depend on per-tick geometry without needing a
 separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
 static projectors. A projector may read any typed meta field and the current
 figure each tick, so direct dynamic collider/render rows are not needed as the
-public low-level surface.
+public low-level surface. Projectors also receive `EntityContext`, so purely
+local temporal behavior such as "this collider until age 0.5" does not need a
+public meta switch.
 
 The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
 these compositional targets. The convergence target is ordinary expected types:
@@ -205,7 +209,7 @@ meta source data
 
 bullet-collider
   -> ColliderProjectorSpec
-  -> each tick: (Figure, Meta) -> List<ColliderData>
+  -> each tick: (Figure, Meta, EntityContext) -> List<ColliderData>
 ```
 
 The current interpreter still realizes some dynamic specs per tick and checks
@@ -236,6 +240,13 @@ Projectors compose at the authoring level. For example:
 The `+` combinator means concatenation/parallel projection of collider rows.
 This recovers the expressiveness of directly returning collider lists while
 keeping all changing non-geometry inputs in meta.
+
+Projectors intentionally share the entity meta namespace. That lets hit,
+graze, render, query, and host-exposed behavior agree on fields such as
+`:radius`, `:style`, or `:scale`. To avoid collisions when importing
+projectors from another library, authors can either store a subrecord in meta
+and pass that map as the projector's field base, or use a field-renaming
+adapter that rewrites the projector's field reads to local names.
 
 Meta is the same kind of typed boundary. The current interpreter's
 `SpawnMetaInput` still carries raw source forms because `:expose` channel
