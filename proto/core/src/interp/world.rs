@@ -772,8 +772,10 @@ pub struct World {
     /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
     pub symbols: SymbolTable,
-    /// Ephemeral render rows emitted by tick/render rules for the current tick.
-    pub render_rows: Vec<RenderData>,
+    /// Ephemeral host-facing render rows emitted by tick/render rules for the current tick.
+    pub render_rows: Vec<RenderRow>,
+    /// Accreted schema for open host-facing render row fields.
+    pub render_schema: HashMap<FieldName, RenderFieldKind>,
     /// Card-defined standing rules over row domains, run once per tick.
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
@@ -792,6 +794,7 @@ impl Clone for World {
             fields: self.fields.clone(),
             symbols: self.symbols.clone(),
             render_rows: self.render_rows.clone(),
+            render_schema: self.render_schema.clone(),
             standing_rules: self.standing_rules.clone(),
             collision_facts: self.collision_facts.clone(),
         }
@@ -892,6 +895,7 @@ impl World {
             fields: WorldFields::default(),
             symbols: SymbolTable::default(),
             render_rows: Vec::new(),
+            render_schema: HashMap::new(),
             standing_rules: Vec::new(),
             collision_facts: Vec::new(),
         }
@@ -1112,6 +1116,22 @@ impl World {
 
     pub fn field_sym(&mut self, name: impl AsRef<str>) -> FieldName {
         self.symbols.intern(name)
+    }
+
+    /// Register/verify a render row field. Exact-kind merge: a key means one
+    /// type everywhere; a conflict is an error, not a coercion.
+    pub fn render_field_check(&mut self, name: &str, kind: RenderFieldKind) -> Result<(), String> {
+        let field = self.field_sym(name);
+        match self.render_schema.get(&field).copied() {
+            Some(prior) if prior != kind => {
+                Err(format!("render: field :{name} is {kind:?} here but {prior:?} elsewhere"))
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.render_schema.insert(field, kind);
+                Ok(())
+            }
+        }
     }
 
     pub fn sym_field_slot(&self, field: FieldName) -> Option<usize> {

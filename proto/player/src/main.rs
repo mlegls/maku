@@ -33,7 +33,8 @@
 
 use maku::host::Instance;
 use maku::interp::{Val, TICK_RATE};
-use maku::sim::{Inputs, RenderItem};
+use maku::model::{RenderData, RenderRow};
+use maku::sim::Inputs;
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -71,9 +72,9 @@ fn serve(port: u16) -> Receiver<String> {
     rx
 }
 
-/// Style color with hue shift, as a macroquad Color (core::host palette).
-fn styled(style: &maku::interp::Style, hue: f64) -> Color {
-    let (r, g, b) = maku::host::style_rgb_hued(style, hue);
+/// Row color with hue shift, as a macroquad Color (core::host palette).
+fn styled(row: &RenderRow, hue: f64) -> Color {
+    let (r, g, b) = maku::host::style_rgb_hued(row.sym("color").unwrap_or(""), hue);
     Color::new(r, g, b, 1.0)
 }
 
@@ -317,8 +318,8 @@ async fn main() {
         // player marker at the $player channel (derived from a piloted rig,
         // or the mouse): true hitbox dot + graze ring
         let (pmx, pmy) = match app.inst.channel("player") {
-            Some(Val::Vec2 { x, y }) => {
-                (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT)
+            Some(Val::Pose(p)) => {
+                (cx + p.x as f32 * PIXELS_PER_UNIT, cy - p.y as f32 * PIXELS_PER_UNIT)
             }
             _ => (mx, my),
         };
@@ -328,29 +329,30 @@ async fn main() {
         if app.inst.running() {
             let to_screen =
                 |x: f64, y: f64| (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT);
-            for item in app.inst.render() {
-                match item {
-                    RenderItem::Dot { x, y, style, hue, scale, alpha, .. } => {
-                        let (sx, sy) = to_screen(x, y);
-                        let r = maku::host::dot_radius(&style.family)
+            for row in app.inst.render() {
+                match &row.data {
+                    RenderData::None => {}
+                    RenderData::Point { x, y, scale, alpha, hue, .. } => {
+                        let (sx, sy) = to_screen(*x, *y);
+                        let r = maku::host::dot_radius(row.sym("family").unwrap_or(""))
                             * PIXELS_PER_UNIT
-                            * scale as f32;
+                            * *scale as f32;
                         let a = alpha.clamp(0.0, 1.0) as f32;
-                        let mut col = styled(&style, hue);
+                        let mut col = styled(&row, *hue);
                         col.a *= a;
                         draw_circle(sx, sy, r, col);
                         draw_circle_lines(sx, sy, r, 1.5, Color::new(1.0, 1.0, 1.0, 0.35 * a));
                     }
-                    RenderItem::Polyline { pts, style, active, hue, alpha } => {
-                        let a = alpha.clamp(0.0, 1.0) as f32;
-                        let mut col = styled(&style, hue);
+                    RenderData::Polyline { points, active } => {
+                        let a = row.num("alpha").unwrap_or(1.0).clamp(0.0, 1.0) as f32;
+                        let mut col = styled(&row, row.num("hue").unwrap_or(0.0));
                         col.a *= a;
-                        let (w, col) = if active {
+                        let (w, col) = if *active {
                             (6.0, col)
                         } else {
                             (1.5, Color::new(col.r, col.g, col.b, 0.45 * a))
                         };
-                        for seg in pts.windows(2) {
+                        for seg in points.windows(2) {
                             let (ax, ay) = to_screen(seg[0].0, seg[0].1);
                             let (bx, by) = to_screen(seg[1].0, seg[1].1);
                             draw_line(ax, ay, bx, by, w, col);
@@ -386,8 +388,8 @@ async fn main() {
                 for (name, col) in
                     [("player", Color::new(1.0, 1.0, 1.0, 0.9)), ("nearest-enemy", ORANGE)]
                 {
-                    if let Some(Val::Vec2 { x, y }) = app.inst.channel(name) {
-                        let (sx, sy) = to_screen(x, y);
+                    if let Some(Val::Pose(p)) = app.inst.channel(name) {
+                        let (sx, sy) = to_screen(p.x, p.y);
                         draw_line(sx - 10.0, sy, sx + 10.0, sy, 1.5, col);
                         draw_line(sx, sy - 10.0, sx, sy + 10.0, 1.5, col);
                         draw_circle_lines(sx, sy, 6.0, 1.5, col);

@@ -21,8 +21,14 @@
             .count()
     }
 
-    fn style(sim: &Sim, row: usize) -> Style {
-        Style {
+    struct TestStyle {
+        family: String,
+        color: String,
+        variant: String,
+    }
+
+    fn style(sim: &Sim, row: usize) -> TestStyle {
+        TestStyle {
             family: sim.world.sym_field_resolved_at(row, "family").unwrap_or("").to_string(),
             color: sim.world.sym_field_resolved_at(row, "color").unwrap_or("").to_string(),
             variant: sim.world.sym_field_resolved_at(row, "variant").unwrap_or("").to_string(),
@@ -826,7 +832,9 @@
             "explicit capsule-chain collider hit the circle body"
         );
         assert!(
-            sim.render().iter().any(|r| matches!(r, RenderItem::Polyline { active: true, .. })),
+            sim.render().iter().any(|r| {
+                matches!(&r.data, RenderData::Polyline { active, .. } if *active)
+            }),
             "explicit polyline renderer produced a render item"
         );
     }
@@ -875,7 +883,10 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         let items = sim.render();
-        let Some(RenderItem::Dot { x, y, th, scale, alpha, hue, .. }) = items.first() else {
+        let Some(row) = items.first() else {
+            panic!("render should emit one point row");
+        };
+        let RenderData::Point { x, y, theta: th, scale, alpha, hue } = &row.data else {
             panic!("render should emit one point row");
         };
         assert!((*x - 1.0).abs() < 1e-9, "x: {x}");
@@ -898,10 +909,13 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         let items = sim.render();
-        let Some(RenderItem::Polyline { pts, active, .. }) = items.first() else {
+        let Some(row) = items.first() else {
             panic!("render should emit one polyline row");
         };
-        assert_eq!(pts, &vec![(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]);
+        let RenderData::Polyline { points, active } = &row.data else {
+            panic!("render should emit one polyline row");
+        };
+        assert_eq!(points, &vec![(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]);
         assert!(*active);
     }
 
@@ -919,7 +933,10 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         let items = sim.render();
-        let Some(RenderItem::Dot { x, y, th, scale, alpha, hue, .. }) = items.first() else {
+        let Some(row) = items.first() else {
+            panic!("defrenderer should emit one point row");
+        };
+        let RenderData::Point { x, y, theta: th, scale, alpha, hue } = &row.data else {
             panic!("defrenderer should emit one point row");
         };
         assert!((*x - 1.0).abs() < 1e-9, "x: {x}");
@@ -942,7 +959,10 @@
         sim.step().unwrap();
         sim.step().unwrap();
         let items = sim.render();
-        let Some(RenderItem::Dot { scale, .. }) = items.first() else {
+        let Some(row) = items.first() else {
+            panic!("defrenderer should emit one point row");
+        };
+        let RenderData::Point { scale, .. } = &row.data else {
             panic!("defrenderer should emit one point row");
         };
         assert!((*scale - (1.0 + 2.0 / TICK_RATE)).abs() < 1e-9, "scale: {scale}");
@@ -966,7 +986,9 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         assert!(
-            sim.render().iter().any(|r| matches!(r, RenderItem::Polyline { active: true, .. })),
+            sim.render().iter().any(|r| {
+                matches!(&r.data, RenderData::Polyline { active, .. } if *active)
+            }),
             "defrenderer should emit a polyline row through the renderer bridge"
         );
     }
@@ -1238,8 +1260,8 @@
         let polys: Vec<bool> = sim2
             .render()
             .iter()
-            .filter_map(|r| match r {
-                RenderItem::Polyline { active, .. } => Some(*active),
+            .filter_map(|r| match &r.data {
+                RenderData::Polyline { active, .. } => Some(*active),
                 _ => None,
             })
             .collect();
@@ -1951,7 +1973,7 @@
         for _ in 0..120 {
             sim.step().unwrap(); // t = 1s
         }
-        let RenderItem::Dot { th, scale, alpha, .. } = &sim.render()[0] else {
+        let RenderData::Point { theta: th, scale, alpha, .. } = &sim.render()[0].data else {
             panic!("expected a dot");
         };
         assert!((scale - 2.0).abs() < 0.02, "scale(1s) = 2: {}", scale);

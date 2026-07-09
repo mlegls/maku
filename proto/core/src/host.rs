@@ -9,9 +9,10 @@
 //! scrubbing) sits underneath and stays reachable for advanced hosts.
 
 use crate::edn::{expand_card, expand_card_with, read_all, Form};
-use crate::interp::{load_card, Event, Style, Val};
+use crate::interp::{load_card, Event, Val};
+use crate::model::RenderRow;
 use crate::session::Session;
-use crate::sim::{Inputs, RenderItem, Sim};
+use crate::sim::{Inputs, Sim};
 
 pub struct Instance {
     card_path: String,
@@ -350,7 +351,7 @@ impl Instance {
         self.session.tick()
     }
 
-    pub fn render(&mut self) -> Vec<RenderItem> {
+    pub fn render(&mut self) -> Vec<RenderRow> {
         self.session.sim.as_mut().map(|s| s.render()).unwrap_or_default()
     }
 
@@ -470,8 +471,8 @@ pub fn style_rgb(color: &str) -> (u8, u8, u8) {
 }
 
 /// Style color with a hue-shift (degrees) applied, as linear 0–1 RGB.
-pub fn style_rgb_hued(style: &Style, hue_deg: f64) -> (f32, f32, f32) {
-    let (r, g, b) = style_rgb(&style.color);
+pub fn style_rgb_hued(color: &str, hue_deg: f64) -> (f32, f32, f32) {
+    let (r, g, b) = style_rgb(color);
     let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
     if hue_deg.abs() < 1e-9 {
         return (r, g, b);

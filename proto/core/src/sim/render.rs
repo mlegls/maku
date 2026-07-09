@@ -1,11 +1,6 @@
 use super::*;
 use super::slots::eval_render_list_into;
 
-pub enum RenderItem {
-    Dot { x: f64, y: f64, th: f64, style: Style, hue: f64, scale: f64, alpha: f64 },
-    Polyline { pts: Vec<(f64, f64)>, style: Style, active: bool, hue: f64, alpha: f64 },
-}
-
 #[derive(Clone, Default)]
 pub(super) struct RenderScratch {
     rows: Vec<RenderData>,
@@ -47,36 +42,34 @@ impl RenderScratch {
 }
 
 impl Sim {
-    fn style_at(&self, i: usize) -> Style {
-        Style {
-            family: self.world.sym_field_resolved_at(i, "family").unwrap_or("").to_string(),
-            color: self.world.sym_field_resolved_at(i, "color").unwrap_or("").to_string(),
-            variant: self.world.sym_field_resolved_at(i, "variant").unwrap_or("").to_string(),
+    fn stock_style_syms(world: &mut World, i: usize) -> Vec<(Rc<str>, Rc<str>)> {
+        let mut syms = Vec::new();
+        for key in ["family", "color", "variant"] {
+            let Some(value) = world.sym_field_resolved_at(i, key).map(Rc::<str>::from) else {
+                continue;
+            };
+            if let Err(err) = world.render_field_check(key, RenderFieldKind::Sym) {
+                debug_assert!(false, "{err}");
+                continue;
+            }
+            syms.push((Rc::<str>::from(key), value));
         }
+        syms
     }
 
-    pub fn render(&mut self) -> Vec<RenderItem> {
+    fn push_row(out: &mut Vec<RenderRow>, data: &RenderData, syms: &[(Rc<str>, Rc<str>)]) {
+        if matches!(data, RenderData::None) {
+            return;
+        }
+        out.push(RenderRow { data: data.clone(), nums: Vec::new(), syms: syms.to_vec() });
+    }
+
+    pub fn render(&mut self) -> Vec<RenderRow> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
         for row in &self.world.render_rows {
-            match row {
-                RenderData::None => {}
-                RenderData::Point { x, y, theta, scale, alpha, hue } => out.push(RenderItem::Dot {
-                    x: *x,
-                    y: *y,
-                    th: *theta,
-                    style: Style::default(),
-                    hue: *hue,
-                    scale: *scale,
-                    alpha: *alpha,
-                }),
-                RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
-                    pts: points.clone(),
-                    style: Style::default(),
-                    active: *active,
-                    hue: 0.0,
-                    alpha: 1.0,
-                }),
+            if !matches!(row.data, RenderData::None) {
+                out.push(row.clone());
             }
         }
         let mut scratch = std::mem::take(&mut self.render_scratch);
@@ -86,11 +79,11 @@ impl Sim {
                 scratch.push_empty();
                 continue;
             }
-            let Some(render_projector) = self.world.entities.render_projector(i) else {
+            let Some(render_projector) = self.world.entities.render_projector(i).cloned() else {
                 scratch.push_empty();
                 continue;
             };
-            let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+            let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
                 scratch.push_empty();
                 continue;
             };
@@ -104,7 +97,7 @@ impl Sim {
             let tau = self.world.entities.tau(i, self.world.tick);
             match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
-                    let style = self.style_at(i);
+                    let syms = Sim::stock_style_syms(&mut self.world, i);
                     let start = scratch.begin_row();
                     let e_view = entity_view(i, &self.world, sig).ok();
                     let ctx_view = Val::Map(std::rc::Rc::new(vec![
@@ -113,8 +106,8 @@ impl Sim {
                         (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
                     ]));
                     eval_render_list_into(
-                        dyn_figure,
-                        render_projector,
+                        &dyn_figure,
+                        &render_projector,
                         tau,
                         sig,
                         e_view.as_ref(),
@@ -125,59 +118,44 @@ impl Sim {
                     scratch.finish_row(start);
                     if !scratch.row(i).is_empty() {
                         for data in scratch.row(i) {
-                            match data {
-                                RenderData::None => {}
-                                RenderData::Point { x, y, theta, scale, alpha, hue } => out.push(RenderItem::Dot {
-                                    x: *x,
-                                    y: *y,
-                                    th: *theta,
-                                    style: style.clone(),
-                                    hue: *hue,
-                                    scale: *scale,
-                                    alpha: *alpha,
-                                }),
-                                RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
-                                    pts: points.clone(),
-                                    style: style.clone(),
-                                    active: *active,
-                                    hue: 0.0,
-                                    alpha: 1.0,
-                                }),
-                            }
+                            Sim::push_row(&mut out, data, &syms);
                         }
                         continue;
                     }
                     if self.world.entities.is_traced(i) {
                         let trace = self.world.entities.trace_samples(i);
                         if trace.len() >= 2 {
-                            out.push(RenderItem::Polyline {
-                                pts: trace.iter().map(|p| (p.x, p.y)).collect(),
-                                style: style.clone(),
-                                active: true,
-                                hue: 0.0,
-                                alpha: 1.0,
+                            out.push(RenderRow {
+                                data: RenderData::Polyline {
+                                    points: trace.iter().map(|p| (p.x, p.y)).collect(),
+                                    active: true,
+                                },
+                                nums: Vec::new(),
+                                syms: syms.clone(),
                             });
                         }
                     } else {
                         let readers = self.motion_readers(i);
                         let state = MotionState::new();
-                        if let Ok(p) = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)) {
-                            out.push(RenderItem::Dot {
-                                x: p.x,
-                                y: p.y,
-                                // :facing overrides the motion direction
-                                th: p.angle_or(0.0),
-                                style: style.clone(),
-                                hue: 0.0,
-                                scale: 1.0,
-                                alpha: 1.0,
+                        if let Ok(p) = dyn_figure_pose_in(&dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)) {
+                            out.push(RenderRow {
+                                data: RenderData::Point {
+                                    x: p.x,
+                                    y: p.y,
+                                    // :facing overrides the motion direction
+                                    theta: p.angle_or(0.0),
+                                    scale: 1.0,
+                                    alpha: 1.0,
+                                    hue: 0.0,
+                                },
+                                nums: Vec::new(),
+                                syms: syms.clone(),
                             });
                         }
                     }
                 }
                 FigureDynRepr::Curve { .. } => {
-                    let alpha = 1.0;
-                    let style = self.style_at(i);
+                    let syms = Sim::stock_style_syms(&mut self.world, i);
                     let start = scratch.begin_row();
                     let e_view = entity_view(i, &self.world, sig).ok();
                     let ctx_view = Val::Map(std::rc::Rc::new(vec![
@@ -186,8 +164,8 @@ impl Sim {
                         (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
                     ]));
                     eval_render_list_into(
-                        dyn_figure,
-                        render_projector,
+                        &dyn_figure,
+                        &render_projector,
                         tau,
                         sig,
                         e_view.as_ref(),
@@ -197,25 +175,7 @@ impl Sim {
                     );
                     scratch.finish_row(start);
                     for data in scratch.row(i) {
-                        match data {
-                            RenderData::None => {}
-                            RenderData::Point { x, y, theta, scale, alpha, hue } => out.push(RenderItem::Dot {
-                                x: *x,
-                                y: *y,
-                                th: *theta,
-                                style: style.clone(),
-                                hue: *hue,
-                                scale: *scale,
-                                alpha: *alpha,
-                            }),
-                            RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
-                                pts: points.clone(),
-                                style: style.clone(),
-                                active: *active,
-                                hue: 0.0,
-                                alpha,
-                            }),
-                        }
+                        Sim::push_row(&mut out, data, &syms);
                     }
                 }
             }

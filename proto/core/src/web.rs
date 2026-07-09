@@ -5,7 +5,8 @@
 
 use crate::host::{dot_radius, style_rgb_hued, Instance};
 use crate::interp::Val;
-use crate::sim::{Inputs, RenderItem};
+use crate::model::RenderData;
+use crate::sim::Inputs;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = stdlibSource)]
@@ -180,13 +181,13 @@ impl Maku {
     /// pre-applied to the radius, :opacity arrives as a).
     pub fn dots(&mut self) -> Vec<f32> {
         let mut out = Vec::new();
-        for item in self.inst.render() {
-            if let RenderItem::Dot { x, y, style, hue, scale, alpha, .. } = item {
-                let (r, g, b) = style_rgb_hued(&style, hue);
+        for row in self.inst.render() {
+            if let RenderData::Point { x, y, scale, alpha, hue, .. } = row.data {
+                let (r, g, b) = style_rgb_hued(row.sym("color").unwrap_or(""), hue);
                 out.extend_from_slice(&[
                     x as f32,
                     y as f32,
-                    dot_radius(&style.family) * scale as f32,
+                    dot_radius(row.sym("family").unwrap_or("")) * scale as f32,
                     r,
                     g,
                     b,
@@ -200,18 +201,20 @@ impl Maku {
     /// Lasers/pathers: [active, r, g, b, a, n, x1, y1, … xn, yn]* repeated.
     pub fn beams(&mut self) -> Vec<f32> {
         let mut out = Vec::new();
-        for item in self.inst.render() {
-            if let RenderItem::Polyline { pts, style, active, hue, alpha } = item {
-                let (r, g, b) = style_rgb_hued(&style, hue);
+        for row in self.inst.render() {
+            if let RenderData::Polyline { points, active } = row.data {
+                let hue = row.num("hue").unwrap_or(0.0);
+                let alpha = row.num("alpha").unwrap_or(1.0);
+                let (r, g, b) = style_rgb_hued(row.sym("color").unwrap_or(""), hue);
                 out.extend_from_slice(&[
                     if active { 1.0 } else { 0.0 },
                     r,
                     g,
                     b,
                     alpha.clamp(0.0, 1.0) as f32,
-                    pts.len() as f32,
+                    points.len() as f32,
                 ]);
-                for (x, y) in pts {
+                for (x, y) in points {
                     out.extend_from_slice(&[x as f32, y as f32]);
                 }
             }

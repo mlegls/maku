@@ -189,7 +189,7 @@ pub(crate) fn special(
             Val::CollisionSet(pairs.into())
         }
         "render" => {
-            let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?)?;
+            let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?, world)?;
             Val::Action(Rc::new(ActionV::Render { row }))
         }
         "entity-pos" => {
@@ -262,7 +262,7 @@ pub(crate) fn special(
     Ok(Some(val))
 }
 
-fn render_row_from_value(v: Val) -> Result<RenderData, String> {
+fn render_row_from_value(v: Val, world: &mut World) -> Result<RenderRow, String> {
     let Val::Map(kvs) = v else {
         return Err("render: expected row map".into());
     };
@@ -280,15 +280,15 @@ fn render_row_from_value(v: Val) -> Result<RenderData, String> {
         },
         _ => return Err("render: missing keyword :shape".into()),
     };
-    match &*shape {
-        "point" | "dot" => Ok(RenderData::Point {
+    let data = match &*shape {
+        "point" | "dot" => RenderData::Point {
             x: get("x").map(|v| v.num()).transpose()?.unwrap_or(0.0),
             y: get("y").map(|v| v.num()).transpose()?.unwrap_or(0.0),
             theta: get("theta").or_else(|| get("facing")).map(|v| v.num()).transpose()?.unwrap_or(0.0),
             scale: get("scale").map(|v| v.num()).transpose()?.unwrap_or(1.0),
             alpha: get("alpha").or_else(|| get("opacity")).map(|v| v.num()).transpose()?.unwrap_or(1.0),
             hue: get("hue").map(|v| v.num()).transpose()?.unwrap_or(0.0),
-        }),
+        },
         "polyline" => {
             let points = match get("points").or_else(|| get("pts")) {
                 Some(Val::Arr(items)) => items
@@ -300,10 +300,32 @@ fn render_row_from_value(v: Val) -> Result<RenderData, String> {
                 None => return Err("render: polyline missing :points".into()),
             };
             let active = get("active").map(|v| v.num()).transpose()?.unwrap_or(1.0) != 0.0;
-            Ok(RenderData::Polyline { points, active })
+            RenderData::Polyline { points, active }
         }
-        other => Err(format!("render: unsupported shape :{}", other)),
+        other => return Err(format!("render: unsupported shape :{}", other)),
+    };
+    let mut row = RenderRow::plain(data);
+    for (k, v) in kvs.iter() {
+        let Val::Kw(key) = k else { continue };
+        match key.as_ref() {
+            "shape" | "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity"
+            | "hue" | "points" | "pts" | "active" => continue,
+            _ => {}
+        }
+        match v {
+            Val::Num(n) => {
+                world.render_field_check(key, RenderFieldKind::Num)?;
+                row.nums.push((key.clone(), *n));
+            }
+            Val::Kw(sym) => {
+                world.render_field_check(key, RenderFieldKind::Sym)?;
+                row.syms.push((key.clone(), sym.clone()));
+            }
+            Val::Nothing => {}
+            _ => return Err(format!("render: field :{key} must be a number or keyword")),
+        }
     }
+    Ok(row)
 }
 
 fn render_point_xy(v: Val) -> Result<(f64, f64), String> {

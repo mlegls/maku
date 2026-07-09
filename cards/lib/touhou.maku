@@ -68,7 +68,10 @@
                     :theta (value-or e.facing (:th p))
                     :scale (value-or e.scale 1)
                     :alpha (value-or e.opacity 1)
-                    :hue (value-or e.hue 0)})))
+                    :hue (value-or e.hue 0)
+                    :family e.family
+                    :color e.color
+                    :variant e.variant})))
        (entities-where (fn [e] (* (= e.render :touhou-sprite) (= e.kind :point))))))
 
 ;; hostile bullet: a damage core inside a graze ring

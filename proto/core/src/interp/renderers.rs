@@ -1,12 +1,6 @@
-//! Built-in renderer cases and compatibility style bridge.
+//! Built-in render slot cases.
 
 use super::*;
-#[derive(Clone, Debug, Default)]
-pub struct Style {
-    pub family: String,
-    pub color: String,
-    pub variant: String,
-}
 
 #[derive(Clone, Debug)]
 pub struct PointRenderSlot {

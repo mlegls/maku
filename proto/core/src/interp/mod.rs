@@ -44,7 +44,8 @@ pub use colliders::*;
 pub use coerce::*;
 pub use r#dyn::*;
 pub use crate::model::{
-    ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, SampleSet, Symbol,
+    ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, RenderFieldKind,
+    RenderRow, SampleSet, Symbol,
 };
 pub use motion::*;
 pub(crate) use projectors::*;
@@ -196,7 +197,7 @@ pub enum ActionV {
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
     Spawn { entities: Vec<EntitySpec> },
-    Render { row: RenderData },
+    Render { row: RenderRow },
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
     Remat { target: EntityRef, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
