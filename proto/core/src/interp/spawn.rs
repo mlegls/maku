@@ -222,12 +222,37 @@ fn build_entity_specs(
                     sym_fields.push((field, value));
                 }
             }
+            let mut cols = cols;
+            let mut dyn_cols = dyn_cols.iter().cloned().collect::<Vec<_>>();
+            for (key, seed) in e.fields.iter() {
+                match seed {
+                    FieldSeed::Num(n) => {
+                        let col = world.intern_col(key.as_ref());
+                        cols.retain(|(name, _)| *name != col);
+                        dyn_cols.retain(|(name, _)| *name != col);
+                        cols.push((col, *n));
+                    }
+                    FieldSeed::Dyn(d) => {
+                        let col = world.intern_col(key.as_ref());
+                        cols.retain(|(name, _)| *name != col);
+                        dyn_cols.retain(|(name, _)| *name != col);
+                        dyn_cols.push((col, d.clone()));
+                    }
+                    FieldSeed::Sym(s) => {
+                        let field = world.field_sym(key.as_ref());
+                        let value = world.symbols.intern(s.as_ref());
+                        world.intern_sym_field_slot(field);
+                        sym_fields.retain(|(name, _)| *name != field);
+                        sym_fields.push((field, value));
+                    }
+                }
+            }
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
                 sym_fields,
                 cols,
-                dyn_cols: dyn_cols.clone(),
+                dyn_cols: dyn_cols.into(),
                 collider_projector: ColliderProjector { projectors: collider_projectors.into() },
                 render_projector: RenderProjector { specs: render_specs.into() },
             }
@@ -334,6 +359,20 @@ pub(crate) fn flatten_elems(
             }
             Ok(())
         }
+        Val::ElemV(e) => {
+            let start = out.len();
+            flatten_elems(e.figure.clone(), path, out)?;
+            for elem in &mut out[start..] {
+                let mut fields = e.fields.iter().cloned().collect::<Vec<_>>();
+                for (k, v) in elem.fields.iter() {
+                    if !fields.iter().any(|(existing, _)| existing.as_ref() == k.as_ref()) {
+                        fields.push((k.clone(), v.clone()));
+                    }
+                }
+                elem.fields = fields.into();
+            }
+            Ok(())
+        }
         Val::CurveV(l) => {
             let (dyn_figure, colliders, renderers, cache_policy) = match &l.backing {
                 CurveBacking::Parametric {
@@ -378,6 +417,7 @@ pub(crate) fn flatten_elems(
                 renderer_projector_spec: renderers,
                 cache_policy,
                 path: path.clone(),
+                fields: Rc::new([]),
             });
             Ok(())
         }
@@ -388,6 +428,7 @@ pub(crate) fn flatten_elems(
                 renderer_projector_spec: RendererProjectorSpec::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
+                fields: Rc::new([]),
             });
             Ok(())
         }

@@ -93,6 +93,19 @@ impl Deref for Seq {
 
 
 #[derive(Clone, Debug)]
+pub enum FieldSeed {
+    Num(f64),
+    Dyn(DynNum),
+    Sym(Rc<str>),
+}
+
+#[derive(Clone, Debug)]
+pub struct ElemFields {
+    pub figure: Val,
+    pub fields: Rc<[(Rc<str>, FieldSeed)]>,
+}
+
+#[derive(Clone, Debug)]
 pub enum Val {
     Num(f64),
     Kw(Rc<str>),
@@ -108,6 +121,7 @@ pub enum Val {
     DynPose(DynPose),
     DynFigure(DynFigure),
     CurveV(Rc<ExtCurve>),
+    ElemV(Rc<ElemFields>),
     /// A form as a value — what macros manipulate and quasiquote builds.
     FormV(Rc<Form>),
     Action(Rc<ActionV>),
@@ -164,6 +178,7 @@ pub struct SpawnElem {
     pub renderer_projector_spec: RendererProjectorSpec,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
+    pub fields: Rc<[(Rc<str>, FieldSeed)]>,
 }
 
 /// One state of a `states` machine (§8): `(label body…)`.
@@ -513,6 +528,8 @@ fn val_contains_structural_dyn(v: &Val) -> bool {
         Val::Map(kvs) => kvs
             .iter()
             .any(|(k, v)| val_contains_structural_dyn(k) || val_contains_structural_dyn(v)),
+        Val::ElemV(e) => val_contains_structural_dyn(&e.figure)
+            || e.fields.iter().any(|(_, seed)| matches!(seed, FieldSeed::Dyn(_))),
         _ => false,
     }
 }
@@ -544,6 +561,84 @@ fn eval_dynlike_form(
             env: env.clone(),
         })),
         form => DynLike::from_val(evaluate(form, env, ctx, world)?),
+    }
+}
+
+pub(crate) fn elem_fields_from_val_map(m: &Val, signal_hint: &str) -> Result<Vec<(Rc<str>, FieldSeed)>, String> {
+    let Val::Map(kvs) = m else {
+        return Err(format!("fields: expected map, got {:?}", m));
+    };
+    let mut out = Vec::new();
+    for (k, v) in kvs.iter() {
+        let Val::Kw(key) = k else {
+            return Err(format!("fields: expected keyword field name, got {:?}", k));
+        };
+        match v {
+            Val::Nothing => {}
+            Val::Num(n) => out.push((key.clone(), FieldSeed::Num(*n))),
+            Val::Kw(s) => out.push((key.clone(), FieldSeed::Sym(s.clone()))),
+            Val::DynLike(d) => out.push((key.clone(), FieldSeed::Dyn(as_dyn_num(d)?))),
+            other => return Err(format!("fields: field :{} expected number, keyword, or signal; got {:?}. Use (fields ...) for signal seeds in {}", key, other, signal_hint)),
+        }
+    }
+    Ok(out)
+}
+
+fn elem_fields_from_form_map(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Vec<(Rc<str>, FieldSeed)>, String> {
+    match form {
+        Form::Map(kvs) => {
+            let mut out = Vec::new();
+            for (k, v) in kvs.iter() {
+                let kv = evaluate(k, env, ctx, world)?;
+                let Val::Kw(key) = kv else {
+                    return Err(format!("fields: expected keyword field name, got {:?}", kv));
+                };
+                if contains_t(v) {
+                    out.push((key, FieldSeed::Dyn(DynNum::num_expr(v.clone(), env.clone()))));
+                    continue;
+                }
+                match evaluate(v, env, ctx, world)? {
+                    Val::Nothing => {}
+                    Val::Num(n) => out.push((key, FieldSeed::Num(n))),
+                    Val::Kw(s) => out.push((key, FieldSeed::Sym(s))),
+                    other => return Err(format!("fields: field :{} expected number, keyword, or signal; got {:?}", key, other)),
+                }
+            }
+            Ok(out)
+        }
+        other => {
+            let mv = evaluate(other, env, ctx, world)?;
+            elem_fields_from_val_map(&mv, "(fields ...)")
+        }
+    }
+}
+
+pub(crate) fn wrap_elem_fields(figure: Val, fields: Vec<(Rc<str>, FieldSeed)>) -> Val {
+    if fields.is_empty() {
+        return figure;
+    }
+    match figure {
+        Val::ElemV(e) => {
+            let mut merged = fields;
+            for (k, v) in e.fields.iter() {
+                if !merged.iter().any(|(existing, _)| existing.as_ref() == k.as_ref()) {
+                    merged.push((k.clone(), v.clone()));
+                }
+            }
+            Val::ElemV(Rc::new(ElemFields {
+                figure: e.figure.clone(),
+                fields: merged.into(),
+            }))
+        }
+        figure => Val::ElemV(Rc::new(ElemFields {
+            figure,
+            fields: fields.into(),
+        })),
     }
 }
 
@@ -1004,6 +1099,14 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             }
             "vel" => return sf_vel(items, env, ctx, world),
             "laser" => return sf_laser(items, env, ctx, world),
+            "fields" => {
+                if items.len() != 3 {
+                    return Err("fields: expected (fields figure {field value ...})".into());
+                }
+                let figure = evaluate(&items[1], env, ctx, world)?;
+                let fields = elem_fields_from_form_map(&items[2], env, ctx, world)?;
+                return Ok(wrap_elem_fields(figure, fields));
+            }
             "quasiquote" => {
                 if items.len() != 2 {
                     return Err("quasiquote: expected one argument".into());
@@ -1073,12 +1176,19 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "pather" => {
                 // (pather window dyn): a trailing time-window of the
                 // trajectory, materialized as geometry (§6)
+                if !(items.len() == 3 || items.len() == 4) {
+                    return Err("pather: expected (pather window dyn) or (pather window dyn {fields...})".into());
+                }
                 let window = evaluate(&items[1], env, ctx, world)?.num()?;
                 let dv = as_dyn_pose(evaluate(&items[2], env, ctx, world)?)?;
-                return Ok(Val::CurveV(Rc::new(ExtCurve {
+                let figure = Val::CurveV(Rc::new(ExtCurve {
                     anchor: dv,
                     backing: CurveBacking::Trace { window },
-                })));
+                }));
+                return match items.get(3) {
+                    Some(fields) => Ok(wrap_elem_fields(figure, elem_fields_from_form_map(fields, env, ctx, world)?)),
+                    None => Ok(figure),
+                };
             }
             "sample" => {
                 // (sample dyn t) / (sample dyn t u): pure evaluation of a
@@ -1360,6 +1470,10 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             anchor: l.anchor.framed(frame),
             backing: l.backing.clone(),
         }))),
+        Val::ElemV(e) => Ok(wrap_elem_fields(
+            apply_dyn_frame(frame, e.figure.clone())?,
+            e.fields.iter().cloned().collect(),
+        )),
         other => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
             frame,
             as_dyn_pose(other)?.into_node(),
@@ -2229,6 +2343,10 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
             anchor: l.anchor.framed(Rc::new(DynNode::Const(frame))),
             backing: l.backing.clone(),
         }))),
+        Val::ElemV(e) => Ok(wrap_elem_fields(
+            apply_frame_val(frame, e.figure.clone())?,
+            e.fields.iter().cloned().collect(),
+        )),
         other => {
             let d = as_dyn_pose(other)?;
             Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
@@ -2563,6 +2681,9 @@ fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resul
 }
 
 fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    if !(items.len() == 2 || items.len() == 3) {
+        return Err("vel: expected (vel c[..]), (vel c[..] child), or (vel c[..] {fields...})".into());
+    }
     let Some(Form::List(arg)) = items.get(1) else {
         return Err("vel: expected a coordinate argument".into());
     };
@@ -2582,10 +2703,18 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     });
     match items.get(2) {
         None => Ok(Val::DynPose(DynPose::pose_node(node))),
+        Some(Form::Map(_)) => Ok(wrap_elem_fields(
+            Val::DynPose(DynPose::pose_node(node)),
+            elem_fields_from_form_map(&items[2], env, ctx, world)?,
+        )),
         Some(cf) => {
             // trailing-child sugar on dyn constructors
             let child = evaluate(cf, env, ctx, world)?;
             match child {
+                Val::Map(_) => Ok(wrap_elem_fields(
+                    Val::DynPose(DynPose::pose_node(node)),
+                    elem_fields_from_val_map(&child, "vel")?,
+                )),
                 Val::Arr(_) => {
                     // one vel frame carrying an array of children: product
                     let Val::Arr(kids) = child else { unreachable!() };
@@ -2600,6 +2729,13 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
                         .collect::<Result<Vec<_>, String>>()?;
                     Ok(Val::arr(out))
                 }
+                Val::ElemV(e) => Ok(wrap_elem_fields(
+                    Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
+                        node,
+                        as_dyn_pose(e.figure.clone())?.into_node(),
+                    )))),
+                    e.fields.iter().cloned().collect(),
+                )),
                 other => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
                     node,
                     as_dyn_pose(other)?.into_node(),
@@ -2622,36 +2758,72 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
     // evaluate options, keeping signal-valued entries (contain t) as forms
     let mut u_max_sig = None;
     let mut fill_sig = None;
+    let mut seeds = Vec::new();
     let opts = match items.get(opts_idx) {
         Some(Form::Map(kvs)) => {
             let mut pairs = Vec::new();
             for (k, v) in kvs.iter() {
                 let kv = evaluate(k, env, ctx, world)?;
+                let key = match &kv {
+                    Val::Kw(kw) => Some(kw.clone()),
+                    _ => None,
+                };
                 if matches!(&kv, Val::Kw(kw) if &**kw == "fill") {
                     if matches!(v, Form::Num(_)) {
                         return Err("laser :fill expects a fraction signal; use (fill-linear warn dur) for a linear sweep".into());
                     }
-                    fill_sig = Some(DynNum::num_expr(v.clone(), env.clone()));
+                    let dyn_num = DynNum::num_expr(v.clone(), env.clone());
+                    fill_sig = Some(dyn_num.clone());
+                    if let Some(key) = key {
+                        seeds.push((key, FieldSeed::Dyn(dyn_num)));
+                    }
                     pairs.push((kv, Val::Nothing));
                 } else if contains_t(v) {
+                    let dyn_num = DynNum::num_expr(v.clone(), env.clone());
                     if matches!(&kv, Val::Kw(kw) if &**kw == "u-max") {
-                        u_max_sig = Some(DynNum::num_expr(v.clone(), env.clone()));
+                        u_max_sig = Some(dyn_num.clone());
+                    }
+                    if let Some(key) = key {
+                        seeds.push((key, FieldSeed::Dyn(dyn_num)));
                     }
                     pairs.push((kv, Val::Nothing));
                 } else {
                     let vv = evaluate(v, env, ctx, world)?;
+                    if let Some(key) = key {
+                        match &vv {
+                            Val::Nothing => {}
+                            Val::Num(n) => seeds.push((key, FieldSeed::Num(*n))),
+                            Val::Kw(s) => seeds.push((key, FieldSeed::Sym(s.clone()))),
+                            _ => {}
+                        }
+                    }
                     pairs.push((kv, vv));
                 }
             }
             Val::Map(Rc::new(pairs))
         }
-        Some(m) => evaluate(m, env, ctx, world)?,
+        Some(m) => {
+            let opts = evaluate(m, env, ctx, world)?;
+            if let Val::Map(kvs) = &opts {
+                for (k, v) in kvs.iter() {
+                    let Val::Kw(key) = k else { continue };
+                    match v {
+                        Val::Nothing => {}
+                        Val::Num(n) => seeds.push((key.clone(), FieldSeed::Num(*n))),
+                        Val::Kw(s) => seeds.push((key.clone(), FieldSeed::Sym(s.clone()))),
+                        Val::DynLike(d) => seeds.push((key.clone(), FieldSeed::Dyn(as_dyn_num(d)?))),
+                        _ => {}
+                    }
+                }
+            }
+            opts
+        }
         None => Val::Map(Rc::new(vec![])),
     };
     let getf = |key: &str, dflt: f64| -> f64 {
         map_get(&opts, key).and_then(|v| v.num().ok()).unwrap_or(dflt)
     };
-    Ok(Val::CurveV(Rc::new(ExtCurve {
+    let curve = Val::CurveV(Rc::new(ExtCurve {
         anchor: DynPose::pose_node(Rc::new(DynNode::Const(Pose::IDENTITY))),
         backing: CurveBacking::Parametric {
             curve: ParametricCurve {
@@ -2665,7 +2837,8 @@ fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
             width: getf("width", 1.0),
             fill_sig,
         },
-    })))
+    }));
+    Ok(wrap_elem_fields(curve, seeds))
 }
 
 /// Stateful scan expression sites. State keyed by (base, site index); the
@@ -3074,7 +3247,9 @@ mod tests {
             panic!()
         };
         assert_eq!(items.len(), 6);
-        let Val::CurveV(l) = &items[0] else { panic!("expected laser") };
+        let Val::ElemV(e) = &items[0] else { panic!("expected seeded laser") };
+        assert!(e.fields.iter().any(|(k, v)| k.as_ref() == "warn" && matches!(v, FieldSeed::Num(n) if *n == 1.5)));
+        let Val::CurveV(l) = &e.figure else { panic!("expected laser") };
         let CurveBacking::Parametric { curve, sample_set, .. } = &l.backing else {
             panic!("expected parametric curve")
         };

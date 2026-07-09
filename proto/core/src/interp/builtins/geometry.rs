@@ -16,7 +16,13 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
             let (s, c) = th.to_radians().sin_cos();
             Ok(Val::Pose(Pose::point(r * c, r * s)))
         }
-        "pose" => as_pose(args[0].clone()).map(Val::Pose),
+        "pose" => {
+            let figure = as_pose(args[0].clone()).map(Val::Pose)?;
+            match args.get(1) {
+                Some(m) => Ok(wrap_elem_fields(figure, elem_fields_from_builtin_map(name, m)?)),
+                None => Ok(figure),
+            }
+        }
         "rot" => match &args[0] {
             Val::Arr(xs) => Ok(Val::arr(
                 xs.iter()
@@ -26,13 +32,19 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
             v => Ok(Val::Pose(Pose::oriented(0.0, 0.0, v.num()?))),
         },
         "still" => Ok(Val::Pose(Pose::IDENTITY)),
-        "linear" => match &args[0] {
-            Val::Pose(p) => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Linear {
-                vx: p.x,
-                vy: p.y,
-            })))),
-            v => Err(format!("linear: expected point, got {:?}", v)),
-        },
+        "linear" => {
+            let figure = match &args[0] {
+                Val::Pose(p) => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Linear {
+                    vx: p.x,
+                    vy: p.y,
+                })))),
+                v => Err(format!("linear: expected point, got {:?}", v)),
+            }?;
+            match args.get(1) {
+                Some(m) => Ok(wrap_elem_fields(figure, elem_fields_from_builtin_map(name, m)?)),
+                None => Ok(figure),
+            }
+        }
         "angle-of" => match &args[0] {
             Val::Pose(p) => Ok(Val::Num(p.y.atan2(p.x).to_degrees())),
             v => Err(format!("angle-of: expected point, got {:?}", v)),
@@ -44,4 +56,26 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
         _ => return Ok(None),
     };
     r.map(Some)
+}
+
+fn elem_fields_from_builtin_map(name: &str, m: &Val) -> Result<Vec<(Rc<str>, FieldSeed)>, String> {
+    let Val::Map(kvs) = m else {
+        return Err(format!("{}: trailing fields must be a map, got {:?}", name, m));
+    };
+    let mut out = Vec::new();
+    for (k, v) in kvs.iter() {
+        let Val::Kw(key) = k else {
+            return Err(format!("{}: expected keyword field name, got {:?}", name, k));
+        };
+        match v {
+            Val::Nothing => {}
+            Val::Num(n) => out.push((key.clone(), FieldSeed::Num(*n))),
+            Val::Kw(s) => out.push((key.clone(), FieldSeed::Sym(s.clone()))),
+            Val::DynLike(_) | Val::DynPose(_) | Val::DynFigure(_) => {
+                return Err(format!("{}: trailing field :{} cannot capture signal seeds here; use (fields ...) for signal seeds", name, key));
+            }
+            other => return Err(format!("{}: trailing field :{} expected number or keyword, got {:?}; use (fields ...) for signal seeds", name, key, other)),
+        }
+    }
+    Ok(out)
 }

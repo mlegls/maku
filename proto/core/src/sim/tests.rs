@@ -2011,6 +2011,82 @@
         assert_eq!(big.channel_u64("hits"), 1, "scaled collider connects");
     }
 
+    #[test]
+    fn laser_opts_seed_entity_fields() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (laser {:warn 0.5 :active 2 :u-max 6})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "warn"), Some(0.5));
+        assert_eq!(sim.world.col_get_at(0, "active"), Some(2.0));
+        assert_eq!(sim.world.col_get_at(0, "u-max"), Some(6.0));
+    }
+
+    #[test]
+    fn element_seeds_override_spawn_meta() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (laser {:warn 1}) {:warn 2}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "warn"), Some(1.0));
+    }
+
+    #[test]
+    fn dyn_seed_refreshes_per_tick() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (fields (pose c[0 0]) {:grow m"2*t"})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..60 {
+            sim.step().unwrap();
+        }
+        let grow = sim.world.col_get_at(0, "grow").unwrap();
+        assert!((grow - 1.0).abs() < 0.02, "grow at 0.5s = 1: {}", grow);
+    }
+
+    #[test]
+    fn fields_on_pose_figure_and_frame_transparency() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn ((rot 90) (fields (pose c[1 0]) {:tag :abc}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(sim.world.sym_field_matches_at(0, "tag", "abc"));
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.0, &MotionState::new(), &SigEnv::default()).unwrap();
+        assert!(p.x.abs() < 1e-9 && (p.y - 1.0).abs() < 1e-9, "rotated pose: {:?}", p);
+    }
+
+    #[test]
+    fn constructor_trailing_map() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (linear c[0 1] {:speed 3})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "speed"), Some(3.0));
+    }
+
+    #[test]
+    fn distribution_over_repeat() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (circle 3 (laser {:warn 1 :active 1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.entities.len(), 3);
+        for i in 0..3 {
+            assert_eq!(sim.world.col_get_at(i, "warn"), Some(1.0));
+        }
+    }
+
     /// §8 scope semantics under the guard-unwind rule: cancellation kills
     /// the scope, and the TASK CONTINUES after it — (seq (until p a) b)
     /// reaches b.
