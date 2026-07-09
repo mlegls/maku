@@ -153,6 +153,47 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     let form = Form::list(vec![Form::sym("__defcollider"), Form::list(projector)]);
                     defs.insert(name, form);
                 }
+                Some(Form::Sym(s)) if &**s == "defrenderer" => {
+                    // (defrenderer name [e ctx] body...)
+                    // (defrenderer :parametric name [e ctx] body...)
+                    let (figure, name_idx) = match items.get(1) {
+                        Some(Form::Kw(k)) => {
+                            let figure = FigureProjectorKind::from_defrenderer_keyword(k)?;
+                            (figure, 2)
+                        }
+                        _ => (FigureProjectorKind::Pose, 1),
+                    };
+                    let name = match items.get(name_idx) {
+                        Some(Form::Sym(n)) => n.to_string(),
+                        _ => return Err("defrenderer: expected name".into()),
+                    };
+                    let params_idx = name_idx + 1;
+                    let body_idx = name_idx + 2;
+                    let params: Vec<Form> = match items.get(params_idx) {
+                        Some(Form::Vector(ps)) if ps.len() == 2 => {
+                            ps.iter()
+                                .map(|p| match p {
+                                    Form::Sym(_) => Ok(p.clone()),
+                                    _ => Err("defrenderer: params must be symbols".to_string()),
+                                })
+                                .collect::<Result<_, _>>()?
+                        }
+                        Some(Form::Vector(_)) => {
+                            return Err("defrenderer: expected two parameters".into());
+                        }
+                        _ => return Err("defrenderer: expected parameter vector".into()),
+                    };
+                    if items.len() <= body_idx {
+                        return Err("defrenderer: expected body".into());
+                    }
+                    let mut projector = vec![
+                        Form::sym("__renderer-projector"),
+                        Form::Kw(figure.name().into()),
+                        Form::Vector(params.into()),
+                    ];
+                    projector.extend(items[body_idx..].iter().cloned());
+                    defs.insert(name, Form::list(projector));
+                }
                 Some(Form::Sym(s)) if &**s == "defchannel" => {
                     // (defchannel $name expr): a per-tick derived channel.
                     // Redefinition replaces (imports first, card later —

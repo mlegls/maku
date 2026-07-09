@@ -781,6 +781,43 @@
     }
 
     #[test]
+    fn defrenderer_parametric_reads_entity_meta() {
+        const CARD: &str = r#"
+(defrenderer :parametric beam-renderer [e ctx]
+  {:shape [:polyline {:resolution e.resolution
+                      :u-max e.u-max
+                      :warn e.warn
+                      :active e.active
+                      :width e.width}]})
+(defpattern p []
+  (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+         {:style {:family :laser :color :red}
+          :warn 0 :active 2 :u-max 6 :resolution 0.1 :width 1}
+         beam-renderer))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(
+            sim.render().iter().any(|r| matches!(r, RenderItem::Polyline { active: true, .. })),
+            "defrenderer should emit a polyline row through the renderer bridge"
+        );
+    }
+
+    #[test]
+    fn defrenderer_rejects_unknown_figure_type() {
+        const CARD: &str = r#"
+(defrenderer :polyline bad-renderer [e ctx]
+  {:shape [:polyline {:resolution 0.1}]})
+(defpattern p [] (spawn (pose c[0 0]) bad-renderer))
+"#;
+        let Err(err) = Sim::load(CARD, Some("p")) else {
+            assert!(false, "unknown defrenderer figure type unexpectedly loaded");
+            return;
+        };
+        assert!(err.contains("defrenderer: unsupported figure type :polyline"), "{err}");
+    }
+
+    #[test]
     fn circle_collider_accepts_dynamic_radius() {
         const CARD: &str = r#"
 (defcollider expanding-collider [e ctx]

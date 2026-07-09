@@ -42,15 +42,27 @@ pub enum FigureProjectorKind {
 }
 
 impl FigureProjectorKind {
-    pub(crate) fn from_defcollider_keyword(name: &str) -> Result<FigureProjectorKind, String> {
+    pub(crate) fn from_projector_keyword(
+        surface: &str,
+        name: &str,
+    ) -> Result<FigureProjectorKind, String> {
         match name {
             "pose" => Ok(FigureProjectorKind::Pose),
             "parametric" => Ok(FigureProjectorKind::Parametric),
             other => Err(format!(
-                "defcollider: unsupported figure type :{}",
+                "{}: unsupported figure type :{}",
+                surface,
                 other
             )),
         }
+    }
+
+    pub(crate) fn from_defcollider_keyword(name: &str) -> Result<FigureProjectorKind, String> {
+        FigureProjectorKind::from_projector_keyword("defcollider", name)
+    }
+
+    pub(crate) fn from_defrenderer_keyword(name: &str) -> Result<FigureProjectorKind, String> {
+        FigureProjectorKind::from_projector_keyword("defrenderer", name)
     }
 
     pub(crate) fn name(self) -> &'static str {
@@ -211,30 +223,38 @@ impl ColliderProjectorValue {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum RendererProjectorExpr {
+    Specs(DynLike),
+    Callable { figure: FigureProjectorKind, params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
+}
+
 /// A source-level renderer projector expression after dyn-lifting and schema
 /// checking for a render slot. Dynamic lists are rechecked after per-tick
 /// realization until the typed layer can represent their element schema.
 #[derive(Clone, Debug)]
 pub struct RendererProjectorSpec {
-    pub(crate) expr: DynLike,
+    pub(crate) expr: RendererProjectorExpr,
 }
 
 impl RendererProjectorSpec {
     pub(crate) fn checked(expr: DynLike) -> RendererProjectorSpec {
-        RendererProjectorSpec { expr }
+        RendererProjectorSpec { expr: RendererProjectorExpr::Specs(expr) }
+    }
+
+    pub(crate) fn callable(
+        figure: FigureProjectorKind,
+        params: Vec<Rc<str>>,
+        body: Rc<[Form]>,
+        env: Env,
+    ) -> RendererProjectorSpec {
+        RendererProjectorSpec {
+            expr: RendererProjectorExpr::Callable { figure, params: params.into(), body, env },
+        }
     }
 
     pub(crate) fn empty() -> RendererProjectorSpec {
         RendererProjectorSpec::checked(DynLike::List(Vec::new().into()))
-    }
-
-    pub(crate) fn eval(
-        &self,
-        tau: f64,
-        state: &MotionState,
-        sig: &SigEnv,
-    ) -> Result<Val, String> {
-        self.expr.eval(tau, state, sig)
     }
 }
 

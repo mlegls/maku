@@ -449,7 +449,21 @@ impl Sim {
                     let state = MotionState::new();
                     render_slots.clear();
                     if let Some(projector) = self.world.entities.render_projector(i) {
-                        let _ = materialize_render_defs_into(projector, tau, &state, &sig, &mut render_slots);
+                        let e_view = entity_view(i, &self.world, &sig).ok();
+                        let ctx_view = Val::Map(std::rc::Rc::new(vec![
+                            (Val::Kw("age".into()), Val::Num(tau)),
+                            (Val::Kw("t".into()), Val::Num(tau)),
+                            (Val::Kw("tick".into()), Val::Num(tick as f64)),
+                        ]));
+                        let _ = materialize_render_defs_into(
+                            projector,
+                            tau,
+                            &state,
+                            &sig,
+                            e_view.as_ref(),
+                            Some(&ctx_view),
+                            &mut render_slots,
+                        );
                     }
                     let render_live = render_slots.first()
                         .map(DynRender::polyline)

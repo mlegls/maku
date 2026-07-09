@@ -770,6 +770,35 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     ColliderProjectorValue::callable(figure, params, items[body_idx..].to_vec().into(), env.clone()),
                 )));
             }
+            "__renderer-projector" => {
+                let (figure, params_idx, body_idx) = match items.get(1) {
+                    Some(Form::Kw(k)) => (
+                        FigureProjectorKind::from_defrenderer_keyword(k)?,
+                        2,
+                        3,
+                    ),
+                    _ => (FigureProjectorKind::Pose, 1, 2),
+                };
+                let Some(Form::Vector(ps)) = items.get(params_idx) else {
+                    return Err("defrenderer: expected parameter vector".into());
+                };
+                let params = ps
+                    .iter()
+                    .map(|p| match p {
+                        Form::Sym(n) => Ok(n.clone()),
+                        _ => Err("defrenderer: bad parameter".to_string()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if params.len() != 2 {
+                    return Err("defrenderer: expected two parameters".into());
+                }
+                if items.len() <= body_idx {
+                    return Err("defrenderer: expected body".into());
+                }
+                return Ok(Val::RendererProjectorSpec(Rc::new(
+                    RendererProjectorSpec::callable(figure, params, items[body_idx..].to_vec().into(), env.clone()),
+                )));
+            }
             "spawn" => return sf_spawn(items, env, ctx, world),
             "colliders" => return sf_colliders(items, env, ctx, world),
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),

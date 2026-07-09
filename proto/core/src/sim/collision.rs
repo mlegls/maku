@@ -105,7 +105,7 @@ fn materialize_colliders_into(
     materialize_collider_defs_into(projector, tau, &state, sig, Some(e_view), Some(ctx_view), symbols, defs)
         .map_err(|e| format!("colliders: {}", e))?;
     let curve_slot = if matches!(dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
-        first_render_projection_into(render_projector, tau, sig, render_defs).map(
+        first_render_projection_into(render_projector, tau, sig, Some(e_view), Some(ctx_view), render_defs).map(
             |projection| CapsuleChainSlot {
                 sample_set: projection.sample_set,
                 u_max_sig: projection.u_max_sig,

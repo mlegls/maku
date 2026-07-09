@@ -31,18 +31,20 @@ pub(crate) fn first_render_projection(
     sig: &SigEnv,
 ) -> Option<CurveRenderSlot> {
     let mut defs = Vec::new();
-    first_render_projection_into(projector, tau, sig, &mut defs)
+    first_render_projection_into(projector, tau, sig, None, None, &mut defs)
 }
 
 pub(crate) fn first_render_projection_into(
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
+    e_view: Option<&Val>,
+    ctx_view: Option<&Val>,
     defs: &mut Vec<DynRender>,
 ) -> Option<CurveRenderSlot> {
     let state = MotionState::new();
     defs.clear();
-    materialize_render_defs_into(projector, tau, &state, sig, defs)
+    materialize_render_defs_into(projector, tau, &state, sig, e_view, ctx_view, defs)
         .ok()?;
     defs
         .first()
@@ -258,11 +260,49 @@ pub fn materialize_render_defs_into(
     tau: f64,
     state: &MotionState,
     sig: &SigEnv,
+    e_view: Option<&Val>,
+    ctx_view: Option<&Val>,
     out: &mut Vec<DynRender>,
 ) -> Result<(), String> {
     for list in projector.specs.iter() {
-        let val = list.eval(tau, state, sig)?;
-        let dynlike = DynLike::from_val(val)?;
+        let val = match &list.expr {
+            RendererProjectorExpr::Specs(expr) => expr.eval(tau, state, sig)?,
+            RendererProjectorExpr::Callable { figure, params, body, env } => {
+                let e_bound = e_view
+                    .cloned()
+                    .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+                let ctx_bound = ctx_view
+                    .cloned()
+                    .unwrap_or_else(|| Val::Map(std::rc::Rc::new(Vec::new())));
+                let mut env = env.clone();
+                if let Some(param) = params.first() {
+                    env = env.bind(param.clone(), e_bound.clone());
+                }
+                if let Some(param) = params.get(1) {
+                    env = env.bind(param.clone(), ctx_bound.clone());
+                }
+                let mut run_ctx = Ctx::default();
+                run_ctx.sig = sig.clone();
+                run_ctx.projector_scope = match (params.first(), params.get(1)) {
+                    (Some(entity), Some(context)) => Some(ProjectorScope {
+                        entity: entity.clone(),
+                        context: context.clone(),
+                        figure: *figure,
+                    }),
+                    _ => None,
+                };
+                let mut run_world = World::default();
+                let mut last = Val::Nothing;
+                for form in body.iter() {
+                    last = evaluate(form, &env, &mut run_ctx, &mut run_world)?;
+                }
+                last
+            }
+        };
+        let dynlike = match val {
+            Val::Map(kvs) => DynLike::List(vec![DynLike::from_val(Val::Map(kvs))?].into()),
+            other => DynLike::from_val(other)?,
+        };
         as_stable_render_slots_into(&dynlike, out)?;
     }
     Ok(())
@@ -392,12 +432,14 @@ pub fn eval_render_list_into(
     projector: &RenderProjector,
     tau: f64,
     sig: &SigEnv,
+    e_view: Option<&Val>,
+    ctx_view: Option<&Val>,
     slots: &mut Vec<DynRender>,
     out: &mut Vec<RenderData>,
 ) {
     let state = MotionState::new();
     slots.clear();
-    if materialize_render_defs_into(projector, tau, &state, sig, slots).is_err() {
+    if materialize_render_defs_into(projector, tau, &state, sig, e_view, ctx_view, slots).is_err() {
         return;
     }
     for slot in slots.iter() {

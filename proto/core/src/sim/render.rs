@@ -127,11 +127,19 @@ impl Sim {
                 FigureDynRepr::Curve { .. } => {
                     let alpha = self.sample_sig(&render_projector.sigs.opacity, tau, 1.0);
                     let start = scratch.begin_row();
+                    let e_view = entity_view(i, &self.world, sig).ok();
+                    let ctx_view = Val::Map(std::rc::Rc::new(vec![
+                        (Val::Kw("age".into()), Val::Num(tau)),
+                        (Val::Kw("t".into()), Val::Num(tau)),
+                        (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
+                    ]));
                     eval_render_list_into(
                         dyn_figure,
                         render_projector,
                         tau,
                         sig,
+                        e_view.as_ref(),
+                        Some(&ctx_view),
                         &mut scratch.defs,
                         &mut scratch.rows,
                     );
