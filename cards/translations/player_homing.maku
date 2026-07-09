@@ -69,11 +69,12 @@
     ;; compose (smooth |> slew); `target` is let-bound = one shared instance
     ;; feeding the laser's frame.
     (let [target (smooth 0.02 (live $nearest-enemy))]
-      (spawn-shot ((rot (slew (lerp 3 8 t 0.7 0) 90
+      (laser-shot ((rot (slew (lerp 3 8 t 0.7 0) 90
                          (angle-of (- target pos))))
-               (laser {:active inf
-                       :u-max (min 15 m"30*t")     ; varLength: grows, capped
-                       :while (live $focus-firing)})) {:style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
+               (curve {:u-max (min 15 m"30*t")})) ; varLength: grows, capped
+                     {:active inf
+                      :while (live $focus-firing)
+                      :style {:family :gdlaser :color (nth [:red :black] (quot opt 2))
                       :variant :b} :damage {:hit 12 :graze 25 :on-hit :oh1-red}}))))
 
 ;; ============================================================================

@@ -20,29 +20,25 @@ pub(crate) fn as_sample_set(opts: &DynLike) -> Result<SampleSet, String> {
     })
 }
 
-pub(crate) fn as_slot_activity(opts: &DynLike) -> Result<SlotActivity, String> {
-    if let Some(frac) = dynlike_map_get(opts, "fraction")
-        .or_else(|| dynlike_map_get(opts, "frac"))
-    {
-        return Ok(SlotActivity {
-            warn: 0.0,
-            active: f64::INFINITY,
-            hot_frac_sig: Some(as_dyn_num(&frac)?),
-        });
+fn reject_lifecycle_keys(kind: &str, opts: &DynLike, keys: &[&str]) -> Result<(), String> {
+    for key in keys {
+        if dynlike_map_get(opts, key).is_some() {
+            return Err(format!(
+                "{}: :{} is lifecycle policy; put lifecycle logic in a defcollider/defrenderer body over entity fields",
+                kind,
+                key
+            ));
+        }
     }
-    Ok(SlotActivity {
-        warn: dynlike_map_as_static_num(opts, "warn", 0.0)?,
-        active: dynlike_map_as_static_num(opts, "active", f64::INFINITY)?,
-        hot_frac_sig: dynlike_map_get(opts, "fill").map(|v| as_dyn_num(&v)).transpose()?,
-    })
+    Ok(())
 }
 
 pub(crate) fn as_capsule_chain_slot(opts: &DynLike) -> Result<CapsuleChainSlot, String> {
+    reject_lifecycle_keys("capsule-chain-collider", opts, &["warn", "active", "fill", "fraction", "frac"])?;
     Ok(CapsuleChainSlot {
         sample_set: as_sample_set(opts)?,
-        u_max_sig: dynlike_map_get(opts, "u-max").map(|v| as_dyn_num(&v)).transpose()?,
+        u_max: dynlike_map_as_static_num(opts, "u-max", 10.0)?,
         width: dynlike_map_as_static_num(opts, "width", 1.0)?,
-        activity: as_slot_activity(opts)?,
     })
 }
 
@@ -93,12 +89,15 @@ pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
                 .transpose()?
                 .unwrap_or_else(|| DynNum::num(1.0)),
         })),
-        "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {
-            sample_set: as_sample_set(&opts)?,
-            u_max_sig: dynlike_map_get(&opts, "u-max").map(|v| as_dyn_num(&v)).transpose()?,
-            width: dynlike_map_as_static_num(&opts, "width", 1.0)?,
-            activity: as_slot_activity(&opts)?,
-        })),
+        "polyline" => {
+            reject_lifecycle_keys("renderers :polyline", &opts, &["warn", "fill", "fraction", "frac"])?;
+            Ok(DynRender::render_polyline(CurveRenderSlot {
+                sample_set: as_sample_set(&opts)?,
+                u_max: dynlike_map_as_static_num(&opts, "u-max", 10.0)?,
+                width: dynlike_map_as_static_num(&opts, "width", 1.0)?,
+                active: dynlike_map_as_static_num(&opts, "active", 1.0)? != 0.0,
+            }))
+        }
         _ => Err(format!("renderers: unknown shape :{}", shape)),
     }
 }

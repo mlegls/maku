@@ -560,7 +560,16 @@ fn eval_dynlike_form(
             form: form.clone(),
             env: env.clone(),
         })),
-        form => DynLike::from_val(evaluate(form, env, ctx, world)?),
+        form => match evaluate(form, env, ctx, world) {
+            Ok(v) => DynLike::from_val(v),
+            Err(e) if e == "unresolved symbol 't'" || e == "unresolved symbol 'u'" => {
+                Ok(DynLike::Dyn(DynVal::Expr {
+                    form: form.clone(),
+                    env: env.clone(),
+                }))
+            }
+            Err(e) => Err(e),
+        },
     }
 }
 
@@ -1098,9 +1107,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 }))));
             }
             "vel" => return sf_vel(items, env, ctx, world),
-            // `curve` is the figure constructor; `laser` is a transitional
-            // alias until the lib spawner owns that name
-            "curve" | "laser" => return sf_curve(items, env, ctx, world),
+            "curve" => return sf_curve(items, env, ctx, world),
             "fields" => {
                 if items.len() != 3 {
                     return Err("fields: expected (fields figure {field value ...})".into());
@@ -1440,13 +1447,24 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 .collect::<Result<Vec<_>, _>>()?;
             // cells are dynamic ambient: the caller's scope flows into the
             // callee (hygiene excepts #cells, like the slot-bound t/u)
-            let f = match (f, env.lookup(CELLS_KEY)) {
-                (Val::Fn { params, body, env: fenv }, Some(cells))
-                    if fenv.lookup(CELLS_KEY).is_none() =>
-                {
-                    Val::Fn { params, body, env: fenv.bind(CELLS_KEY.into(), cells) }
+            let f = match f {
+                Val::Fn { params, body, env: fenv } => {
+                    let mut fenv = fenv;
+                    if fenv.lookup(CELLS_KEY).is_none() {
+                        if let Some(cells) = env.lookup(CELLS_KEY) {
+                            fenv = fenv.bind(CELLS_KEY.into(), cells);
+                        }
+                    }
+                    for name in ["t", "u"] {
+                        if fenv.lookup(name).is_none() {
+                            if let Some(v) = env.lookup(name) {
+                                fenv = fenv.bind(name.into(), v);
+                            }
+                        }
+                    }
+                    Val::Fn { params, body, env: fenv }
                 }
-                (f, _) => f,
+                f => f,
             };
             apply_fn(f, &args, ctx, world, false)
         }
@@ -2757,9 +2775,7 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
         }
         None => return Err("curve: expected options".into()),
     };
-    // evaluate options, keeping signal-valued entries (contain t) as forms
-    let mut u_max_sig = None;
-    let mut fill_sig = None;
+    // evaluate options, keeping signal-valued entries (contain t) as fields
     let mut seeds = Vec::new();
     let opts = match items.get(opts_idx) {
         Some(Form::Map(kvs)) => {
@@ -2770,21 +2786,14 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
                     Val::Kw(kw) => Some(kw.clone()),
                     _ => None,
                 };
-                if matches!(&kv, Val::Kw(kw) if &**kw == "fill") {
-                    if matches!(v, Form::Num(_)) {
-                        return Err("laser :fill expects a fraction signal; use (fill-linear warn dur) for a linear sweep".into());
-                    }
+                if matches!(&kv, Val::Kw(kw) if &**kw == "fill") && !matches!(v, Form::Num(_)) {
                     let dyn_num = DynNum::num_expr(v.clone(), env.clone());
-                    fill_sig = Some(dyn_num.clone());
                     if let Some(key) = key {
                         seeds.push((key, FieldSeed::Dyn(dyn_num)));
                     }
                     pairs.push((kv, Val::Nothing));
                 } else if contains_t(v) {
                     let dyn_num = DynNum::num_expr(v.clone(), env.clone());
-                    if matches!(&kv, Val::Kw(kw) if &**kw == "u-max") {
-                        u_max_sig = Some(dyn_num.clone());
-                    }
                     if let Some(key) = key {
                         seeds.push((key, FieldSeed::Dyn(dyn_num)));
                     }
@@ -2796,6 +2805,7 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
                             Val::Nothing => {}
                             Val::Num(n) => seeds.push((key, FieldSeed::Num(*n))),
                             Val::Kw(s) => seeds.push((key, FieldSeed::Sym(s.clone()))),
+                            Val::DynLike(d) => seeds.push((key, FieldSeed::Dyn(as_dyn_num(d)?))),
                             _ => {}
                         }
                     }
@@ -2832,12 +2842,6 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
                 eval: shape.map(CurveEval::Expr).unwrap_or(CurveEval::Straight),
                 domain: CurveDomain::Range { min: 0.0, max: getf("u-max", 10.0) },
             },
-            sample_set: SampleSet::Step { resolution: getf("resolution", 0.1) },
-            u_max_sig,
-            warn: getf("warn", 0.0),
-            active: getf("active", f64::INFINITY),
-            width: getf("width", 1.0),
-            fill_sig,
         },
     }));
     Ok(wrap_elem_fields(curve, seeds))
@@ -3244,19 +3248,19 @@ mod tests {
     #[test]
     fn laser_value_and_framing() {
         let Val::Arr(items) =
-            ev("(circle 6 (laser p[m\"2*t\" m\"-14*u\"] {:warn 1.5 :active inf :u-max 3.5 :resolution 0.4}))")
+            ev("(circle 6 (curve p[m\"2*t\" m\"-14*u\"] {:warn 1.5 :active inf :u-max 3.5 :resolution 0.4}))")
         else {
             panic!()
         };
         assert_eq!(items.len(), 6);
         let Val::ElemV(e) = &items[0] else { panic!("expected seeded laser") };
         assert!(e.fields.iter().any(|(k, v)| k.as_ref() == "warn" && matches!(v, FieldSeed::Num(n) if *n == 1.5)));
+        assert!(e.fields.iter().any(|(k, v)| k.as_ref() == "u-max" && matches!(v, FieldSeed::Num(n) if *n == 3.5)));
         let Val::CurveV(l) = &e.figure else { panic!("expected laser") };
-        let CurveBacking::Parametric { curve, sample_set, .. } = &l.backing else {
+        let CurveBacking::Parametric { curve } = &l.backing else {
             panic!("expected parametric curve")
         };
         assert!(matches!(&curve.domain, CurveDomain::Range { min, max } if *min == 0.0 && *max == 3.5));
-        assert!(matches!(sample_set, SampleSet::Step { resolution } if *resolution == 0.4));
         // shape at t=1, u=1: r=2, θ=-14°
         let p = eval_curve_pose(&curve.eval, 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
         let ex = 2.0 * (-14f64).to_radians().cos();

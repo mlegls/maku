@@ -418,7 +418,7 @@
 (defpattern t []
   (par
     (spawn (pose c[0 0]) (circle-collider {:layer :body :r 0.06}))
-    (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+    (spawn ((pose c[-2 0]) (curve {:u-max 6}))
            laser-collider)))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -788,7 +788,7 @@
       (bind-channel! $graze (:graze body))
       (bind-channel! $hits (:hits body)))))
 (defpattern beam []
-  (par (rig) (spawn-bullet ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})) {})))
+  (par (rig) (laser ((pose c[-2 0]) (curve {:u-max 6})) {:warn 0.5 :active 2})))
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
         // player parked ON the beam line, 2 units along it
@@ -820,10 +820,10 @@
   (par
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.06}))
-    (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
-           (capsule-chain-collider {:layer :beam :r 0.06 :width 1 :resolution 0.1
-                                    :warn 0 :active 2})
-           (renderers {:shape [:polyline {:resolution 0.1 :warn 0 :active 2}]}))))
+    (spawn ((pose c[-2 0]) (curve {:u-max 6}))
+           (capsule-chain-collider {:layer :beam :r 0.06 :width 1
+                                    :resolution 0.1 :u-max 6})
+           (renderers {:shape [:polyline {:resolution 0.1 :u-max 6 :active 1}]}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -847,12 +847,12 @@
   (map (fn [[a b]]
          (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
            (seq (set-col a :hit 1) (event :hit))))
-       (collisions :beam :body)))
+       (collisions :damage :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
            (circle-collider {:layer :body :r 0.06}))
-    (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+    (spawn ((pose c[-2 0]) (curve {:u-max 6}))
            {:warn 0 :active 2 :u-max 6 :radius 0.06 :resolution 0.1}
            laser-collider)))
 "#;
@@ -974,11 +974,10 @@
 (defrenderer :parametric beam-renderer [e ctx]
   {:shape [:polyline {:resolution e.resolution
                       :u-max e.u-max
-                      :warn e.warn
-                      :active e.active
+                      :active 1
                       :width e.width}]})
 (defpattern p []
-  (spawn ((pose c[-2 0]) (laser {:warn 0 :active 2 :u-max 6}))
+  (spawn ((pose c[-2 0]) (curve {:u-max 6}))
          {:style {:family :laser :color :red}
           :warn 0 :active 2 :u-max 6 :resolution 0.1 :width 1}
          beam-renderer))
@@ -991,6 +990,53 @@
             }),
             "defrenderer should emit a polyline row through the renderer bridge"
         );
+    }
+
+    #[test]
+    fn defrenderer_parametric_array_yields_multiple_polyline_rows() {
+        const CARD: &str = r#"
+(defrenderer :parametric beam-renderer [e ctx]
+  [{:shape [:polyline {:resolution 0.5 :u-max 1 :active 0}]}
+   {:shape [:polyline {:resolution 0.5 :u-max 2 :active 1}]}])
+(defpattern p []
+  (spawn (curve {:u-max 3}) beam-renderer))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let polys: Vec<(bool, usize)> = sim.render()
+            .iter()
+            .filter_map(|r| match &r.data {
+                RenderData::Polyline { points, active } => Some((*active, points.len())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(polys, vec![(false, 3), (true, 5)]);
+    }
+
+    #[test]
+    fn touhou_beam_cull_is_library_policy() {
+        const CARD: &str = r#"
+(import "touhou")
+(defpattern p []
+  (par
+    (laser ((pose c[0 0]) (curve {:u-max 1})) {:warn 0.1 :active 0.2})
+    (laser ((pose c[0 1]) (curve {:u-max 1})) {:warn 0.1})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..80 {
+            sim.step().unwrap();
+        }
+        let mut finite_alive = false;
+        let mut default_alive = false;
+        for i in 0..sim.world.entities.len() {
+            if sim.world.col_get_at(i, "active") == Some(0.2) {
+                finite_alive |= sim.world.entities.is_alive(i);
+            } else if sim.world.col_get_at(i, "warn") == Some(0.1) {
+                default_alive |= sim.world.entities.is_alive(i);
+            }
+        }
+        assert!(!finite_alive, "finite active laser should be culled by touhou deftick");
+        assert!(default_alive, "default active laser should survive");
     }
 
     #[test]
@@ -1235,9 +1281,9 @@
       (bind-channel! $hits (:hits body)))))
 (defpattern beam []
   (par (rig)
-       (spawn-bullet ((pose c[-2 0])
-                (laser {:warn 0.5 :active 6 :u-max 6 :fill (fill-linear 0.5 2)}))
-              {:style {:family :laser :color :red}})))
+       (laser ((pose c[-2 0]) (curve {:u-max 6}))
+              {:warn 0.5 :active 6 :u-max 6 :fill (fill-linear 0.5 2)
+               :style {:family :laser :color :red}})))
 "#;
         let mut sim = Sim::load(CARD, Some("beam")).unwrap();
         // player parked on the beam line at u = 2 (x = 0); 120 ticks/s
@@ -2015,7 +2061,7 @@
     fn laser_opts_seed_entity_fields() {
         const CARD: &str = r#"
 (defpattern p []
-  (spawn (laser {:warn 0.5 :active 2 :u-max 6})))
+  (spawn (curve {:warn 0.5 :active 2 :u-max 6})))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -2028,7 +2074,7 @@
     fn element_seeds_override_spawn_meta() {
         const CARD: &str = r#"
 (defpattern p []
-  (spawn (laser {:warn 1}) {:warn 2}))
+  (spawn (curve {:warn 1}) {:warn 2}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -2077,7 +2123,7 @@
     fn distribution_over_repeat() {
         const CARD: &str = r#"
 (defpattern p []
-  (spawn (circle 3 (laser {:warn 1 :active 1}))))
+  (spawn (circle 3 (curve {:warn 1 :active 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();

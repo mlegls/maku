@@ -66,23 +66,13 @@ impl SymbolTable {
 }
 
 #[derive(Debug, Clone)]
-pub struct SlotActivity {
-    pub warn: f64,
-    pub active: f64,
-    /// Signal-valued active-domain fraction, clamped to 0..1.
-    pub hot_frac_sig: Option<DynNum>,
-}
-
-#[derive(Debug, Clone)]
 pub struct CapsuleChainSlot {
     /// Sampling used by this collision projection.
     /// Abstract parametric figures do not own sampling.
     pub sample_set: SampleSet,
-    /// Signal-valued override for the upper range bound (:u-max varLength).
-    pub u_max_sig: Option<DynNum>,
+    pub u_max: f64,
     /// Width multiplier for the capsule-chain half-width.
     pub width: f64,
-    pub activity: SlotActivity,
 }
 
 #[derive(Debug, Clone)]
@@ -90,12 +80,11 @@ pub struct CurveRenderSlot {
     /// Sampling used by this render projection.
     /// Abstract parametric figures do not own sampling.
     pub sample_set: SampleSet,
-    /// Signal-valued override for the upper range bound (:u-max varLength).
-    pub u_max_sig: Option<DynNum>,
+    pub u_max: f64,
     /// Width multiplier for the current rendered stroke. The host still
     /// controls final appearance.
     pub width: f64,
-    pub activity: SlotActivity,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone)]

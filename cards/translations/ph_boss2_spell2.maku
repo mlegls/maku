@@ -35,10 +35,10 @@
   (loop [c (rand-cell)] (if (= c prev) (recur (rand-cell)) c)))
 
 (defn v2-lasers [style skip]              ; ph_ref V2Laser: slam 2 of 3 columns
-  (spawn-bullet (map (fn [a] ((pose c[m"2.1*a - 3.6" 8])
+  (laser (map (fn [a] ((pose c[m"2.1*a - 3.6" 8])
                         ((rot -90)
-                          (laser {:warn 1.5 :active 2 :u-max 20 :width 3}))))
-              (without skip [-1 0 1])) {:style style}))
+                          (curve {:u-max 20 :width 3}))))
+              (without skip [-1 0 1])) {:warn 1.5 :active 2 :style style}))
 
 (defn power-up []                         ; power1(): charge aura, host-drawn
   (event :aura {:style :powerup1 :palette [:blue :green]}))
@@ -63,14 +63,14 @@
           (fork (seq (wait 1)                       ; DMK delay 1s
                   (loop []
                     (wait-for (= mode 1))           ; whiletrue == pause
-                    (spawn-bullet ((aim $player)
-                             (laser {:warn 1 :active 0.2 :u-max 20})) {:style {:family :gdlaser :color :blue}})
+                    (laser ((aim $player)
+                             (curve {:u-max 20})) {:warn 1 :active 0.2 :style {:family :gdlaser :color :blue}})
                     (wait (ticks (/ 280 factor)))
                     (recur))))
           (fork (loop []
                   (wait-for (= mode 2))
-                  (spawn-bullet ((aim $player)
-                           (laser {:warn 1 :active 0.2 :u-max 20 :width 2})) {:style {:family :gdlaser :color :blue :variant :w}})
+                  (laser ((aim $player)
+                           (curve {:u-max 20 :width 2})) {:warn 1 :active 0.2 :style {:family :gdlaser :color :blue :variant :w}})
                   (wait (ticks (/ 180 factor)))
                   (recur))))))))
 

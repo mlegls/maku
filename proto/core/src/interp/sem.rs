@@ -102,7 +102,6 @@ pub struct CapsuleChainProjectorSpec {
     pub radius: ProjectorNum,
     pub sample_set: ProjectorSampleSet,
     pub u_max: Option<ProjectorNum>,
-    pub fraction: Option<ProjectorNum>,
     pub width: ProjectorNum,
     pub env: Env,
     pub scope: Option<ProjectorScope>,

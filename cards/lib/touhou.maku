@@ -50,10 +50,12 @@
 
 (defn value-or [x d] (if (nothing? x) d x))
 
+;; Beam lifecycle is ordinary fields (:warn :active :fill), translated each
+;; tick into static collider/render extents by the projector bodies below.
 (defn laser-hot-fraction [e ctx]
   (let [warn (value-or e.warn 0)
         active (value-or e.active inf)
-        fill (value-or e.fill 1)]
+        fill (max 0 (min 1 (value-or e.fill 1)))]
     (if (< ctx.t warn)
       0
       (if (> ctx.t (+ warn active)) 0 fill))))
@@ -83,16 +85,53 @@
     (circle-collider {:layer :damage :r e.hitbox})
     (circle-collider {:layer :graze :r 0.35})))
 
+;; hostile beam: a damage core inside a graze ring, swept along the hot
+;; extent of the curve. Cold (telegraph/afterlife) means no colliders at all.
 (defcollider :parametric laser-collider [e ctx]
+  (let [frac (laser-hot-fraction e ctx)
+        hot (* frac (value-or e.u-max 10))
+        res (value-or e.resolution 0.1)]
+    (if (< frac 0.000001)
+      (colliders)
+      (colliders
+        (capsule-chain-collider {:layer :damage
+                                 :r (value-or e.radius (value-or e.r 0.08))
+                                 :u-max hot :resolution res :width 0})
+        (capsule-chain-collider {:layer :graze :r 0.35
+                                 :u-max hot :resolution res :width 0})))))
+
+;; player beam: same lifecycle, :shot layer
+(defcollider :parametric shot-laser-collider [e ctx]
   (let [frac (laser-hot-fraction e ctx)]
     (if (< frac 0.000001)
       (colliders)
-      (capsule-chain-collider {:layer :beam
+      (capsule-chain-collider {:layer :shot
                                :r (value-or e.radius (value-or e.r 0.08))
-                               :u-max (value-or e.u-max 10)
+                               :u-max (* frac (value-or e.u-max 10))
                                :resolution (value-or e.resolution 0.1)
-                               :fraction frac
                                :width 0}))))
+
+;; the beam look: a dim telegraph along the full path, a bright polyline
+;; along the hot extent.
+(defrenderer :parametric beam-renderer [e ctx]
+  (let [frac (laser-hot-fraction e ctx)
+        u-max (value-or e.u-max 10)
+        res (value-or e.resolution 0.1)
+        w (value-or e.width 1)]
+    (if (>= frac 1)
+      {:shape [:polyline {:u-max u-max :resolution res :width w :active 1}]}
+      (if (< frac 0.000001)
+        {:shape [:polyline {:u-max u-max :resolution res :width w :active 0}]}
+        [{:shape [:polyline {:u-max u-max :resolution res :width w :active 0}]}
+         {:shape [:polyline {:u-max (* frac u-max) :resolution res :width w :active 1}]}]))))
+
+;; end-of-life: a beam past warn+active is culled — beam lifecycle is genre
+;; policy, not an engine rule. Curves without :active live forever.
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (* (= e.kind :laser)
+                                  (> e.t (+ (value-or e.warn 0)
+                                            (value-or e.active inf))))))))
 
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
@@ -101,6 +140,23 @@
           {:render :touhou-sprite
            :damage ~(damage-value* metas 1)
            :hitbox ~(primary-hitbox-radius* metas 0.12)}
+          ~@metas))
+
+;; hostile beam spawn: the laser-ness (colliders, beam look, lifecycle
+;; fields) lives at the spawn boundary; the figure inside is a plain curve.
+(defmacro laser [dyn & metas]
+  `(spawn ~dyn
+          laser-collider
+          beam-renderer
+          {:damage ~(damage-value* metas 1)}
+          ~@metas))
+
+;; player beam
+(defmacro laser-shot [dyn & metas]
+  `(spawn ~dyn
+          shot-laser-collider
+          beam-renderer
+          {:team :player :damage ~(damage-value* metas 1)}
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule

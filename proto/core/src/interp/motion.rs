@@ -464,16 +464,9 @@ pub fn eval_curve_pose(
 /// Compatibility extended values before spawn lowering.
 #[derive(Debug, Clone)]
 pub enum CurveBacking {
-    /// Surface `laser` syntax currently lowers to this representation.
+    /// Surface `curve` syntax lowers to this representation.
     Parametric {
         curve: ParametricCurve,
-        sample_set: SampleSet,
-        u_max_sig: Option<DynNum>, // signal-valued :u-max (varLength)
-        warn: f64,
-        active: f64,
-        width: f64,
-        /// Swept hot fraction as a function of curve age t.
-        fill_sig: Option<DynNum>,
     },
     /// Surface `pather` syntax currently lowers to a pose entity with a
     /// legacy trace cache enabled.

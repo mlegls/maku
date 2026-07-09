@@ -18,9 +18,9 @@
 ;; counts you want exact.
 (defpattern ex2-rank-additive []
   (for [vol inf :every 3]
-    (spawn-bullet ((rot m"10 * vol")
+    (laser ((rot m"10 * vol")
              (circle (+ 3 (* 2 (- $rank 0.7)))
-               (laser {:warn 0.8 :active 1.5 :u-max 6 :width 0.6}))) {:style {:family :gdlaser :color :blue}})))
+               (curve {:u-max 6 :width 0.6}))) {:warn 0.8 :active 1.5 :style {:family :gdlaser :color :blue}})))
 
 ;; 3. $player is a channel too: (aim $player) rotates a frame toward it
 ;; at spawn time. In the sandbox the mouse is the mock player.

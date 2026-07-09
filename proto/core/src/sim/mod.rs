@@ -17,7 +17,6 @@ mod tests;
 pub use slots::{sample_curve, sample_curve_frac};
 
 use exec::{new_task, step_task, Task, TF};
-use slots::{materialize_collider_defs_into, materialize_render_defs_into};
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
 
@@ -466,11 +465,9 @@ impl Sim {
         }
         self.world.tick += 1;
         self.refresh_dyn_cols()?;
-        // cull: off-playfield poses/traces; compatibility curves past their active window
+        // cull: off-playfield poses/traces; curve lifetime is card/library policy
         let tick = self.world.tick;
         let mut err = None;
-        let mut render_slots = Vec::new();
-        let mut collider_slots = Vec::new();
         for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
                 continue;
@@ -494,78 +491,7 @@ impl Sim {
                     }
                     }
                 }
-                FigureDynRepr::Curve { .. } => {
-                    let state = MotionState::new();
-                    render_slots.clear();
-                    if let Some(projector) = self.world.entities.render_projector(i) {
-                        let e_view = entity_view(i, &self.world, &sig).ok();
-                        let ctx_view = Val::Map(std::rc::Rc::new(vec![
-                            (Val::Kw("age".into()), Val::Num(tau)),
-                            (Val::Kw("t".into()), Val::Num(tau)),
-                            (Val::Kw("tick".into()), Val::Num(tick as f64)),
-                        ]));
-                        let _ = materialize_render_defs_into(
-                            projector,
-                            tau,
-                            &state,
-                            &sig,
-                            e_view.as_ref(),
-                            Some(&ctx_view),
-                            &mut render_slots,
-                        );
-                    }
-                    let first_polyline = render_slots.iter().find_map(|slot| match slot.repr() {
-                        RenderDynRepr::Polyline(projection) => Some(projection),
-                        RenderDynRepr::Point(_) => None,
-                    });
-                    let render_live = first_polyline
-                        .map(|projection| tau <= projection.activity.warn + projection.activity.active);
-                    let collider_live = || {
-                        let Some(projector) = self.world.entities.collider_projector(i).cloned() else {
-                            return None;
-                        };
-                        let e_view = entity_view(i, &self.world, &sig).ok()?;
-                        let ctx_view = Val::Map(std::rc::Rc::new(vec![
-                            (Val::Kw("age".into()), Val::Num(tau)),
-                            (Val::Kw("t".into()), Val::Num(tau)),
-                            (Val::Kw("tick".into()), Val::Num(tick as f64)),
-                        ]));
-                        collider_slots.clear();
-                        materialize_collider_defs_into(
-                            &projector,
-                            tau,
-                            &state,
-                            &sig,
-                            Some(&e_view),
-                            Some(&ctx_view),
-                            &mut self.world.symbols,
-                            &mut collider_slots,
-                        )
-                            .ok()?;
-                        let curve_slot = render_slots.iter()
-                            .find_map(|slot| match slot.repr() {
-                                RenderDynRepr::Polyline(projection) => Some(projection),
-                                RenderDynRepr::Point(_) => None,
-                            })
-                            .map(|projection| CapsuleChainSlot {
-                                sample_set: projection.sample_set.clone(),
-                                u_max_sig: projection.u_max_sig.clone(),
-                                width: projection.width,
-                                activity: projection.activity.clone(),
-                            });
-                        collider_slots.iter().find_map(|slot| match &slot.slot().shape {
-                            ColliderSlotShape::Circle { .. } => curve_slot
-                                .as_ref()
-                                .map(|projection| {
-                                    tau <= projection.activity.warn + projection.activity.active
-                                }),
-                            ColliderSlotShape::CapsuleChain { slot: projection, .. } => {
-                                Some(tau <= projection.activity.warn + projection.activity.active)
-                            }
-                        })
-                    };
-                    render_live.or_else(collider_live).unwrap_or(true)
-                }
+                FigureDynRepr::Curve { .. } => true,
             };
             if !keep {
                 self.world.cull_at(i);

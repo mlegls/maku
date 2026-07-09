@@ -237,10 +237,10 @@ fn capsule_chain_projector_spec_from_form(
     if opts.as_ref().is_some_and(|form| !matches!(form, Form::Map(_))) {
         return Err("capsule-chain-collider: expected override map".into());
     }
-    for key in ["warn", "active", "fill"] {
+    for key in ["warn", "active", "fill", "fraction", "frac"] {
         if form_map_value(&opts, &[key]).is_some() {
             return Err(format!(
-                "capsule-chain-collider: :{} is laser policy; use :fraction in projector scope",
+                "capsule-chain-collider: :{} is lifecycle policy; put lifecycle logic in a defcollider body over entity fields",
                 key
             ));
         }
@@ -264,7 +264,6 @@ fn capsule_chain_projector_spec_from_form(
         radius: projector_num_from_form("capsule-chain-collider", &opts, &["radius", "r"], 0.08, env, ctx, world)?,
         sample_set,
         u_max: optional_projector_num_from_form("capsule-chain-collider", &opts, &["u-max"], env, ctx, world)?,
-        fraction: optional_projector_num_from_form("capsule-chain-collider", &opts, &["fraction", "frac"], env, ctx, world)?,
         width: projector_num_from_form("capsule-chain-collider", &opts, &["width"], 0.0, env, ctx, world)?,
         env: env.clone(),
         scope: ctx.projector_scope.clone(),
@@ -322,17 +321,8 @@ pub(crate) fn materialize_capsule_chain_projector(
     };
     let slot = CapsuleChainSlot {
         sample_set,
-        u_max_sig: spec.u_max.as_ref().map(|n| eval_num(n).map(DynNum::num)).transpose()?,
+        u_max: spec.u_max.as_ref().map(&mut eval_num).transpose()?.unwrap_or(10.0),
         width: eval_num(&spec.width)?,
-        activity: SlotActivity {
-            warn: 0.0,
-            active: f64::INFINITY,
-            hot_frac_sig: spec
-                .fraction
-                .as_ref()
-                .map(|n| eval_num(n).map(DynNum::num))
-                .transpose()?,
-        },
     };
     let slot = DynCollider::collider_capsule_chain(spec.layer, DynNum::num(eval_num(&spec.radius)?), slot);
     *symbols = run_world.symbols;
