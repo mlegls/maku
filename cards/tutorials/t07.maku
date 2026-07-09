@@ -11,7 +11,7 @@
 ;; index — later bullets faster.
 (defpattern ex1-index []
   (for [vol inf :every 1]
-    (spawn-bullet ((aim $player)
+    (bullet ((aim $player)
              (map (fn [k] ((rot (- (* 6 k) 27))
                             (linear p[(+ 2 (* 0.2 k)) 0])))
                   (iota 10))) {:style {:family :arrow :color :red :variant :w}})))
@@ -29,7 +29,7 @@
 ;; 2. the arrow, moving straight: offsets inside a (linear …) frame.
 (defpattern ex2-arrow []
   (for [vol inf :every 1]
-    (spawn-bullet ((linear c[2 0]) (arrow 11 -0.2 0.1)) {:style {:family :amulet :color :red}})))
+    (bullet ((linear c[2 0]) (arrow 11 -0.2 0.1)) {:style {:family :amulet :color :red}})))
 
 ;; 3. the naive turn: give each bullet its own turning velocity, with the
 ;; offsets OUTSIDE the moving frame. The formation translates rigidly but
@@ -37,7 +37,7 @@
 ;; down: the offsets were fixed in world orientation at spawn.
 (defpattern ex3-unguided []
   (for [vol inf :every 1.5]
-    (spawn-bullet (map (fn [k] ((pose (arrow-at k -0.2 0.1))
+    (bullet (map (fn [k] ((pose (arrow-at k -0.2 0.1))
                           (vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])))
                (iota 11)) {:style {:family :amulet :color :purple}})))
 
@@ -49,7 +49,7 @@
 ;; body rotating. The guide is a LEVEL OF THE FRAME TREE — not an entity.
 (defpattern ex4-guided []
   (for [vol inf :every 1.5]
-    (spawn-bullet ((vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])
+    (bullet ((vel c[(lerp 1 2 t 2 0) (lerp 1 2 t 0 -2)])
              ((pose c[0.6 0]) (arrow 11 -0.2 0.1))) {:style {:family :amulet :color :red}})))
 
 ;; 5. when the guide is SHARED — one trajectory carrying a visible rider
@@ -65,4 +65,4 @@
                     :team :scenery})
       (in-frame guide
         (for [i inf :every 0.7]
-          (spawn-bullet ((aim $player) (fan 3 10 (linear p[2.5 0]))) {:style {:family :circle :color :teal :variant :w}}))))))
+          (bullet ((aim $player) (fan 3 10 (linear p[2.5 0]))) {:style {:family :circle :color :teal :variant :w}}))))))

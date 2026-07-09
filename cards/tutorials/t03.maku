@@ -16,13 +16,13 @@
 (import "touhou")
 (defpattern ex1-fruit-basic []
   (for [vol inf :every 3]
-    (let [seeds (spawn-bullet (circle 8 (linear p[3 0])) {:style {:family :lellipse :color :red :variant :w}})]
+    (let [seeds (bullet (circle 8 (linear p[3 0])) {:style {:family :lellipse :color :red :variant :w}})]
       (for [b seeds]
         (fork
           (seq
             (wait 0.7)
             ((pose (pos b))
-              (spawn-bullet (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])) {:style {:family :ellipse :color :red :variant :w}}))
+              (bullet (circle 20 (vel p[(lerp 0.3 1.4 t 0 2.6) 0])) {:style {:family :ellipse :color :red :variant :w}}))
             (cull b)))))))
 
 ;; 2. the burst gets fancier (six rings unfolding at growing radius) —
@@ -34,7 +34,7 @@
 (defn burst [at ci]
   ((pose at)
     (for [ring 6 :every (ticks 12)]
-      (spawn-bullet (circle 20
+      (bullet (circle 20
                ((pose c[(* 0.4 ring) 0])
                  (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))) {:style {:family :ellipse
                       :color (nth palette ci)
@@ -42,7 +42,7 @@
 
 (defpattern ex2-fruit-staged [n 8 ripen 0.7]
   (for [vol inf :every 3]
-    (let [seeds (spawn-bullet (circle n (linear p[3 0])) {:style {:family :lellipse :color palette :variant :w}})]
+    (let [seeds (bullet (circle n (linear p[3 0])) {:style {:family :lellipse :color palette :variant :w}})]
       (for [b seeds, ci (iota n)]
         (fork
           (seq (wait ripen)
@@ -53,7 +53,7 @@
 ;; binds its index ci lexically — pass it through.
 (defpattern ex3-fruit-colors [n 8 ripen 0.7]
   (for [vol inf :every 3]
-    (let [seeds (spawn-bullet (circle n (linear p[3 0])) {:style {:family :lellipse :color palette :variant :w}})]
+    (let [seeds (bullet (circle n (linear p[3 0])) {:style {:family :lellipse :color palette :variant :w}})]
       (for [b seeds, ci (iota n)]
         (fork
           (seq (wait ripen)
@@ -70,7 +70,7 @@
 (defpattern ex4-weave []
   (in-frame (cart m"sine(12.94, 2, t)" 0)
     (for [vol inf :every 2]
-      (spawn-bullet ((rot m"13.6 * vol")
+      (bullet ((rot m"13.6 * vol")
                (circle 16 ((pose c[1 0]) (linear p[2 0])))) {:style {:family :keine :color :purple :variant :w}}))))
 
 ;; 5. the full spell REUSES ex4 — patterns invoke like functions, so the
@@ -99,7 +99,7 @@
                      tx (- b.pos.x (* r (cos th)))  ; the volley ORIGIN
                      ty (- b.pos.y (* r (sin th)))]
                  (seq
-                   (spawn-bullet ((pose c[tx ty])
+                   (bullet ((pose c[tx ty])
                             (map (fn [k]
                                    ((rot (lerpsmooth eiosine 0 3 t
                                            th
@@ -119,7 +119,7 @@
              (fn [b]
                ((pose (pos b))
                  ((rot b.ang)
-                   (spawn-bullet (linear p[2 0]) {:style {:family :keine :color :purple :variant :w}})))))
+                   (bullet (linear p[2 0]) {:style {:family :keine :color :purple :variant :w}})))))
     (control (ticks 5)
              {:family :gcircle :where (where (> b.t 3.2))}
              (fn [b] (cull b)))))

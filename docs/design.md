@@ -188,7 +188,7 @@ SC's workflow — scratchpad document, select-and-evaluate any region, persisten
 ## 12. Consolidated architecture
 
 1. **Core:** native (or .NET) deterministic simulation library; fixed timestep; SoA pooled bullets; bucketed collision *inside*; entire game sim inside, host as renderer/input device.
-2. **API:** C ABI; `step(inputs, dt) → events`; bulk per-style span getters for render state; explicit command surface (bomb, clear, spawn-boss…); frame-stamped event log.
+2. **API:** C ABI; `step(inputs, dt) → events`; bulk per-style span getters for render state; explicit command surface (bomb, clear, boss…); frame-stamped event log.
 3. **Language:** BDSL semantic model — typed trees, type unification/overload resolution against a function repository — with s-expression canonical form and an infix escape for math; macros for card-level abstraction.
 4. **Execution:** two layers. Control layer: interpreted state machines/patterns with cancellation semantics and a fuel budget. Hot layer: loop-free per-frame functions → register bytecode → pool-at-a-time SIMD evaluation in dev; AOT-compiled to native for shipping decks. Rate inference (`ir`/`kr`/`ar`) hoists spawn-time and pool-invariant computation automatically. Array broadcasting (MCE) for fan-out.
 5. **Lifecycle:** cull conditions as done-action nodes in the value graph.

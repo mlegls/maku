@@ -50,7 +50,7 @@
   ;; the caller applies a frame ((boss-frame (aimed-demo))) if one is wanted.
   (dotimes [vol inf, vrt [:c :w :b] :every 2.5]
     (event :sfx "x-fire-burst-1")
-    (spawn-bullet ((aim $player)                          ; injected signal in spawn args
+    (bullet ((aim $player)                          ; injected signal in spawn args
              (+ c[-7 0]                           ;   => implicit snap (SS3, class a)
                 (arrow 7 1.0 0.5                  ; + inside the aim frame =
                   (arrow 9 0.15 0.08              ;   rotational offset (rx of <-7;:>)
@@ -64,7 +64,7 @@
 ;; only observable through indexed meta, hence the mirrored :color literal.
 ;;
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn-bullet argument {})
+;; Canonical desugared tree (bullet argument {})
 ;;
 ;;   (in-frame (rot (snap (angle-to player)))            ; (aim $player)
 ;;     (+ (cart -7 0)                                    ; translate, theta untouched;

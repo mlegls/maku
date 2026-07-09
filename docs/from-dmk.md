@@ -12,10 +12,12 @@ decode notes.
 
 ## Firing (Tutorial 1)
 
+The old `spawn-*` macro names remain as aliases.
+
 | DMK | here |
 |---|---|
-| `CreateShot2(x, y, speed, angle, style)` | `(spawn-bullet ((pose c[x y]) (linear p[speed angle])) {:style …})` |
-| `sync(style, rv2, s(...))` | `(spawn-bullet dyn {:style …})` |
+| `CreateShot2(x, y, speed, angle, style)` | `(bullet ((pose c[x y]) (linear p[speed angle])) {:style …})` |
+| `sync(style, rv2, s(...))` | `(bullet dyn {:style …})` |
 | engine-owned pools / player / BEH prefabs | `(import "touhou")` — the genre layer is a library card (spawn templates, `invuln`, the stock rig) over a bare `spawn` of dyn + explicit meta |
 | V2RV2 `<nx;ny:rx;ry:θ>` | position of `pose`/`+` written inside vs outside `rot` frames; the θ slot is the `rot` itself |
 | `rvelocity(v)` / `nrvelocity(v)` | `(linear v)` inside the rotation / outside it |
@@ -99,7 +101,7 @@ lands somewhere specific here:
 | DMK's pitch | here |
 |---|---|
 | movement is function-based: drop `3 + sine(4, 0.6, t)` into any velocity slot instead of falling back to manual update loops | the signal model *is* the language: every dyn/meta slot takes an expression over `t`/`u`, and closed-vs-integrated is typed (which DMK doesn't do — that's what buys scrubbing) |
-| the showcase: 4 spiral bullets, `gsrepeat({ times(4), circle }, s(polar(2*t, 80*t)))` vs pages of LuaSTG/DNH update-loop code | `(spawn-bullet (circle 4 (polar m"2*t" m"80*t")))` — see `cards/translations/060_polar.maku` for a production-strength version of the same shot |
+| the showcase: 4 spiral bullets, `gsrepeat({ times(4), circle }, s(polar(2*t, 80*t)))` vs pages of LuaSTG/DNH update-loop code | `(bullet (circle 4 (polar m"2*t" m"80*t")))` — see `cards/translations/060_polar.maku` for a production-strength version of the same shot |
 | modifiers/options (`scale`, `dir`, `opacity` on `simple`) extend entities without breaking signatures | meta maps merged per-key + render-signal tags (`:scale` `:facing` `:opacity` `:hue`); colliders, columns, triggers are the same open-map story |
 | extensible by "writing a C# function and putting it somewhere" — engine-language extension, engine rebuild | extension is *in-language*: `defn`/`defmacro`/lib cards. The whole touhou genre layer (spawn templates, contact rules, phases) is card code over a bare engine — a user card extends the vocabulary with no engine involvement at all |
 
@@ -113,7 +115,7 @@ needs no tutorial port.
 | DMK | here |
 |---|---|
 | `pattern { } { phase … phase … }` | `(phases (:label opts? body… (finally …)?) …)` — a `(import "touhou")` macro over the `states` FSM primitive |
-| the boss BEH entity | `(spawn-boss $boss dyn meta machine…)` — library macro: an *enemy with a phase machine*. It owns the boss conventions: binds a map-valued `$boss` channel, holds the machine until the boss registers, binds `boss`/`boss-main` for the machine body; hp/hurtbox/triggers are ordinary meta |
+| the boss BEH entity | `(boss $boss dyn meta machine…)` — library macro: an *enemy with a phase machine*. It owns the boss conventions: binds a map-valued `$boss` channel, holds the machine until the boss registers, binds `boss`/`boss-main` for the machine body; hp/hurtbox/triggers are ordinary meta |
 | `hp(4000)` phase property | `{:hp n}` — desugars to `(until (<= (hp-of boss-main) n) body)`, reading the local boss handle; `{:until pred}` is the general gate |
 | phase timeout `phase X {…}` | `{:timeout X}` — desugars to `(fork (seq (wait X) (goto)))`; bare goto = exit to successor |
 | `root(0, 2)` phase property | `{:root c[0 2]}` — desugars to `(move-to boss-main …)` at the body head; the card knows its boss |
@@ -124,7 +126,7 @@ needs no tutorial port.
 | end-of-phase item drops / cleanup | the clause's `finally` block — runs on every exit path |
 | `vulnerable(false)` phase property | `(invuln boss dur)` in the previous phase's `finally` — a column both resolve paths honor |
 | player invulnerability after death | automatic `iframe-until`; window duration = the `:iframes` column |
-| boss HP bar / phase name on the HUD | `spawn-boss` binds a structured boss channel such as `$mima`; richer phase metadata is card-level state over `bind-channel!` |
+| boss HP bar / phase name on the HUD | `boss` binds a structured boss channel such as `$mima`; richer phase metadata is card-level state over `bind-channel!` |
 
 ## Firing index and empty-guided fires (Tutorial 8)
 
@@ -210,7 +212,7 @@ to render it.
 | boss portraits, sidebars, hexagram overlays, spell-circle effects | host/UI/render-layer effects driven by boss channel state |
 | default nonspell/spell backgrounds and transitions | host scene/background policy, usually keyed from published phase type |
 | spell cutins and boss cutins | host timeline effects; card code can emit events such as `(event :spell)` or publish `{:type :spell}` |
-| secondary HP display / bottom tracker / spell stars | host reads a map-valued boss channel such as `$mima` from `(spawn-boss $mima dyn meta …)` |
+| secondary HP display / bottom tracker / spell stars | host reads a map-valued boss channel such as `$mima` from `(boss $mima dyn meta …)` |
 | `phaset` special timer | explicit phase-local state: use bullet-local `t`, or capture an epoch from `$tick` when a whole phase needs a shared clock |
 | `type(non/spell, "Name")` as phase config | card-level phase metadata, commonly folded into a structured boss channel with `bind-channel!` |
 
@@ -221,13 +223,13 @@ publishes a small, typed surface and the host chooses presentation:
 ```clojure
 (defchannel $mima {:hp 0 :phase :none})
 
-(spawn-boss $mima (live $boss) {:hp 100 ...}
+(boss $mima (live $boss) {:hp 100 ...}
   (phases
     (:nonspell {:hp 60} ...)
     (:spell2 {:hp 0} ...)))
 ```
 
-`spawn-boss` binds `$mima` as structured boss state and `phases` gates on
+`boss` binds `$mima` as structured boss state and `phases` gates on
 the local `boss-main` handle, not a global hp channel. If a game wants
 phase names, spell indices, capture timers, or active-boss ids, those are
 ordinary cells/events folded into the same map with `bind-channel!` or a
@@ -245,7 +247,7 @@ for which one is "the UI boss". DMK's legal multi-boss cases map as:
 | changing which boss drives UI by phase index | publish an active boss id/channel in phase code; host follows that value |
 
 There is no standalone tutorial port for `tbosses`: the engine-facing
-mechanics are already covered by Tutorial 6 (`spawn-boss`, `phases`,
+mechanics are already covered by Tutorial 6 (`boss`, `phases`,
 channels), and the remaining material belongs in the first concrete host
 integration guide.
 
@@ -262,11 +264,11 @@ is host metadata and is not a core-language feature.
 | `phase 8 { stage } { ... }` | scoped action: `(until timeout body...)` plus `(finally ... cleanup ...)`; host labels it as a stage practice segment if desired |
 | stage phase timeout clearing bullets | explicit phase-edge policy: `(finally body (cull) (event :stage-section-clear))` |
 | `stage` / `midboss` / `endboss` / `announce` / `dialogue` phase properties | published stage state and events, e.g. `(bind-channel! $stage {:section :dialogue})` and `(event :dialogue)`; timer freezing/UI visibility are host policy |
-| stage script firing from LevelManager origin | direct `spawn-bullet` from the pattern's ambient frame |
-| `summonr(root, saction, { hp ... })` | `(spawn-enemy ((pose root) dyn) meta)` returning handles; per-enemy `fork`ed timelines use `(pos e)`, `invuln`, `set-col`, and `cull` |
+| stage script firing from LevelManager origin | direct `bullet` from the pattern's ambient frame |
+| `summonr(root, saction, { hp ... })` | `(enemy ((pose root) dyn) meta)` returning handles; per-enemy `fork`ed timelines use `(pos e)`, `invuln`, `set-col`, and `cull` |
 | enemy entrance movement + firing script | piecewise dyns such as `(stages (stage enter ...) (stage hover ...) (forever exit ...))` plus control-layer `seq`/`for` |
 | `vulnerableafter` | `(invuln e dur)` or direct `:iframe-until` column writes |
-| `boss "tutorial"` in a stage | host-selected boss card/pattern, or direct `(spawn-boss $boss dyn meta (phases ...))` inside the stage pattern |
+| `boss "tutorial"` in a stage | host-selected boss card/pattern, or direct `(boss $boss dyn meta (phases ...))` inside the stage pattern |
 | boss config's `State Machine` field | host registry mapping boss/stage ids to card patterns |
 | `stageannounce` / `stagedeannounce` | host-facing events such as `(event :stage-announce)` / `(event :stage-end)` |
 | `executevn ExampleVNScript "log-key"` | host handoff: emit an event or set a channel, then wait on a host-provided completion signal if needed |

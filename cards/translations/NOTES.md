@@ -249,10 +249,10 @@ dissolution: hp was already a column and invuln a deadline column — what
 remained *engine* was the defaulting (team→collider sets, hp 1, the
 died-trigger synthesis) and one verb (`invuln`). All of it is now card
 code in cards/lib/touhou.maku: `spawn` knows only dyn + explicit meta,
-and `spawn-bullet`/`spawn-shot`/`spawn-enemy` are macros prepending a
+and `bullet`/`shot`/`enemy` are macros prepending a
 defaults map (macros, not defns, so the caller's literal meta keeps its
 unevaluated signal tags; `spawn` itself grew per-key multi-map merge as
-the composition hook). `spawn-boss` is *an enemy with a phase machine* —
+the composition hook). `boss` is *an enemy with a phase machine* —
 that is the whole difference — binding `boss` for its machine body.
 `invuln` is `(set-col b :iframe-until (+ $tick (* dur 120)))` once
 `$tick` exists as a derived channel. The lib is authored as .maku files
@@ -271,10 +271,10 @@ That extraction shipped as `defcontact`: contact rules are card code, and
 layer names are opaque tags owned by the templates that create them. The
 engine now provides hot overlap detection plus two data prefilters (`:once`
 and `:skip-if`) and zero genre semantics; Touhou's hit/graze/shot behavior
-lives beside `spawn-bullet`/`spawn-shot`/`spawn-enemy` in lib/touhou.maku.
+lives beside `bullet`/`shot`/`enemy` in lib/touhou.maku.
 
 **`phases` is genre policy, so the lib defines it — and macros became
-able to.** Mima showed the spawn-boss boundary sitting wrong: the card
+able to.** Mima showed the boss boundary sitting wrong: the card
 was hand-writing hp channel exposure, the registration wait, and
 `{:until (<= (hp-of boss-main) n)}` gates — pure boss *convention*, repeated at
 every boss. Two moves fixed it. First, macro-time power became real
@@ -284,7 +284,7 @@ seq builtins reading form lists as sequences of subforms, total `get`
 over map forms, `form-type`/`form-name`, and evaluator-backed
 `map`/`filter`. With those, `phases` moved out of Rust entirely: a
 touhou.maku macro walking its clause list with a helper defn and
-splicing `states` clauses. Second, `spawn-boss` now owns the boss
+splicing `states` clauses. Second, `boss` now owns the boss
 conventions: it binds a structured boss channel with `bind-channel!`,
 holds the machine until the boss registers, and binds `boss`/`boss-main`;
 `phases` gained `{:hp n}` as gate sugar reading that local handle.

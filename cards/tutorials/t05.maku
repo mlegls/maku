@@ -11,7 +11,7 @@
 (defchannel $dummy-hp 0)
 (defpattern ex1-rank-density []
   (for [vol inf :every (/ 2.5 $rank)]
-    (spawn-bullet (circle (* 24 $rank) (linear p[1.8 0])) {:style {:family :circle :color :red :variant :w}})))
+    (bullet (circle (* 24 $rank) (linear p[1.8 0])) {:style {:family :circle :color :red :variant :w}})))
 
 ;; 2. additive scaling for discrete layers: 3 beams, +2 per rank step
 ;; above easy. Multiplicative for continuous quantities, additive for
@@ -26,14 +26,14 @@
 ;; at spawn time. In the sandbox the mouse is the mock player.
 (defpattern ex3-aimed []
   (for [vol inf :every 1]
-    (spawn-bullet ((aim $player) (fan 5 8 (linear p[2.5 0]))) {:style {:family :arrow :color :purple :variant :w}})))
+    (bullet ((aim $player) (fan 5 8 (linear p[2.5 0]))) {:style {:family :arrow :color :purple :variant :w}})))
 
 ;; 4. cards PUBLISH channels: bind-channel! derives a channel from local
 ;; handles/cells. The dummy's hp drives both the host HUD and other patterns —
 ;; here a victory ring fires when $dummy-hp runs out. Shoot the dummy (the rig
 ;; fires with the mouse in the sandbox; hold near it).
 (defpattern ex4-expose []
-  (let [dummy (spawn-enemy ((pose c[0 2.5]) (still))
+  (let [dummy (enemy ((pose c[0 2.5]) (still))
                            {:hp 20
                             :style {:family :lstar :color :green}
                             :scale 1.5})]
@@ -41,7 +41,7 @@
     (seq
       (wait-for (> $dummy-hp 0))          ; registered
       (wait-for (<= $dummy-hp 0))         ; destroyed
-      (spawn-bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))))
+      (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))))
 
 ;; 5. cells export too: a card-level counter published as $volleys.
 ;; bind-channel! and (export cell) both publish ordinary channels — the host
@@ -54,13 +54,13 @@
       (for [i inf :every 1.5]
         (seq
           (set! volleys (+ volleys 1))
-          (spawn-bullet (circle 10 (linear p[1.5 0])) {:style {:family :circle :color :teal :variant :w}}))))
+          (bullet (circle 10 (linear p[1.5 0])) {:style {:family :circle :color :teal :variant :w}}))))
     ;; a reaction to the exported value: every 4th volley, a bonus fan
     (for [i inf :every 1.5]
       (seq
         (wait (ticks 2))
         ((rot 90)
-          (spawn-bullet (fan (* 4 (mod $volleys 4)) 10 (linear p[2 0])) {:style {:family :star :color :orange :variant :w} :hitbox 0.09}))))))
+          (bullet (fan (* 4 (mod $volleys 4)) 10 (linear p[2 0])) {:style {:family :star :color :orange :variant :w} :hitbox 0.09}))))))
 
 ;; 6. the player is card content: an entity riding the $move axes in the
 ;; vel domain, clamped to the field, with a hurtbox collider, lives as a
@@ -77,4 +77,4 @@
             :style {:family :circle :color :white :variant :w}})
     (in-frame (pose c[0 3])
       (for [vol inf :every (/ 1.2 $rank)]
-        (spawn-bullet ((aim $player) (fan 3 12 (linear p[2.2 0]))) {:style {:family :arrow :color :red :variant :w}})))))
+        (bullet ((aim $player) (fan 3 12 (linear p[2.2 0]))) {:style {:family :arrow :color :red :variant :w}})))))

@@ -26,7 +26,7 @@ The smallest stage phase is a timed action with cleanup (`ex1-stage-phase`):
   (finally
     (until (>= $tick end)
       (for [i inf :every (ticks 12)]
-        (spawn-bullet ((rot m"17*i")
+        (bullet ((rot m"17*i")
                  (circle 10 (linear p[1.6 0]))) ...)))
     (cull)
     (event :stage-section-clear)))
@@ -53,7 +53,7 @@ this as `summonr(..., saction ...)`; here the equivalent is spawn
 handles plus forked timelines (`ex2-fairy-wave`):
 
 ```clojure
-(let [fairies (spawn-enemy formation {:hp 12 ...})]
+(let [fairies (enemy formation {:hp 12 ...})]
   (for [e fairies]
     (fork
       (seq
@@ -61,7 +61,7 @@ handles plus forked timelines (`ex2-fairy-wave`):
         (wait 1.0)
         (for [v 4 :every (ticks 24)]
           ((pose (pos e))
-            (spawn-bullet ((aim $player) ...))))
+            (bullet ((aim $player) ...))))
         (cull e)))))
 ```
 
@@ -88,13 +88,13 @@ piecewise trajectory.
 DMK stage scripts summon bosses by key, and the key resolves through
 `BossConfig`. This engine keeps the sim side direct: a stage can embed a
 boss pattern or a host can choose which pattern to run for a stage slot.
-The runnable midboss (`ex3-midboss`) is just `spawn-boss` inside the
+The runnable midboss (`ex3-midboss`) is just `boss` inside the
 stage timeline:
 
 ```clojure
 (defchannel $stage-boss {:hp 0})
 
-(spawn-boss $stage-boss (live $boss) {:hp 30 ...}
+(boss $stage-boss (live $boss) {:hp 30 ...}
   (phases
     (:midboss {:timeout 3 :root c[0 2.1]}
       ...

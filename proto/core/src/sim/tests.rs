@@ -244,7 +244,7 @@
 (defpattern atk []
   (par (rig)
     (dotimes [i 2 :every (ticks 10)]
-      (spawn-bullet (in-frame (pose c[0 3]) (vel c[0 -6])) {}))))
+      (bullet (in-frame (pose c[0 3]) (vel c[0 -6])) {}))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -281,7 +281,7 @@
       (bind-channel! $graze (:graze body))
       (bind-channel! $hits (:hits body)))))
 (defpattern g []
-  (par (rig) (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
+  (par (rig) (bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
 "#;
         let mut sim = Sim::load(CARD, Some("g")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -626,9 +626,9 @@
 (import "touhou")
 (defpattern duel []
   (seq
-    (spawn-enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})
+    (enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})
     (dotimes [i 3 :every (ticks 30)]
-      (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
+      (shot (in-frame (pose c[0 0]) (vel c[0 4]))
                   {:damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
@@ -654,7 +654,7 @@
         use crate::session::Session;
         const CARD: &str = r#"
 (import "touhou")
-(defpattern g [] (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {}))
+(defpattern g [] (bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {}))
 "#;
         let mut sess = Session::default();
         sess.rig = Some(
@@ -697,7 +697,7 @@
 (defpattern atk []
   (par (rig)
     (dotimes [i 5 :every (ticks 70)]
-      (spawn-bullet (in-frame (pose c[0 3]) (vel c[0 -6])) {}))))
+      (bullet (in-frame (pose c[0 3]) (vel c[0 -6])) {}))))
 "#;
         let mut sim = Sim::load(CARD, Some("atk")).unwrap();
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -732,9 +732,9 @@
                                   (< (col-or (:lowhp-fired e) 0) 1))))))
 (defpattern gates []
   (seq
-    (spawn-enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
+    (enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
     (dotimes [i 3 :every (ticks 30)]
-      (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
+      (shot (in-frame (pose c[0 0]) (vel c[0 4]))
                   {:damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("gates")).unwrap();
@@ -757,8 +757,8 @@
 (import "touhou")
 (defpattern duel []
   (seq
-    (spawn-enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
-    (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
+    (enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
+    (shot (in-frame (pose c[0 0]) (vel c[0 4]))
                 {:damage {:hit 4 :graze 9}})))
 "#;
         let mut sim = Sim::load(CARD, Some("duel")).unwrap();
@@ -1215,13 +1215,13 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern p []
-  (let [boss (spawn-enemy (pose c[0 3]) {:hp 10})]
+  (let [boss (enemy (pose c[0 3]) {:hp 10})]
     (seq
       (invuln (nth boss 0) 1)
       (fork
         (for [i inf :every (ticks 30)]
           ((pose c[0 0])
-            (spawn-shot (vel c[0 6]) {:damage 1})))))))
+            (shot (vel c[0 6]) {:damage 1})))))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         // boss at y=3, shots at 6/s reach it in ~60 ticks; invuln covers
@@ -1319,7 +1319,7 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern p []
-  (let [enemy (spawn-enemy (pose c[0 0]) {:style {:family :lstar}})]
+  (let [enemy (enemy (pose c[0 0]) {:style {:family :lstar}})]
     (move-to (nth enemy 0) 1.0 eoutsine c[2 0])))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
@@ -1709,12 +1709,12 @@
   (seq
     (defvar phase 1)
     (export phase)
-    (let [target (spawn-enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
+    (let [target (enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
       (bind-channel! $target-hp (value-or (:hp (nth target 0)) 0)))
-    (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
+    (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
     (wait-for (<= $target-hp 1))
     (set! phase 2)
-    (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})))
+    (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})))
 "#;
         let mut sim = Sim::load(CARD, Some("e")).unwrap();
         for _ in 0..40 {
@@ -1861,9 +1861,9 @@
 (import "touhou")
 (defpattern hunt []
   (seq
-    (spawn-enemy (pose c[2 3]) {:style {:family :dummy}})
+    (enemy (pose c[2 3]) {:style {:family :dummy}})
     (wait (ticks 1))
-    (spawn-bullet (vel p[3 (slew 720 90 (angle-of (- (live $nearest-enemy) pos)))])
+    (bullet (vel p[3 (slew 720 90 (angle-of (- (live $nearest-enemy) pos)))])
                   {:style {:family :amulet}})))
 "#;
         let mut sim = Sim::load(CARD, Some("hunt")).unwrap();
@@ -2609,7 +2609,7 @@ fn prelude_when_unless() {
     assert_eq!(sim.world.entities.len(), 2, "even iterations only");
 }
 
-/// spawn-boss owns the boss conventions: map-valued boss state is bound
+/// boss owns the boss conventions: map-valued boss state is bound
 /// for the host, the machine is held until the boss registers, `boss` is
 /// bound for the body, and phases' {:hp n} gate reads local boss hp.
 #[test]
@@ -2618,7 +2618,7 @@ fn spawn_boss_owns_conventions() {
 (import "touhou")
 (defchannel $m {:hp 0})
 (defpattern m []
-  (spawn-boss $m (pose c[0 2])
+  (boss $m (pose c[0 2])
               {:hp 3 :hitbox 0.4 :style {:family :lstar}}
     (phases
       (:one {:hp 1} (seq (event :phase-one) (wait 99))
@@ -2657,7 +2657,7 @@ fn bind_channel_closes_over_handles_and_cells() {
 (defpattern p []
   (seq
     (defvar phase :warmup)
-    (let [e (spawn-enemy (pose c[0 2]) {:hp 5})]
+    (let [e (enemy (pose c[0 2]) {:hp 5})]
       (let [b (nth e 0)]
         (bind-channel! $dummy {:hp (:hp b) :phase phase})
         (wait (ticks 2))
@@ -2691,8 +2691,8 @@ fn defchannel_derives_per_tick() {
 (defchannel $reds (count-entities {:team :enemy :color :red}))
 (defpattern p []
   (seq
-    (spawn-enemy (pose c[0 2]) {:style {:family :circle :color :red}})
-    (spawn-enemy (pose c[1 2]) {:style {:family :circle :color :blue}})
+    (enemy (pose c[0 2]) {:style {:family :circle :color :red}})
+    (enemy (pose c[1 2]) {:style {:family :circle :color :blue}})
     (wait-for (>= $reds 1))
     (spawn (pose c[0 -3]) {:marker 1})))
 "#;

@@ -181,7 +181,7 @@ work.
   libraries. Core should remain a 2D graphing + collision/rule/render-row
   engine.
 - Richer spellcard templates (:name/:type/hp bars) should be lib macros over
-  `states`, `phases`, `spawn-boss`, `finally`, and ordinary fields.
+  `states`, `phases`, `boss`, `finally`, and ordinary fields.
 - Candidate stdlib moves:
   - `for` / `dotimes`, after deciding the lib-visible wait-loop primitive
     needed for scheduler performance;

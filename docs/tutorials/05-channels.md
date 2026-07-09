@@ -30,7 +30,7 @@ Difficulty is nothing special — it's a number you multiply by
 
 ```clojure
 (for [vol inf :every (/ 2.5 $rank)]
-  (spawn-bullet (circle (* 24 $rank) (linear p[1.8 0])) {:style {:family :circle :color :red :variant :w}}))
+  (bullet (circle (* 24 $rank) (linear p[1.8 0])) {:style {:family :circle :color :red :variant :w}}))
 ```
 
 Higher rank: denser rings, faster volleys. Press T/Y/U/I and rerun. Two
@@ -61,7 +61,7 @@ entity, and reads 0 once it dies (`ex4-expose`):
 ```clojure
 (defchannel $dummy-hp 0)
 
-(spawn-enemy ((pose c[0 2.5]) (still)) { :hp 20
+(enemy ((pose c[0 2.5]) (still)) { :hp 20
         :expose {$dummy-hp :hp}
         :style {:family :lstar :color :green}
         :scale 1.5})
@@ -74,7 +74,7 @@ and other patterns react to it —
 (seq
   (wait-for (> $dummy-hp 0))          ; registered
   (wait-for (<= $dummy-hp 0))         ; destroyed
-  (spawn-bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))
+  (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))
 ```
 
 For richer state, **`(bind-channel! $name expr)`** registers an
@@ -134,7 +134,7 @@ fans track you — through the same `$player` channel your rig now
 drives.
 
 **Try it:** make `ex1`'s color depend on `$rank` (palette by
-difficulty); give `ex6`'s rig a `spawn-shot` pattern with `:damage` from
+difficulty); give `ex6`'s rig a `shot` pattern with `:damage` from
 an `(in-frame :world …)` loop); expose the
 rig's `:lives` and fire a taunt ring when it drops.
 

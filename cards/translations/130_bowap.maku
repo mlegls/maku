@@ -47,7 +47,7 @@
                    period (ticks 8)]
   ((pose c[0 2])                       ; DMK roott(1, 0, 2): lexical anchor
    (dotimes [i inf :every period]
-     (spawn-bullet ((rot m"0.2*(i+1)*(i+2)")
+     (bullet ((rot m"0.2*(i+1)*(i+2)")
              (circle arms (linear c[speed 0]))) {:style {:family :gem :variant :w
                      :color [:yellow :orange :red :pink :purple]} :hitbox 0.09}))))
 
@@ -66,7 +66,7 @@
   ((pose c[0 2])
    (loop [increment 0.4
           base      0.4]
-     (spawn-bullet ((rot base)
+     (bullet ((rot base)
              (circle arms (linear c[speed 0]))) {:style {:family :gem :variant :w
                      :color [:yellow :orange :red :pink :purple]} :hitbox 0.09})
      (wait period)
@@ -78,7 +78,7 @@
 ;; trichotomy point: dotimes (indexed iteration) vs loop/recur (explicit fold).
 
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn-bullet argument, {})
+;; Canonical desugared tree (bullet argument, {})
 ;;
 ;;   (in-frame (rot <ir angle>)                 ; whole-volley rotation
 ;;     (map (fn [p] (in-frame p (linear (cart 4 0))))

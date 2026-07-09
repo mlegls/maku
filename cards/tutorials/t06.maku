@@ -16,11 +16,11 @@
     (:red
       (fork (seq (wait 1.2) (goto)))
       (for [i inf :every (ticks 20)]
-        (spawn-bullet ((rot m"17*i") (circle 8 (linear p[1.8 0]))) {:style {:family :circle :color :red :variant :w}})))
+        (bullet ((rot m"17*i") (circle 8 (linear p[1.8 0]))) {:style {:family :circle :color :red :variant :w}})))
     (:blue
       (fork (seq (wait 1.2) (goto :red)))     ; loop back by label
       (for [i inf :every (ticks 20)]
-        (spawn-bullet ((aim $player) (fan 5 10 (linear p[2.4 0]))) {:style {:family :arrow :color :blue :variant :w}})))))
+        (bullet ((aim $player) (fan 5 10 (linear p[2.4 0]))) {:style {:family :arrow :color :blue :variant :w}})))))
 
 ;; 2. labels are VALUES, evaluated at the goto — routing can be computed.
 ;; Two attack moods walking a coin-flip Markov chain.
@@ -28,12 +28,12 @@
   (states
     (:calm
       (fork (for [i inf :every (ticks 26)]
-              (spawn-bullet (circle 6 (linear p[1.2 0])) {:style {:family :circle :color :teal :variant :w}})))
+              (bullet (circle 6 (linear p[1.2 0])) {:style {:family :circle :color :teal :variant :w}})))
       (wait 0.9)
       (goto (nth [:calm :burst] (rand-int 0 2))))
     (:burst
       (fork (for [i inf :every (ticks 9)]
-              (spawn-bullet ((rot m"25*i") (fan 7 6 (linear p[2.6 0]))) {:style {:family :star :color :orange :variant :w} :hitbox 0.09})))
+              (bullet ((rot m"25*i") (fan 7 6 (linear p[2.6 0]))) {:style {:family :star :color :orange :variant :w} :hitbox 0.09})))
       (wait 0.9)
       (goto (nth [:calm :burst] (rand-int 0 2))))))
 
@@ -44,12 +44,12 @@
   (states
     (:loose
       (fork (for [i inf :every (ticks 14)]
-              (spawn-bullet ((aim $player) (linear p[2 0])) {:style {:family :amulet :color :red}})))
+              (bullet ((aim $player) (linear p[2 0])) {:style {:family :amulet :color :red}})))
       (wait-for (> $focus-firing 0.5))
       (goto :tight))
     (:tight
       (fork (for [i inf :every (ticks 7)]
-              (spawn-bullet ((aim $player) (fan 3 4 (linear p[3 0]))) {:style {:family :gem :color :blue} :hitbox 0.09})))
+              (bullet ((aim $player) (fan 3 4 (linear p[3 0]))) {:style {:family :gem :color :blue} :hitbox 0.09})))
       (wait-for (< $focus-firing 0.5))
       (goto :loose))))
 
@@ -61,13 +61,13 @@
   (phases
     (:warmup {:timeout 1.2}
       (for [i inf :every (ticks 15)]
-        (spawn-bullet (circle 10 (linear p[1.5 0])) {:style {:family :circle :color :pink :variant :w}}))
+        (bullet (circle 10 (linear p[1.5 0])) {:style {:family :circle :color :pink :variant :w}}))
       (finally (event :warmup-done)))
     (:main
       (for [i inf :every (ticks 20)]
-        (spawn-bullet ((rot m"9*i") (circle 14 (linear p[1.8 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})))))
+        (bullet ((rot m"9*i") (circle 14 (linear p[1.8 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})))))
 
-;; 5. the full stack: spawn-boss = an enemy WITH a phase machine. The
+;; 5. the full stack: boss = an enemy WITH a phase machine. The
 ;; macro binds $tutorial-boss as a map-valued host channel, holds the
 ;; machine until the boss registers, and binds `boss`. {:hp 0} gates the last phase on the
 ;; health bar; the phase edge (field clear + mercy window) is the first
@@ -75,18 +75,18 @@
 ;; down (in the sandbox the rig fires with the mouse).
 (defpattern ex5-boss []
   (seq
-    (spawn-boss $tutorial-boss (pose c[0 2.6])
+    (boss $tutorial-boss (pose c[0 2.6])
                 {:hp 40 :hitbox 0.45
                  :style {:family :lstar :color :purple}
                  :scale 2}
       (phases
         (:opening {:timeout 2 :root c[0 2.2]}
           (for [vol inf :every (ticks 30)]
-            (spawn-bullet ((aim $player) (fan 3 14 (linear p[2.2 0]))) {:style {:family :arrow :color :red :variant :w}}))
+            (bullet ((aim $player) (fan 3 14 (linear p[2.2 0]))) {:style {:family :arrow :color :red :variant :w}}))
           (finally
             (event :spell)
             (cull)                          ; field clear at the phase edge
             (invuln (nth boss 0) 1.0)))     ; transition mercy window
         (:spell {:hp 0}
           (for [vol inf :every (ticks 24)]
-            (spawn-bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) {:style {:family :circle :color :purple}})))))))
+            (bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) {:style {:family :circle :color :purple}})))))))

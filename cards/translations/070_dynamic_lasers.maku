@@ -80,7 +80,7 @@
 ;;     for control flow (finding F11, corrected).
 ;;
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn-bullet argument {})
+;; Canonical desugared tree (bullet argument {})
 ;;
 ;;   (map (fn [p] (in-frame p
 ;;          (laser (polar (* 2 t)

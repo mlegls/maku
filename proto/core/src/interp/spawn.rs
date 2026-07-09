@@ -183,7 +183,7 @@ fn build_entity_specs(
     // Collider/render sets are explicit spawn arguments. No genre defaults —
     // an entity with no colliders is inert to the contact pass (scenery);
     // what a "bullet" or "enemy" carries is the library's business
-    // (spawn-bullet/spawn-enemy in lib/touhou.maku).
+    // (bullet/enemy in lib/touhou.maku).
     let mut explicit_colliders = collider_slots;
     let mut explicit_renderers = renderer_slots;
     if explicit_colliders.is_empty() {

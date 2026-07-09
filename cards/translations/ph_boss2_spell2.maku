@@ -95,7 +95,7 @@
               ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
               (loop [k 0, cell (rand-cell)]
                 (move-to root-main (if (= k 0) 1.6 0.7) eoutsine (grid-cell :enemy cell))
-                (spawn-bullet ((aim $player)
+                (bullet ((aim $player)
                          (map (fn [v]
                                 ((fan 5 18)                       ; centered 5-fan, 18deg
                                   (linear p[(* factor (lerp 0 2 v 4 2.4))
@@ -113,7 +113,7 @@
               ;; star burst: 4 volleys 80 ticks apart, rings of 28; radius soft-
               ;; switches from a fast to a slow curve; per-bullet random swirl
               (dotimes [v 4 :every (ticks 80)]
-                (spawn-bullet ((rot m"4*phi*v")
+                (bullet ((rot m"4*phi*v")
                          (circle 28
                            (polar m"factor * lssht(-3, 0.6, 6*t, 2*t)"
                                   m"rand(4, 8) * randpm1() * t"))) {:style {:family :star :variant :c

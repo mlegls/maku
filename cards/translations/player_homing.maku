@@ -35,7 +35,7 @@
   (dotimes [i inf :every (ticks 12)]
     (when (>= power opt)                      ; DMK clip <= powerf p
       (event :sfx "x-pc-fire-1")
-      (spawn-shot (vel p[10 (slew 60 90
+      (shot (vel p[10 (slew 60 90
                              (angle-of (- (live $nearest-enemy) pos)))]) {:style {:family :amulet :color (nth [:red :black] opt)} :damage {:hit 21 :graze 21 :on-hit :oh1-red}}))))
 
 ;; (slew rate init sig): rate-limited angle follower; `init` optional
@@ -60,7 +60,7 @@
     ;; A time-varying slew rate hitting zero freezes the heading: class (d)
     ;; reactivity that discretizes ITSELF into class (c); no stages needed.
     (dotimes [i inf :every (ticks 120)]
-      (spawn-shot (pather 0.5
+      (shot (pather 0.5
                (vel p[(lerp3 0 0.3 1.1 1.3 t 9 2 10)
                       (slew (lerp 0.8 1.5 t 120 0) 90
                             (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :gpather :color :black :variant :b}
@@ -113,7 +113,7 @@
 
 (defpattern fantasy-seal []
   (dotimes [k 6, col [:red :green :yellow :blue] :every (ticks 24)]
-    (spawn-shot (seal-orb k 4.0) {:style {:family :gglcircle :color col :variant :w}
+    (shot (seal-orb k 4.0) {:style {:family :gglcircle :color col :variant :w}
             :scale 2 :damage {:hit 900 :graze 700} :hitbox 0.20})))
 
 ;; ============================================================================

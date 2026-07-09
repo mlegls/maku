@@ -33,11 +33,11 @@ boss template:
   (:red
     (fork (seq (wait 1.2) (goto)))
     (for [i inf :every (ticks 20)]
-      (spawn-bullet ((rot m"17*i") (circle 8 (linear p[1.8 0]))) …)))
+      (bullet ((rot m"17*i") (circle 8 (linear p[1.8 0]))) …)))
   (:blue
     (fork (seq (wait 1.2) (goto :red)))
     (for [i inf :every (ticks 20)]
-      (spawn-bullet ((aim $player) (fan 5 10 (linear p[2.4 0]))) …))))
+      (bullet ((aim $player) (fan 5 10 (linear p[2.4 0]))) …))))
 ```
 
 Run `ex1-states`: rings for 1.2 seconds, then aimed fans, alternating
@@ -84,7 +84,7 @@ options over `states` (`ex4-phases`):
 
 | option | desugars to |
 |---|---|
-| `{:hp n}` | `(until (<= (hp-of boss-main) n) body)` — the local health-bar gate inside `spawn-boss` |
+| `{:hp n}` | `(until (<= (hp-of boss-main) n) body)` — the local health-bar gate inside `boss` |
 | `{:until pred}` | the same race with any predicate |
 | `{:timeout d}` | `(fork (seq (wait d) (goto)))` |
 | `{:root pos}` | `(move-to boss-main 0.9 eoutsine pos)` at the body head |
@@ -96,28 +96,28 @@ read, and the desugared output is exactly the `ex1` shapes. If your
 game means something different by "phase", you write a different macro;
 the engine has no opinion.
 
-## The template: `spawn-boss`
+## The template: `boss`
 
 A boss is an *enemy with a phase machine* — that is the entire
-difference. `spawn-boss` owns the conventions (`ex5-boss`):
+difference. `boss` owns the conventions (`ex5-boss`):
 
 ```clojure
 (defchannel $tutorial-boss {:hp 0})
 
 (seq
-  (spawn-boss $tutorial-boss (pose c[0 2.6])
+  (boss $tutorial-boss (pose c[0 2.6])
               {:hp 40 :hitbox 0.45 :style {:family :lstar :color :purple} :scale 2}
     (phases
       (:opening {:timeout 2 :root c[0 2.2]}
         (for [vol inf :every (ticks 30)]
-          (spawn-bullet ((aim $player) (fan 3 14 (linear p[2.2 0]))) …))
+          (bullet ((aim $player) (fan 3 14 (linear p[2.2 0]))) …))
         (finally
           (event :spell)
           (cull)                          ; field clear at the phase edge
           (invuln (nth boss 0) 1.0)))     ; transition mercy window
       (:spell {:hp 0}
         (for [vol inf :every (ticks 24)]
-          (spawn-bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) …))))))
+          (bullet ((rot m"11*vol") (circle 16 (linear p[1.6 0]))) …))))))
 ```
 
 The leading `move` is the legacy boss-anchor shortcut used before the

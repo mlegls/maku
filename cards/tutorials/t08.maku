@@ -20,19 +20,19 @@
       (finally
         (until (>= $tick end)
           (for [i inf :every (ticks 12)]
-            (spawn-bullet ((rot m"17*i")
+            (bullet ((rot m"17*i")
                      (circle 10 (linear p[1.6 0]))) {:style {:family :triangle :color :red :variant :w}})))
         (cull)
         (event :stage-section-clear)))
     (bind-channel! $stage {:section :after-clear})
     (for [i inf :every (ticks 30)]
-      (spawn-bullet ((aim $player) (fan 5 9 (linear p[2.2 0]))) {:style {:family :arrow :color :blue :variant :w}}))))
+      (bullet ((aim $player) (fan 5 9 (linear p[2.2 0]))) {:style {:family :arrow :color :blue :variant :w}}))))
 
 ;; Stage scripts usually summon enemies, and the enemies run their own
 ;; little timelines. Handles replace DMK's summoned BehaviorEntity IDs.
 (defpattern ex2-fairy-wave []
   (let [fairies
-        (spawn-enemy
+        (enemy
           (map (fn [k]
                  ((pose c[(+ -3.5 (* 1.4 k)) 5])
                    (stages
@@ -48,7 +48,7 @@
           (wait 1.0)
           (for [v 4 :every (ticks 24)]
             ((pose (pos e))
-              (spawn-bullet ((aim $player)
+              (bullet ((aim $player)
                        (fan 3 12 (linear p[(+ 1.5 (* 0.25 v)) 0]))) {:style {:family :amulet :color :red :variant :w}})))
           (cull e))))))
 
@@ -57,12 +57,12 @@
 ;; run, and a card can embed one directly.
 (defpattern ex3-midboss []
   (seq
-    (spawn-boss $stage-boss (pose c[0 2.4])
+    (boss $stage-boss (pose c[0 2.4])
                 {:hp 30 :hitbox 0.45 :style {:family :lstar :color :purple} :scale 1.8}
       (phases
         (:midboss {:timeout 3 :root c[0 2.1]}
           (for [i inf :every (ticks 18)]
-            (spawn-bullet ((rot m"13*i")
+            (bullet ((rot m"13*i")
                      (circle 14 (linear p[1.7 0]))) {:style {:family :circle :color :purple :variant :w}}))
           (finally
             (cull)
@@ -82,7 +82,7 @@
     (wait 0.8)
     (bind-channel! $stage {:section :resume})
     (for [i inf :every (ticks 20)]
-      (spawn-bullet ((rot m"25*i") (fan 7 8 (linear p[2 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09}))))
+      (bullet ((rot m"25*i") (fan 7 8 (linear p[2 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09}))))
 
 ;; A compact whole-stage script: announce, fairy wave, midboss, deannounce.
 ;; A campaign host would run this pattern as one stage in a stage list.
@@ -95,4 +95,4 @@
     (ex3-midboss)
     (event :stage-end)
     (for [i inf :every (ticks 16)]
-      (spawn-bullet ((rot m"9*i") (circle 18 (linear p[1.8 0]))) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))
+      (bullet ((rot m"9*i") (circle 18 (linear p[1.8 0]))) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))

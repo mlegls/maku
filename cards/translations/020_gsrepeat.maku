@@ -34,14 +34,14 @@
     (par                                    ; DMK roott animates the boss entity;
       (seq                                  ; the pattern only anchors.
         (event :sfx "x-fire-burst-1")
-        (spawn-bullet (circle 14 (linear c[2 0])) {:style {:family :scircle :color :blue :variant :b}}))
+        (bullet (circle 14 (linear c[2 0])) {:style {:family :scircle :color :blue :variant :b}}))
       (seq
         (wait 1.0)
         (event :sfx "x-fire-burst-2")
-        (spawn-bullet (circle 10 (linear c[3 0])) {:style {:family :scircle :color :red :variant :w}})))))
+        (bullet (circle 10 (linear c[3 0])) {:style {:family :scircle :color :red :variant :w}})))))
 
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn-bullet argument, {})
+;; Canonical desugared tree (bullet argument, {})
 ;;
 ;; (circle 14 <child>) is trailing-child sugar; ((pose ...) <actions>) is an
 ;; applicable frame. Both desugar to in-frame. Each pose in (circle 14)

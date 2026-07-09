@@ -47,11 +47,11 @@
       (dotimes [vol inf, col [:red :green :blue] :every volley-gap]
         (fork
           (dotimes [shot 8 :every shot-gap]
-            (spawn-bullet ((rot m"120*vol + shot*40/7")
+            (bullet ((rot m"120*vol + shot*40/7")
                      (linear c[m"2 + 0.3*shot" 0])) {:style {:family :arrow :color col :variant :w}})))))))
 
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn-bullet argument, {})
+;; Canonical desugared tree (bullet argument, {})
 ;;
 ;;   (in-frame (pose (cart 0 1))
 ;;     (in-frame (rot 90)

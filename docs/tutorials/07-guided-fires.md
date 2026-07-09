@@ -20,7 +20,7 @@ faster, the seventh is offset further. Whenever you create multiplicity
 with `map` over `iota`, the index is simply in scope (`ex1-index`):
 
 ```clojure
-(spawn-bullet ((aim $player)
+(bullet ((aim $player)
          (map (fn [k] ((rot (- (* 6 k) 27))
                         (linear p[(+ 2 (* 0.2 k)) 0])))
               (iota 10))) …)
@@ -118,7 +118,7 @@ the shared instance (`ex5-rig`):
                   :team :scenery})
     (in-frame guide
       (for [i inf :every 0.7]
-        (spawn-bullet ((aim $player) (fan 3 10 (linear p[2.5 0]))) …)))))
+        (bullet ((aim $player) (fan 3 10 (linear p[2.5 0]))) …)))))
 ```
 
 The launcher decelerates along its 45° line; the star rides it visibly

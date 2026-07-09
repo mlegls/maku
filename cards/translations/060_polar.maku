@@ -48,7 +48,7 @@
               vrt [:c :b]
               :every period]
       (event :sfx "x-fire-burst-1")
-      (spawn-bullet (circle 15 (polar m"2*t" m"lr*20*t")) {:style {:family :sakura :color col :variant vrt}}))))
+      (bullet (circle 15 (polar m"2*t" m"lr*20*t")) {:style {:family :sakura :color col :variant vrt}}))))
 
 ;; Every DMK modifier in this script became a seq binding:
 ;;   colorf(xs, i/2) -> col (stutter 2 xs)     (SC Pstutter; streams compose)
@@ -56,7 +56,7 @@
 ;;   colorf(vs, pi)  -> vrt [:c :b]            (parent-index = outer loop binding)
 ;;
 ;; ---------------------------------------------------------------------------
-;; Canonical desugared tree (spawn-bullet argument {})
+;; Canonical desugared tree (bullet argument {})
 ;;
 ;;   (in-frame (pose (cart 0 1.5))
 ;;     (map (fn [p] (in-frame p

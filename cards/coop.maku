@@ -49,7 +49,7 @@
   (seq
     (wait (ticks 2))            ; rigs register their derived channels first
     (for [i inf :every (ticks 9)]
-      (spawn-shot (in-frame (nth [$player-1 $player-2] (dec k))
+      (shot (in-frame (nth [$player-1 $player-2] (dec k))
                (vel p[10 (slew 70 90
                              (angle-of (- (live (nth [$nearest-enemy-1 $nearest-enemy-2]
                                                      (dec k)))
@@ -57,11 +57,11 @@
 
 (defpattern drones []
   (for [i inf :every 2.5]
-    (spawn-enemy (in-frame c[(rand -4 4) 4.4] (vel c[0 -0.5])) {:style {:family :gglcircle :color :green} :hp 3 :hitbox 0.3})))
+    (enemy (in-frame c[(rand -4 4) 4.4] (vel c[0 -0.5])) {:style {:family :gglcircle :color :green} :hp 3 :hitbox 0.3})))
 
 (defpattern spray []
   (seq
     (wait 0.5)
     (for [vol inf :every (ticks 30)]
-      (spawn-bullet (in-frame (pose c[0 3.2])
+      (bullet (in-frame (pose c[0 3.2])
                ((aim $nearest-pilot) (fan 5 22 (linear p[2.6 0])))) {:style {:family :circle :color :red}}))))

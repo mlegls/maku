@@ -8,7 +8,7 @@
 ;; with drifting hue.
 (import "touhou")
 (defpattern ex1-pathers []
-  (spawn-bullet ((rot m"120 * iota(3)")
+  (bullet ((rot m"120 * iota(3)")
            (pather 1.2 (cart m"1.2 * t" m"sine(1, 0.35, t)"))) {:style {:family :pather :color [:red :teal :purple] :variant :w}
           :hue m"60 * t"}))
 
@@ -44,11 +44,11 @@
 (defpattern ex4-tip-fire []
   (let [guide (cart m"1.4 * t" m"sine(1.1, 0.3, t)")]
     (par
-      (spawn-bullet (pather 1.5 guide) {:style {:family :lightning :color :blue :variant :w}})
+      (bullet (pather 1.5 guide) {:style {:family :lightning :color :blue :variant :w}})
       (in-frame guide
         (fork
           (for [i 40 :every (ticks 10)]
-            (spawn-bullet ((rot 180) (linear p[2 0])) {:style {:family :amulet :color :pink :variant :b}})))))))
+            (bullet ((rot 180) (linear p[2 0])) {:style {:family :amulet :color :pink :variant :b}})))))))
 
 ;; 5. subfiring along a laser: (on-laser h u) gives the pose (position +
 ;; tangent) at distance u along a live laser; (rot 90) fires normal to it.
@@ -59,7 +59,7 @@
     (for [i 44 :every (ticks 8)]
       ((pose (on-laser (nth h 0) m"0.07 * i"))
         ((rot 90)
-          (spawn-bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))))
+          (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))))
 
 ;; 6. slow lasers: :fill is a swept-fraction signal; fill-linear is the
 ;; ordinary source→tip helper. The full path stays telegraphed (dim) while
@@ -75,7 +75,7 @@
 ;; Ring → each becomes a laser → each laser fires perpendicular shots →
 ;; each shot explodes by parity of its index.
 (defpattern ex7-lifecycle []
-  (let [ring (spawn-bullet (circle 12 (linear p[1.5 0])) {:style {:family :circle :color :red :variant :w}})]
+  (let [ring (bullet (circle 12 (linear p[1.5 0])) {:style {:family :circle :color :red :variant :w}})]
     (for [b ring]
       (fork
         (seq
@@ -88,7 +88,7 @@
                                (curve {:u-max 2.5 :width 0.5}))) {:warn 0.3 :active 2 :style {:family :gdlaser :color :purple}})]
                 (seq
                   (wait 0.8)
-                  (let [shots (spawn-bullet (map (fn [k]
+                  (let [shots (bullet (map (fn [k]
                                             ((pose (on-laser (nth l 0) (* 0.5 k)))
                                               ((rot 90) (linear p[1 0]))))
                                           (iota 5)) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})]
@@ -99,7 +99,7 @@
                       (for [s shots, k (iota 5)]
                         (seq
                           ((pose (pos s))
-                            (spawn-bullet (nth [(circle 8 (linear p[2 0]))
+                            (bullet (nth [(circle 8 (linear p[2 0]))
                                          (fan 6 20 (linear p[2.5 0]))]
                                         k) {:style {:family :gem
                                             :color (nth [:teal :pink] k)

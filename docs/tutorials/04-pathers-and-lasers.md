@@ -18,7 +18,7 @@ been and draws a ribbon through the last `window` seconds of it
 (`ex1-pathers`):
 
 ```clojure
-(spawn-bullet ((rot m"120 * iota(3)")
+(bullet ((rot m"120 * iota(3)")
          (pather 1.2 (cart m"1.2 * t" m"sine(1, 0.35, t)"))) {:style {:family :pather :color [:red :teal :purple] :variant :w}
         :hue m"60 * t"})
 ```
@@ -39,7 +39,7 @@ harmless) and an **active** phase (hot). `:u-max` is its length
 (`ex2-lasers`):
 
 ```clojure
-(spawn-bullet ((pose c[-2 3]) ((rot -90) (laser {:warn 1 :active 2 :u-max 7}))) {:style {:family :laser :color :red}})
+(bullet ((pose c[-2 3]) ((rot -90) (laser {:warn 1 :active 2 :u-max 7}))) {:style {:family :laser :color :red}})
 ```
 
 By default a laser points along its frame's +x, so aiming is ordinary
@@ -105,11 +105,11 @@ twice — once to draw the ribbon, once as a frame for the firing loop
 ```clojure
 (let [guide (cart m"1.4 * t" m"sine(1.1, 0.3, t)")]
   (par
-    (spawn-bullet (pather 1.5 guide) {:style {:family :lightning :color :blue :variant :w}})
+    (bullet (pather 1.5 guide) {:style {:family :lightning :color :blue :variant :w}})
     (in-frame guide
       (fork
         (for [i 40 :every (ticks 10)]
-          (spawn-bullet ((rot 180) (linear p[2 0])) {:style {:family :amulet :color :pink :variant :b}}))))))
+          (bullet ((rot 180) (linear p[2 0])) {:style {:family :amulet :color :pink :variant :b}}))))))
 ```
 
 The `let` matters: both uses share *one* instance of the guide, so the
@@ -123,16 +123,16 @@ the point at distance `u` along a live laser. Firing normal to the beam
 is the tangent plus 90° (`ex5-on-laser`):
 
 ```clojure
-(let [h (spawn-bullet ((pose c[-2.5 -2])
+(let [h (bullet ((pose c[-2.5 -2])
                  (laser (polar m"1.8 * u" m"-15 * t + sine(2.8, 40, u + t)")
                         {:warn 0.5 :active 5 :u-max 3 :width 0.6})) {:style {:family :gdlaser :color :red}})]
   (for [i 44 :every (ticks 8)]
     ((pose (on-laser (nth h 0) m"0.07 * i"))
       ((rot 90)
-        (spawn-bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09})))))
+        (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09})))))
 ```
 
-`spawn-bullet` returns handles; the loop walks `u` outward each volley, so the
+`bullet` returns handles; the loop walks `u` outward each volley, so the
 gems peel off the beam from base to tip — and because the pose is sampled
 live, they track the writhing curve.
 
@@ -146,7 +146,7 @@ returning the pose (with tangent) at that point —
 ```clojure
 (let [curve (polar m"1.8 * u" m"sine(2.8, 40, u + t)")]
   ((pose (sample curve 0.5 0.7))    ; a point on the curve, no laser
-    ((rot 90) (spawn-bullet (linear p[1.5 0]) {}))))
+    ((rot 90) (bullet (linear p[1.5 0]) {}))))
 ```
 
 `on-laser` is the entity-clocked convenience: the live laser's own age

@@ -13,7 +13,7 @@
 (import "touhou")
 (defpattern ex1-restyle []
   (for [vol inf :every (ticks 45)]
-    (let [ring (spawn-bullet (circle 12 (linear p[1.2 0])) {:style {:family :circle :color :blue :variant :w}})]
+    (let [ring (bullet (circle 12 (linear p[1.2 0])) {:style {:family :circle :color :blue :variant :w}})]
       (for [b ring]
         (fork
           (seq
@@ -26,13 +26,13 @@
 ;; the rest of the timeline a harmless no-op.
 (defpattern ex2-burst []
   (for [vol inf :every (ticks 70)]
-    (let [stars (spawn-bullet (circle 6 (linear p[1.5 0])) {:style {:family :star :color :teal :variant :w} :hitbox 0.09})]
+    (let [stars (bullet (circle 6 (linear p[1.5 0])) {:style {:family :star :color :teal :variant :w} :hitbox 0.09})]
       (for [s stars]
         (fork
           (seq
             (wait 1.2)
             ((pose (pos s))
-              (spawn-bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w} :hitbox 0.09}))
+              (bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w} :hitbox 0.09}))
             (cull s)))))))
 
 ;; --- queries: the general tool ----------------------------------------
@@ -49,7 +49,7 @@
                 :where (fn [b] (* (> b.pos.y 3) (> b.vel.y 0)))}
           (fn [b] (remat b (linear c[b.vel.x (- 0 b.vel.y)]))))))
     (for [vol inf :every (ticks 50)]
-      (spawn-bullet (circle 24 (linear p[2.5 0])) {:style {:family :circle :color :red :variant :w}}))))
+      (bullet (circle 24 (linear p[2.5 0])) {:style {:family :circle :color :red :variant :w}}))))
 
 ;; 4. selection across styles: two families × two colors spray; one
 ;; control culls only {circle, star} × {red, blue} that fall below
@@ -63,6 +63,6 @@
                 :where (fn [b] (< b.pos.y -2))}
           (fn [b] (cull b)))))
     (for [vol inf :every (ticks 40)]
-      (spawn-bullet (circle 16 (linear p[2 0])) {:style {:family (nth [:circle :star] vol)
+      (bullet (circle 16 (linear p[2 0])) {:style {:family (nth [:circle :star] vol)
                       :color [:red :blue :green]
                       :variant :w}}))))

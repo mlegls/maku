@@ -133,7 +133,7 @@
                                   (> e.t (+ (value-or e.warn 0)
                                             (value-or e.active inf))))))))
 
-(defmacro spawn-bullet [dyn & metas]
+(defmacro bullet [dyn & metas]
   `(spawn ~dyn
           bullet-collider
           (renderers) ; drawn by the sprite rule, not projector rows
@@ -141,6 +141,7 @@
            :damage ~(damage-value* metas 1)
            :hitbox ~(primary-hitbox-radius* metas 0.12)}
           ~@metas))
+(defmacro spawn-bullet [dyn & metas] `(bullet ~dyn ~@metas))
 
 ;; hostile beam spawn: the laser-ness (colliders, beam look, lifecycle
 ;; fields) lives at the spawn boundary; the figure inside is a plain curve.
@@ -163,22 +164,24 @@
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
-(defmacro spawn-shot [dyn & metas]
+(defmacro shot [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
           (renderers)
           {:render :touhou-sprite
            :team :player :damage ~(damage-value* metas 1)}
           ~@metas))
+(defmacro spawn-shot [dyn & metas] `(shot ~dyn ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
-(defmacro spawn-enemy [dyn & metas]
+(defmacro enemy [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
           (renderers)
           {:render :touhou-sprite
            :team :enemy :hp 1}
           ~@metas))
+(defmacro spawn-enemy [dyn & metas] `(enemy ~dyn ~@metas))
 
 ;; a col read that defaults when the column is absent
 (defn col-or [x d] (value-or x d))
@@ -193,14 +196,15 @@
 ;;     are bound for the machine body
 ;; Meta supplies :hp/:hitbox/:style as usual. Gate phases with
 ;; {:hp n} (below), which reads boss-main's local hp.
-(defmacro spawn-boss [chan dyn meta & machine]
-  `(let [boss (spawn-enemy ~dyn ~meta)]
+(defmacro boss [chan dyn meta & machine]
+  `(let [boss (enemy ~dyn ~meta)]
      (let [boss-main (nth boss 0)]
        (seq
          (bind-channel! ~chan {:hp (hp-of boss-main)
                                :pos (:pos boss-main)})
          (wait-for (> (hp-of boss-main) 0))
          ~@machine))))
+(defmacro spawn-boss [chan dyn meta & machine] `(boss ~chan ~dyn ~meta ~@machine))
 
 ;; ---------------------------------------------------------------------
 ;; Contacts are card code. The engine now detects overlaps between opaque
@@ -242,7 +246,7 @@
 ;; player: a piloted Touhou hurtbox. This owns the DMK-like player
 ;; convention, but only as library code: a different game can shadow this
 ;; macro or bind $player itself.
-(defmacro spawn-player [dyn & metas]
+(defmacro player [dyn & metas]
   `(let [player (spawn ~dyn
                        (circle-collider {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
                        (renderers)
@@ -253,6 +257,7 @@
      (let [player-main (nth player 0)]
        (seq
          (bind-channel! $player (:pos player-main))))))
+(defmacro spawn-player [dyn & metas] `(player ~dyn ~@metas))
 
 (defn touhou-player-motion [speed focus_speed]
   (clamp c[-3.8 -4.4] c[3.8 4.4]
@@ -264,7 +269,7 @@
                         bombs 3
                         speed 4.5
                         focus-speed 1.8]
-  (spawn-player (touhou-player-motion speed focus-speed)
+  (player (touhou-player-motion speed focus-speed)
                 {:lives lives :bombs bombs}))
 
 ;; shot damage: the shot dies either way (absorbed during the target's mercy

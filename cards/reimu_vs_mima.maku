@@ -14,7 +14,7 @@
 ;;   desugars to a local boss-hp gate: its cancellation kills the
 ;;   phase's whole task subtree (turret forks, guide loops) the tick it
 ;;   holds, and the finally block is the phase-edge bookkeeping (field
-;;   clear, transition mercy window). spawn-boss publishes $mima and
+;;   clear, transition mercy window). boss publishes $mima and
 ;;   holds the machine until the boss registers.
 ;;
 ;;   sides: boss patterns anchor at the boss (root ambient = the move
@@ -40,7 +40,7 @@
 ;; the piloted rig: position = integral of the raw axes, clamped to the
 ;; field; focus slows. Reimu uses a smaller hitbox than the stock rig.
 (defpattern rig []
-  (spawn-player (touhou-player-motion 4.5 1.8)
+  (player (touhou-player-motion 4.5 1.8)
                 {:hitbox 0.05}))
 
 ;; focus switches the fire mode (player_homing's A/B split): homing
@@ -49,11 +49,11 @@
   (for [i inf :every (ticks 8)]
     (when (> (:hp $mima) 0)
       (when (< $focus-firing 0.5)
-        (spawn-shot (in-frame $player
+        (shot (in-frame $player
                  (vel p[10 (slew 60 90
                                 (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :amulet :color :red} :damage 1}))
       (when (> $focus-firing 0.5)
-        (spawn-shot (in-frame $player
+        (shot (in-frame $player
                  ([c[-0.25 0] c[0.25 0]] ((rot 90) (linear c[13 0])))) {:style {:family :gem :color :blue} :damage 1 :hitbox 0.09})))))
 
 ;; bombs: raw $bomb button, stock as fold state, cooldown as debounce.
@@ -71,7 +71,7 @@
 
 (defpattern seal []
   (for [k 6 :every (ticks 6)]
-    (spawn-shot (seal-orb k 1.2) {:style {:family :gglcircle
+    (shot (seal-orb k 1.2) {:style {:family :gglcircle
                     :color (nth [:red :green :yellow :blue] k)
                     :variant :w}
             :scale 2 :damage 8 :hitbox 0.20})))
@@ -81,9 +81,9 @@
 
 (defpattern mima []
   (seq
-    ;; spawn-boss owns the boss conventions: $mima bound for host state,
+    ;; boss owns the boss conventions: $mima bound for host state,
     ;; machine held until the boss registers, `boss` handles bound.
-    (spawn-boss $mima (pose c[0 2.6])
+    (boss $mima (pose c[0 2.6])
                 {:hp 100 :hitbox 0.45
                   :style {:family :lstar :color :purple}
                   :scale 2}
@@ -101,8 +101,8 @@
 (defpattern nonspell []
   (for [vol inf :every (ticks 46)]
     (seq
-      (spawn-bullet ((aim $player)
+      (bullet ((aim $player)
                (fan 5 16 (linear p[(* factor 2.6) 0]))) {:style {:family :circle :color :purple}})
       (when (= (mod vol 3) 0)
-        (spawn-bullet ((rot m"13*vol")
+        (bullet ((rot m"13*vol")
                  (circle 20 (linear p[(* factor 1.3) 0]))) {:style {:family :circle :color :pink}})))))
