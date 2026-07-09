@@ -252,6 +252,12 @@ functions directly, with dynamic data evaluated through figure, meta, and
 context fields per tick; literal colliders are emitted by extraction rather
 than returned as ordinary `.maku` values.
 
+`Meta` itself is a flat typed record of primitive atoms. Source maps and lists
+are still ordinary values for macros, option records, and reserved spawn
+directives, but retained entity meta does not store arbitrary structures or
+allocate cold per-entity records. Namespace hygiene is handled by field naming
+or adapters that map one flat field convention to another.
+
 Two projector output cases must classify differently:
 
 - static projector shape with dynamic meta reads, e.g. one bullet circle whose
@@ -315,9 +321,8 @@ to lowering, not to an opaque map-returning closure.
 Projectors intentionally share the entity meta namespace. That lets hit,
 graze, render, query, and host-exposed behavior agree on fields such as
 `:radius`, `:style`, or `:scale`. To avoid collisions when importing
-projectors from another library, authors can either store a subrecord in meta
-and evaluate the projector under that sub-environment, or use a namespace
-adapter that rebinds names in the meta environment seen by the projector.
+projectors from another library, authors can wrap the projector with an adapter
+that rebinds flat names in the meta environment seen by the projector.
 Colliders themselves do not have author-visible fields in this model; operators
 compose or adapt opaque projector values.
 

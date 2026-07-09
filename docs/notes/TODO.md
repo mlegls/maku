@@ -140,6 +140,10 @@ work.
 - Source-level entity fields should be finite, flat, interned fields. Storage
   may distinguish builtin pose/state from user fields, but source should not
   expose separate arbitrary `cols` and `meta` concepts.
+- Retained entity meta is flat primitive fields only. Do not add map/list
+  storage or cold per-entity structure interning without a specific measured
+  need; use source-level maps for macros/options and flat field adapters for
+  namespace conflicts.
 - Runtime metadata target:
   ```text
   nums    : NumFieldId    x entity_row -> f64

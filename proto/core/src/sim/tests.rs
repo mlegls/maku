@@ -2421,6 +2421,29 @@ fn keyword_metadata_fields_query_and_access() {
 }
 
 #[test]
+fn structured_meta_is_not_retained_as_entity_fields() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (pose c[0 0])
+         {:team :enemy
+          :radius 0.2
+          :collision {:radius 0.3}
+          :tags [:a :b]}))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    assert_eq!(sim.world.col_get_at(0, "radius"), Some(0.2));
+    assert_eq!(sim.world.col_get_at(0, "collision"), None);
+    assert_eq!(sim.world.col_get_at(0, "tags"), None);
+    let collision = sim.world.symbols.lookup("collision");
+    assert!(
+        collision
+            .and_then(|field| sim.world.sym_field_value_at(0, field))
+            .is_none()
+    );
+}
+
+#[test]
 fn entity_rows_do_not_shift_after_cull() {
     const CARD: &str = r#"
 (defchannel $enemy-rows (entities-where (matches :team :enemy)))

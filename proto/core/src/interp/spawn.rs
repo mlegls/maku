@@ -33,6 +33,14 @@ fn is_reserved_sym_field_key(key: &str) -> bool {
     RESERVED_KW_FIELD_KEYS.contains(&key)
 }
 
+fn is_numeric_field_value(v: &Val) -> bool {
+    match v {
+        Val::Num(_) => true,
+        Val::Arr(items) => items.iter().all(is_numeric_field_value),
+        _ => false,
+    }
+}
+
 pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
     let mut out = Vec::new();
     // several meta maps merge per-key, later wins: the LAST map carrying
@@ -206,8 +214,8 @@ fn build_entity_specs(
     };
     if let Val::Map(kvs) = meta_value {
         for (k, v) in kvs.iter() {
-            if let (Val::Kw(k), v @ (Val::Num(_) | Val::Arr(_))) = (k, v) {
-                if !is_reserved_sym_field_key(k.as_ref()) {
+            if let Val::Kw(k) = k {
+                if !is_reserved_sym_field_key(k.as_ref()) && is_numeric_field_value(v) {
                     push_col(&mut cols, k.as_ref().into(), v.clone());
                 }
             }
