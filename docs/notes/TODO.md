@@ -37,22 +37,27 @@ work.
   extend dense schemas at runtime when a lazy segment is first constructed.
 - Move remaining gameplay-domain behavior out of core:
   - bare hostile `(cull)`;
-  - Touhou concepts such as bullet/shot/enemy/player/boss/laser;
-  - style family/color/variant defaults and family->sprite assumptions.
+  - Touhou concepts such as bullet/shot/enemy/player/boss/laser.
+  Core no longer knows style axes; the remaining family->color/radius
+  tables are stock host policy in `host.rs` (see the renderer item).
 - Move the Rust-side `laser` bridge into library code. Core should only expose
   figure construction plus collider/render projectors.
 - Represent fill/warning/hot phases as dyn collider/render slots returning
   different data over time, not laser-specific lifecycle shortcuts.
-- Continue renderer migration from the transitional `defrenderer`/fallback
-  bridge toward tick/render rules over ordinary finite fields. `:hue`,
-  `:scale`, `:facing`, and `:opacity` are now ordinary fields, including dyn
-  numeric fields, and primitive `(render ...)` can emit current-tick point
-  and explicit polyline rows. Remaining work is to remove the old
-  render-projector/Style coupling and make render rows fully open
-  schema-checked host-facing data.
-- Generalize `Style` from hardcoded family/color/variant Rust fields to a
-  small interned opaque map/record. Touhou/host config should own the visual
-  vocabulary.
+- Continue renderer migration toward the §7 target surface. The Rust-side
+  `Style`/`RenderItem` bridge is gone: hosts consume `RenderRow` values
+  (structural point/polyline geometry plus open keyed num/sym fields checked
+  against an accreted per-world schema), style axes are ordinary sym fields
+  flattened from the `:style` spawn map, the stock sprite row is a lib
+  deftick rule, and the default dot is a spawn-injected `{:shape :point}`
+  spec (trace-backed elements carry it per-element). Remaining work:
+  per-kind registered row schemas with manifest negotiation (the current
+  schema is one global key->kind map), `defrenderer` bodies returning
+  schema-checked row maps directly instead of point/polyline slot specs,
+  the builtin field rename/pick adapter, and a mesh/sprite-batch kind.
+  Host palette tables (`style_rgb`, `dot_radius`) remain stock host policy
+  in `host.rs`; move them behind host/profile config when a second
+  frontend needs different vocabulary.
 - Compile dyn evaluation to a flat program with fixed scratch storage. The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
@@ -112,12 +117,14 @@ work.
   mesh rendering without changing source semantics.
 - Raw collider rows are boundary data emitted by extraction, not normal entity
   slots. Source code should construct opaque collider projector values through
-  builtin primitive constructors and combinators. Render rows should be open
-  schema-checked host-facing data constructed by render/tick code; entity
-  count and render-row count are separate capacities. One entity may emit zero,
-  one, or many rows, and non-entity systems may emit rows too. Render schemas
-  merge by key with exact type compatibility, and imported conflicting schemas
-  should be adapted by a builtin field rename/pick operator.
+  builtin primitive constructors and combinators. Render rows are now open
+  schema-checked host-facing data constructed by render/tick code and slot
+  extraction; entity count and render-row count are separate capacities. One
+  entity may emit zero, one, or many rows, and non-entity systems may emit
+  rows too. Render schemas merge by key with exact type compatibility
+  (implemented as one accreted key->kind map; per-kind schemas are future
+  work), and imported conflicting schemas should be adapted by a builtin
+  field rename/pick operator (unimplemented).
 - `defcollider` should become `defn` plus an expected return type
   `ColliderProjector<F> | [ColliderProjector<F>]`. Constructor argument records
   have known shape; their values are concrete typed expressions over the typed
