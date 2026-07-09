@@ -97,6 +97,7 @@
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
           bullet-collider
+          (renderers) ; drawn by the sprite rule, not projector rows
           {:render :touhou-sprite
            :damage ~(damage-value* metas 1)
            :hitbox ~(primary-hitbox-radius* metas 0.12)}
@@ -106,6 +107,7 @@
 (defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
+          (renderers)
           {:render :touhou-sprite
            :team :player :damage ~(damage-value* metas 1)}
           ~@metas))
@@ -114,6 +116,7 @@
 (defmacro spawn-enemy [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
+          (renderers)
           {:render :touhou-sprite
            :team :enemy :hp 1}
           ~@metas))
@@ -183,6 +186,7 @@
 (defmacro spawn-player [dyn & metas]
   `(let [player (spawn ~dyn
                        (circle-collider {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
+                       (renderers)
                        {:render :touhou-sprite
                         :team :player-body
                         :lives 3 :bombs 3 :graze 0 :hits 0}

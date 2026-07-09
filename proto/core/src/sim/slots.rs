@@ -405,31 +405,45 @@ pub fn eval_render_slot_into(
     slot: &DynRender,
     tau: f64,
     sig: &SigEnv,
+    pose: Option<Pose>,
+    trace: &[Pose],
+    traced: bool,
     out: &mut Vec<RenderData>,
 ) {
     match slot.repr() {
         RenderDynRepr::Point(projection) => {
             let state = MotionState::new();
-            let Ok(pose) = dyn_figure_pose(dyn_figure, tau, &state, sig) else {
-                out.push(RenderData::None);
-                return;
-            };
-            let scale = eval_dyn(&projection.scale, tau, &state, sig).unwrap_or(1.0);
-            let alpha = eval_dyn(&projection.opacity, tau, &state, sig).unwrap_or(1.0);
-            let hue = eval_dyn(&projection.hue, tau, &state, sig).unwrap_or(0.0);
-            let theta = projection
-                .facing
-                .as_ref()
-                .and_then(|d| eval_dyn(d, tau, &state, sig).ok())
-                .unwrap_or_else(|| pose.angle_or(0.0));
-            out.push(RenderData::Point {
-                x: pose.x,
-                y: pose.y,
-                theta,
-                scale,
-                alpha,
-                hue,
-            });
+            match dyn_figure.repr() {
+                FigureDynRepr::Curve { .. } => out.push(RenderData::None),
+                FigureDynRepr::Pose(_) if traced && trace.len() >= 2 => {
+                    out.push(RenderData::Polyline {
+                        points: trace.iter().map(|p| (p.x, p.y)).collect(),
+                        active: true,
+                    });
+                }
+                FigureDynRepr::Pose(_) => {
+                    let Some(pose) = pose else {
+                        out.push(RenderData::None);
+                        return;
+                    };
+                    let scale = eval_dyn(&projection.scale, tau, &state, sig).unwrap_or(1.0);
+                    let alpha = eval_dyn(&projection.opacity, tau, &state, sig).unwrap_or(1.0);
+                    let hue = eval_dyn(&projection.hue, tau, &state, sig).unwrap_or(0.0);
+                    let theta = projection
+                        .facing
+                        .as_ref()
+                        .and_then(|d| eval_dyn(d, tau, &state, sig).ok())
+                        .unwrap_or_else(|| pose.angle_or(0.0));
+                    out.push(RenderData::Point {
+                        x: pose.x,
+                        y: pose.y,
+                        theta,
+                        scale,
+                        alpha,
+                        hue,
+                    });
+                }
+            }
         }
         RenderDynRepr::Polyline(projection) => {
             let hot = hot_frac(&projection.activity, tau, sig);
@@ -459,6 +473,9 @@ pub fn eval_render_list_into(
     sig: &SigEnv,
     e_view: Option<&Val>,
     ctx_view: Option<&Val>,
+    pose: Option<Pose>,
+    trace: &[Pose],
+    traced: bool,
     slots: &mut Vec<DynRender>,
     out: &mut Vec<RenderData>,
 ) {
@@ -468,6 +485,6 @@ pub fn eval_render_list_into(
         return;
     }
     for slot in slots.iter() {
-        eval_render_slot_into(dyn_figure, slot, tau, sig, out);
+        eval_render_slot_into(dyn_figure, slot, tau, sig, pose, trace, traced, out);
     }
 }

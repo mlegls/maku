@@ -190,7 +190,7 @@ fn build_entity_specs(
         explicit_colliders.push(ColliderProjectorValue::empty());
     }
     if explicit_renderers.is_empty() {
-        explicit_renderers.push(RendererProjectorSpec::empty());
+        explicit_renderers.push(stock_point_renderer_spec());
     }
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(ColName, f64)>> = elems
@@ -265,6 +265,15 @@ fn dynlike_kw_atom(name: &str) -> DynLike {
 
 fn dynlike_num(n: f64) -> DynLike {
     DynLike::Atom(DataAtom::Num(n))
+}
+
+/// The stock point renderer — what `(renderers {:shape :point})` builds.
+/// Injected when a spawn passes no renderer argument, and carried by
+/// trace-backed elements.
+fn stock_point_renderer_spec() -> RendererProjectorSpec {
+    RendererProjectorSpec::checked(DynLike::List(
+        vec![dynlike_map(vec![("shape", dynlike_kw_atom("point"))])].into(),
+    ))
 }
 
 fn dynlike_map(pairs: Vec<(&str, DynLike)>) -> DynLike {
@@ -354,7 +363,10 @@ pub(crate) fn flatten_elems(
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
                     ColliderProjectorValue::empty(),
-                    RendererProjectorSpec::empty(),
+                    // a traced pather draws through its point slot (which
+                    // renders the trace), like parametric elements carry
+                    // their polyline spec
+                    stock_point_renderer_spec(),
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },

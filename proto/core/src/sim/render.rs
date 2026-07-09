@@ -87,97 +87,36 @@ impl Sim {
                 scratch.push_empty();
                 continue;
             };
-            if !self.world.render_rows.is_empty()
-                && matches!(dyn_figure.repr(), FigureDynRepr::Pose(_))
-                && self.world.sym_field_matches_at(i, "render", "touhou-sprite")
-            {
-                scratch.push_empty();
-                continue;
-            }
+            let syms = Sim::stock_style_syms(&mut self.world, i);
             let tau = self.world.entities.tau(i, self.world.tick);
-            match dyn_figure.repr() {
-                FigureDynRepr::Pose(_) => {
-                    let syms = Sim::stock_style_syms(&mut self.world, i);
-                    let start = scratch.begin_row();
-                    let e_view = entity_view(i, &self.world, sig).ok();
-                    let ctx_view = Val::Map(std::rc::Rc::new(vec![
-                        (Val::Kw("age".into()), Val::Num(tau)),
-                        (Val::Kw("t".into()), Val::Num(tau)),
-                        (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
-                    ]));
-                    eval_render_list_into(
-                        &dyn_figure,
-                        &render_projector,
-                        tau,
-                        sig,
-                        e_view.as_ref(),
-                        Some(&ctx_view),
-                        &mut scratch.defs,
-                        &mut scratch.rows,
-                    );
-                    scratch.finish_row(start);
-                    if !scratch.row(i).is_empty() {
-                        for data in scratch.row(i) {
-                            Sim::push_row(&mut out, data, &syms);
-                        }
-                        continue;
-                    }
-                    if self.world.entities.is_traced(i) {
-                        let trace = self.world.entities.trace_samples(i);
-                        if trace.len() >= 2 {
-                            out.push(RenderRow {
-                                data: RenderData::Polyline {
-                                    points: trace.iter().map(|p| (p.x, p.y)).collect(),
-                                    active: true,
-                                },
-                                nums: Vec::new(),
-                                syms: syms.clone(),
-                            });
-                        }
-                    } else {
-                        let readers = self.motion_readers(i);
-                        let state = MotionState::new();
-                        if let Ok(p) = dyn_figure_pose_in(&dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)) {
-                            out.push(RenderRow {
-                                data: RenderData::Point {
-                                    x: p.x,
-                                    y: p.y,
-                                    // :facing overrides the motion direction
-                                    theta: p.angle_or(0.0),
-                                    scale: 1.0,
-                                    alpha: 1.0,
-                                    hue: 0.0,
-                                },
-                                nums: Vec::new(),
-                                syms: syms.clone(),
-                            });
-                        }
-                    }
-                }
-                FigureDynRepr::Curve { .. } => {
-                    let syms = Sim::stock_style_syms(&mut self.world, i);
-                    let start = scratch.begin_row();
-                    let e_view = entity_view(i, &self.world, sig).ok();
-                    let ctx_view = Val::Map(std::rc::Rc::new(vec![
-                        (Val::Kw("age".into()), Val::Num(tau)),
-                        (Val::Kw("t".into()), Val::Num(tau)),
-                        (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
-                    ]));
-                    eval_render_list_into(
-                        &dyn_figure,
-                        &render_projector,
-                        tau,
-                        sig,
-                        e_view.as_ref(),
-                        Some(&ctx_view),
-                        &mut scratch.defs,
-                        &mut scratch.rows,
-                    );
-                    scratch.finish_row(start);
-                    for data in scratch.row(i) {
-                        Sim::push_row(&mut out, data, &syms);
-                    }
-                }
+            let readers = self.motion_readers(i);
+            let state = MotionState::new();
+            let pose = dyn_figure_pose_in(&dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)).ok();
+            let trace = self.world.entities.trace_samples(i);
+            let traced = self.world.entities.is_traced(i);
+            let start = scratch.begin_row();
+            let e_view = entity_view(i, &self.world, sig).ok();
+            let ctx_view = Val::Map(std::rc::Rc::new(vec![
+                (Val::Kw("age".into()), Val::Num(tau)),
+                (Val::Kw("t".into()), Val::Num(tau)),
+                (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
+            ]));
+            eval_render_list_into(
+                &dyn_figure,
+                &render_projector,
+                tau,
+                sig,
+                e_view.as_ref(),
+                Some(&ctx_view),
+                pose,
+                trace,
+                traced,
+                &mut scratch.defs,
+                &mut scratch.rows,
+            );
+            scratch.finish_row(start);
+            for data in scratch.row(i) {
+                Sim::push_row(&mut out, data, &syms);
             }
         }
         self.render_scratch = scratch;
