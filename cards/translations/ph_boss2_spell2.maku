@@ -81,59 +81,62 @@
 (def factor (pow $rank 0.3))
 
 (defpattern spell-2 []
-  (defvar mode 1)                          ; F16: pattern-scoped control cell
   (let [root (spawn (pose c[0 0]) {:team :anchor})]
-    (let [root-main (nth root 0)]
-      (seq
-        (bind-channel! $boss (:pos root-main))
-        (in-frame (live $boss)
-          (seq
-            (par (guide-rig 1) (guide-rig -1)) ; rigs persist for the whole phase
-            (loop []
-              (set! mode 1)
-              (power-up)
-              ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
-              (loop [k 0, cell (rand-cell)]
-                (move-to root-main (if (= k 0) 1.6 0.7) eoutsine (grid-cell :enemy cell))
-                (bullet ((aim $player)
-                         (map (fn [v]
-                                ((fan 5 18)                       ; centered 5-fan, 18deg
-                                  (linear p[(* factor (lerp 0 2 v 4 2.4))
-                                            (rand -8 8)])))       ; per-bullet ir jitter
-                              (iota 3))) {:style {:family :gdcircle :color :green
-                                :variant [:w :c :b]}              ; axis 0: speed tier
-                        :cues {:spawn "x-fire-burst-1"}})
-                (wait (ticks 300))
-                (when (< k 3) (recur (inc k) (rand-cell-except cell))))
-              (wait 1)
-              (power-up)
-              (move-to root-main 1.6 eoutsine (grid-cell :enemy {:x 0 :y 0}))
-              (set! mode 2)
-              (v2-lasers {:family :gdlaser :color :blue :variant :b} 1)
-              ;; star burst: 4 volleys 80 ticks apart, rings of 28; radius soft-
-              ;; switches from a fast to a slow curve; per-bullet random swirl
-              (dotimes [v 4 :every (ticks 80)]
-                (bullet ((rot m"4*phi*v")
-                         (circle 28
-                           (polar m"factor * lssht(-3, 0.6, 6*t, 2*t)"
-                                  m"rand(4, 8) * randpm1() * t"))) {:style {:family :star :variant :c
-                                :color (nth [:blue :teal :green :pink] (iota 28))}
-                        :scale 1.5
-                        :cues {:spawn "x-fire-star-3"} :hitbox 0.09}))
-              (wait 1)
-              (set! mode 0)                    ; turrets pause; reflector stops
-              (wait 1)
-              (recur))))))))
+    (spell-2-with-root root)))
+
+(defpattern spell-2-with-root [root []]
+  (defvar mode 1)                          ; F16: pattern-scoped control cell
+  (let [root-main (nth root 0)]
+    (seq
+      (bind-channel! $boss (:pos root-main))
+      (in-frame (live $boss)
+        (seq
+          (par (guide-rig 1) (guide-rig -1)) ; rigs persist for the whole phase
+          (loop []
+            (set! mode 1)
+            (power-up)
+            ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
+            (loop [k 0, cell (rand-cell)]
+              (move-to root-main (if (= k 0) 1.6 0.7) eoutsine (grid-cell :enemy cell))
+              (bullet ((aim $player)
+                       (map (fn [v]
+                              ((fan 5 18)                       ; centered 5-fan, 18deg
+                                (linear p[(* factor (lerp 0 2 v 4 2.4))
+                                          (rand -8 8)])))       ; per-bullet ir jitter
+                            (iota 3))) {:style {:family :gdcircle :color :green
+                              :variant [:w :c :b]}              ; axis 0: speed tier
+                      :cues {:spawn "x-fire-burst-1"}})
+              (wait (ticks 300))
+              (when (< k 3) (recur (inc k) (rand-cell-except cell))))
+            (wait 1)
+            (power-up)
+            (move-to root-main 1.6 eoutsine (grid-cell :enemy {:x 0 :y 0}))
+            (set! mode 2)
+            (v2-lasers {:family :gdlaser :color :blue :variant :b} 1)
+            ;; star burst: 4 volleys 80 ticks apart, rings of 28; radius soft-
+            ;; switches from a fast to a slow curve; per-bullet random swirl
+            (dotimes [v 4 :every (ticks 80)]
+              (bullet ((rot m"4*phi*v")
+                       (circle 28
+                         (polar m"factor * lssht(-3, 0.6, 6*t, 2*t)"
+                                m"rand(4, 8) * randpm1() * t"))) {:style {:family :star :variant :c
+                              :color (nth [:blue :teal :green :pink] (iota 28))}
+                      :scale 1.5
+                      :cues {:spawn "x-fire-star-3"} :hitbox 0.09}))
+            (wait 1)
+            (set! mode 0)                    ; turrets pause; reflector stops
+            (wait 1)
+            (recur)))))))
 
 ;; In the boss's phases -- the boss-shaped sugar over the `states` FSM:
 ;;   (:spell2 {:root c[3.6 -0.5] :timeout 48 :until (<= (hp-of boss-main) 0)}
-;;     (spell-2 factor))
+;;     (spell-2-with-root boss))
 ;; which desugars to plain state-body code:
 ;;   (:spell2
 ;;     (move-to boss-main 0.9 eoutsine c[3.6 -0.5]) ; root
 ;;     (fork (seq (wait 48) (goto)))            ; timeout -> successor
 ;;     (until (<= (hp-of boss-main) 0)          ; hp gate
-;;       (spell-2 factor)))
+;;       (spell-2-with-root boss)))
 ;; Phase end (hp or timeout) cancels the whole tree: the main loop, both
 ;; forked turrets, and the guide rigs die together -- scope cancellation is
 ;; the cleanup DMK gets from phase-token propagation.

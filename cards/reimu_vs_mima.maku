@@ -95,7 +95,7 @@
             (cull)                       ; field clear at the phase edge
             (invuln (nth boss 0) 1.5)))  ; transition mercy window
         (:spell2 {:hp 0}
-          (spell-2))))))
+          (spell-2-with-root boss))))))
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks
 (defpattern nonspell []
