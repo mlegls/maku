@@ -70,8 +70,8 @@ The old `spawn-*` macro names remain as aliases.
 | DMK | here |
 |---|---|
 | `pather(maxRemember, rememberFn, path, opts)` | `(pather window dyn)` — the trail is the hitbox |
-| `laser(path, cold, hot, opts)` | `(laser shape? {:warn cold :active hot :u-max len …})` |
-| `straight(angle)` / `rotate(base, fn)` options | frame rotation: `((rot angle) laser)` / `((rot m"…t…") laser)` |
+| `laser(path, cold, hot, opts)` | `(laser (curve shape? {:u-max len …}) {:warn cold :active hot …})` — the figure is a plain curve; lifecycle is ordinary spawn meta |
+| `straight(angle)` / `rotate(base, fn)` options | frame rotation: `((rot angle) (curve …))` / `((rot m"…t…") (curve …))` |
 | `static(path)` / `dynamic(path)` with `lt` | one shape slot over `(t, u)`: u-only = static, t entering = dynamic |
 | `s(width)` / `stagger(x)` options | `:width` (also scales the hitbox) / `:resolution` |
 | `varLength` | signal-valued `:u-max` (grows the beam AND hitbox together) |

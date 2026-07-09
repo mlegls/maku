@@ -34,41 +34,57 @@ been and draws a ribbon through the last `window` seconds of it
 
 ## Lasers
 
-A laser has a lifecycle: a **warn** phase (the telegraph — visible,
-harmless) and an **active** phase (hot). `:u-max` is its length
-(`ex2-lasers`):
+A laser is two things composed: a **curve** figure (the geometry — where
+the beam is) and the **laser spawn** (the gameplay — when it telegraphs,
+when it hurts). `(curve {...})` builds the figure; `:u-max` is its
+length. `(laser dyn meta)` spawns it as a beam, with the lifecycle in
+the meta as ordinary fields: a **warn** phase (the telegraph — visible,
+harmless) and an **active** phase (hot) (`ex2-lasers`):
 
 ```clojure
-(bullet ((pose c[-2 3]) ((rot -90) (laser {:warn 1 :active 2 :u-max 7}))) {:style {:family :laser :color :red}})
+(laser ((pose c[-2 3]) ((rot -90) (curve {:u-max 7})))
+       {:warn 1 :active 2 :style {:family :laser :color :red}})
 ```
 
-By default a laser points along its frame's +x, so aiming is ordinary
+By default a curve points along its frame's +x, so aiming is ordinary
 frame rotation: `(rot -90)` fires it downward, and a time-varying
 rotation — `((rot m"-120 + 30 * t") …)` — makes a sweeping beam. There is
 no separate "rotating laser" concept; it's the same `rot` you already
 know.
 
+`:warn` and `:active` are not special vocabulary — they are entity fields
+like `:hp` or `:hitbox`, read each tick by the laser's collider and
+renderer (library code in `touhou.maku`). Override them, animate them, or
+write your own beam rules over the same fields.
+
 ## Shaped lasers
 
-A laser's shape can be any signal over `(t, u)`, where `u` is distance
+A curve's shape can be any signal over `(t, u)`, where `u` is distance
 along the beam. Using only `u` gives a frozen curve; letting `t` in makes
 it writhe (`ex3-shaped`):
 
 ```clojure
 ;; static: a frozen spiral
-(laser (polar m"1.5 * u" m"sine(1.4, 60, u)")
-       {:warn 1 :active 4 :u-max 2.5 :width 0.5})
+(laser ((pose c[-2 0])
+         (curve (polar m"1.5 * u" m"sine(1.4, 60, u)")
+                {:u-max 2.5 :width 0.5}))
+       {:warn 1 :active 4 :style {:family :gdlaser :color :yellow}})
 
 ;; dynamic: the same spiral, alive
-(laser (polar m"1.5 * u" m"-30 * t + sine(1.4, 60, u + t)")
-       {:warn 1 :active 4 :u-max 2.5 :width 0.5})
+(laser ((pose c[2 0])
+         (curve (polar m"1.5 * u" m"-30 * t + sine(1.4, 60, u + t)")
+                {:u-max 2.5 :width 0.5}))
+       {:warn 1 :active 4 :style {:family :gdlaser :color :pink}})
 ```
 
 Useful mental model: the shape traces where a bullet with that motion
 would fly; the beam is all of those positions at once. `:width` scales
 both the drawn thickness and the hitbox; `:resolution` is a sampling
 hint for rendering; a signal-valued `:u-max` grows or shrinks the beam
-over time.
+over time. The map on `(curve ...)` seeds the same entity fields the
+spawn meta does — writing geometry keys at the figure and lifecycle keys
+at the spawn is convention, not a rule, and a field on the figure wins
+over the same key in the spawn meta (it's the more specific site).
 
 ## Slow lasers
 
@@ -78,8 +94,8 @@ fraction, clamped to 0…1. The stock linear helper is `fill-linear`
 (`ex6-slow`):
 
 ```clojure
-(laser {:warn 0.8 :active 4 :u-max 7
-        :fill (fill-linear 0.8 1.5)})
+(laser ((pose c[-3 3]) ((rot -90) (curve {:u-max 7})))
+       {:warn 0.8 :active 4 :fill (fill-linear 0.8 1.5)})
 ```
 
 While filling, the full path renders dim (still a telegraph) and the
@@ -92,7 +108,8 @@ returning the swept fraction. A fast start that decelerates toward the
 tip:
 
 ```clojure
-(laser {:warn 0.8 :active 4 :u-max 7
+(laser ((pose c[-3 3]) ((rot -90) (curve {:u-max 7})))
+       {:warn 0.8 :active 4
         :fill m"1 - (1 - (t - 0.8) / 1.5)^2"})   ; ease-out sweep
 ```
 
@@ -123,29 +140,30 @@ the point at distance `u` along a live laser. Firing normal to the beam
 is the tangent plus 90° (`ex5-on-laser`):
 
 ```clojure
-(let [h (bullet ((pose c[-2.5 -2])
-                 (laser (polar m"1.8 * u" m"-15 * t + sine(2.8, 40, u + t)")
-                        {:warn 0.5 :active 5 :u-max 3 :width 0.6})) {:style {:family :gdlaser :color :red}})]
+(let [h (laser ((pose c[-2.5 -2])
+                 (curve (polar m"1.8 * u" m"-15 * t + sine(2.8, 40, u + t)")
+                        {:u-max 3 :width 0.6}))
+               {:warn 0.5 :active 5 :style {:family :gdlaser :color :red}})]
   (for [i 44 :every (ticks 8)]
     ((pose (on-laser (nth h 0) m"0.07 * i"))
       ((rot 90)
         (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09})))))
 ```
 
-`bullet` returns handles; the loop walks `u` outward each volley, so the
-gems peel off the beam from base to tip — and because the pose is sampled
-live, they track the writhing curve.
+`laser` returns handles like every spawner; the loop walks `u` outward
+each volley, so the gems peel off the beam from base to tip — and because
+the pose is sampled live, they track the writhing curve.
 
 The way to think about all of this: **points over time are bullets;
 curves over time are lasers.** A curve is just a motion expression that
-mentions `u`, and a laser *expresses* one as an entity — the same way
-`spawn` expresses a point motion. Which means curves don't need an
-entity at all to be useful: `(sample curve t u)` evaluates one anywhere,
-returning the pose (with tangent) at that point —
+mentions `u`, and the `laser` spawn *expresses* one as an entity — the
+same way `bullet` expresses a point motion. Which means curves don't need
+an entity at all to be useful: `(sample curve t u)` evaluates one
+anywhere, returning the pose (with tangent) at that point —
 
 ```clojure
-(let [curve (polar m"1.8 * u" m"sine(2.8, 40, u + t)")]
-  ((pose (sample curve 0.5 0.7))    ; a point on the curve, no laser
+(let [arc (polar m"1.8 * u" m"sine(2.8, 40, u + t)")]
+  ((pose (sample arc 0.5 0.7))      ; a point on the curve, no laser
     ((rot 90) (bullet (linear p[1.5 0]) {}))))
 ```
 

@@ -24,6 +24,12 @@ work.
 - Blocking lasers / world-geometry extent from DMK §13.7 remains unported.
 - RNG is sequential splitmix, so replay determinism holds but spawn-order
   independence does not.
+- Array-valued DYN meta fields do not broadcast per spawn element: static
+  numeric fields bind per element like style axes, but a signal such as
+  `:hue m"60*iota(6) + 120*t"` fails at `refresh_dyn_cols` ("expected
+  number, got Arr"). This is what breaks `070_dynamic_lasers` (and the
+  ignored `translations_run` corpus test) — pre-existing, not a laser
+  regression. Needs a per-element axis selection on dyn cols at spawn.
 
 ## Engine Refactor
 
@@ -35,15 +41,23 @@ work.
 - Lower lazy `stages` to a closed set of dyns at load time. Until then, it is
   isolated as an interpreted compatibility path: only lazy-stage dyn writes may
   extend dense schemas at runtime when a lazy segment is first constructed.
-- Move remaining gameplay-domain behavior out of core:
-  - bare hostile `(cull)`;
-  - Touhou concepts such as bullet/shot/enemy/player/boss/laser.
-  Core no longer knows style axes; the remaining family->color/radius
-  tables are stock host policy in `host.rs` (see the renderer item).
-- Move the Rust-side `laser` bridge into library code. Core should only expose
-  figure construction plus collider/render projectors.
-- Represent fill/warning/hot phases as dyn collider/render slots returning
-  different data over time, not laser-specific lifecycle shortcuts.
+- Move remaining gameplay-domain behavior out of core: bare hostile
+  `(cull)`. Core no longer knows style axes or lasers; the remaining
+  family->color/radius tables are stock host policy in `host.rs` (see the
+  renderer item). The laser bridge is gone: `(curve shape? {geometry})` is
+  the core figure constructor, `laser`/`laser-shot` are lib spawn macros,
+  lifecycle (`:warn`/`:active`/`:fill`) is ordinary entity fields that
+  `laser-collider`/`beam-renderer` bodies translate per tick into STATIC
+  collider/render descriptions (primitives take concrete numbers; no
+  stored dyn slots), and beam end-of-life is a lib cull rule. The
+  circle->capsule adaptation that borrowed collider truth from render
+  specs is deleted; a :pose collider on a curve element yields no collider.
+- Projector constructor target surface: `(collider :pose|:parametric
+  [e ctx] body)` as the builtin that constructs a parameterized projector
+  value (kind annotation intact, not a callable fn, capture discipline
+  owned by the special); `defcollider`/`defrenderer` become `def` plus
+  that form. Bare `(fn [e ctx] ...)` is deliberately NOT a projector:
+  no kind annotation, and closure capture fights spec-store dedup.
 - Continue renderer migration toward the §7 target surface. The Rust-side
   `Style`/`RenderItem` bridge is gone: hosts consume `RenderRow` values
   (structural point/polyline geometry plus open keyed num/sym fields checked
@@ -185,9 +199,9 @@ work.
 - Candidate stdlib moves:
   - `for` / `dotimes`, after deciding the lib-visible wait-loop primitive
     needed for scheduler performance;
-  - family->hitbox-radius data currently repeated at call sites;
-  - more card-facing Touhou short names (`bullet`, `shot`, `enemy`,
-    `player`, `boss`) with compatibility aliases where useful.
+  - family->hitbox-radius data currently repeated at call sites.
+  (The short spawner names — `bullet`, `shot`, `enemy`, `player`, `boss`,
+  `laser`, `laser-shot` — are done; `spawn-*` remain as aliases.)
 - Collision effects now use `deftick` plus `(collisions ... )` domain
   expressions and ordinary `map`/destructuring. Keep Touhou hit/graze/shot
   rules in lib over opaque layers and fields; any ergonomic row-wise API should
