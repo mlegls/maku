@@ -74,6 +74,25 @@ pub(crate) fn as_render(v: &DynLike) -> Result<DynRender, String> {
     });
     let (shape, opts) = as_shape_spec(&shape_v)?;
     match shape.as_ref() {
+        "point" | "dot" => Ok(DynRender::render_point(PointRenderSlot {
+            facing: match dynlike_map_get(&opts, "facing") {
+                Some(DynLike::Atom(DataAtom::Nothing)) | None => None,
+                Some(v) => Some(as_dyn_num(&v)?),
+            },
+            scale: dynlike_map_get(&opts, "scale")
+                .map(|v| as_dyn_num(&v))
+                .transpose()?
+                .unwrap_or_else(|| DynNum::num(1.0)),
+            hue: dynlike_map_get(&opts, "hue")
+                .map(|v| as_dyn_num(&v))
+                .transpose()?
+                .unwrap_or_else(|| DynNum::num(0.0)),
+            opacity: dynlike_map_get(&opts, "opacity")
+                .or_else(|| dynlike_map_get(&opts, "alpha"))
+                .map(|v| as_dyn_num(&v))
+                .transpose()?
+                .unwrap_or_else(|| DynNum::num(1.0)),
+        })),
         "polyline" => Ok(DynRender::render_polyline(CurveRenderSlot {
             sample_set: as_sample_set(&opts)?,
             u_max_sig: dynlike_map_get(&opts, "u-max").map(|v| as_dyn_num(&v)).transpose()?,

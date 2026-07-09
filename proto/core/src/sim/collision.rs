@@ -141,8 +141,8 @@ fn curve_capsule_slot(collider: DynCollider, curve_slot: &CapsuleChainSlot) -> D
 }
 
 impl Sim {
-    /// Collision pass, detect-then-resolve over card-defined contact rules.
-    /// Checks are hot, geometry-only data; contacts are rare callback code.
+    /// Collision pass: materialize collider rows and record current-tick
+    /// collision facts for `(collisions :a :b)` domain queries.
     pub(super) fn collide(&mut self, _inputs: &Inputs) -> Result<(), String> {
         let sig = self.ctx.sig.clone();
         let tick = self.world.tick;
@@ -173,13 +173,7 @@ impl Sim {
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
-            let scale = {
-                let Some(render_projector) = self.world.entities.render_projector(i) else {
-                    self.collider_scratch.push_empty();
-                    continue;
-                };
-                self.sample_sig(&render_projector.sigs.scale, tau, 1.0)
-            };
+            let scale = self.world.col_get_at(i, "scale").unwrap_or(1.0);
             let dyn_figure = self
                 .world
                 .entities
@@ -227,115 +221,26 @@ impl Sim {
             self.collider_scratch.finish_row(start);
         }
 
-        let rules = self.world.contacts.clone();
-        let mut contacts: Vec<Vec<(usize, usize)>> = Vec::with_capacity(rules.len());
-        for rule in &rules {
-            let mut pairs = Vec::new();
-            for (i, _a) in self.world.entities.iter().enumerate() {
-                if !self.world.entities.is_alive(i) || pos[i].is_none() {
-                    continue;
-                }
-                for (j, _b) in self.world.entities.iter().enumerate() {
-                    if i == j || !self.world.entities.is_alive(j) {
-                        continue;
-                    }
-                    if pos[j].is_none() {
-                        continue;
-                    }
-                    for ac in self
-                        .collider_scratch
-                        .row(i)
-                        .iter()
-                        .filter(|c| c.layer() == Some(rule.a))
-                    {
-                        for bc in self
-                            .collider_scratch
-                            .row(j)
-                            .iter()
-                            .filter(|c| c.layer() == Some(rule.b))
-                        {
-                            if collider_overlap(ac, bc) {
-                                pairs.push((i, j));
-                            }
-                        }
-                    }
-                }
+        self.world.collision_facts.clear();
+        for (i, _a) in self.world.entities.iter().enumerate() {
+            if !self.world.entities.is_alive(i) || pos[i].is_none() {
+                continue;
             }
-            contacts.push(pairs);
-        }
-
-        for (rule, pairs) in rules.iter().zip(contacts.iter()) {
-            for &(i, j) in pairs {
-                if !self.world.entities.is_alive(i) || !self.world.entities.is_alive(j) {
+            for (j, _b) in self.world.entities.iter().enumerate() {
+                if i == j || !self.world.entities.is_alive(j) || pos[j].is_none() {
                     continue;
                 }
-                if let Some(col) = &rule.once {
-                    if self.world.col_get_sym_at(i, *col).is_some() {
-                        continue;
-                    }
-                }
-                if let Some(skip) = &rule.skip_if {
-                    let side = if skip.on_b { j } else { i };
-                    let lhs = self.world.col_get_sym_at(side, skip.col).unwrap_or(0.0);
-                    let rhs = match &skip.rhs {
-                        SkipRhs::Tick => tick as f64,
-                        SkipRhs::Num(n) => *n,
-                    };
-                    if (skip.gt && lhs > rhs) || (!skip.gt && lhs < rhs) {
-                        continue;
-                    }
-                }
-                let a_ref = self.world.entity_ref(i);
-                let b_ref = self.world.entity_ref(j);
-                apply_fn(
-                    rule.callback.clone(),
-                    &[Val::Handle(a_ref), Val::Handle(b_ref)],
-                    &mut self.ctx,
-                    &mut self.world,
-                    true,
-                )?;
-                if let Some(col) = &rule.once {
-                    // dead-inclusive: the callback may have culled A, and the
-                    // latch must still stick (find() only sees live entities)
-                    if self
-                        .world
-                        .entities
-                        .generation(a_ref.row)
-                        .is_some_and(|generation| generation == a_ref.generation)
-                    {
-                        let bi = a_ref.row;
-                        self.world.col_set_sym_at(bi, *col, 1.0);
+                for ac in self.collider_scratch.row(i) {
+                    let Some(a) = ac.layer() else { continue };
+                    for bc in self.collider_scratch.row(j) {
+                        let Some(b) = bc.layer() else { continue };
+                        if collider_overlap(ac, bc) {
+                            self.world.collision_facts.push(CollisionFact { a, b, i, j });
+                        }
                     }
                 }
             }
         }
         Ok(())
-    }
-
-    /// Standing triggers: per entity, per rule, when `col ≤ leq` first
-    /// holds, fire (event + optional cull). The latch is a column, so it
-    /// snapshots/scrubs; order is canonical (entity index, rule index).
-    pub(super) fn fire_triggers(&mut self) {
-        let tick = self.world.tick;
-        for i in 0..self.world.entities.len() {
-            let rules = self.world.entities.triggers(i);
-            for rule in rules.iter().cloned() {
-                if !self.world.entities.is_alive(i) {
-                    break;
-                }
-                let armed = self.world.col_get_sym_at(i, rule.latch).is_none();
-                let holds = self.world.col_get_sym_at(i, rule.col).map(|v| v <= rule.leq).unwrap_or(false);
-                if !(armed && holds) {
-                    continue;
-                }
-                let (latch, name, cull) = (rule.latch, rule.name, rule.cull);
-                let at = self.world.entities.sampled_pos(i, tick);
-                self.world.col_set_sym_at(i, latch, 1.0);
-                if cull {
-                    self.world.cull_at(i);
-                }
-                self.world.push_event(StoredEvent { tick, name, pos: at });
-            }
-        }
     }
 }

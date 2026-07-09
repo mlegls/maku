@@ -77,6 +77,27 @@ impl Sim {
     pub fn render(&mut self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
+        for row in &self.world.render_rows {
+            match row {
+                RenderData::None => {}
+                RenderData::Point { x, y, theta, scale, alpha, hue } => out.push(RenderItem::Dot {
+                    x: *x,
+                    y: *y,
+                    th: *theta,
+                    style: Style::default(),
+                    hue: *hue,
+                    scale: *scale,
+                    alpha: *alpha,
+                }),
+                RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
+                    pts: points.clone(),
+                    style: Style::default(),
+                    active: *active,
+                    hue: 0.0,
+                    alpha: 1.0,
+                }),
+            }
+        }
         let mut scratch = std::mem::take(&mut self.render_scratch);
         scratch.clear_for_entities(self.world.entities.len());
         for (i, _) in self.world.entities.iter().enumerate() {
@@ -92,10 +113,58 @@ impl Sim {
                 scratch.push_empty();
                 continue;
             };
+            if !self.world.render_rows.is_empty()
+                && matches!(dyn_figure.repr(), FigureDynRepr::Pose(_))
+                && self.world.sym_field_matches_at(i, "render", "touhou-sprite")
+            {
+                scratch.push_empty();
+                continue;
+            }
             let tau = self.world.entities.tau(i, self.world.tick);
             match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
-                    scratch.push_empty();
+                    let start = scratch.begin_row();
+                    let e_view = entity_view(i, &self.world, sig).ok();
+                    let ctx_view = Val::Map(std::rc::Rc::new(vec![
+                        (Val::Kw("age".into()), Val::Num(tau)),
+                        (Val::Kw("t".into()), Val::Num(tau)),
+                        (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
+                    ]));
+                    eval_render_list_into(
+                        dyn_figure,
+                        render_projector,
+                        tau,
+                        sig,
+                        e_view.as_ref(),
+                        Some(&ctx_view),
+                        &mut scratch.defs,
+                        &mut scratch.rows,
+                    );
+                    scratch.finish_row(start);
+                    if !scratch.row(i).is_empty() {
+                        for data in scratch.row(i) {
+                            match data {
+                                RenderData::None => {}
+                                RenderData::Point { x, y, theta, scale, alpha, hue } => out.push(RenderItem::Dot {
+                                    x: *x,
+                                    y: *y,
+                                    th: *theta,
+                                    style: render_projector.style.clone(),
+                                    hue: *hue,
+                                    scale: *scale,
+                                    alpha: *alpha,
+                                }),
+                                RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
+                                    pts: points.clone(),
+                                    style: render_projector.style.clone(),
+                                    active: *active,
+                                    hue: self.sample_hue(render_projector, tau),
+                                    alpha: self.sample_sig(&render_projector.sigs.opacity, tau, 1.0),
+                                }),
+                            }
+                        }
+                        continue;
+                    }
                     if self.world.entities.is_traced(i) {
                         let trace = self.world.entities.trace_samples(i);
                         if trace.len() >= 2 {
@@ -147,6 +216,15 @@ impl Sim {
                     for data in scratch.row(i) {
                         match data {
                             RenderData::None => {}
+                            RenderData::Point { x, y, theta, scale, alpha, hue } => out.push(RenderItem::Dot {
+                                x: *x,
+                                y: *y,
+                                th: *theta,
+                                style: render_projector.style.clone(),
+                                hue: *hue,
+                                scale: *scale,
+                                alpha: *alpha,
+                            }),
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
                                 pts: points.clone(),
                                 style: render_projector.style.clone(),

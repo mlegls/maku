@@ -228,12 +228,13 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern rig []
-  (spawn (live $player)
-         (circle-collider {:layer :player-hurt :r 0.06})
-         {:team :player-body
-          :cols {:lives 3 :graze 0 :hits 0}
-          :expose {$graze :graze $hits :hits}
-          :triggers [{:col :lives :leq 0 :event :game-over}]}))
+  (let [p (spawn (live $player)
+                 (circle-collider {:layer :player-hurt :r 0.06})
+                 {:team :player-body
+                  :lives 3 :graze 0 :hits 0})]
+    (let [body (nth p 0)]
+      (bind-channel! $graze (:graze body))
+      (bind-channel! $hits (:hits body)))))
 (defpattern atk []
   (par (rig)
     (dotimes [i 2 :every (ticks 10)]
@@ -266,11 +267,13 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern rig []
-  (spawn (live $player)
-         (circle-collider {:layer :player-hurt :r 0.06})
-         {:team :player-body
-          :cols {:graze 0 :hits 0}
-          :expose {$graze :graze $hits :hits}}))
+  (let [p (spawn (live $player)
+                 (circle-collider {:layer :player-hurt :r 0.06})
+                 {:team :player-body
+                  :graze 0 :hits 0})]
+    (let [body (nth p 0)]
+      (bind-channel! $graze (:graze body))
+      (bind-channel! $hits (:hits body)))))
 (defpattern g []
   (par (rig) (spawn-bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
 "#;
@@ -286,10 +289,11 @@
     }
 
     #[test]
-    fn defcontact_custom_rule() {
+    fn deftick_collision_custom_rule() {
         const CARD: &str = r#"
-(defcontact [:zap :zappable]
-  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
+(deftick
+  (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
+       (collisions :zap :zappable)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
@@ -305,8 +309,9 @@
     #[test]
     fn circle_collider_constructor_projects() {
         const CARD: &str = r#"
-(defcontact [:zap :zappable]
-  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
+(deftick
+  (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
+       (collisions :zap :zappable)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
@@ -322,10 +327,14 @@
     #[test]
     fn colliders_composes_projectors() {
         const CARD: &str = r#"
-(defcontact [:zap :zappable]
-  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
-(defcontact [:graze :zappable] {:once :grazed}
-  (fn [a b] (event :grazed (:pos b))))
+(deftick
+  (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
+       (collisions :zap :zappable)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:grazed a)) 0 (:grazed a)) 1)
+           (seq (set-col a :grazed 1) (event :grazed (:pos b)))))
+       (collisions :graze :zappable)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0])
@@ -349,10 +358,14 @@
   (colliders
     (circle-collider {:layer :zap :r 0.05})
     (circle-collider {:layer :graze :r 0.3})))
-(defcontact [:zap :zappable]
-  (fn [a b] (seq (event :zapped (:pos b)) (cull a))))
-(defcontact [:graze :zappable] {:once :grazed}
-  (fn [a b] (event :grazed (:pos b))))
+(deftick
+  (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
+       (collisions :zap :zappable)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:grazed a)) 0 (:grazed a)) 1)
+           (seq (set-col a :grazed 1) (event :grazed (:pos b)))))
+       (collisions :graze :zappable)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) bullet-collider)
@@ -371,11 +384,14 @@
         const CARD: &str = r#"
 (defcollider :pose hitbox-collider [e ctx]
   (circle-collider {:layer :damage :r e.hitbox}))
-(defcontact [:damage :body] {:once :hit}
-  (fn [a b] (event :hit (:pos b))))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit (:pos b)))))
+       (collisions :damage :body)))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} hitbox-collider)
+    (spawn (pose c[0 0]) {:hitbox 0.3} hitbox-collider)
     (spawn (pose c[0.35 0]) (circle-collider {:layer :body :r 0.1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -386,8 +402,11 @@
     #[test]
     fn defcollider_accepts_parametric_figure_type() {
         const CARD: &str = r#"
-(defcontact [:beam :body] {:once :hit}
-  (fn [a b] (event :hit)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit))))
+       (collisions :beam :body)))
 (defcollider :parametric laser-collider [e ctx]
   (capsule-chain-collider {:layer :beam :r 0.1}))
 (defpattern t []
@@ -423,11 +442,14 @@
         const CARD: &str = r#"
 (defcollider hitbox-collider [entity context]
   (circle-collider {:layer :damage :r entity.hitbox}))
-(defcontact [:damage :body] {:once :hit}
-  (fn [a b] (event :hit (:pos b))))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit (:pos b)))))
+       (collisions :damage :body)))
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} hitbox-collider)
+    (spawn (pose c[0 0]) {:hitbox 0.3} hitbox-collider)
     (spawn (pose c[0.35 0]) (circle-collider {:layer :body :r 0.1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -440,8 +462,11 @@
         const CARD: &str = r#"
 (defcollider hitbox-collider [entity context]
   (circle-collider {:layer :damage :r entity.hitbox}))
-(defcontact [:damage :body] {:once :hit}
-  (fn [a b] (event :hit (:pos b))))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit (:pos b)))))
+       (collisions :damage :body)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) {:hitbox 0.3} hitbox-collider)
@@ -458,7 +483,7 @@
 (defcollider hitbox-collider [e ctx]
   (circle-collider {:layer :damage :r :hitbox}))
 (defpattern t []
-  (spawn (pose c[0 0]) {:cols {:hitbox 0.3}} hitbox-collider))
+  (spawn (pose c[0 0]) {:hitbox 0.3} hitbox-collider))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         let err = match sim.step() {
@@ -487,10 +512,47 @@
     }
 
     #[test]
-    fn defcontact_once_latch() {
+    fn deftick_maps_entity_domains() {
         const CARD: &str = r#"
-(defcontact [:zap :zappable] {:once :latched}
-  (fn [a b] (event :zapped (:pos a))))
+(deftick
+  (map (fn [e]
+         (if (<= (:hp e) 0)
+           (seq (event :died (:pos e)) (cull e))))
+       (entities-where {:team :enemy})))
+(defpattern p []
+  (spawn (pose c[0 0]) {:team :enemy :hp 0}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(sim.events_vec().iter().any(|e| &*e.name == "died"));
+        assert_eq!(sim.world.entities.iter().enumerate().filter(|(i, _)| sim.world.entities.is_alive(*i)).count(), 0);
+    }
+
+    #[test]
+    fn deftick_maps_collision_domains() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
+       (collisions :zap :body)))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
+    (spawn (pose c[0 0]) (circle-collider {:layer :body :r 0.2}) {:team :target})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(sim.events_vec().iter().any(|e| &*e.name == "zapped"));
+        assert_eq!(sim.world.entities.iter().enumerate().filter(|(i, _)| sim.world.entities.is_alive(*i)).count(), 1);
+    }
+
+    #[test]
+    fn collision_domain_latch_with_field() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:latched a)) 0 (:latched a)) 1)
+           (seq (set-col a :latched 1) (event :zapped (:pos a)))))
+       (collisions :zap :zappable)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
@@ -510,13 +572,16 @@
     }
 
     #[test]
-    fn defcontact_skip_if() {
+    fn collision_domain_filter_predicate() {
         const CARD: &str = r#"
-(defcontact [:zap :zappable] {:skip-if [:b :shield :gt 0]}
-  (fn [a b] (event :zapped (:pos b))))
+(deftick
+  (map (fn [[a b]]
+         (if (<= (if (nothing? (:shield b)) 0 (:shield b)) 0)
+           (event :zapped (:pos b))))
+       (collisions :zap :zappable)))
 (defpattern t []
   (let [a (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
-        b (spawn (pose c[0 0]) {:cols {:shield 1}}
+        b (spawn (pose c[0 0]) {:shield 1}
                                 (circle-collider {:layer :zappable :r 0.2}))]
     (seq (wait 0.05) (set-col (first b) :shield 0))))
 "#;
@@ -532,10 +597,10 @@
     }
 
     #[test]
-    fn defcontact_replaces() {
+    fn multiple_deftick_rules_compose() {
         const CARD: &str = r#"
-(defcontact [:zap :zappable] (fn [a b] (event :first (:pos b))))
-(defcontact [:zap :zappable] (fn [a b] (event :second (:pos b))))
+(deftick (map (fn [[a b]] (event :first (:pos b))) (collisions :zap :zappable)))
+(deftick (map (fn [[a b]] (event :second (:pos b))) (collisions :zap :zappable)))
 (defpattern t []
   (seq
     (spawn (pose c[0 0]) (circle-collider {:layer :zap :r 0.2}))
@@ -543,7 +608,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         sim.step().unwrap();
-        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "first").count(), 0);
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "first").count(), 1);
         assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "second").count(), 1);
     }
 
@@ -587,8 +652,8 @@
 "#;
         let mut sess = Session::default();
         sess.rig = Some(
-            "(defpattern rig [] (spawn (live $player) (circle-collider {:layer :player-hurt :r 0.06}) {:team :player-body \
-             :cols {:graze 0 :hits 0} :expose {$graze :graze $hits :hits}}))"
+            "(defpattern rig [] (let [p (spawn (live $player) (circle-collider {:layer :player-hurt :r 0.06}) {:team :player-body \
+             :graze 0 :hits 0})] (let [body (nth p 0)] (bind-channel! $graze (:graze body)) (bind-channel! $hits (:hits body)))))"
                 .into(),
         );
         sess.last_inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -616,12 +681,13 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern rig []
-  (spawn (live $player)
-         (circle-collider {:layer :player-hurt :r 0.06})
-         {:team :player-body
-          :cols {:lives 2 :graze 0 :hits 0}
-          :expose {$graze :graze $hits :hits}
-          :triggers [{:col :lives :leq 0 :event :game-over}]}))
+  (let [p (spawn (live $player)
+                 (circle-collider {:layer :player-hurt :r 0.06})
+                 {:team :player-body
+                  :lives 2 :graze 0 :hits 0})]
+    (let [body (nth p 0)]
+      (bind-channel! $graze (:graze body))
+      (bind-channel! $hits (:hits body)))))
 (defpattern atk []
   (par (rig)
     (dotimes [i 5 :every (ticks 70)]
@@ -644,19 +710,23 @@
         }));
     }
 
-    /// Death is not special: :triggers replaces the synthesized default,
-    /// so an entity can gate a phase event at low hp and die at zero —
-    /// same mechanism, two thresholds, each edge-fires exactly once.
+    /// Death is not special: deftick can gate a phase event at low hp and
+    /// Touhou's library rule kills at zero. Latches are ordinary fields.
     #[test]
-    fn trigger_thresholds() {
+    fn deftick_thresholds() {
         const CARD: &str = r#"
 (import "touhou")
+(deftick
+  (map (fn [e]
+         (seq
+           (set-col e :lowhp-fired 1)
+           (event :low-hp (:pos e))))
+       (entities-where (fn [e] (* (= e.team :enemy)
+                                  (<= (col-or (:hp e) 1) 1)
+                                  (< (col-or (:lowhp-fired e) 0) 1))))))
 (defpattern gates []
   (seq
-    (spawn-enemy (pose c[0 2])
-           {:hp 3 :hitbox 0.3
-            :triggers [{:col :hp :leq 1 :event :low-hp}
-                       {:col :hp :leq 0 :event :died :cull true}]})
+    (spawn-enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
     (dotimes [i 3 :every (ticks 30)]
       (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4]))
                   {:damage 1}))))
@@ -704,11 +774,13 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern rig []
-  (spawn (live $player)
-         (circle-collider {:layer :player-hurt :r 0.06})
-         {:team :player-body
-          :cols {:graze 0 :hits 0}
-          :expose {$graze :graze $hits :hits}}))
+  (let [p (spawn (live $player)
+                 (circle-collider {:layer :player-hurt :r 0.06})
+                 {:team :player-body
+                  :graze 0 :hits 0})]
+    (let [body (nth p 0)]
+      (bind-channel! $graze (:graze body))
+      (bind-channel! $hits (:hits body)))))
 (defpattern beam []
   (par (rig) (spawn-bullet ((pose c[-2 0]) (laser {:warn 0.5 :active 2 :u-max 6})) {})))
 "#;
@@ -737,7 +809,7 @@
     #[test]
     fn low_level_curve_slots() {
         const CARD: &str = r#"
-(defcontact [:beam :body] (fn [a b] (event :hit)))
+(deftick (map (fn [[a b]] (event :hit)) (collisions :beam :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
@@ -763,7 +835,11 @@
     fn touhou_laser_collider_reads_lifecycle_from_meta() {
         const CARD: &str = r#"
 (import "touhou")
-(defcontact [:beam :body] {:once :hit} (fn [a b] (event :hit)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit))))
+       (collisions :beam :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
@@ -778,6 +854,98 @@
             sim.events_vec().iter().any(|e| &*e.name == "hit"),
             "touhou laser-collider should project an active capsule chain"
         );
+    }
+
+    #[test]
+    fn deftick_render_emits_point_row() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (render {:shape :point
+                  :x (:x (:pos e))
+                  :y (:y (:pos e))
+                  :theta 30
+                  :scale e.scale
+                  :alpha 0.75
+                  :hue 120}))
+       (entities-where {:render :sprite})))
+(defpattern p []
+  (spawn (pose c[1 2]) {:render :sprite :scale 2}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let items = sim.render();
+        let Some(RenderItem::Dot { x, y, th, scale, alpha, hue, .. }) = items.first() else {
+            panic!("render should emit one point row");
+        };
+        assert!((*x - 1.0).abs() < 1e-9, "x: {x}");
+        assert!((*y - 2.0).abs() < 1e-9, "y: {y}");
+        assert!((*th - 30.0).abs() < 1e-9, "th: {th}");
+        assert!((*scale - 2.0).abs() < 1e-9, "scale: {scale}");
+        assert!((*alpha - 0.75).abs() < 1e-9, "alpha: {alpha}");
+        assert!((*hue - 120.0).abs() < 1e-9, "hue: {hue}");
+    }
+
+    #[test]
+    fn deftick_render_emits_polyline_row() {
+        const CARD: &str = r#"
+(deftick
+  (render {:shape :polyline
+           :points [c[0 0] c[1 0] {:x 1 :y 1}]
+           :active 1}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let items = sim.render();
+        let Some(RenderItem::Polyline { pts, active, .. }) = items.first() else {
+            panic!("render should emit one polyline row");
+        };
+        assert_eq!(pts, &vec![(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]);
+        assert!(*active);
+    }
+
+    #[test]
+    fn defrenderer_pose_emits_point_row() {
+        const CARD: &str = r#"
+(defrenderer sprite-renderer [e ctx]
+  {:shape [:point {:scale e.scale :opacity e.opacity :hue e.hue :facing e.facing}]})
+(defpattern p []
+  (spawn (pose c[1 2])
+         {:style {:family :orb :color :blue}
+          :scale 2 :opacity 0.5 :hue 45 :facing 90}
+         sprite-renderer))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let items = sim.render();
+        let Some(RenderItem::Dot { x, y, th, scale, alpha, hue, .. }) = items.first() else {
+            panic!("defrenderer should emit one point row");
+        };
+        assert!((*x - 1.0).abs() < 1e-9, "x: {x}");
+        assert!((*y - 2.0).abs() < 1e-9, "y: {y}");
+        assert!((*th - 90.0).abs() < 1e-9, "th: {th}");
+        assert!((*scale - 2.0).abs() < 1e-9, "scale: {scale}");
+        assert!((*alpha - 0.5).abs() < 1e-9, "alpha: {alpha}");
+        assert!((*hue - 45.0).abs() < 1e-9, "hue: {hue}");
+    }
+
+    #[test]
+    fn defrenderer_pose_reads_dyn_entity_meta_field() {
+        const CARD: &str = r#"
+(defrenderer sprite-renderer [e ctx]
+  {:shape [:point {:scale e.scale}]})
+(defpattern p []
+  (spawn (pose c[0 0]) {:scale (+ 1 t)} sprite-renderer))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        sim.step().unwrap();
+        let items = sim.render();
+        let Some(RenderItem::Dot { scale, .. }) = items.first() else {
+            panic!("defrenderer should emit one point row");
+        };
+        assert!((*scale - (1.0 + 2.0 / TICK_RATE)).abs() < 1e-9, "scale: {scale}");
     }
 
     #[test]
@@ -822,7 +990,11 @@
         const CARD: &str = r#"
 (defcollider expanding-collider [e ctx]
   (circle-collider {:layer :expanding :r m"ctx.t"}))
-(defcontact [:expanding :body] {:once :hit} (fn [a b] (event :hit)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit))))
+       (collisions :expanding :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
@@ -850,12 +1022,15 @@
     #[test]
     fn primitive_collider_outside_projector_cannot_read_entity_context() {
         const CARD: &str = r#"
-(defcontact [:damage :body] {:once :hit}
-  (fn [a b] (event :hit (:pos b))))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit (:pos b)))))
+       (collisions :damage :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
-           {:cols {:hitbox 0.3}}
+           {:hitbox 0.3}
            (circle-collider {:layer :damage :r e.hitbox}))
     (spawn (pose c[0.35 0])
            (circle-collider {:layer :body :r 0.1}))))
@@ -875,7 +1050,11 @@
   (cond
     (> ctx.t 0.5) (circle-collider {:layer :appears :r 0.1})
     :else (circle-collider {:layer :cold :r 0.01})))
-(defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit))))
+       (collisions :appears :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
@@ -903,7 +1082,11 @@
     #[test]
     fn spawn_level_cond_cannot_capture_projector_context() {
         const CARD: &str = r#"
-(defcontact [:appears :body] {:once :hit} (fn [a b] (event :hit)))
+(deftick
+  (map (fn [[a b]]
+         (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
+           (seq (set-col a :hit 1) (event :hit))))
+       (collisions :appears :body)))
 (defpattern p []
   (par
     (spawn (pose c[0 0])
@@ -1021,11 +1204,13 @@
         const CARD: &str = r#"
 (import "touhou")
 (defpattern rig []
-  (spawn (live $player)
-         (circle-collider {:layer :player-hurt :r 0.06})
-         {:team :player-body
-          :cols {:graze 0 :hits 0}
-          :expose {$graze :graze $hits :hits}}))
+  (let [p (spawn (live $player)
+                 (circle-collider {:layer :player-hurt :r 0.06})
+                 {:team :player-body
+                  :graze 0 :hits 0})]
+    (let [body (nth p 0)]
+      (bind-channel! $graze (:graze body))
+      (bind-channel! $hits (:hits body)))))
 (defpattern beam []
   (par (rig)
        (spawn-bullet ((pose c[-2 0])
@@ -1225,7 +1410,7 @@
                    (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
                  (circle-collider {:layer :player-hurt :r 0.05})
                  {:team :player-body
-                  :cols {:pilot 1}})]
+                  :pilot 1})]
     (bind-channel! $player (:pos (nth h 0)))))
 "#;
         let mut sim = Sim::load(CARD, Some("c")).unwrap();
@@ -1275,7 +1460,7 @@
         assert!(n >= 6 && n <= 18, "steady state through macro sugar: {}", n);
     }
 
-    /// Per-element columns (:cols arrays bind like style axes) and
+    /// Per-element numeric fields (arrays bind like style axes) and
     /// deferred forks (timed work scheduled from inside a callback).
     #[test]
     fn cols_per_element_and_deferred_fork() {
@@ -1283,7 +1468,7 @@
 (defpattern p []
   (seq
     (spawn (circle 4 (linear c[0.5 0]))
-           {:style {:family :seed} :cols {:ci (iota 4)}})
+           {:style {:family :seed} :ci (iota 4)})
     (wait (ticks 2))
     (manipulate (fn [b] (* (= b.family :seed) (> b.ci 2.5)))
       (fn [b]
@@ -1445,10 +1630,10 @@
         );
     }
 
-    /// :expose publishes an entity column as a channel (0 after death, so
-    /// hp gates fire); (export cell) publishes a pattern cell read-only.
+    /// Handle-scoped derived channels can publish entity fields for gates;
+    /// (export cell) publishes a pattern cell read-only.
     #[test]
-    fn expose_and_export() {
+    fn bind_channel_and_export() {
         const CARD: &str = r#"
 (import "touhou")
 (defchannel $target-hp 0)
@@ -1456,8 +1641,8 @@
   (seq
     (defvar phase 1)
     (export phase)
-    (spawn-enemy (pose c[0 2])
-           {:hp 2 :hitbox 0.3 :expose {$target-hp :hp}})
+    (let [target (spawn-enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
+      (bind-channel! $target-hp (value-or (:hp (nth target 0)) 0)))
     (spawn-shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
     (wait-for (<= $target-hp 1))
     (set! phase 2)
@@ -1532,7 +1717,7 @@
 
     /// The full-stack card: piloted rig (raw axes -> vel-domain movement),
     /// focus, bombs (raw button + control-layer stock), boss hp phases via
-    /// triggers, spell-2 embedded. One scripted run hits every mechanism.
+    /// rules, spell-2 embedded. One scripted run hits every mechanism.
     #[test]
     #[ignore = "long full-card playthrough; run with cargo test --lib -- --ignored --test-threads=1"]
     fn reimu_vs_mima_plays() {
@@ -1750,14 +1935,17 @@
         assert_eq!(b(7).color, "green");
     }
 
-    /// Render-affecting signal tags (§7): :scale/:facing/:opacity sampled at
-    /// entity-local t like :hue; :scale also multiplies collider radii.
+    /// Dyn-valued top-level numeric fields are evaluated into SoA fields;
+    /// renderers/colliders read those fields like any other entity meta.
     #[test]
-    fn render_signal_tags() {
+    fn dyn_numeric_meta_fields() {
         const CARD: &str = r#"
+(defrenderer sprite-renderer [e ctx]
+  {:shape [:point {:scale e.scale :opacity e.opacity :facing e.facing}]})
 (defpattern tags []
   (spawn (still)
-         {:scale (+ 1 t) :opacity (- 1 (* 0.5 t)) :facing (* 90 t)}))
+         {:scale (+ 1 t) :opacity (- 1 (* 0.5 t)) :facing (* 90 t)}
+         sprite-renderer))
 "#;
         let mut sim = Sim::load(CARD, Some("tags")).unwrap();
         for _ in 0..120 {
@@ -1771,16 +1959,17 @@
         assert!((th - 90.0).abs() < 1.0, "facing(1s) = 90°: {}", th);
 
         // collision: a bullet whose base radius misses the player connects
-        // once :scale grows the collider (constant-valued tags work too —
-        // a constant is just a constant signal)
+        // once :scale grows the collider.
         const HIT: &str = r#"
 (import "touhou")
 (defpattern rig []
-  (spawn (live $player)
-         (circle-collider {:layer :player-hurt :r 0.06})
-         {:team :player-body
-          :cols {:graze 0 :hits 0}
-          :expose {$graze :graze $hits :hits}}))
+  (let [p (spawn (live $player)
+                 (circle-collider {:layer :player-hurt :r 0.06})
+                 {:team :player-body
+                  :graze 0 :hits 0})]
+    (let [body (nth p 0)]
+      (bind-channel! $graze (:graze body))
+      (bind-channel! $hits (:hits body)))))
 (defpattern scaled [s 1]
   (par (rig)
        (spawn ((pose c[0.5 0]) (still))
@@ -2164,7 +2353,7 @@
         const CARD: &str = r#"
 (defpattern p []
   (spawn (pose c[0 0])
-         {:team :enemy :hp 5 :cols {:a 1} :style {:family :gem}}
+         {:team :enemy :hp 5 :a 1 :style {:family :gem}}
          {:hp 2 :style {:family :star :color :red}}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
@@ -2361,7 +2550,7 @@ fn defchannel_derives_per_tick() {
     (spawn-enemy (pose c[0 2]) {:style {:family :circle :color :red}})
     (spawn-enemy (pose c[1 2]) {:style {:family :circle :color :blue}})
     (wait-for (>= $reds 1))
-    (spawn (pose c[0 -3]) {:cols {:marker 1}})))
+    (spawn (pose c[0 -3]) {:marker 1})))
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     for _ in 0..3 {

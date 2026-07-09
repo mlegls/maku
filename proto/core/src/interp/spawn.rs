@@ -5,28 +5,8 @@ use crate::edn::Form;
 use std::rc::Rc;
 
 
-/// Meta keys whose values are signals sampled later (§7): never evaluated at
-/// spawn time (they reference slot-bound t).
-/// Meta tags whose values are NOT evaluated at spawn: signal-valued tags
-/// (contain t), and :expose (whose $names are channel DESIGNATORS, not
-/// reads — evaluated, $some-channel would resolve as a channel read).
-const SIGNAL_TAGS: &[&str] = &[
-    "hue",
-    "scale",
-    "facing",
-    "opacity",
-    "expose",
-];
-
 const RESERVED_KW_FIELD_KEYS: &[&str] = &[
     "style",
-    "cols",
-    "triggers",
-    "expose",
-    "hue",
-    "scale",
-    "facing",
-    "opacity",
 ];
 
 fn is_reserved_sym_field_key(key: &str) -> bool {
@@ -39,33 +19,6 @@ fn is_numeric_field_value(v: &Val) -> bool {
         Val::Arr(items) => items.iter().all(is_numeric_field_value),
         _ => false,
     }
-}
-
-pub(crate) fn parse_expose(metas: &[Form]) -> Rc<[(Rc<str>, Rc<str>)]> {
-    let mut out = Vec::new();
-    // several meta maps merge per-key, later wins: the LAST map carrying
-    // :expose supplies the whole rule set
-    for meta in metas.iter().rev() {
-        let Form::Map(kvs) = meta else { continue };
-        for (k, v) in kvs.iter() {
-            if matches!(k, Form::Kw(kw) if &**kw == "expose") {
-                if let Form::Map(pairs) = v {
-                    for (chan, col) in pairs.iter() {
-                        let chan: Option<Rc<str>> = match chan {
-                            Form::Sym(s) if s.starts_with('$') => Some(s[1..].into()),
-                            _ => None,
-                        };
-                        let Form::Kw(col) = col else { continue };
-                        if let Some(chan) = chan {
-                            out.push((col.as_ref().into(), chan));
-                        }
-                    }
-                }
-                return out.into();
-            }
-        }
-    }
-    out.into()
 }
 
 fn normalize_spawn_input(
@@ -110,24 +63,21 @@ fn merge_spawn_meta(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<SpawnMetaPlan, String> {
-    // Meta maps merge per-key with later maps winning. Literal maps are kept
-    // as forms long enough for signal tags and :expose channel designators to
-    // remain unevaluated; computed maps arrive as already-evaluated pairs.
+    // Meta maps merge per-key with later maps winning. Literal maps are
+    // lifted through DynLike so static keys may carry dyn-valued fields;
+    // computed maps arrive as already-evaluated pairs.
     let mut pairs: Vec<(Val, Val)> = Vec::new();
-    let raw_meta_forms = meta.forms;
-    for mf in raw_meta_forms.iter().rev() {
+    for mf in meta.forms.iter().rev() {
         match mf {
             Form::Map(kvs) => {
                 for (k, v) in kvs.iter() {
                     let kv = evaluate(k, env, ctx, world)?;
-                    let skip = matches!(&kv, Val::Kw(kw) if SIGNAL_TAGS.contains(&kw.as_ref()));
-                    let vv = if skip { Val::Nothing } else { evaluate(v, env, ctx, world)? };
+                    let vv = dynlike_to_val(&eval_dynlike_form(v, env, ctx, world)?)?;
                     pairs.push((kv, vv));
                 }
             }
             m => {
-                // a computed meta (variable, call): evaluated pairs only —
-                // signal tags need a literal map to stay unevaluated
+                // a computed meta (variable, call): evaluated pairs only.
                 match evaluate(m, env, ctx, world)? {
                     Val::Map(kvs) => pairs.extend(kvs.iter().cloned()),
                     Val::DynLike(d) => pairs.extend(dynlike_meta_pairs(&d)?),
@@ -139,7 +89,6 @@ fn merge_spawn_meta(
     pairs.extend(meta.computed_pairs);
     Ok(SpawnMetaPlan {
         value: Val::Map(Rc::new(pairs)),
-        directives: SpawnDirectives { raw_meta_forms },
     })
 }
 
@@ -173,13 +122,12 @@ fn build_entity_specs(
     meta: &SpawnMetaPlan,
     collider_slots: Vec<ColliderProjectorValue>,
     renderer_slots: Vec<RendererProjectorSpec>,
-    env: &Env,
+    _env: &Env,
     world: &mut World,
 ) -> Result<Vec<EntitySpec>, String> {
     let meta_value = &meta.value;
-    let raw_meta_forms = &meta.directives.raw_meta_forms;
     let styles = resolve_styles(meta_value, &elems)?;
-    let sigs = resolve_sigs(raw_meta_forms, env, elems.len());
+    let sigs = resolve_sigs(elems.len());
     let mut sym_fields: Vec<(FieldName, Symbol)> = Vec::new();
     if let Val::Map(kvs) = meta_value {
         for (k, v) in kvs.iter() {
@@ -197,15 +145,27 @@ fn build_entity_specs(
             }
         }
     }
-    // columns: :hp n is sugar for a col (the contact layer reads the hp
-    // column by name; what zero hp MEANS is a trigger's business, and the
-    // default death trigger is library code, not engine). :cols {:armor 2
-    // ...} adds more; with several meta maps every :cols map contributes,
-    // later maps' columns shadowing earlier ones (columns are independent
-    // facts — they deep-merge where scalar keys replace).
-    // Column values may be ARRAYS, binding per spawn element exactly like
-    // style axes (leading-axis / by-length / nested-structural) — per-entity
-    // saved data: :cols {:ci (iota 8)} gives bullet k the column ci = k.
+    let mut dyn_cols: Vec<(Rc<str>, DynNum)> = Vec::new();
+    let push_dyn_col = |dyn_cols: &mut Vec<(Rc<str>, DynNum)>, k: Rc<str>, v: DynNum| {
+        if !dyn_cols.iter().any(|(existing, _)| existing.as_ref() == k.as_ref()) {
+            dyn_cols.push((k, v));
+        }
+    };
+    if let Val::Map(kvs) = meta_value {
+        for (k, v) in kvs.iter() {
+            let Val::Kw(k) = k else { continue };
+            if is_reserved_sym_field_key(k.as_ref()) {
+                continue;
+            }
+            if let Val::DynLike(d) = v {
+                push_dyn_col(&mut dyn_cols, k.as_ref().into(), as_dyn_num(d)?);
+            }
+        }
+    }
+    // Top-level numeric fields initialize SoA fields. What a field means is
+    // library/card code: hp is just a field, damage is just a field, etc.
+    // Values may be arrays, binding per spawn element exactly like style axes
+    // (leading-axis / by-length / nested-structural).
     let mut cols: Vec<(Rc<str>, Val)> = Vec::new();
     let push_col = |cols: &mut Vec<(Rc<str>, Val)>, k: Rc<str>, v: Val| {
         if !cols.iter().any(|(existing, _)| existing.as_ref() == k.as_ref()) {
@@ -219,65 +179,8 @@ fn build_entity_specs(
                     push_col(&mut cols, k.as_ref().into(), v.clone());
                 }
             }
-            let is_cols = matches!(k, Val::Kw(kw) if &**kw == "cols");
-            if !is_cols {
-                continue;
-            }
-            if let Val::Map(cs) = v {
-                for (k, v) in cs.iter() {
-                    if let Val::Kw(k) = k {
-                        push_col(&mut cols, k.as_ref().into(), v.clone());
-                    }
-                }
-            }
         }
     }
-    // triggers: data only — no synthesized rules (spawn-enemy in the lib
-    // is where "hp ≤ 0 means death" lives)
-    let triggers: Rc<[TriggerRule]> = match map_get(meta_value, "triggers") {
-        Some(Val::Arr(items)) => {
-            let mut rules = Vec::new();
-            for it in items.iter() {
-                let Val::Map(kvs) = it else {
-                    return Err("triggers: expected maps".into());
-                };
-                let get = |name: &str| {
-                    kvs.iter().find_map(|(k, v)| match k {
-                        Val::Kw(kw) if &**kw == name => Some(v.clone()),
-                        _ => None,
-                    })
-                };
-                let col = match get("col") {
-                    Some(Val::Kw(k)) => k,
-                    _ => return Err("triggers: missing :col".into()),
-                };
-                let leq = match get("leq") {
-                    Some(Val::Num(n)) => n,
-                    _ => return Err("triggers: missing :leq".into()),
-                };
-                let event = match get("event") {
-                    Some(Val::Kw(k)) => k,
-                    _ => return Err("triggers: missing :event".into()),
-                };
-                let cull = matches!(get("cull"), Some(Val::Num(n)) if n != 0.0);
-                let event_sym = world.symbols.intern(event.as_ref());
-                let latch = world.intern_col(format!("{}#fired", event.as_ref()));
-                let col = world.intern_col(col.as_ref());
-                rules.push(TriggerRule::new(event_sym, latch, col, leq, cull));
-            }
-            rules.into()
-        }
-        _ => Vec::new().into(),
-    };
-    // :expose {$some-hp :hp}: publish this entity's column as a derived
-    // channel — the declarative form of "sim-computed world fact" (§3).
-    // Parsed from the RAW form ($names here are channel designators, like
-    // the keys of (with {$rank 0.5} …) — not reads).
-    let expose: Rc<[(ColName, Rc<str>)]> = parse_expose(raw_meta_forms)
-        .iter()
-        .map(|(col, chan)| (world.intern_col(col.as_ref()), chan.clone()))
-        .collect::<Vec<_>>()
-        .into();
     // Collider/render sets are explicit spawn arguments. No genre defaults —
     // an entity with no colliders is inert to the contact pass (scenery);
     // what a "bullet" or "enemy" carries is the library's business
@@ -298,6 +201,11 @@ fn build_entity_specs(
             cols.iter().map(|(k, v)| (world.intern_col(k.as_ref()), axis_num(v, e, i))).collect()
         })
         .collect();
+    let dyn_cols: Rc<[(ColName, DynNum)]> = dyn_cols
+        .into_iter()
+        .map(|(k, v)| (world.intern_col(k.as_ref()), v))
+        .collect::<Vec<_>>()
+        .into();
     let shared_collider_projectors: Rc<[ColliderProjectorValue]> = explicit_colliders.into();
     let shared_render_specs: Rc<[RendererProjectorSpec]> = explicit_renderers.into();
     let entities = elems
@@ -315,14 +223,13 @@ fn build_entity_specs(
                 cache_policy: e.cache_policy,
                 sym_fields: sym_fields.clone(),
                 cols,
-                triggers: triggers.clone(),
+                dyn_cols: dyn_cols.clone(),
                 collider_projector: ColliderProjector { projectors: collider_projectors.into() },
                 render_projector: RenderProjector {
                     specs: render_specs.into(),
                     style,
                     sigs,
                 },
-                expose: expose.clone(),
             }
         })
         .collect();
@@ -690,39 +597,8 @@ pub(crate) fn resolve_styles(meta: &Val, elems: &[SpawnElem]) -> Result<Vec<Styl
         .collect())
 }
 
-/// Signal-valued meta (§7): keep the FORM and sample at render time.
-/// One tag's per-element signals — every element shares the form; array
-/// values resolve per element via the carried idx. With several meta
-/// maps, the last one carrying the tag wins (per-key merge).
-fn resolve_tag(metas: &[Form], env: &Env, n: usize, tag: &str) -> Vec<Option<MetaSig>> {
-    for meta_form in metas.iter().rev() {
-        let Form::Map(kvs) = meta_form else { continue };
-        for (k, v) in kvs.iter() {
-            if let Form::Kw(kw) = k {
-                if &**kw == tag {
-                    return (0..n)
-                        .map(|idx| Some(MetaSig { form: v.clone(), env: env.clone(), idx }))
-                        .collect();
-                }
-            }
-        }
-    }
-    vec![None; n]
-}
-
-/// All render-affecting signal tags (:hue :scale :facing :opacity), zipped
-/// into one RenderSigs per element.
-pub(crate) fn resolve_sigs(metas: &[Form], env: &Env, n: usize) -> Vec<RenderSigs> {
-    let hue = resolve_tag(metas, env, n, "hue");
-    let scale = resolve_tag(metas, env, n, "scale");
-    let facing = resolve_tag(metas, env, n, "facing");
-    let opacity = resolve_tag(metas, env, n, "opacity");
-    hue.into_iter()
-        .zip(scale)
-        .zip(facing)
-        .zip(opacity)
-        .map(|(((hue, scale), facing), opacity)| RenderSigs { hue, scale, facing, opacity })
-        .collect()
+pub(crate) fn resolve_sigs(n: usize) -> Vec<RenderSigs> {
+    vec![RenderSigs::default(); n]
 }
 
 pub(crate) fn formation(

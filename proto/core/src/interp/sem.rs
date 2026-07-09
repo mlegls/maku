@@ -279,27 +279,16 @@ pub struct RenderProjector {
     pub sigs: RenderSigs,
 }
 
-/// Literal meta forms are kept alongside computed pairs so source-only syntax
-/// such as :expose channel designators and signal tags can be handled at the
-/// semantic spawn boundary.
+/// Literal meta forms are lifted through DynLike before merging so static keys
+/// may carry dyn-valued field initializers.
 pub(crate) struct SpawnMetaInput {
     pub forms: Vec<Form>,
     pub computed_pairs: Vec<(Val, Val)>,
 }
 
-/// Source-level spawn directives that are not entity meta values. Today this
-/// keeps literal meta maps because legacy signal tags and :expose are still
-/// recognized from raw forms; each directive should move here explicitly as
-/// the typed boundary is tightened.
-pub(crate) struct SpawnDirectives {
-    pub raw_meta_forms: Vec<Form>,
-}
-
-/// Spawn meta after merging evaluated map values, plus source directives kept
-/// out of the eventual `Dyn<Meta>` value.
+/// Spawn meta after merging evaluated map values.
 pub(crate) struct SpawnMetaPlan {
     pub value: Val,
-    pub directives: SpawnDirectives,
 }
 
 /// Compositional expected types for the low-level spawn API. The current

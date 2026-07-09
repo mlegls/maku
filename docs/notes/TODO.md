@@ -17,7 +17,10 @@ work.
 - `remat` / `manipulate`: still missing per-slot epochs, soft-cull fades,
   the F1 lint, and the masked-SoA fast path. Current callbacks all bill fuel.
 - Extraction and 3D embedding remain unimplemented.
-- Trigger predicates are still single-column `<=` crossings only.
+- Tick/rule ergonomics are still settling. Core now has primitive `deftick`
+  plus domain expressions such as `(entities-where ...)` and `(collisions
+  :a :b)`; row-wise helpers/macros should live in lib/prelude rather than
+  reintroducing core `defrule` magic.
 - Blocking lasers / world-geometry extent from DMK §13.7 remains unported.
 - RNG is sequential splitmix, so replay determinism holds but spawn-order
   independence does not.
@@ -40,10 +43,13 @@ work.
   figure construction plus collider/render projectors.
 - Represent fill/warning/hot phases as dyn collider/render slots returning
   different data over time, not laser-specific lifecycle shortcuts.
-- Move render tags and render-signal compatibility (`:hue`, `:scale`,
-  `:facing`, `:opacity`) into ordinary renderer spec records or finite fields.
-  Collider scale/radius should be explicit collider data, not borrowed from a
-  render-specific `:scale`.
+- Continue renderer migration from the transitional `defrenderer`/fallback
+  bridge toward tick/render rules over ordinary finite fields. `:hue`,
+  `:scale`, `:facing`, and `:opacity` are now ordinary fields, including dyn
+  numeric fields, and primitive `(render ...)` can emit current-tick point
+  and explicit polyline rows. Remaining work is to remove the old
+  render-projector/Style coupling and make render rows fully open
+  schema-checked host-facing data.
 - Generalize `Style` from hardcoded family/color/variant Rust fields to a
   small interned opaque map/record. Touhou/host config should own the visual
   vocabulary.
@@ -88,10 +94,9 @@ work.
   ProjectorContext = age/t, world tick, extraction-pass context
   ColliderProjector<F> = opaque source value lowered by extraction with
                          (EntityView<F>, ProjectorContext) -> [Collider]
-  RenderProjector<F, K> = typed function/projector lowered by extraction with
-                          (EntityView<F>, ProjectorContext) -> RenderData<K>
+  RenderRule = tick/render-domain code that emits open host render rows
   Collider = literal collision row, not a figure-to-collider spec
-  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector<F>] * RenderProjector<F, K>
+  SpawnedObject = Dyn<Figure> * Dyn<Meta> * [ColliderProjector<F>]
   ```
 - Spawned objects are retained as row ids into SoA stores, not as an `Entity`
   row struct.
@@ -107,13 +112,12 @@ work.
   mesh rendering without changing source semantics.
 - Raw collider rows are boundary data emitted by extraction, not normal entity
   slots. Source code should construct opaque collider projector values through
-  builtin primitive constructors and combinators. Render rows are open
-  schema-checked host-facing data and may be constructed directly by renderer
-  code, but each entity emits exactly one row. No-render/nullability is a
-  schema convention, not a language-reserved kind; multiple visual parts are
-  encoded as fields in a maximal schema. Render schemas merge by key with exact
-  type compatibility, and imported conflicting schemas should be adapted by a
-  builtin field rename/pick operator.
+  builtin primitive constructors and combinators. Render rows should be open
+  schema-checked host-facing data constructed by render/tick code; entity
+  count and render-row count are separate capacities. One entity may emit zero,
+  one, or many rows, and non-entity systems may emit rows too. Render schemas
+  merge by key with exact type compatibility, and imported conflicting schemas
+  should be adapted by a builtin field rename/pick operator.
 - `defcollider` should become `defn` plus an expected return type
   `ColliderProjector<F> | [ColliderProjector<F>]`. Constructor argument records
   have known shape; their values are concrete typed expressions over the typed
@@ -136,10 +140,16 @@ work.
 - Homogeneous lists may be packed into dense vectors as a representation
   choice. Source syntax should not need a special uniform-literal marker.
 - Entity indices are ephemeral row indices; handles are stable cross-time
-  references. Query order should remain unspecified unless explicitly sorted.
-- Source-level entity fields should be finite, flat, interned fields. Storage
-  may distinguish builtin pose/state from user fields, but source should not
-  expose separate arbitrary `cols` and `meta` concepts.
+  references. Query/domain values may remain index-backed and typed by what
+  they index (`EntitySet`, `CollisionSet`, future figure-specific sets) so
+  array operations can stay SoA-native. User code should not treat row indices
+  as durable numbers; materialize handles/views only at action boundaries.
+  Query order should remain unspecified unless explicitly sorted.
+- Source-level entity fields are finite, flat, interned fields. Storage may
+  distinguish builtin pose/state from user fields, but source no longer exposes
+  separate arbitrary `cols` and `meta` concepts. Top-level numeric fields
+  initialize SoA fields; dyn numeric values are evaluated into those fields
+  each tick before collision/render/rule code reads entity views.
 - Retained entity meta is flat primitive fields only. Do not add map/list
   storage or cold per-entity structure interning without a specific measured
   need; use source-level maps for macros/options and flat field adapters for
@@ -151,7 +161,9 @@ work.
   handles : HandleFieldId x entity_row -> EntityRef
   present : bitsets or typed sentinel policy
   ```
-  Unknown fields are load/reschema errors, not per-tick allocation.
+  Unknown fields should become load/reschema errors, not per-tick allocation.
+  The interpreter still interns fields opportunistically at spawn/write time;
+  tightening this requires a schema collection pass.
 - Retained entity storage should be cold data plus dense row state. Hot data
   should be per-tick derived SoA buffers for poses, colliders, render rows,
   and sampled curve points.
@@ -159,7 +171,8 @@ work.
 ## Standard Library
 
 - Keep Touhou/DMK/BDSL conventions in `cards/lib/touhou.maku` and related
-  libraries. Core should remain a 2D graphing + collision engine.
+  libraries. Core should remain a 2D graphing + collision/rule/render-row
+  engine.
 - Richer spellcard templates (:name/:type/hp bars) should be lib macros over
   `states`, `phases`, `spawn-boss`, `finally`, and ordinary fields.
 - Candidate stdlib moves:
@@ -168,8 +181,10 @@ work.
   - family->hitbox-radius data currently repeated at call sites;
   - more card-facing Touhou short names (`bullet`, `shot`, `enemy`,
     `player`, `boss`) with compatibility aliases where useful.
-- `defcontact` is the collision foundation: checks are data, contacts are
-  code. Keep Touhou hit/graze/shot rules in lib over opaque layers and fields.
+- Collision effects now use `deftick` plus `(collisions ... )` domain
+  expressions and ordinary `map`/destructuring. Keep Touhou hit/graze/shot
+  rules in lib over opaque layers and fields; any ergonomic row-wise API should
+  be lib/prelude sugar rather than a core special form.
 
 ## Intrinsics / Arrays
 
@@ -178,7 +193,10 @@ work.
   start as lib code over `match` and seq views.
 - Initial array/control candidates: `map`/each, `filter`, `fold`, `scan`,
   `each-prior`, `window`, `sort-by`, `best-by`, `count`, `nth`, `take`,
-  `drop`, and `concat`.
+  `drop`, `concat`, and transpose/zip-style operations for tuple domains.
+  Function argument destructuring now reuses `match` pattern machinery, so
+  collision pairs can be consumed as `(fn [[a b]] ...)` without a primitive
+  `for-pairs`.
 - K-inspired verbs/adverbs remain the direction, but the builtin set should
   be profiling-driven. Specialized operations such as binsearch, case,
   join/split, encode/decode, converge, and while-style adverbs can start in

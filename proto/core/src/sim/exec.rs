@@ -373,6 +373,7 @@ fn run_action(
         | ActionV::Export { .. }
         | ActionV::BindChannel { .. }
         | ActionV::Remat { .. }
+        | ActionV::Render { .. }
         | ActionV::SetCol { .. }
         | ActionV::SetStyle { .. }
         | ActionV::Manipulate { .. }

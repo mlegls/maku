@@ -23,17 +23,6 @@ impl Sim {
                 ch.insert(name.to_string(), v);
             }
         }
-        // :expose rules — entity columns published as channels; a dead or
-        // absent entity reads 0, so hp gates fire (cards declare these:
-        // {:expose {$some-hp :hp}})
-        for (chan, handle, col) in &self.world.exposes {
-            let v = self
-                .world
-                .find(*handle)
-                .and_then(|i| self.world.col_get_sym_at(i, *col))
-                .unwrap_or(0.0);
-            ch.insert(chan.to_string(), Val::Num(v));
-        }
         // (export cell) — pattern cells published as read-only channels
         for (name, id) in self.ctx.sig.exports.borrow().iter() {
             if let Some((_, v)) = self.ctx.sig.cells.borrow().get(id) {

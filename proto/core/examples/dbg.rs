@@ -1,6 +1,15 @@
 
 use maku::sim::Sim;
 
+fn live_count(sim: &Sim) -> usize {
+    sim.world
+        .entities
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| sim.world.entities.is_alive(*i))
+        .count()
+}
+
 fn main() {
     let cases: &[(&str, &str, usize)] = &[
         ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.maku", "bowap", 300),
@@ -35,7 +44,13 @@ fn main() {
             }
         }
         if !failed {
-            println!("OK   {} [{}]: {} bullets", path, pattern, sim.world.bullets.len());
+            println!(
+                "OK   {} [{}]: {} live / {} total entities",
+                path,
+                pattern,
+                live_count(&sim),
+                sim.world.entities.len()
+            );
         }
     }
 }

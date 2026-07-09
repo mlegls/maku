@@ -1,7 +1,7 @@
 ;; The touhou genre layer — ordinary card code over the bare engine.
 ;;
 ;; `spawn` itself knows only (dyn, collider/render specs, meta): columns,
-;; triggers, damage are explicit data, and an entity with no colliders is inert to
+;; rules, damage are explicit data, and an entity with no colliders is inert to
 ;; the contact pass. What a "bullet", "enemy", or "boss" carries is THIS
 ;; file's business. Authored here, inlined into the engine at compile
 ;; time: (import "touhou") resolves to this text on every host.
@@ -58,6 +58,19 @@
       0
       (if (> ctx.t (+ warn active)) 0 fill))))
 
+;; Stock Touhou/DMK sprite row. Visual knobs are ordinary flat entity fields.
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (render {:shape :point
+                    :x (:x p)
+                    :y (:y p)
+                    :theta (value-or e.facing (:th p))
+                    :scale (value-or e.scale 1)
+                    :alpha (value-or e.opacity 1)
+                    :hue (value-or e.hue 0)})))
+       (entities-where (fn [e] (* (= e.render :touhou-sprite) (= e.kind :point))))))
+
 ;; hostile bullet: a damage core inside a graze ring
 (defcollider :pose graze-collider [e ctx]
   (circle-collider {:layer :graze :r 0.35}))
@@ -81,23 +94,25 @@
 (defmacro spawn-bullet [dyn & metas]
   `(spawn ~dyn
           bullet-collider
-          {:cols {:damage ~(damage-value* metas 1)
-                  :hitbox ~(primary-hitbox-radius* metas 0.12)}}
+          {:render :touhou-sprite
+           :damage ~(damage-value* metas 1)
+           :hitbox ~(primary-hitbox-radius* metas 0.12)}
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
 (defmacro spawn-shot [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
-          {:team :player :cols {:damage ~(damage-value* metas 1)}}
+          {:render :touhou-sprite
+           :team :player :damage ~(damage-value* metas 1)}
           ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
 (defmacro spawn-enemy [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
-          {:team :enemy :hp 1
-           :triggers [{:col :hp :leq 0 :event :died :cull true}]}
+          {:render :touhou-sprite
+           :team :enemy :hp 1}
           ~@metas))
 
 ;; a col read that defaults when the column is absent
@@ -111,7 +126,7 @@
 ;;   - the machine starts only once the boss is REGISTERED
 ;;   - `boss` (the spawn's handle array) and `boss-main` (its first handle)
 ;;     are bound for the machine body
-;; Meta supplies :hp/:hitbox/:triggers/:style as usual. Gate phases with
+;; Meta supplies :hp/:hitbox/:style as usual. Gate phases with
 ;; {:hp n} (below), which reads boss-main's local hp.
 (defmacro spawn-boss [chan dyn meta & machine]
   `(let [boss (spawn-enemy ~dyn ~meta)]
@@ -128,30 +143,33 @@
 ;; does not know what damage, graze, shots, hurtboxes, or mercy windows are.
 ;; These Touhou rules sit next to the spawn templates that create the tags.
 
-;; player hit: bullets pass through during the mercy window (:skip-if is the
-;; engine-evaluated prefilter — same-tick double hits suppress themselves);
-;; beams persist through a hit (cull points only); the mercy window is
-;; per-entity data (:iframes col, seconds), default 0.5s; 120 = tick rate
-(defcontact [:damage :player-hurt] {:skip-if [:b :iframe-until :gt :tick]}
-  (fn [a b]
-    (seq
-      (when (= (:kind a) :point) (cull a))
-      (set-col b :hits (+ (col-or (:hits b) 0) 1))
-      (set-col b :iframe-until (+ (:tick b) (* (col-or (:iframes b) 0.5) 120)))
-      (set-col b :lives (- (col-or (:lives b) 0) 1))
-      (event :player-hit (:pos a)))))
+;; player hit: bullets pass through during the mercy window; beams persist
+;; through a hit (cull points only). The mercy window is per-entity data
+;; (:iframes col, seconds), default 0.5s; 120 = tick rate.
+(deftick
+  (map (fn [[a b]]
+         (if (<= (col-or (:iframe-until b) 0) (:tick b))
+           (seq
+             (when (= (:kind a) :point) (cull a))
+             (set-col b :hits (+ (col-or (:hits b) 0) 1))
+             (set-col b :iframe-until (+ (:tick b) (* (col-or (:iframes b) 0.5) 120)))
+             (set-col b :lives (- (col-or (:lives b) 0) 1))
+             (event :player-hit (:pos a)))))
+       (collisions :damage :player-hurt)))
 
-;; graze: once per bullet ever (:once latches a column on the bullet)
-(defcontact [:graze :player-hurt] {:once :grazed}
-  (fn [a b]
-    (seq
-      (set-col b :graze (+ (col-or (:graze b) 0) 1))
-      (event :graze (:pos a)))))
+;; graze: once per bullet ever, latched with an ordinary field on the bullet.
+(deftick
+  (map (fn [[a b]]
+         (if (< (col-or (:grazed a) 0) 1)
+           (seq
+             (set-col a :grazed 1)
+             (set-col b :graze (+ (col-or (:graze b) 0) 1))
+             (event :graze (:pos a)))))
+       (collisions :graze :player-hurt)))
 
-;; The HUD counters are derived channels, not exposes: a host may layer its
-;; own player rig over a card that ships one (two hurtboxes, one screen), and
-;; per-entity :expose registrations would fight over the channel name. The
-;; sum over every player body is what "the run's graze count" means.
+;; The HUD counters are derived channels: a host may layer its own player rig
+;; over a card that ships one (two hurtboxes, one screen). The sum over every
+;; player body is what "the run's graze count" means.
 (defchannel $graze (sum-entities {:team :player-body} :graze))
 (defchannel $hits (sum-entities {:team :player-body} :hits))
 (defchannel $lives (sum-entities {:team :player-body} :lives))
@@ -162,9 +180,9 @@
 (defmacro spawn-player [dyn & metas]
   `(let [player (spawn ~dyn
                        (circle-collider {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
-                       {:team :player-body
-                        :cols {:lives 3 :bombs 3 :graze 0 :hits 0}
-                        :triggers [{:col :lives :leq 0 :event :game-over}]}
+                       {:render :touhou-sprite
+                        :team :player-body
+                        :lives 3 :bombs 3 :graze 0 :hits 0}
                        ~@metas)]
      (let [player-main (nth player 0)]
        (seq
@@ -181,20 +199,37 @@
                         speed 4.5
                         focus-speed 1.8]
   (spawn-player (touhou-player-motion speed focus-speed)
-                {:cols {:lives lives :bombs bombs}}))
+                {:lives lives :bombs bombs}))
 
 ;; shot damage: the shot dies either way (absorbed during the target's mercy
 ;; window); :damage is a numeric column, defaulting to 1.
-(defcontact [:shot :hurt]
-  (fn [a b]
-    (seq
-      (cull a)
-      (if (> (col-or (:iframe-until b) 0) (:tick b))
-        (event :absorbed (:pos b))
-        (let [dmg (col-or (:damage a) 1)]
-          (seq
-            (set-col b :hp (- (col-or (:hp b) 1) dmg))
-            (event :enemy-hit (:pos b))))))))
+(deftick
+  (map (fn [[a b]]
+         (seq
+           (cull a)
+           (if (> (col-or (:iframe-until b) 0) (:tick b))
+             (event :absorbed (:pos b))
+             (let [dmg (col-or (:damage a) 1)]
+               (seq
+                 (set-col b :hp (- (col-or (:hp b) 1) dmg))
+                 (event :enemy-hit (:pos b)))))))
+       (collisions :shot :hurt)))
+
+(deftick
+  (map (fn [e]
+         (seq
+           (event :died (:pos e))
+           (cull e)))
+       (entities-where (fn [e] (* (= e.team :enemy) (<= (col-or (:hp e) 1) 0))))))
+
+(deftick
+  (map (fn [e]
+         (seq
+           (set-col e :game-over-fired 1)
+           (event :game-over)))
+       (entities-where (fn [e] (* (= e.team :player-body)
+                                  (<= (col-or (:lives e) 1) 0)
+                                  (< (col-or (:game-over-fired e) 0) 1))))))
 
 ;; ---------------------------------------------------------------------
 ;; (phases (:label opts? body… (finally …)?) …) — the boss-shaped layer

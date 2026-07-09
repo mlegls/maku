@@ -47,9 +47,11 @@ pub(crate) fn first_render_projection_into(
     materialize_render_defs_into(projector, tau, &state, sig, e_view, ctx_view, defs)
         .ok()?;
     defs
-        .first()
-        .cloned()
-        .map(|r| r.polyline().clone())
+        .iter()
+        .find_map(|r| match r.repr() {
+            RenderDynRepr::Polyline(projection) => Some(projection.clone()),
+            RenderDynRepr::Point(_) => None,
+        })
 }
 
 fn sample_curve_collider_frac(
@@ -406,6 +408,29 @@ pub fn eval_render_slot_into(
     out: &mut Vec<RenderData>,
 ) {
     match slot.repr() {
+        RenderDynRepr::Point(projection) => {
+            let state = MotionState::new();
+            let Ok(pose) = dyn_figure_pose(dyn_figure, tau, &state, sig) else {
+                out.push(RenderData::None);
+                return;
+            };
+            let scale = eval_dyn(&projection.scale, tau, &state, sig).unwrap_or(1.0);
+            let alpha = eval_dyn(&projection.opacity, tau, &state, sig).unwrap_or(1.0);
+            let hue = eval_dyn(&projection.hue, tau, &state, sig).unwrap_or(0.0);
+            let theta = projection
+                .facing
+                .as_ref()
+                .and_then(|d| eval_dyn(d, tau, &state, sig).ok())
+                .unwrap_or_else(|| pose.angle_or(0.0));
+            out.push(RenderData::Point {
+                x: pose.x,
+                y: pose.y,
+                theta,
+                scale,
+                alpha,
+                hue,
+            });
+        }
         RenderDynRepr::Polyline(projection) => {
             let hot = hot_frac(&projection.activity, tau, sig);
             let partly = tau >= projection.activity.warn && hot < 1.0;

@@ -100,6 +100,7 @@ pub enum Val {
     ColliderProjector(Rc<ColliderProjectorValue>),
     RendererProjectorSpec(Rc<RendererProjectorSpec>),
     EntitySet(Rc<[usize]>),
+    CollisionSet(Rc<[(usize, usize)]>),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
     DynLike(Rc<DynLike>),
@@ -109,7 +110,7 @@ pub enum Val {
     /// A form as a value — what macros manipulate and quasiquote builds.
     FormV(Rc<Form>),
     Action(Rc<ActionV>),
-    Fn { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
+    Fn { params: Rc<[Form]>, body: Rc<[Form]>, env: Env },
     Builtin(Rc<str>),
     Handle(EntityRef),
     /// A deferred signal expression (shared stateful instance, §5): forced
@@ -195,6 +196,7 @@ pub enum ActionV {
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
     Spawn { entities: Vec<EntitySpec> },
+    Render { row: RenderData },
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
     Remat { target: EntityRef, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
@@ -273,10 +275,9 @@ pub struct EntitySpec {
     pub cache_policy: EntityCachePolicy,
     pub sym_fields: Vec<(FieldName, Symbol)>,
     pub cols: Vec<(ColName, f64)>,
-    pub triggers: Rc<[TriggerRule]>,
+    pub dyn_cols: Rc<[(ColName, DynNum)]>,
     pub collider_projector: ColliderProjector,
     pub render_projector: RenderProjector,
-    pub expose: Rc<[(ColName, Rc<str>)]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -655,15 +656,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 let Some(Form::Vector(ps)) = items.get(1) else {
                     return Err("fn: expected param vector".into());
                 };
-                let params: Vec<Rc<str>> = ps
-                    .iter()
-                    .map(|p| match p {
-                        Form::Sym(n) => Ok(n.clone()),
-                        _ => Err("fn: bad param (destructuring unimplemented)".to_string()),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                validate_fn_params(ps)?;
                 return Ok(Val::Fn {
-                    params: params.into(),
+                    params: ps.iter().cloned().collect::<Vec<_>>().into(),
                     body: items[2..].to_vec().into(),
                     env: env.clone(),
                 });
@@ -689,7 +684,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 };
                 return Ok(Val::Action(Rc::new(ActionV::Event { name, pos })));
             }
-            "defcontact" => return sf_defcontact(items, env, ctx, world),
+            "deftick" => return sf_deftick(items, env, ctx, world),
             "__defcollider" => {
                 let Some(projector_form) = items.get(1) else {
                     return Err("defcollider: expected projector form".into());
@@ -1028,6 +1023,37 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "map" | "filter" => {
                 let f = evaluate(&items[1], env, ctx, world)?;
                 let subject = evaluate(&items[2], env, ctx, world)?;
+                if let Val::EntitySet(idxs) = &subject {
+                    let mut out = Vec::new();
+                    for i in idxs.iter().copied() {
+                        if !world.entities.is_alive(i) {
+                            continue;
+                        }
+                        let r = apply_fn(f.clone(), &[Val::Handle(world.entity_ref(i))], ctx, world, false)?;
+                        if &**s == "map" {
+                            out.push(r);
+                        } else if truthy(&r) {
+                            out.push(Val::Handle(world.entity_ref(i)));
+                        }
+                    }
+                    return Ok(Val::arr(out));
+                }
+                if let Val::CollisionSet(pairs) = &subject {
+                    let mut out = Vec::new();
+                    for (i, j) in pairs.iter().copied() {
+                        if !world.entities.is_alive(i) || !world.entities.is_alive(j) {
+                            continue;
+                        }
+                        let pair = Val::arr(vec![Val::Handle(world.entity_ref(i)), Val::Handle(world.entity_ref(j))]);
+                        let r = apply_fn(f.clone(), &[pair.clone()], ctx, world, false)?;
+                        if &**s == "map" {
+                            out.push(r);
+                        } else if truthy(&r) {
+                            out.push(pair);
+                        }
+                    }
+                    return Ok(Val::arr(out));
+                }
                 let xs = match seq_view(&subject) {
                     Some(xs) => xs,
                     None => return Err(format!("{}: not a sequence: {:?}", s, subject)),
@@ -1450,13 +1476,13 @@ fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
         vec![Form::list(forms)]
     };
     Ok(Val::Fn {
-        params: vec!["x".into()].into(),
+        params: vec![Form::sym("x")].into(),
         body: body.into(),
         env: env.clone(),
     })
 }
 
-fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
+pub(crate) fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
     match q {
         Val::Map(_) => resolve_map_query(q, ctx, world),
         Val::Fn { .. } | Val::Builtin(_) => resolve_predicate_query(q, ctx, world),
@@ -1657,92 +1683,46 @@ fn entity_field_value(v: Val, field: &str, world: &World, sig: &SigEnv) -> Resul
     Ok(singleton_or_array(vals))
 }
 
-fn sf_defcontact(
+fn sf_deftick(
     items: &[Form],
     env: &Env,
-    ctx: &mut Ctx,
+    _ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Val, String> {
-    if items.len() != 3 && items.len() != 4 {
-        return Err("defcontact: expected pair, optional opts, callback".into());
+    if items.len() < 2 {
+        return Err("deftick: expected body".into());
     }
-    let pair = match items.get(1) {
-        Some(Form::Vector(xs)) if xs.len() == 2 => {
-            let a = match &xs[0] {
-                Form::Kw(k) => k.clone(),
-                _ => return Err("defcontact: pair entries must be keywords".into()),
-            };
-            let b = match &xs[1] {
-                Form::Kw(k) => k.clone(),
-                _ => return Err("defcontact: pair entries must be keywords".into()),
-            };
-            (a, b)
-        }
-        _ => return Err("defcontact: expected [:a :b] layer pair".into()),
+    let key: Rc<str> = format!("{:?}", items).into();
+    let rule = StandingRule {
+        key: key.clone(),
+        body: items[1..].to_vec().into(),
+        env: env.clone(),
     };
-    let (opts, cb_idx) = if items.len() == 4 {
-        (evaluate(&items[2], env, ctx, world)?, 3)
-    } else {
-        (Val::Map(Rc::new(Vec::new())), 2)
-    };
-    let Val::Map(kvs) = opts else {
-        return Err("defcontact: opts must be a map".into());
-    };
-    let mut once: Option<ColName> = None;
-    let mut skip_if: Option<SkipIf> = None;
-    for (k, v) in kvs.iter() {
-        let Val::Kw(key) = k else { return Err("defcontact: opts keys must be keywords".into()) };
-        match &**key {
-            "once" => match v {
-                Val::Kw(c) => once = Some(world.intern_col(c.as_ref())),
-                _ => return Err("defcontact: :once expects a keyword column".into()),
-            },
-            "skip-if" => {
-                let Val::Arr(xs) = v else {
-                    return Err("defcontact: :skip-if expects a vector".into());
-                };
-                if xs.len() != 4 {
-                    return Err("defcontact: :skip-if expects four entries".into());
-                }
-                let on_b = match &xs[0] {
-                    Val::Kw(s) if &**s == "a" => false,
-                    Val::Kw(s) if &**s == "b" => true,
-                    _ => return Err("defcontact: :skip-if side must be :a or :b".into()),
-                };
-                let col = match &xs[1] {
-                    Val::Kw(s) => world.intern_col(s.as_ref()),
-                    _ => return Err("defcontact: :skip-if column must be keyword".into()),
-                };
-                let gt = match &xs[2] {
-                    Val::Kw(s) if &**s == "gt" => true,
-                    Val::Kw(s) if &**s == "lt" => false,
-                    _ => return Err("defcontact: :skip-if op must be :gt or :lt".into()),
-                };
-                let rhs = match &xs[3] {
-                    Val::Kw(s) if &**s == "tick" => SkipRhs::Tick,
-                    Val::Num(n) => SkipRhs::Num(*n),
-                    _ => return Err("defcontact: :skip-if rhs must be :tick or number".into()),
-                };
-                skip_if = Some(SkipIf { on_b, col, gt, rhs });
-            }
-            other => return Err(format!("defcontact: unknown option :{}", other)),
-        }
-    }
-    let callback = evaluate(&items[cb_idx], env, ctx, world)?;
-    let a = world.symbols.intern(pair.0.as_ref());
-    let b = world.symbols.intern(pair.1.as_ref());
-    let rule = ContactRule { a, b, once, skip_if, callback };
-    match world.contacts.iter_mut().find(|r| r.a == a && r.b == b) {
+    match world.standing_rules.iter_mut().find(|r| r.key == key) {
         Some(slot) => *slot = rule,
-        None => world.contacts.push(rule),
+        None => world.standing_rules.push(rule),
     }
     Ok(Val::Nothing)
 }
 
-/// Bind a param vector to arguments, honoring a `& rest` tail (fns and
-/// macros share this): fixed params bind positionally — missing trailing
-/// args stay unbound, as before — and the param after `&` binds the
-/// remaining args as one array (possibly empty).
+fn validate_fn_params(params: &[Form]) -> Result<(), String> {
+    let mut rest = false;
+    for (i, p) in params.iter().enumerate() {
+        if matches!(p, Form::Sym(s) if &**s == "&") {
+            if rest || i + 1 >= params.len() || i + 2 != params.len() {
+                return Err("fn: & must appear once before the final rest parameter".into());
+            }
+            if !matches!(params.get(i + 1), Some(Form::Sym(_))) {
+                return Err("fn: rest parameter must be a symbol".into());
+            }
+            rest = true;
+        }
+    }
+    Ok(())
+}
+
+/// Bind a symbol param vector, honoring a `& rest` tail. Used for macros,
+/// whose parameters are still simple symbols and receive unevaluated forms.
 fn bind_params<T>(
     mut env: Env,
     params: &[Rc<str>],
@@ -1765,6 +1745,34 @@ fn bind_params<T>(
     Ok(env)
 }
 
+fn bind_fn_params(mut env: Env, params: &[Form], args: &[Val]) -> Result<Env, String> {
+    let mut pi = 0;
+    while pi < params.len() {
+        if matches!(&params[pi], Form::Sym(s) if &**s == "&") {
+            let Some(Form::Sym(rest_name)) = params.get(pi + 1) else {
+                return Err("params: & must be followed by a rest name".into());
+            };
+            return Ok(env.bind(rest_name.clone(), Val::arr(args.get(pi..).unwrap_or(&[]).to_vec())));
+        }
+        if let Some(arg) = args.get(pi) {
+            match &params[pi] {
+                Form::Sym(name) => env = env.bind(name.clone(), arg.clone()),
+                pat => {
+                    let mut binds = Vec::new();
+                    if !match_pattern(pat, arg, &mut binds)? {
+                        return Err(format!("params: argument {} did not match pattern", pi));
+                    }
+                    for (name, value) in binds {
+                        env = env.bind(name, value);
+                    }
+                }
+            }
+        }
+        pi += 1;
+    }
+    Ok(env)
+}
+
 pub fn apply_fn(
     f: Val,
     args: &[Val],
@@ -1775,7 +1783,7 @@ pub fn apply_fn(
     match f {
         Val::Builtin(name) => builtin(&name, args),
         Val::Fn { params, body, env } => {
-            let e = bind_params(env.clone(), &params, args, |a: &Val| a.clone())?;
+            let e = bind_fn_params(env.clone(), &params, args)?;
             let saved_ambient = ctx.ambient;
             ctx.ambient = Pose::IDENTITY;
             let mut last = Val::Nothing;
@@ -1937,7 +1945,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let row = world.install_entity(
                     dyn_figure,
                     spec.cache_policy.clone(),
-                    spec.triggers.clone(),
+                    spec.dyn_cols.clone(),
                     spec.collider_projector.clone(),
                     spec.render_projector.clone(),
                 )?;
@@ -1948,20 +1956,13 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     world.col_set_sym_at(row, *name, *val);
                 }
                 let handle = world.entity_ref(row);
-                for (col, chan) in spec.expose.iter() {
-                    world.exposes.push((chan.clone(), handle, col.clone()));
-                    // same-tick availability: the channel exists the moment
-                    // the entity does (gates may read it this very tick)
-                    let v = world
-                        .col_get_sym_at(row, *col)
-                        .unwrap_or(0.0);
-                    let mut m = (*ctx.sig.channels).clone();
-                    m.insert(chan.to_string(), Val::Num(v));
-                    ctx.sig.channels = Rc::new(m);
-                }
                 handles.push(Val::Handle(handle));
             }
             Ok(Val::arr(handles))
+        }
+        ActionV::Render { row } => {
+            world.render_rows.push(row.clone());
+            Ok(Val::Nothing)
         }
         ActionV::Manipulate { targets, query, callback } => {
             let handles: Vec<EntityRef> = match query {
@@ -2924,6 +2925,7 @@ mod tests {
     #[test]
     fn fn_map_and_easings() {
         assert_eq!(ev("((fn [x] (* x x)) 5)").num().unwrap(), 25.0);
+        assert_eq!(ev("((fn [[x y]] (+ x y)) [2 3])").num().unwrap(), 5.0);
         let Val::Arr(items) = ev("(map (fn [x] (inc x)) [1 2 3])") else { panic!() };
         assert_eq!(items[2].num().unwrap(), 4.0);
         assert!((ev("(eoutsine 1)").num().unwrap() - 1.0).abs() < 1e-9);

@@ -20,6 +20,8 @@ const NAMES: &[&str] = &[
     "count-entities",
     "sum-entities",
     "entities-where",
+    "collisions",
+    "render",
     "entity-pos",
     "entity-col",
     "nearest-entity",
@@ -170,6 +172,26 @@ pub(crate) fn special(
             let idxs = resolve_query(&q, ctx, world)?;
             Val::EntitySet(idxs.into())
         }
+        "collisions" => {
+            let Val::Kw(a) = evaluate(&items[1], env, ctx, world)? else {
+                return Err("collisions: expected first layer keyword".into());
+            };
+            let Val::Kw(b) = evaluate(&items[2], env, ctx, world)? else {
+                return Err("collisions: expected second layer keyword".into());
+            };
+            let a = world.symbols.intern(a.as_ref());
+            let b = world.symbols.intern(b.as_ref());
+            let pairs = world
+                .collision_facts
+                .iter()
+                .filter_map(|fact| (fact.a == a && fact.b == b).then_some((fact.i, fact.j)))
+                .collect::<Vec<_>>();
+            Val::CollisionSet(pairs.into())
+        }
+        "render" => {
+            let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?)?;
+            Val::Action(Rc::new(ActionV::Render { row }))
+        }
         "entity-pos" => {
             let target = evaluate(&items[1], env, ctx, world)?;
             entity_field_value(target, "pos", world, &ctx.sig)?
@@ -238,4 +260,68 @@ pub(crate) fn special(
         _ => return Ok(None),
     };
     Ok(Some(val))
+}
+
+fn render_row_from_value(v: Val) -> Result<RenderData, String> {
+    let Val::Map(kvs) = v else {
+        return Err("render: expected row map".into());
+    };
+    let get = |name: &str| {
+        kvs.iter().find_map(|(k, v)| match k {
+            Val::Kw(kw) if &**kw == name => Some(v.clone()),
+            _ => None,
+        })
+    };
+    let shape = match get("shape") {
+        Some(Val::Kw(k)) => k,
+        Some(Val::Arr(items)) => match items.first() {
+            Some(Val::Kw(k)) => k.clone(),
+            _ => return Err("render: :shape vector must start with a keyword".into()),
+        },
+        _ => return Err("render: missing keyword :shape".into()),
+    };
+    match &*shape {
+        "point" | "dot" => Ok(RenderData::Point {
+            x: get("x").map(|v| v.num()).transpose()?.unwrap_or(0.0),
+            y: get("y").map(|v| v.num()).transpose()?.unwrap_or(0.0),
+            theta: get("theta").or_else(|| get("facing")).map(|v| v.num()).transpose()?.unwrap_or(0.0),
+            scale: get("scale").map(|v| v.num()).transpose()?.unwrap_or(1.0),
+            alpha: get("alpha").or_else(|| get("opacity")).map(|v| v.num()).transpose()?.unwrap_or(1.0),
+            hue: get("hue").map(|v| v.num()).transpose()?.unwrap_or(0.0),
+        }),
+        "polyline" => {
+            let points = match get("points").or_else(|| get("pts")) {
+                Some(Val::Arr(items)) => items
+                    .iter()
+                    .cloned()
+                    .map(render_point_xy)
+                    .collect::<Result<Vec<_>, _>>()?,
+                Some(v) => return Err(format!("render: :points must be an array, got {:?}", v)),
+                None => return Err("render: polyline missing :points".into()),
+            };
+            let active = get("active").map(|v| v.num()).transpose()?.unwrap_or(1.0) != 0.0;
+            Ok(RenderData::Polyline { points, active })
+        }
+        other => Err(format!("render: unsupported shape :{}", other)),
+    }
+}
+
+fn render_point_xy(v: Val) -> Result<(f64, f64), String> {
+    match v {
+        Val::Pose(p) => Ok((p.x, p.y)),
+        Val::Arr(items) if items.len() >= 2 => Ok((items[0].num()?, items[1].num()?)),
+        Val::Map(kvs) => {
+            let get = |name: &str| {
+                kvs.iter().find_map(|(k, v)| match k {
+                    Val::Kw(kw) if &**kw == name => Some(v.clone()),
+                    _ => None,
+                })
+            };
+            Ok((
+                get("x").ok_or("render: point missing :x")?.num()?,
+                get("y").ok_or("render: point missing :y")?.num()?,
+            ))
+        }
+        other => Err(format!("render: unsupported point {:?}", other)),
+    }
 }

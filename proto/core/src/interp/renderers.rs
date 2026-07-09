@@ -11,7 +11,20 @@ pub struct Style {
 }
 
 #[derive(Clone, Debug)]
+pub struct PointRenderSlot {
+    /// Optional sprite rotation in degrees. Defaults to the figure pose angle.
+    pub facing: Option<DynNum>,
+    /// Sprite size multiplier.
+    pub scale: DynNum,
+    /// Hue offset / palette phase for the stock host renderer.
+    pub hue: DynNum,
+    /// Alpha multiplier.
+    pub opacity: DynNum,
+}
+
+#[derive(Clone, Debug)]
 pub enum RenderDynRepr {
+    Point(PointRenderSlot),
     Polyline(CurveRenderSlot),
 }
 
@@ -45,17 +58,15 @@ pub struct RenderSigs {
 }
 
 impl Dyn<RenderData> {
+    pub fn render_point(slot: PointRenderSlot) -> DynRender {
+        Dyn { repr: RenderDynRepr::Point(slot) }
+    }
+
     pub fn render_polyline(slot: CurveRenderSlot) -> DynRender {
         Dyn { repr: RenderDynRepr::Polyline(slot) }
     }
 
     pub fn repr(&self) -> &RenderDynRepr {
         &self.repr
-    }
-
-    pub fn polyline(&self) -> &CurveRenderSlot {
-        match &self.repr {
-            RenderDynRepr::Polyline(r) => r,
-        }
     }
 }

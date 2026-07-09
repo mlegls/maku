@@ -108,7 +108,7 @@
                                  (iota 13))) {:style {:family :gcircle
                                    :color [:blue :purple]
                                    :variant :w}
-                           :cols {:k (iota 13) :ang (+ th 33.75)}})
+                           :k (iota 13) :ang (+ th 33.75)})
                    (cull b)))))
     ;; act 2 — regenerate: when the rotation settles, the HEAD bead of
     ;; each ray re-fires a keine along its settled angle (the freeze

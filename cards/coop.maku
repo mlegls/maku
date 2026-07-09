@@ -20,8 +20,7 @@
 
 (defn pilot-meta [k]
   {:team :player-body
-   :cols {:lives 3 :pilot k :graze 0 :hits 0}
-   :triggers [{:col :lives :leq 0 :event :game-over}]})
+   :lives 3 :pilot k :graze 0 :hits 0})
 
 (defpattern pilot-rig-1 []
   (let [p (spawn (pilot-rig-motion 1)

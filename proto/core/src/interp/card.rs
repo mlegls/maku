@@ -35,9 +35,9 @@ pub struct Card {
     /// during channel refresh, in definition order. Card code, not engine:
     /// this is how the stdlib publishes $enemies/$nearest-enemy.
     pub channels: Vec<(Rc<str>, Form)>,
-    /// (defcontact [:a :b] opts? f) — evaluated when the card is installed,
-    /// registering contact rules into World data.
-    pub contacts: Vec<Form>,
+    /// (deftick body...) — evaluated when the card is installed, registering
+    /// per-tick rules into World data.
+    pub tick_rules: Vec<Form>,
 }
 
 pub fn load_card(forms: &[Form]) -> Result<Card, String> {
@@ -46,7 +46,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut defs = HashMap::new();
     let mut macros = HashMap::new();
     let mut channels: Vec<(Rc<str>, Form)> = Vec::new();
-    let mut contacts: Vec<Form> = Vec::new();
+    let mut tick_rules: Vec<Form> = Vec::new();
     for f in forms {
         if let Form::List(items) = f {
             match items.first() {
@@ -211,12 +211,12 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     channels.retain(|(k, _)| *k != name);
                     channels.push((name, expr.clone()));
                 }
-                Some(Form::Sym(s)) if &**s == "defcontact" => {
-                    contacts.push(f.clone());
+                Some(Form::Sym(s)) if &**s == "deftick" => {
+                    tick_rules.push(f.clone());
                 }
                 _ => {}
             }
         }
     }
-    Ok(Card { patterns, order, defs, macros, channels, contacts })
+    Ok(Card { patterns, order, defs, macros, channels, tick_rules })
 }

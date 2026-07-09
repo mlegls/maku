@@ -113,8 +113,8 @@ impl ColliderScratch {
     }
 }
 
-fn install_contacts(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
-    for form in &card.contacts {
+fn install_tick_rules(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
+    for form in &card.tick_rules {
         evaluate(form, &Env::empty(), ctx, world)?;
     }
     Ok(())
@@ -178,7 +178,7 @@ impl Sim {
                 let first = sent.order.first().cloned().ok_or("no defpattern")?;
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
-                card.contacts.extend(sent.contacts);
+                card.tick_rules.extend(sent.tick_rules);
                 return Sim::from_pattern(&card, &first);
             }
         }
@@ -187,7 +187,7 @@ impl Sim {
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
-        install_contacts(&card, &mut ctx, &mut world)?;
+        install_tick_rules(&card, &mut ctx, &mut world)?;
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
         Ok(Sim {
@@ -216,12 +216,12 @@ impl Sim {
                 let first = sent.order.first().cloned().ok_or("no defpattern")?;
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
-                card.contacts.extend(sent.contacts);
+                card.tick_rules.extend(sent.tick_rules);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
-                install_contacts(&card, &mut self.ctx, &mut self.world)?;
+                install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 let pat = &self.ctx.patterns.clone()[&first];
                 let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 let mut w = World::default();
@@ -236,7 +236,7 @@ impl Sim {
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
-                install_contacts(&card, &mut self.ctx, &mut self.world)?;
+                install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 (body_forms.into(), env)
             }
@@ -272,7 +272,7 @@ impl Sim {
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
-        install_contacts(card, &mut ctx, &mut world)?;
+        install_tick_rules(card, &mut ctx, &mut world)?;
         let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         for (pname, default) in &pat.params {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;
@@ -324,12 +324,58 @@ impl Sim {
             .unwrap_or(0)
     }
 
+    fn refresh_dyn_cols(&mut self) -> Result<(), String> {
+        let tick = self.world.tick;
+        let sig = self.ctx.sig.clone();
+        let state = MotionState::new();
+        for i in 0..self.world.entities.len() {
+            if !self.world.entities.is_alive(i) {
+                continue;
+            }
+            let tau = self.world.entities.tau(i, tick);
+            for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
+                let value = eval_dyn(dyn_num, tau, &state, &sig)
+                    .map_err(|e| format!("dyn meta field: {}", e))?;
+                self.world.col_set_sym_at(i, *col, value);
+            }
+        }
+        Ok(())
+    }
+
+    fn exec_tick_value(&mut self, v: Val) -> Result<(), String> {
+        match v {
+            Val::Action(action) => {
+                exec_instant(&action, &mut self.ctx, &mut self.world)?;
+            }
+            Val::Arr(items) => {
+                for item in items.iter() {
+                    self.exec_tick_value(item.clone())?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn run_standing_rules(&mut self) -> Result<(), String> {
+        let rules = self.world.standing_rules.clone();
+        for rule in rules {
+            for form in rule.body.iter() {
+                let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)
+                    .map_err(|e| format!("deftick: {}", e))?;
+                self.exec_tick_value(value)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn step(&mut self) -> Result<(), String> {
         self.step_with(&Inputs::default())
     }
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         self.refresh_channels(inputs)?;
+        self.world.render_rows.clear();
         // control layer
         let mut i = 0;
         while i < self.tasks.len() {
@@ -382,6 +428,9 @@ impl Sim {
                 }
             }
         }
+        // Evaluate dyn-owned entity fields after control/motion updates and
+        // before any collision/render/rule projector reads entity views.
+        self.refresh_dyn_cols()?;
         // record traced curves: a dynamic integer sample domain over the
         // retained history window
         {
@@ -406,7 +455,7 @@ impl Sim {
             }
         }
         self.collide(inputs)?;
-        self.fire_triggers();
+        self.run_standing_rules()?;
         // bound the retained event window. The log is SHARED across
         // snapshots (they store only a cursor), so this is display
         // history, not snapshot data: restores truncate the tail and
@@ -417,6 +466,7 @@ impl Sim {
             self.world.log.borrow_mut().prune(cutoff);
         }
         self.world.tick += 1;
+        self.refresh_dyn_cols()?;
         // cull: off-playfield poses/traces; compatibility curves past their active window
         let tick = self.world.tick;
         let mut err = None;
@@ -465,8 +515,11 @@ impl Sim {
                             &mut render_slots,
                         );
                     }
-                    let render_live = render_slots.first()
-                        .map(DynRender::polyline)
+                    let first_polyline = render_slots.iter().find_map(|slot| match slot.repr() {
+                        RenderDynRepr::Polyline(projection) => Some(projection),
+                        RenderDynRepr::Point(_) => None,
+                    });
+                    let render_live = first_polyline
                         .map(|projection| tau <= projection.activity.warn + projection.activity.active);
                     let collider_live = || {
                         let Some(projector) = self.world.entities.collider_projector(i).cloned() else {
@@ -490,8 +543,11 @@ impl Sim {
                             &mut collider_slots,
                         )
                             .ok()?;
-                        let curve_slot = render_slots.first()
-                            .map(DynRender::polyline)
+                        let curve_slot = render_slots.iter()
+                            .find_map(|slot| match slot.repr() {
+                                RenderDynRepr::Polyline(projection) => Some(projection),
+                                RenderDynRepr::Point(_) => None,
+                            })
                             .map(|projection| CapsuleChainSlot {
                                 sample_set: projection.sample_set.clone(),
                                 u_max_sig: projection.u_max_sig.clone(),

@@ -6,7 +6,7 @@
 ;;   movement integrates the raw axes in the vel domain (focus modulates
 ;;   speed as a signal; the rig is clamped to the playfield), bombs are a
 ;;   control-layer loop over the raw button with stock as fold state,
-;;   lives/game-over and boss hp/phases are columns + triggers.
+;;   lives/game-over and boss hp/phases are fields + rules.
 ;;
 ;;   boss phases: (phases ...) — touhou's boss-shaped sugar over the
 ;;   `states` FSM — non-spell while hp > 60, then Spell 2 (imported
@@ -85,8 +85,6 @@
     ;; machine held until the boss registers, `boss` handles bound.
     (spawn-boss $mima (pose c[0 2.6])
                 {:hp 100 :hitbox 0.45
-                  :triggers [{:col :hp :leq 60 :event :spell-break}
-                             {:col :hp :leq 0 :event :died :cull true}]
                   :style {:family :lstar :color :purple}
                   :scale 2}
       (phases                            ; touhou's sugar over `states`:

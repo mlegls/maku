@@ -1,4 +1,4 @@
-//! World data: entities, colliders, triggers, events, contact rules.
+//! World data: entities, colliders, rules, events, contact rules.
 
 use super::*;
 use std::collections::HashMap;
@@ -130,7 +130,7 @@ pub struct EntityStore {
 struct EntitySpecStore {
     dyn_figure: Vec<DynFigure>,
     cache_policy: Vec<EntityCachePolicy>,
-    triggers: Vec<Rc<[TriggerRule]>>,
+    dyn_cols: Vec<Rc<[(ColName, DynNum)]>>,
     collider_projector: Vec<ColliderProjector>,
     render_projector: Vec<RenderProjector>,
     motion_schema: Vec<Rc<MotionStateSchema>>,
@@ -141,7 +141,7 @@ impl EntitySpecStore {
         EntitySpecStore {
             dyn_figure: Vec::with_capacity(max),
             cache_policy: Vec::with_capacity(max),
-            triggers: Vec::with_capacity(max),
+            dyn_cols: Vec::with_capacity(max),
             collider_projector: Vec::with_capacity(max),
             render_projector: Vec::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
@@ -152,14 +152,14 @@ impl EntitySpecStore {
         &mut self,
         dyn_figure: DynFigure,
         cache_policy: EntityCachePolicy,
-        triggers: Rc<[TriggerRule]>,
+        dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) {
         self.dyn_figure.push(dyn_figure);
         self.cache_policy.push(cache_policy);
-        self.triggers.push(triggers);
+        self.dyn_cols.push(dyn_cols);
         self.collider_projector.push(collider_projector);
         self.render_projector.push(render_projector);
         self.motion_schema.push(motion_schema);
@@ -170,14 +170,14 @@ impl EntitySpecStore {
         row: usize,
         dyn_figure: DynFigure,
         cache_policy: EntityCachePolicy,
-        triggers: Rc<[TriggerRule]>,
+        dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) {
         self.dyn_figure[row] = dyn_figure;
         self.cache_policy[row] = cache_policy;
-        self.triggers[row] = triggers;
+        self.dyn_cols[row] = dyn_cols;
         self.collider_projector[row] = collider_projector;
         self.render_projector[row] = render_projector;
         self.motion_schema[row] = motion_schema;
@@ -186,7 +186,7 @@ impl EntitySpecStore {
     fn truncate(&mut self, len: usize) {
         self.dyn_figure.truncate(len);
         self.cache_policy.truncate(len);
-        self.triggers.truncate(len);
+        self.dyn_cols.truncate(len);
         self.collider_projector.truncate(len);
         self.render_projector.truncate(len);
         self.motion_schema.truncate(len);
@@ -199,8 +199,8 @@ impl EntitySpecStore {
         if self.cache_policy.capacity() < max {
             self.cache_policy.reserve_exact(max - self.cache_policy.capacity());
         }
-        if self.triggers.capacity() < max {
-            self.triggers.reserve_exact(max - self.triggers.capacity());
+        if self.dyn_cols.capacity() < max {
+            self.dyn_cols.reserve_exact(max - self.dyn_cols.capacity());
         }
         if self.collider_projector.capacity() < max {
             self.collider_projector.reserve_exact(max - self.collider_projector.capacity());
@@ -396,8 +396,8 @@ impl EntityStore {
         self.specs.cache_policy.get(row)?.trace.as_ref()?.window
     }
 
-    pub fn triggers(&self, row: usize) -> Rc<[TriggerRule]> {
-        self.specs.triggers.get(row).cloned().unwrap_or_else(|| Rc::from([]))
+    pub fn dyn_cols(&self, row: usize) -> Rc<[(ColName, DynNum)]> {
+        self.specs.dyn_cols.get(row).cloned().unwrap_or_else(|| Rc::from([]))
     }
 
     pub fn collider_projector(&self, row: usize) -> Option<&ColliderProjector> {
@@ -646,7 +646,7 @@ impl EntityStore {
         birth: u64,
         scanned: bool,
         cache_policy: EntityCachePolicy,
-        triggers: Rc<[TriggerRule]>,
+        dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
@@ -656,7 +656,7 @@ impl EntityStore {
             i,
             dyn_figure,
             cache_policy,
-            triggers,
+            dyn_cols,
             collider_projector,
             render_projector,
             motion_schema,
@@ -678,7 +678,7 @@ impl EntityStore {
         birth: u64,
         scanned: bool,
         cache_policy: EntityCachePolicy,
-        triggers: Rc<[TriggerRule]>,
+        dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
@@ -690,7 +690,7 @@ impl EntityStore {
         self.specs.push(
             dyn_figure,
             cache_policy,
-            triggers,
+            dyn_cols,
             collider_projector,
             render_projector,
             motion_schema,
@@ -741,59 +741,20 @@ impl Clone for EntityStore {
     }
 }
 
-/// A standing rule over an entity's own columns: when `col <= leq` first
-/// becomes true (edge-triggered; the latch is itself a column, so it
-/// snapshots and scrubs), emit the event and optionally cull. The same
-/// mechanism covers death, HP-gated boss phases, enrage thresholds, lives.
-#[derive(Clone, Debug)]
-pub struct TriggerRule {
-    /// Event name; also keys the latch column.
-    pub name: Symbol,
-    /// Precomputed latch column key.
-    pub latch: ColName,
-    pub col: ColName,
-    pub leq: f64,
-    pub cull: bool,
-}
-
-impl TriggerRule {
-    pub fn new(name: Symbol, latch: ColName, col: ColName, leq: f64, cull: bool) -> TriggerRule {
-        TriggerRule {
-            name,
-            latch,
-            col,
-            leq,
-            cull,
-        }
-    }
-}
-
-/// A collision rule: when an entity with an `a`-layer collider overlaps an
-/// entity with a `b`-layer collider, run the callback with both handles.
-/// Prefilters are rule DATA, evaluated engine-side per pair (no interpreter
-/// on the hot path): `once` latches a column on the A entity (fires once per
-/// A-entity ever), `skip_if` compares a column against a threshold.
 #[derive(Clone)]
-pub struct ContactRule {
+pub struct StandingRule {
+    pub key: Rc<str>,
+    pub body: Rc<[Form]>,
+    pub env: Env,
+}
+
+#[derive(Clone)]
+pub struct CollisionFact {
     pub a: Symbol,
     pub b: Symbol,
-    /// Column name latched to 1.0 on the A entity after the callback fires.
-    pub once: Option<ColName>,
-    /// (side, col, op, rhs): skip the pair when `side.col op rhs` holds.
-    pub skip_if: Option<SkipIf>,
-    pub callback: Val,
+    pub i: usize,
+    pub j: usize,
 }
-
-#[derive(Clone)]
-pub struct SkipIf {
-    pub on_b: bool,          // :a or :b
-    pub col: ColName,
-    pub gt: bool,            // :gt or :lt (missing col reads 0.0)
-    pub rhs: SkipRhs,
-}
-
-#[derive(Clone)]
-pub enum SkipRhs { Tick, Num(f64) }
 
 pub struct World {
     pub tick: u64,
@@ -811,13 +772,12 @@ pub struct World {
     /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
     pub symbols: SymbolTable,
-    /// Column-expose rules from spawn meta :expose {$channel :col}:
-    /// channel := that entity's column while alive, else 0. Registered at
-    /// spawn, persists past the entity (death reads as 0, so hp gates fire).
-    pub exposes: Vec<(Rc<str>, EntityRef, ColName)>,
-    /// Card-defined contact rules, registered by defcontact. World data so
-    /// hot-swaps and timeline restore carry the same collision semantics.
-    pub contacts: Vec<ContactRule>,
+    /// Ephemeral render rows emitted by tick/render rules for the current tick.
+    pub render_rows: Vec<RenderData>,
+    /// Card-defined standing rules over row domains, run once per tick.
+    pub standing_rules: Vec<StandingRule>,
+    /// Current-tick collision domain facts, rebuilt by the collision pass.
+    pub collision_facts: Vec<CollisionFact>,
 }
 
 impl Clone for World {
@@ -831,8 +791,9 @@ impl Clone for World {
             rng: self.rng,
             fields: self.fields.clone(),
             symbols: self.symbols.clone(),
-            exposes: self.exposes.clone(),
-            contacts: self.contacts.clone(),
+            render_rows: self.render_rows.clone(),
+            standing_rules: self.standing_rules.clone(),
+            collision_facts: self.collision_facts.clone(),
         }
     }
 }
@@ -930,8 +891,9 @@ impl World {
             rng: 0x9e37_79b9_7f4a_7c15,
             fields: WorldFields::default(),
             symbols: SymbolTable::default(),
-            exposes: Vec::new(),
-            contacts: Vec::new(),
+            render_rows: Vec::new(),
+            standing_rules: Vec::new(),
+            collision_facts: Vec::new(),
         }
     }
 }
@@ -1023,7 +985,7 @@ impl World {
         &mut self,
         dyn_figure: DynFigure,
         cache_policy: EntityCachePolicy,
-        triggers: Rc<[TriggerRule]>,
+        dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         render_projector: RenderProjector,
     ) -> Result<usize, String> {
@@ -1038,7 +1000,7 @@ impl World {
                 self.tick,
                 scanned,
                 cache_policy,
-                triggers,
+                dyn_cols,
                 collider_projector,
                 render_projector,
                 motion_schema,
@@ -1049,7 +1011,7 @@ impl World {
                 self.tick,
                 scanned,
                 cache_policy,
-                triggers,
+                dyn_cols,
                 collider_projector,
                 render_projector,
                 motion_schema,
