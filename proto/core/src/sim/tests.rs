@@ -16,17 +16,17 @@
             .enumerate()
             .filter(|(i, _)| {
                 sim.world.entities.is_alive(*i)
-                    && sim
-                        .world
-                        .entities
-                        .render_projector(*i)
-                        .is_some_and(|projector| projector.style.family == family)
+                    && sim.world.sym_field_matches_at(*i, "family", family)
             })
             .count()
     }
 
-    fn style(sim: &Sim, row: usize) -> &Style {
-        &sim.world.entities.render_projector(row).unwrap().style
+    fn style(sim: &Sim, row: usize) -> Style {
+        Style {
+            family: sim.world.sym_field_resolved_at(row, "family").unwrap_or("").to_string(),
+            color: sim.world.sym_field_resolved_at(row, "color").unwrap_or("").to_string(),
+            variant: sim.world.sym_field_resolved_at(row, "variant").unwrap_or("").to_string(),
+        }
     }
 
     fn dyn_figure(sim: &Sim, row: usize) -> &DynFigure {
@@ -1511,7 +1511,7 @@
     (defvar probe 0)
     (export probe)
     (spawn (pose c[3 4]) {:style {:family :circle}})
-    (manipulate (fn [b] (* (= b.render.style.family :circle) (> b.pos.y 1)))
+    (manipulate (fn [b] (* (= b.family :circle) (> b.pos.y 1)))
       (fn [b] (set! probe b.pos.y)))))
 (defpattern gather []
   (spawn ((rot m"(30 * iota(12)).[iota(3)]") (linear c[1 0]))))
@@ -2575,7 +2575,7 @@ fn defchannel_derives_per_tick() {
 fn entity_sets_broadcast_keyword_accessors() {
     const CARD: &str = r#"
 (defchannel $enemy-hp-view (:hp (entities-where (matches :team :enemy))))
-(defchannel $enemy-pos-view (:pos (entities-where (matches :team :enemy :render.style.color :red))))
+(defchannel $enemy-pos-view (:pos (entities-where (matches :team :enemy :color :red))))
 (defpattern p []
   (seq
     (spawn (pose c[2 3]) {:team :enemy :hp 4 :style {:color :red}})
@@ -2605,7 +2605,7 @@ fn predicate_queries_drive_manipulate() {
   (seq
     (spawn (pose c[0 0]) {:team :enemy :hp 4 :style {:color :red}})
     (spawn (pose c[0 0]) {:team :enemy :hp 6 :style {:color :blue}})
-    (manipulate (matches :team :enemy :render.style.color :red)
+    (manipulate (matches :team :enemy :color :red)
       (fn [b] (set-col b :hp 1)))
     (wait (ticks 1))))
 "#;

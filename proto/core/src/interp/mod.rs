@@ -1377,21 +1377,8 @@ fn map_path_get(v: &Val, path: &str) -> Option<Val> {
     Some(cur)
 }
 
-fn render_style_map(style: &Style) -> Val {
-    Val::Map(Rc::new(vec![
-        (Val::Kw("family".into()), Val::Kw(style.family.as_str().into())),
-        (Val::Kw("color".into()), Val::Kw(style.color.as_str().into())),
-        (Val::Kw("variant".into()), Val::Kw(style.variant.as_str().into())),
-    ]))
-}
-
-fn render_view(projector: &RenderProjector) -> Val {
-    Val::Map(Rc::new(vec![(Val::Kw("style".into()), render_style_map(&projector.style))]))
-}
-
 /// Entity view passed to predicate queries and manipulate callbacks.
-/// The entity view contains current kinematic fields, `:render` namespaced
-/// renderer compatibility data, legacy flat style aliases, and columns.
+/// The entity view contains current kinematic fields, sym fields, and columns.
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
     let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
@@ -1415,10 +1402,6 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("entity view: missing dyn figure for row {i}"))?;
-    let render_projector = world
-        .entities
-        .render_projector(i)
-        .ok_or_else(|| format!("entity view: missing render projector for row {i}"))?;
     let tau = world.entities.tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::new();
@@ -1434,10 +1417,6 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "laser",
         }.into())),
-        (Val::Kw("render".into()), render_view(render_projector)),
-        (Val::Kw("family".into()), Val::Kw(render_projector.style.family.as_str().into())),
-        (Val::Kw("color".into()), Val::Kw(render_projector.style.color.as_str().into())),
-        (Val::Kw("variant".into()), Val::Kw(render_projector.style.variant.as_str().into())),
     ];
     for (field, value) in world.sym_fields_for_view(i) {
         view.push((Val::Kw(field), Val::Kw(value)));
@@ -1518,7 +1497,6 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
             _ => None,
         })
     };
-    let get_any = |names: &[&str]| names.iter().find_map(|name| get(name));
     let reserved_query_key = |name: &str| {
         matches!(
             name,
@@ -1526,9 +1504,6 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
                 | "family"
                 | "color"
                 | "variant"
-                | "render.style.family"
-                | "render.style.color"
-                | "render.style.variant"
         )
     };
     let axis_ok = |sel: &Option<Val>, actual: &str| match sel {
@@ -1539,9 +1514,9 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
     };
     let (family, color, variant, team) =
         (
-            get_any(&["render.style.family", "family"]),
-            get_any(&["render.style.color", "color"]),
-            get_any(&["render.style.variant", "variant"]),
+            get("family"),
+            get("color"),
+            get("variant"),
             get("team"),
         );
     let kw_filters = kvs
@@ -1556,11 +1531,11 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
         .collect::<Vec<_>>();
     let mut candidates: Vec<usize> = Vec::new();
     for (i, _) in world.entities.iter().enumerate() {
-        let Some(render_projector) = world.entities.render_projector(i) else { continue };
+        let Some(_) = world.entities.render_projector(i) else { continue };
         if !world.entities.is_alive(i)
-            || !axis_ok(&family, &render_projector.style.family)
-            || !axis_ok(&color, &render_projector.style.color)
-            || !axis_ok(&variant, &render_projector.style.variant)
+            || !axis_ok(&family, world.sym_field_resolved_at(i, "family").unwrap_or(""))
+            || !axis_ok(&color, world.sym_field_resolved_at(i, "color").unwrap_or(""))
+            || !axis_ok(&variant, world.sym_field_resolved_at(i, "variant").unwrap_or(""))
             || !axis_ok(&team, world.sym_field_resolved_at(i, "team").unwrap_or(""))
             || kw_filters
                 .iter()
@@ -1622,30 +1597,6 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             FigureDynRepr::Curve { .. } => "curve",
         }
         .into())),
-        "family" => Ok(Val::Kw(world
-            .entities
-            .render_projector(i)
-            .ok_or_else(|| format!("field: missing render projector for row {i}"))?
-            .style
-            .family
-            .as_str()
-            .into())),
-        "color" => Ok(Val::Kw(world
-            .entities
-            .render_projector(i)
-            .ok_or_else(|| format!("field: missing render projector for row {i}"))?
-            .style
-            .color
-            .as_str()
-            .into())),
-        "variant" => Ok(Val::Kw(world
-            .entities
-            .render_projector(i)
-            .ok_or_else(|| format!("field: missing render projector for row {i}"))?
-            .style
-            .variant
-            .as_str()
-            .into())),
         field => {
             if let Some(value) = world.sym_field_resolved_at(i, field) {
                 return Ok(Val::Kw(value.into()));
@@ -2032,25 +1983,15 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::SetStyle { target, style } => {
             if let Some(i) = world.find(*target) {
-                let Some(projector) = world.entities.render_projector(i) else {
-                    return Ok(Val::Nothing);
-                };
-                let mut st = projector.style.clone();
                 if let Val::Map(kvs) = style {
                     for (k, v) in kvs.iter() {
-                        if let Val::Kw(k) = k {
-                            let val = kw_str(v);
-                            match &**k {
-                                "family" => st.family = val,
-                                "color" => st.color = val,
-                                "variant" => st.variant = val,
-                                _ => {}
-                            }
-                        }
+                        let (Val::Kw(k), Val::Kw(v)) = (k, v) else {
+                            continue;
+                        };
+                        let field = world.field_sym(k.as_ref());
+                        let value = world.symbols.intern(v.as_ref());
+                        world.sym_field_set_at(i, field, value);
                     }
-                }
-                if let Some(projector) = world.entities.render_projector_mut(i) {
-                    projector.style = st;
                 }
             }
             Ok(Val::Nothing)

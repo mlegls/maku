@@ -126,8 +126,7 @@ fn build_entity_specs(
     world: &mut World,
 ) -> Result<Vec<EntitySpec>, String> {
     let meta_value = &meta.value;
-    let styles = resolve_styles(meta_value, &elems)?;
-    let sigs = resolve_sigs(elems.len());
+    let styles = resolve_style_fields(meta_value, &elems, world)?;
     let mut sym_fields: Vec<(FieldName, Symbol)> = Vec::new();
     if let Val::Map(kvs) = meta_value {
         for (k, v) in kvs.iter() {
@@ -211,25 +210,26 @@ fn build_entity_specs(
     let entities = elems
         .into_iter()
         .zip(styles)
-        .zip(sigs)
         .zip(cols)
-        .map(|(((e, style), sigs), cols)| {
+        .map(|((e, style_fields), cols)| {
             let mut collider_projectors = shared_collider_projectors.iter().cloned().collect::<Vec<_>>();
             collider_projectors.push(e.collider_projector_spec);
             let mut render_specs = shared_render_specs.iter().cloned().collect::<Vec<_>>();
             render_specs.push(e.renderer_projector_spec);
+            let mut sym_fields = sym_fields.clone();
+            for (field, value) in style_fields {
+                if !sym_fields.iter().any(|(name, _)| *name == field) {
+                    sym_fields.push((field, value));
+                }
+            }
             EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
-                sym_fields: sym_fields.clone(),
+                sym_fields,
                 cols,
                 dyn_cols: dyn_cols.clone(),
                 collider_projector: ColliderProjector { projectors: collider_projectors.into() },
-                render_projector: RenderProjector {
-                    specs: render_specs.into(),
-                    style,
-                    sigs,
-                },
+                render_projector: RenderProjector { specs: render_specs.into() },
             }
         })
         .collect();
@@ -584,21 +584,35 @@ pub(crate) fn axis_value(v: &Val, elem: &SpawnElem, flat: usize) -> String {
     }
 }
 
-pub(crate) fn resolve_styles(meta: &Val, elems: &[SpawnElem]) -> Result<Vec<Style>, String> {
+pub(crate) fn resolve_style_fields(
+    meta: &Val,
+    elems: &[SpawnElem],
+    world: &mut World,
+) -> Result<Vec<Vec<(FieldName, Symbol)>>, String> {
     let style = map_get(meta, "style").unwrap_or(Val::Map(Rc::new(vec![])));
+    let axes = ["family", "color", "variant"]
+        .iter()
+        .filter_map(|axis| map_get(&style, axis).map(|v| (*axis, v)))
+        .collect::<Vec<_>>();
     Ok(elems
         .iter()
         .enumerate()
-        .map(|(k, e)| Style {
-            family: map_get(&style, "family").map(|v| axis_value(&v, e, k)).unwrap_or_default(),
-            color: map_get(&style, "color").map(|v| axis_value(&v, e, k)).unwrap_or_default(),
-            variant: map_get(&style, "variant").map(|v| axis_value(&v, e, k)).unwrap_or_default(),
+        .map(|(k, e)| {
+            axes
+                .iter()
+                .filter_map(|(axis, v)| {
+                    let value = axis_value(v, e, k);
+                    if value.is_empty() {
+                        return None;
+                    }
+                    let field = world.field_sym(axis);
+                    let value = world.symbols.intern(value.as_str());
+                    world.intern_sym_field_slot(field);
+                    Some((field, value))
+                })
+                .collect()
         })
         .collect())
-}
-
-pub(crate) fn resolve_sigs(n: usize) -> Vec<RenderSigs> {
-    vec![RenderSigs::default(); n]
 }
 
 pub(crate) fn formation(

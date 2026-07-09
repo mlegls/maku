@@ -269,14 +269,10 @@ pub struct ColliderProjector {
     pub projectors: Rc<[ColliderProjectorValue]>,
 }
 
-/// Semantic render projector slot carried by a spawned entity. The style/sigs
-/// fields are compatibility host-renderer data and should move behind renderer
-/// specs as that boundary becomes explicit.
+/// Semantic render projector slot carried by a spawned entity.
 #[derive(Clone, Debug)]
 pub struct RenderProjector {
     pub specs: Rc<[RendererProjectorSpec]>,
-    pub style: Style,
-    pub sigs: RenderSigs,
 }
 
 /// Literal meta forms are lifted through DynLike before merging so static keys

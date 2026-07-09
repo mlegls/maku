@@ -247,10 +247,7 @@ mod tests {
             .enumerate()
             .filter(|(i, _)| {
                 world.entities.is_alive(*i)
-                    && world
-                        .entities
-                        .render_projector(*i)
-                        .is_some_and(|projector| projector.style.family == fam)
+                    && world.sym_field_matches_at(*i, "family", fam)
             })
             .count()
     }
@@ -280,13 +277,7 @@ mod tests {
             .iter()
             .enumerate()
             .filter(|(i, _)| {
-                sess.sim
-                    .as_ref()
-                    .unwrap()
-                    .world
-                    .entities
-                    .render_projector(*i)
-                    .is_some_and(|projector| projector.style.family == "y")
+                sess.sim.as_ref().unwrap().world.sym_field_matches_at(*i, "family", "y")
             })
             .filter_map(|(i, _)| sess.sim.as_ref().unwrap().world.entities.birth(i))
             .collect();
@@ -309,13 +300,7 @@ mod tests {
             .iter()
             .enumerate()
             .filter(|(i, _)| {
-                sess.sim
-                    .as_ref()
-                    .unwrap()
-                    .world
-                    .entities
-                    .render_projector(*i)
-                    .is_some_and(|projector| projector.style.family == "y")
+                sess.sim.as_ref().unwrap().world.sym_field_matches_at(*i, "family", "y")
             })
             .filter_map(|(i, _)| sess.sim.as_ref().unwrap().world.entities.birth(i))
             .collect();

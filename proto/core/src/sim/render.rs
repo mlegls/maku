@@ -47,31 +47,12 @@ impl RenderScratch {
 }
 
 impl Sim {
-    /// Sample one render-signal tag at entity-local t (default when absent).
-    pub(super) fn sample_sig(&self, s: &Option<MetaSig>, tau: f64, default: f64) -> f64 {
-        let Some(h) = s else { return default };
-        let env = h.env.bind("t".into(), Val::Num(tau));
-        let mut ctx = Ctx {
-            sig: self.ctx.sig.clone(),
-            ambient: Pose::IDENTITY,
-            scan: None,
-            patterns: self.ctx.patterns.clone(),
-            macros: self.ctx.macros.clone(),
-            deferred: Vec::new(),
-            projector_scope: None,
-        };
-        let mut w = World::default();
-        match evaluate(&h.form, &env, &mut ctx, &mut w) {
-            Ok(Val::Num(x)) => x,
-            Ok(Val::Arr(items)) if !items.is_empty() => {
-                items[h.idx % items.len()].num().unwrap_or(default)
-            }
-            _ => default,
+    fn style_at(&self, i: usize) -> Style {
+        Style {
+            family: self.world.sym_field_resolved_at(i, "family").unwrap_or("").to_string(),
+            color: self.world.sym_field_resolved_at(i, "color").unwrap_or("").to_string(),
+            variant: self.world.sym_field_resolved_at(i, "variant").unwrap_or("").to_string(),
         }
-    }
-
-    fn sample_hue(&self, projector: &RenderProjector, tau: f64) -> f64 {
-        self.sample_sig(&projector.sigs.hue, tau, 0.0)
     }
 
     pub fn render(&mut self) -> Vec<RenderItem> {
@@ -123,6 +104,7 @@ impl Sim {
             let tau = self.world.entities.tau(i, self.world.tick);
             match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
+                    let style = self.style_at(i);
                     let start = scratch.begin_row();
                     let e_view = entity_view(i, &self.world, sig).ok();
                     let ctx_view = Val::Map(std::rc::Rc::new(vec![
@@ -149,17 +131,17 @@ impl Sim {
                                     x: *x,
                                     y: *y,
                                     th: *theta,
-                                    style: render_projector.style.clone(),
+                                    style: style.clone(),
                                     hue: *hue,
                                     scale: *scale,
                                     alpha: *alpha,
                                 }),
                                 RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
                                     pts: points.clone(),
-                                    style: render_projector.style.clone(),
+                                    style: style.clone(),
                                     active: *active,
-                                    hue: self.sample_hue(render_projector, tau),
-                                    alpha: self.sample_sig(&render_projector.sigs.opacity, tau, 1.0),
+                                    hue: 0.0,
+                                    alpha: 1.0,
                                 }),
                             }
                         }
@@ -170,10 +152,10 @@ impl Sim {
                         if trace.len() >= 2 {
                             out.push(RenderItem::Polyline {
                                 pts: trace.iter().map(|p| (p.x, p.y)).collect(),
-                                style: render_projector.style.clone(),
+                                style: style.clone(),
                                 active: true,
-                                hue: self.sample_hue(render_projector, tau),
-                                alpha: self.sample_sig(&render_projector.sigs.opacity, tau, 1.0),
+                                hue: 0.0,
+                                alpha: 1.0,
                             });
                         }
                     } else {
@@ -184,17 +166,18 @@ impl Sim {
                                 x: p.x,
                                 y: p.y,
                                 // :facing overrides the motion direction
-                                th: self.sample_sig(&render_projector.sigs.facing, tau, p.angle_or(0.0)),
-                                style: render_projector.style.clone(),
-                                hue: self.sample_hue(render_projector, tau),
-                                scale: self.sample_sig(&render_projector.sigs.scale, tau, 1.0),
-                                alpha: self.sample_sig(&render_projector.sigs.opacity, tau, 1.0),
+                                th: p.angle_or(0.0),
+                                style: style.clone(),
+                                hue: 0.0,
+                                scale: 1.0,
+                                alpha: 1.0,
                             });
                         }
                     }
                 }
                 FigureDynRepr::Curve { .. } => {
-                    let alpha = self.sample_sig(&render_projector.sigs.opacity, tau, 1.0);
+                    let alpha = 1.0;
+                    let style = self.style_at(i);
                     let start = scratch.begin_row();
                     let e_view = entity_view(i, &self.world, sig).ok();
                     let ctx_view = Val::Map(std::rc::Rc::new(vec![
@@ -220,16 +203,16 @@ impl Sim {
                                 x: *x,
                                 y: *y,
                                 th: *theta,
-                                style: render_projector.style.clone(),
+                                style: style.clone(),
                                 hue: *hue,
                                 scale: *scale,
                                 alpha: *alpha,
                             }),
                             RenderData::Polyline { points, active } => out.push(RenderItem::Polyline {
                                 pts: points.clone(),
-                                style: render_projector.style.clone(),
+                                style: style.clone(),
                                 active: *active,
-                                hue: self.sample_hue(render_projector, tau),
+                                hue: 0.0,
                                 alpha,
                             }),
                         }
