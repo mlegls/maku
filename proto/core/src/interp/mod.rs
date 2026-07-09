@@ -1098,7 +1098,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 }))));
             }
             "vel" => return sf_vel(items, env, ctx, world),
-            "laser" => return sf_laser(items, env, ctx, world),
+            // `curve` is the figure constructor; `laser` is a transitional
+            // alias until the lib spawner owns that name
+            "curve" | "laser" => return sf_curve(items, env, ctx, world),
             "fields" => {
                 if items.len() != 3 {
                     return Err("fields: expected (fields figure {field value ...})".into());
@@ -2745,15 +2747,15 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     }
 }
 
-fn sf_laser(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
-    // (laser shape? opts): shape is a dyn over (t, u); opts is a map.
+fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    // (curve shape? opts): shape is a dyn over (t, u); opts is a map.
     let (shape, opts_idx) = match items.get(1) {
         Some(Form::Map(_)) => (None, 1),
         Some(_) => {
             let sv = evaluate(&items[1], env, ctx, world)?;
             (Some(as_dyn_pose(sv)?), 2)
         }
-        None => return Err("laser: expected options".into()),
+        None => return Err("curve: expected options".into()),
     };
     // evaluate options, keeping signal-valued entries (contain t) as forms
     let mut u_max_sig = None;
