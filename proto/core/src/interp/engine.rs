@@ -16,7 +16,7 @@ const NAMES: &[&str] = &[
     "set-style",
     "cull",
     "pos",
-    "on-laser",
+    "on-curve",
     "count-entities",
     "sum-entities",
     "entities-where",
@@ -121,9 +121,9 @@ pub(crate) fn special(
             )?;
             Val::Pose(Pose::point(p.x, p.y))
         }
-        "on-laser" => {
+        "on-curve" => {
             let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                return Err("on-laser: expected laser handle".into());
+                return Err("on-curve: expected curve entity handle".into());
             };
             let u = evaluate(&items[2], env, ctx, world)?.num()?;
             let Some(i) = world.find(id) else {
@@ -132,9 +132,9 @@ pub(crate) fn special(
             let dyn_figure = world
                 .entities
                 .dyn_figure(i)
-                .ok_or_else(|| format!("on-laser: missing dyn figure for row {i}"))?;
+                .ok_or_else(|| format!("on-curve: missing dyn figure for row {i}"))?;
             let Some(curve) = dyn_figure.curve() else {
-                return Err("on-laser: not a laser".into());
+                return Err("on-curve: not a curve figure".into());
             };
             let tau = world.entities.tau(i, world.tick);
             let readers = entity_motion_readers(i, world);

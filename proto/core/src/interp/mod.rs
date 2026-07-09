@@ -1202,7 +1202,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "sample" => {
                 // (sample dyn t) / (sample dyn t u): pure evaluation of a
                 // dyn at a given time (and curve parameter) — pose with
-                // tangent heading. The entity-free version of on-laser: any
+                // tangent heading. The entity-free version of on-curve: any
                 // shape can be sampled without spawning an entity.
                 let dv = as_dyn_pose(evaluate(&items[1], env, ctx, world)?)?;
                 let tv = evaluate(&items[2], env, ctx, world)?.num()?;
@@ -1550,7 +1550,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("kind".into()), Val::Kw(match dyn_figure.repr() {
             FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
-            FigureDynRepr::Curve { .. } => "laser",
+            FigureDynRepr::Curve { .. } => "curve",
         }.into())),
     ];
     for (field, value) in world.sym_fields_for_view(i) {

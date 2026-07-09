@@ -129,7 +129,7 @@
 ;; policy, not an engine rule. Curves without :active live forever.
 (deftick
   (map (fn [e] (cull e))
-       (entities-where (fn [e] (* (= e.kind :laser)
+       (entities-where (fn [e] (* (= e.kind :curve)
                                   (> e.t (+ (value-or e.warn 0)
                                             (value-or e.active inf))))))))
 
@@ -150,6 +150,9 @@
           beam-renderer
           {:damage ~(damage-value* metas 1)}
           ~@metas))
+
+;; the genre name for sampling a pose along a live beam
+(defn on-laser [h u] (on-curve h u))
 
 ;; player beam
 (defmacro laser-shot [dyn & metas]
