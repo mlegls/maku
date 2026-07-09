@@ -416,6 +416,10 @@ impl DynEval for f64 {
         match d.repr() {
             NumDynRepr::Const(n) => Ok(*n),
             NumDynRepr::Expr { form, env } => eval_sig(form, env, sig, tau, 0.0, None, None)?.num(),
+            NumDynRepr::AxisSel { form, env, path, flat } => {
+                let v = eval_sig(form, env, sig, tau, 0.0, None, None)?;
+                super::spawn::axis_select_val(&v, path, *flat).num()
+            }
         }
     }
 }

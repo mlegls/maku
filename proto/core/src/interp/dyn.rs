@@ -21,6 +21,10 @@ pub struct Dyn<T: DynKind> {
 pub enum NumDynRepr {
     Const(f64),
     Expr { form: Form, env: Env },
+    /// A spawn-meta signal shared by a spawn group: an array-valued result
+    /// binds per element with the style-axis rules (§5/F15), selected by
+    /// the element's repeater path / flat index captured at spawn.
+    AxisSel { form: Form, env: Env, path: Rc<[(usize, usize)]>, flat: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +83,22 @@ impl Dyn<f64> {
 
     pub fn num_expr(form: Form, env: Env) -> DynNum {
         Dyn { repr: NumDynRepr::Expr { form, env } }
+    }
+
+    /// The same signal bound to one spawn element: array results select
+    /// by the element's axis position instead of erroring.
+    pub fn with_axis(&self, path: &[(usize, usize)], flat: usize) -> DynNum {
+        match &self.repr {
+            NumDynRepr::Expr { form, env } => Dyn {
+                repr: NumDynRepr::AxisSel {
+                    form: form.clone(),
+                    env: env.clone(),
+                    path: path.into(),
+                    flat,
+                },
+            },
+            _ => self.clone(),
+        }
     }
 
     pub fn repr(&self) -> &NumDynRepr {

@@ -2133,6 +2133,25 @@
         }
     }
 
+    /// A shared array-valued meta SIGNAL binds per element like a static
+    /// axis array: each entity's field is one scalar lane per tick.
+    #[test]
+    fn dyn_meta_arrays_bind_per_element() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (circle 3 (linear p[1 0])) {:hue m"100*iota(3) + t"}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.entities.len(), 3);
+        let tau = 1.0 / TICK_RATE;
+        for i in 0..3 {
+            let hue = sim.world.col_get_at(i, "hue").unwrap();
+            let want = 100.0 * i as f64 + tau;
+            assert!((hue - want).abs() < 1e-9, "entity {i}: hue {hue}, want {want}");
+        }
+    }
+
     /// §8 scope semantics under the guard-unwind rule: cancellation kills
     /// the scope, and the TASK CONTINUES after it — (seq (until p a) b)
     /// reaches b.

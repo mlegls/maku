@@ -24,12 +24,12 @@ work.
 - Blocking lasers / world-geometry extent from DMK §13.7 remains unported.
 - RNG is sequential splitmix, so replay determinism holds but spawn-order
   independence does not.
-- Array-valued DYN meta fields do not broadcast per spawn element: static
-  numeric fields bind per element like style axes, but a signal such as
-  `:hue m"60*iota(6) + 120*t"` fails at `refresh_dyn_cols` ("expected
-  number, got Arr"). This is what breaks `070_dynamic_lasers` (and the
-  ignored `translations_run` corpus test) — pre-existing, not a laser
-  regression. Needs a per-element axis selection on dyn cols at spawn.
+- Array-valued dyn meta now binds per spawn element (`NumDynRepr::AxisSel`
+  captures the element's axis path at spawn; evaluation selects one lane
+  with the style-axis rules). Interim shape: each entity evaluates the
+  full shared array per tick and keeps its lane — the compiled-dyn pass
+  should recognize the shared program and evaluate once per group,
+  scattering lanes (SS5 array-of-signals/signal-of-array interchange).
 
 ## Engine Refactor
 

@@ -207,11 +207,13 @@ fn build_entity_specs(
         .into();
     let shared_collider_projectors: Rc<[ColliderProjectorValue]> = explicit_colliders.into();
     let shared_render_specs: Rc<[RendererProjectorSpec]> = explicit_renderers.into();
+    let group = elems.len();
     let entities = elems
         .into_iter()
         .zip(styles)
         .zip(cols)
-        .map(|((e, style_fields), cols)| {
+        .enumerate()
+        .map(|(flat, ((e, style_fields), cols))| {
             let mut collider_projectors = shared_collider_projectors.iter().cloned().collect::<Vec<_>>();
             collider_projectors.push(e.collider_projector_spec);
             let mut render_specs = shared_render_specs.iter().cloned().collect::<Vec<_>>();
@@ -224,6 +226,13 @@ fn build_entity_specs(
             }
             let mut cols = cols;
             let mut dyn_cols = dyn_cols.iter().cloned().collect::<Vec<_>>();
+            if group > 1 {
+                // shared meta signals bind per element: array-valued
+                // results select by the element's axis position
+                for (_, d) in dyn_cols.iter_mut() {
+                    *d = d.with_axis(&e.path, flat);
+                }
+            }
             for (key, seed) in e.fields.iter() {
                 match seed {
                     FieldSeed::Num(n) => {
@@ -503,10 +512,10 @@ pub(crate) fn kw_str(v: &Val) -> String {
 }
 
 /// §5/F15: a meta axis array binds to the first array level (root to leaf)
-/// whose length matches; otherwise it cycles on the flat index.
-/// Numeric per-element resolution: same axis rules as style values
-/// (nested-structural, else by-length, else leading-cycle), for columns.
-pub(crate) fn axis_num(v: &Val, elem: &SpawnElem, flat: usize) -> f64 {
+/// whose length matches; otherwise it cycles on the flat index. Selection
+/// rules shared by static columns, style values, and axis-bound dyn
+/// signals (nested-structural, else by-length, else leading-cycle).
+pub(crate) fn axis_select_val(v: &Val, path: &[(usize, usize)], flat: usize) -> Val {
     match v {
         Val::Arr(items) if items.iter().any(|x| matches!(x, Val::Arr(_))) => {
             let mut cur = v.clone();
@@ -514,61 +523,41 @@ pub(crate) fn axis_num(v: &Val, elem: &SpawnElem, flat: usize) -> f64 {
             loop {
                 match cur {
                     Val::Arr(xs) if !xs.is_empty() => {
-                        let idx = elem.path.get(depth).map(|(_, i)| *i).unwrap_or(flat);
+                        let idx = path.get(depth).map(|(_, i)| *i).unwrap_or(flat);
                         cur = xs[idx % xs.len()].clone();
                         depth += 1;
                     }
-                    other => return other.num().unwrap_or(0.0),
+                    other => return other,
                 }
             }
         }
         Val::Arr(items) if !items.is_empty() => {
             let len = items.len();
-            for (axis_len, idx) in &elem.path {
+            for (axis_len, idx) in path {
                 if *axis_len == len {
-                    return items[idx % len].num().unwrap_or(0.0);
+                    return items[idx % len].clone();
                 }
             }
-            items[flat % len].num().unwrap_or(0.0)
+            items[flat % len].clone()
         }
-        v => v.num().unwrap_or(0.0),
+        v => v.clone(),
     }
 }
 
+/// Numeric per-element resolution over the shared axis rules, for columns.
+pub(crate) fn axis_num(v: &Val, elem: &SpawnElem, flat: usize) -> f64 {
+    axis_select_val(v, &elem.path, flat).num().unwrap_or(0.0)
+}
+
+// NESTED arrays resolve STRUCTURALLY: depth in the meta value = axis
+// along the element's root-to-leaf path, cycling at every level; a
+// scalar reached early broadcasts to all deeper axes.
+// [[:red :blue] :green :purple] over 10×3 → group 0 cycles red/blue
+// inside, group 1 all green, group 2 all purple, group 3 wraps to
+// [red blue]… Shape disambiguates where length cannot. Flat arrays:
+// F15 by-length targeting, leading-first.
 pub(crate) fn axis_value(v: &Val, elem: &SpawnElem, flat: usize) -> String {
-    match v {
-        // NESTED arrays resolve STRUCTURALLY: depth in the meta value =
-        // axis along the element's root-to-leaf path, cycling at every
-        // level; a scalar reached early broadcasts to all deeper axes.
-        // [[:red :blue] :green :purple] over 10×3 → group 0 cycles
-        // red/blue inside, group 1 all green, group 2 all purple, group 3
-        // wraps to [red blue]… Shape disambiguates where length cannot.
-        Val::Arr(items) if items.iter().any(|x| matches!(x, Val::Arr(_))) => {
-            let mut cur = v.clone();
-            let mut depth = 0;
-            loop {
-                match cur {
-                    Val::Arr(xs) if !xs.is_empty() => {
-                        let idx = elem.path.get(depth).map(|(_, i)| *i).unwrap_or(flat);
-                        cur = xs[idx % xs.len()].clone();
-                        depth += 1;
-                    }
-                    other => return kw_str(&other),
-                }
-            }
-        }
-        // flat arrays: F15 by-length targeting, leading-first
-        Val::Arr(items) if !items.is_empty() => {
-            let len = items.len();
-            for (axis_len, idx) in &elem.path {
-                if *axis_len == len {
-                    return kw_str(&items[idx % len]);
-                }
-            }
-            kw_str(&items[flat % len])
-        }
-        v => kw_str(v),
-    }
+    kw_str(&axis_select_val(v, &elem.path, flat))
 }
 
 pub(crate) fn resolve_style_fields(
