@@ -119,16 +119,18 @@ work.
     handles, rows, channels, or action construction.
   Specials are the IR; pure builtins are intrinsics. Anything expressible in
   `.maku` without hot-path or boundary semantics should move toward lib code.
-  First step (decided): audit EVERY special form, builtin, and reserved
-  keyword for expressibility in terms of a more generic primitive, before
-  moving anything. Expected outcomes: shape/figure constructors (`cart`,
-  `polar`, `rot`, and repeaters like `circle`/`fan`) become lib code over
-  arrays/math plus a small figure/dyn kernel, with their lowered nodes kept
-  as compiler-recognized fast paths. Note `linear` is pos = v*t with STATIC
-  velocity (it does not scan a dyn; lifting a dyn argument would mean
-  v(t)*t, not integration) — if velocity semantics are wanted, the generic
-  primitive is a dyn integrator (`scan` over signals), and `linear` becomes
-  lib sugar over it that lowers to the existing optimized node.
+  Governing principle (decided): NO sugar in lang. Minimize the surface to a
+  semantic kernel; the surface vocabulary is lib macros over it, and
+  optimization recognizes the macro EXPANSION SHAPE (AST patterns after
+  expansion), never the name — hand-writing the same shape optimizes
+  identically. Builtins return as AST-rewrite intrinsics driven by profiled
+  bottlenecks (array/entity-domain paths expected first). The audit and the
+  kernel-shrink worklist live in `docs/notes/builtins-audit.md`. Note
+  `linear` is pos = v*t with STATIC velocity (it does not scan a dyn;
+  lifting a dyn argument would mean v(t)*t, not integration) — velocity
+  semantics come from the `scan` integrator (currently a reserved stub;
+  designing real `scan` is the kernel centerpiece), with `linear` as lib
+  sugar whose expansion lowers to the existing optimized node.
 - Finish shared model extraction. `model::figure` is top-level and generic
   over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids,
   entity handles, primitive data atoms, and runtime collider/render boundary

@@ -21,6 +21,52 @@ Per the recorded stance, easings and other hot pure functions stay
 intrinsics *pending profiling*; the verdict marks semantic expressibility,
 the profiling harness decides the final placement.
 
+## Governing principle (decided): minimal kernel, structural lowering
+
+No sugar in lang. The language surface is minimized to a semantic kernel;
+everything else is lib macros over it. Optimization recognizes the MACRO
+EXPANSION SHAPE (AST patterns after expansion), never the macro name — so
+hand-writing the same shape optimizes identically. Contract boundary: the
+semantic guarantee is that no name is magical; the performance guarantee
+applies to code that normalizes to a recognized shape (lib expansions do by
+construction; the recognizer must be at least alpha/let-normalization
+robust, and arbitrary-equivalence recognition is explicitly NOT promised).
+Builtins get added back as AST-rewrite intrinsics from profiled bottlenecks
+first (array/entity-domain paths are the expected start).
+
+Kernel-shrink direction from this principle (beyond the tables below):
+- `defcollider` → lib macro (already `def` + `collider`).
+- `map`/`filter` → `match` + recursion; the recognizer compiles seq vs
+  vec/mat/entity-domain shapes differently. Domain typing
+  (`EntitySet`/`CollisionSet`) must survive expansion so rule bodies keep
+  the SoA loop.
+- Everything expressible over `sample` (pure evaluation) leaves the kernel.
+- Everything expressible over `scan` leaves the kernel — NOTE: the `scan`
+  head is currently a RESERVED STUB ("not implemented in this milestone");
+  the existing stateful builtins route through `scan_builtin_spec`. Building
+  real `scan` is the kernel-design centerpiece, not a refactor.
+- `rand-int`, `randpm1` (missed by the first audit pass) → lib over `rand`
+  with identical draw counts; requires a `floor` intrinsic (math also lacks
+  `sqrt` outside `mag` — the minimal math set needs completing).
+- `wait-for` → lib macro for the poll loop
+  `(loop [] (when (not pred) (wait tick) (recur)))`; compiled scheduling
+  recognizes the shape as a wake condition. Not primitive.
+- Array ops → `match` + recursion; dense lowering by shape.
+- Form reflection (`forms`/`get`/`form-type`/`form-name`/...) → collapse
+  into `match` over form structure plus quote; keep one or two.
+- `remat` via `manip`/`spawn`/`cull`: BLOCKED on an identity-semantics
+  decision — if remat preserves the handle/generation, cull+spawn cannot
+  express it without an explicit identity-transfer primitive.
+- `set-col` via `remat` ("rematerialize differing only in field f", with
+  the recognizer reducing that shape to a store): coherent, but MUST land
+  after the pattern-lowering exists — hp/graze writes are the hottest rule
+  effects and would crater interpreted.
+- Renames/merges: `defvar` → `defcell` (it creates the F16 pattern-scoped
+  cell); `channel` is a read-with-default of `$name` — merge into `$name`
+  syntax + an ordinary default combinator; `stages-action` is a reserved
+  stub (action-level `stages` analogue) — decide or delete the reservation.
+- `event` stays: boundary effect emitting into the observable event stream.
+
 ## Top-level card forms (`card.rs`)
 
 | name | verdict | note |
@@ -44,10 +90,14 @@ the profiling harness decides the final placement.
 
 | name | verdict | note |
 |---|---|---|
-| `seq`, `par`, `fork`, `wait`, `until`, `finally`, `race`, `goto`, `wait-for`, `event` | IR | scheduler node constructors |
-| `states`, `stages`, `stages-action` | IR | FSM/staged-dyn cores; richer templates stay lib (TODO) |
+| `seq`, `par`, `fork`, `wait`, `until`, `finally`, `race`, `goto`, `event` | IR | scheduler node constructors / observable effects |
+| `wait-for` | LIB (pattern-lowered) | = poll loop over `loop`/`recur` + `wait`; compiled scheduling recognizes the shape as a wake condition |
+| `defvar` | IR, RENAME `defcell` | creates the F16 pattern-scoped cell |
+| `channel` | MERGE | read-with-default of `$name`; fold into `$name` + default combinator |
+| `stages-action` | STUB | reserved, errors today; decide or delete |
+| `states`, `stages` | IR | FSM/staged-dyn cores; richer templates stay lib (TODO) |
 | `inline` | IR | pattern-embedding scope adapter |
-| `defvar`, `channel`, `bind-channel!`, `live`, `in-frame` | IR | cells/channels/frame ambience |
+| `bind-channel!`, `live`, `in-frame` | IR | channels/frame ambience |
 | `export` | IR | host boundary |
 
 ## Spawn / figure / dyn specials
@@ -61,8 +111,9 @@ the profiling harness decides the final placement.
 | `circle`, `fan`, `arrow` | LIB | formations = arrays of poses composed with the child: `(circle n)` ≈ `(map (fn [k] (rot (* k (/ 360 n)))) (iota n))`; array-of-figures already broadcasts at spawn. Move; keep nothing in core |
 | `aim` | LIB-AFTER(ambient readable) | pure math over target and the ambient frame; it is a special only because `ctx.ambient` is not a readable value |
 | `sample` | IR | pure dyn evaluation — the kernel the others reduce to |
-| `pather`, `path`, `vel`, `slew`, `smooth`, `scan`, `clamp` | FLAG(2) | the dyn-motion kernel; `scan` is the integrator primitive, the rest are candidates to re-express over it. NB `clamp` is spatial — `(clamp c[lo] c[hi] dyn)` boxes a dyn's position, not numeric min/max |
-| `rand`, `rand-int` | IR | deterministic RNG stream is engine state |
+| `pather`, `path`, `vel`, `slew`, `smooth`, `scan`, `clamp` | FLAG(2) | the dyn-motion kernel; `scan` is the intended integrator primitive but is currently a RESERVED STUB (stateful builtins route through `scan_builtin_spec`) — designing/building real `scan` is the centerpiece. NB `clamp` is spatial — `(clamp c[lo] c[hi] dyn)` boxes a dyn's position, not numeric min/max |
+| `rand` | IR | deterministic RNG stream is engine state |
+| `rand-int`, `randpm1` | LIB (needs `floor` intrinsic) | one draw each over `rand`; identical stream consumption |
 | `pos` (engine), `entity-pos` | MERGE | two accessors for the same read; keep one that takes handle or view |
 | `on-curve` | LIB-AFTER(entity figure readable) | = `sample` of a live entity's curve; needs a way to read the figure off a handle/view |
 | `nearest-entity` | LIB-AFTER(`best-by` intrinsic) | query + argmin |
