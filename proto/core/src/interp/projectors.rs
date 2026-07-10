@@ -1,29 +1,11 @@
 //! Source-level projector constructors and combinators.
 //!
 //! Spawn consumes projector values; it does not own the vocabulary for
-//! constructing collider or renderer projectors.
+//! constructing collider projectors.
 
 use super::*;
 use crate::edn::Form;
 use std::rc::Rc;
-
-fn spec_args(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<DynLike, String> {
-    match items.len() {
-        0 => Ok(empty_projector_spec_list()),
-        1 => {
-            let one = eval_dynlike_form(&items[0], env, ctx, world)?;
-            match one {
-                DynLike::Map(_) => Ok(DynLike::List(vec![one].into())),
-                other => Ok(other),
-            }
-        }
-        _ => items
-            .iter()
-            .map(|i| eval_dynlike_form(i, env, ctx, world))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|items| DynLike::List(items.into())),
-    }
-}
 
 pub(crate) fn contains_bound_projector_context(form: &Form, scope: Option<&ProjectorScope>) -> bool {
     fn sym_matches(sym: &Rc<str>, name: &str) -> bool {
@@ -396,14 +378,4 @@ pub(crate) fn sf_capsule_chain_collider(
     Ok(collider_projector_value(ColliderProjectorValue::stable(vec![
         slot,
     ])))
-}
-
-pub(crate) fn sf_renderers(
-    items: &[Form],
-    env: &Env,
-    ctx: &mut Ctx,
-    world: &mut World,
-) -> Result<Val, String> {
-    let specs = spec_args(&items[1..], env, ctx, world)?;
-    Ok(Val::RendererProjectorSpec(Rc::new(as_renderer_projector_spec(&specs)?)))
 }

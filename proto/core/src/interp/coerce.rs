@@ -124,10 +124,6 @@ pub(crate) fn dynlike_arr(v: &DynLike) -> Option<Vec<DynLike>> {
     }
 }
 
-pub(crate) fn as_dynlike_list(v: &DynLike, what: &str) -> Result<Vec<DynLike>, String> {
-    dynlike_arr(v).ok_or_else(|| format!("{}: expected array", what))
-}
-
 pub(crate) fn dynlike_to_val(v: &DynLike) -> Result<Val, String> {
     if v.is_dynamic() {
         Ok(Val::DynLike(Rc::new(v.clone())))

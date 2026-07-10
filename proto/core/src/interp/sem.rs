@@ -61,10 +61,6 @@ impl FigureProjectorKind {
         FigureProjectorKind::from_projector_keyword("defcollider", name)
     }
 
-    pub(crate) fn from_defrenderer_keyword(name: &str) -> Result<FigureProjectorKind, String> {
-        FigureProjectorKind::from_projector_keyword("defrenderer", name)
-    }
-
     pub(crate) fn name(self) -> &'static str {
         match self {
             FigureProjectorKind::Pose => "pose",
@@ -185,56 +181,12 @@ impl ColliderProjectorValue {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum RendererProjectorExpr {
-    Specs(DynLike),
-    Callable { figure: FigureProjectorKind, params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
-}
-
-/// A source-level renderer projector expression after dyn-lifting and schema
-/// checking for a render slot. Dynamic lists are rechecked after per-tick
-/// realization until the typed layer can represent their element schema.
-#[derive(Clone, Debug)]
-pub struct RendererProjectorSpec {
-    pub(crate) expr: RendererProjectorExpr,
-}
-
-impl RendererProjectorSpec {
-    pub(crate) fn checked(expr: DynLike) -> RendererProjectorSpec {
-        RendererProjectorSpec { expr: RendererProjectorExpr::Specs(expr) }
-    }
-
-    pub(crate) fn callable(
-        figure: FigureProjectorKind,
-        params: Vec<Rc<str>>,
-        body: Rc<[Form]>,
-        env: Env,
-    ) -> RendererProjectorSpec {
-        RendererProjectorSpec {
-            expr: RendererProjectorExpr::Callable { figure, params: params.into(), body, env },
-        }
-    }
-
-    pub(crate) fn empty() -> RendererProjectorSpec {
-        RendererProjectorSpec::checked(DynLike::List(Vec::new().into()))
-    }
-}
-
-/// Compatibility alias for the current `(renderers ...)` bridge surface.
-pub type RenderSpecList = RendererProjectorSpec;
-
 /// Semantic collider projector slot carried by a spawned entity. It is still a
 /// bridge representation: the interpreter lowers specs against the current
 /// figure into realized collider rows during simulation.
 #[derive(Clone, Debug)]
 pub struct ColliderProjector {
     pub projectors: Rc<[ColliderProjectorValue]>,
-}
-
-/// Semantic render projector slot carried by a spawned entity.
-#[derive(Clone, Debug)]
-pub struct RenderProjector {
-    pub specs: Rc<[RendererProjectorSpec]>,
 }
 
 /// Literal meta forms are lifted through DynLike before merging so static keys
@@ -256,7 +208,6 @@ pub(crate) struct SpawnMetaPlan {
 pub(crate) struct SpawnSlotTypes {
     pub figure: Type,
     pub colliders: Type,
-    pub renderers: Type,
     pub meta: Type,
 }
 
@@ -265,7 +216,6 @@ impl SpawnSlotTypes {
         SpawnSlotTypes {
             figure: Type::spawn_figure(),
             colliders: Type::spawn_colliders(),
-            renderers: Type::spawn_renderers(),
             meta: Type::spawn_meta(),
         }
     }
@@ -277,7 +227,6 @@ pub(crate) struct SpawnSlots {
     pub targets: SpawnSlotTypes,
     pub figure: Val,
     pub colliders: Vec<ColliderProjectorValue>,
-    pub renderers: Vec<RendererProjectorSpec>,
     pub meta: SpawnMetaInput,
 }
 
@@ -289,5 +238,4 @@ pub(crate) struct SpawnPlan {
     pub elems: Vec<SpawnElem>,
     pub meta: SpawnMetaPlan,
     pub colliders: Vec<ColliderProjectorValue>,
-    pub renderers: Vec<RendererProjectorSpec>,
 }

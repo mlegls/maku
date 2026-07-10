@@ -31,7 +31,6 @@ fn normalize_spawn_input(
     let mut meta_forms = Vec::new();
     let mut computed_meta_pairs: Vec<(Val, Val)> = Vec::new();
     let mut colliders = Vec::new();
-    let mut renderers = Vec::new();
     for item in &items[2..] {
         if matches!(item, Form::Map(_)) {
             meta_forms.push(item.clone());
@@ -51,7 +50,6 @@ fn normalize_spawn_input(
                     .cloned(),
                 );
             }
-            Val::RendererProjectorSpec(specs) => renderers.push(specs.as_ref().clone()),
             Val::Map(kvs) => computed_meta_pairs.extend(kvs.iter().cloned()),
             Val::DynLike(d) => computed_meta_pairs.extend(dynlike_meta_pairs(&d)?),
             _ => {}
@@ -61,7 +59,6 @@ fn normalize_spawn_input(
         targets: SpawnSlotTypes::low_level(),
         figure,
         colliders,
-        renderers,
         meta: SpawnMetaInput {
             forms: meta_forms,
             computed_pairs: computed_meta_pairs,
@@ -125,7 +122,6 @@ fn plan_spawn(
         elems,
         meta,
         colliders: slots.colliders,
-        renderers: slots.renderers,
     })
 }
 
@@ -133,7 +129,6 @@ fn build_entity_specs(
     elems: Vec<SpawnElem>,
     meta: &SpawnMetaPlan,
     collider_slots: Vec<ColliderProjectorValue>,
-    renderer_slots: Vec<RendererProjectorSpec>,
     _env: &Env,
     world: &mut World,
 ) -> Result<Vec<EntitySpec>, String> {
@@ -192,17 +187,13 @@ fn build_entity_specs(
             }
         }
     }
-    // Collider/render sets are explicit spawn arguments. No genre defaults —
+    // Collider sets are explicit spawn arguments. No genre defaults —
     // an entity with no colliders is inert to the contact pass (scenery);
     // what a "bullet" or "enemy" carries is the library's business
     // (bullet/enemy in lib/touhou.maku).
     let mut explicit_colliders = collider_slots;
-    let mut explicit_renderers = renderer_slots;
     if explicit_colliders.is_empty() {
         explicit_colliders.push(ColliderProjectorValue::empty());
-    }
-    if explicit_renderers.is_empty() {
-        explicit_renderers.push(stock_point_renderer_spec());
     }
     // per-element column resolution: same axis rules as styles
     let cols: Vec<Vec<(ColName, f64)>> = elems
@@ -218,7 +209,6 @@ fn build_entity_specs(
         .collect::<Vec<_>>()
         .into();
     let shared_collider_projectors: Rc<[ColliderProjectorValue]> = explicit_colliders.into();
-    let shared_render_specs: Rc<[RendererProjectorSpec]> = explicit_renderers.into();
     let group = elems.len();
     let entities = elems
         .into_iter()
@@ -228,8 +218,6 @@ fn build_entity_specs(
         .map(|(flat, ((e, style_fields), cols))| {
             let mut collider_projectors = shared_collider_projectors.iter().cloned().collect::<Vec<_>>();
             collider_projectors.push(e.collider_projector_spec);
-            let mut render_specs = shared_render_specs.iter().cloned().collect::<Vec<_>>();
-            render_specs.push(e.renderer_projector_spec);
             let mut sym_fields = sym_fields.clone();
             for (field, value) in style_fields {
                 if !sym_fields.iter().any(|(name, _)| *name == field) {
@@ -275,7 +263,6 @@ fn build_entity_specs(
                 cols,
                 dyn_cols: dyn_cols.into(),
                 collider_projector: ColliderProjector { projectors: collider_projectors.into() },
-                render_projector: RenderProjector { specs: render_specs.into() },
             }
         })
         .collect();
@@ -289,33 +276,10 @@ pub(crate) fn sf_spawn(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
         plan.elems,
         &plan.meta,
         plan.colliders,
-        plan.renderers,
         env,
         world,
     )?;
     Ok(Val::Action(Rc::new(ActionV::Spawn { entities })))
-}
-
-fn dynlike_kw_atom(name: &str) -> DynLike {
-    DynLike::Atom(DataAtom::Kw(name.into()))
-}
-
-/// The stock point renderer — what `(renderers {:shape :point})` builds.
-/// Injected when a spawn passes no renderer argument, and carried by
-/// trace-backed elements.
-fn stock_point_renderer_spec() -> RendererProjectorSpec {
-    RendererProjectorSpec::checked(DynLike::List(
-        vec![dynlike_map(vec![("shape", dynlike_kw_atom("point"))])].into(),
-    ))
-}
-
-fn dynlike_map(pairs: Vec<(&str, DynLike)>) -> DynLike {
-    DynLike::Map(Rc::new(
-        pairs
-            .into_iter()
-            .map(|(k, v)| (DataAtom::Kw(k.into()), v))
-            .collect(),
-    ))
 }
 
 pub(crate) fn flatten_elems(
@@ -348,19 +312,15 @@ pub(crate) fn flatten_elems(
             Ok(())
         }
         Val::CurveV(l) => {
-            let (dyn_figure, colliders, renderers, cache_policy) = match &l.backing {
+            let (dyn_figure, colliders, cache_policy) = match &l.backing {
                 CurveBacking::Parametric { curve } => (
                     DynFigure::figure_curve(l.anchor.clone(), curve.clone()),
                     ColliderProjectorValue::empty(),
-                    RendererProjectorSpec::empty(),
                     EntityCachePolicy::default(),
                 ),
                 CurveBacking::Trace { window } => (
                     DynFigure::pose(l.anchor.clone()),
                     ColliderProjectorValue::empty(),
-                    // a traced pather draws through its point slot (which
-                    // renders the trace)
-                    stock_point_renderer_spec(),
                     EntityCachePolicy {
                         trace: Some(TracePolicy { window: Some(*window) }),
                     },
@@ -369,7 +329,6 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure,
                 collider_projector_spec: colliders,
-                renderer_projector_spec: renderers,
                 cache_policy,
                 path: path.clone(),
                 fields: Rc::new([]),
@@ -380,7 +339,6 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure: as_dyn_figure(other)?,
                 collider_projector_spec: ColliderProjectorValue::empty(),
-                renderer_projector_spec: RendererProjectorSpec::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
                 fields: Rc::new([]),

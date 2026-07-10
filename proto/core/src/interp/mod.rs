@@ -31,7 +31,6 @@ mod r#dyn;
 pub mod model;
 mod motion;
 mod projectors;
-mod renderers;
 mod sem;
 mod specs;
 mod spawn;
@@ -49,7 +48,6 @@ pub use crate::model::{
 };
 pub use motion::*;
 pub(crate) use projectors::*;
-pub use renderers::*;
 pub use sem::*;
 pub(crate) use specs::*;
 pub(crate) use spawn::*;
@@ -112,7 +110,7 @@ pub enum Val {
     Pose(Pose),
     Figure(Figure),
     ColliderProjector(Rc<[ColliderProjectorValue]>),
-    RendererProjectorSpec(Rc<RendererProjectorSpec>),
+    CurveSamples(Rc<CurveSamples>),
     EntitySet(Rc<[usize]>),
     CollisionSet(Rc<[(usize, usize)]>),
     Arr(Seq),
@@ -229,10 +227,16 @@ pub(crate) fn flatten_collider_projectors(
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
     pub collider_projector_spec: ColliderProjectorValue,
-    pub renderer_projector_spec: RendererProjectorSpec,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
     pub fields: Rc<[(Rc<str>, FieldSeed)]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CurveSamples {
+    pub entity: EntityRef,
+    pub u_max: f64,
+    pub resolution: f64,
 }
 
 /// One state of a `states` machine (§8): `(label body…)`.
@@ -347,7 +351,6 @@ pub struct EntitySpec {
     pub cols: Vec<(ColName, f64)>,
     pub dyn_cols: Rc<[(ColName, DynNum)]>,
     pub collider_projector: ColliderProjector,
-    pub render_projector: RenderProjector,
 }
 
 // ---------------------------------------------------------------------------
@@ -919,39 +922,9 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     }
                 };
             }
-            "__renderer-projector" => {
-                let (figure, params_idx, body_idx) = match items.get(1) {
-                    Some(Form::Kw(k)) => (
-                        FigureProjectorKind::from_defrenderer_keyword(k)?,
-                        2,
-                        3,
-                    ),
-                    _ => (FigureProjectorKind::Pose, 1, 2),
-                };
-                let Some(Form::Vector(ps)) = items.get(params_idx) else {
-                    return Err("defrenderer: expected parameter vector".into());
-                };
-                let params = ps
-                    .iter()
-                    .map(|p| match p {
-                        Form::Sym(n) => Ok(n.clone()),
-                        _ => Err("defrenderer: bad parameter".to_string()),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                if params.len() != 2 {
-                    return Err("defrenderer: expected two parameters".into());
-                }
-                if items.len() <= body_idx {
-                    return Err("defrenderer: expected body".into());
-                }
-                return Ok(Val::RendererProjectorSpec(Rc::new(
-                    RendererProjectorSpec::callable(figure, params, items[body_idx..].to_vec().into(), env.clone()),
-                )));
-            }
             "spawn" => return sf_spawn(items, env, ctx, world),
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),
             "capsule-chain-collider" => return sf_capsule_chain_collider(items, env, ctx, world),
-            "renderers" => return sf_renderers(items, env, ctx, world),
             name if engine::is_special(name) => {
                 return engine::special(name, items, env, ctx, world).map(|v| v.unwrap());
             }
@@ -1595,6 +1568,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
         (Val::Kw("t".into()), Val::Num(tau)),
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
+        (Val::Kw("handle".into()), Val::Handle(world.entity_ref(i))),
         (Val::Kw("kind".into()), Val::Kw(match dyn_figure.repr() {
             FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
@@ -1714,7 +1688,6 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
         .collect::<Vec<_>>();
     let mut candidates: Vec<usize> = Vec::new();
     for (i, _) in world.entities.iter().enumerate() {
-        let Some(_) = world.entities.render_projector(i) else { continue };
         if !world.entities.is_alive(i)
             || !axis_ok(&family, world.sym_field_resolved_at(i, "family").unwrap_or(""))
             || !axis_ok(&color, world.sym_field_resolved_at(i, "color").unwrap_or(""))
@@ -1771,6 +1744,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             Ok(Val::Num(world.entities.tau(i, world.tick)))
         }
         "tick" => Ok(Val::Num(world.tick as f64)),
+        "handle" => Ok(Val::Handle(world.entity_ref(i))),
         "kind" => Ok(Val::Kw(match world
             .entities
             .dyn_figure(i)
@@ -2081,7 +2055,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     spec.cache_policy.clone(),
                     spec.dyn_cols.clone(),
                     spec.collider_projector.clone(),
-                    spec.render_projector.clone(),
                 )?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);

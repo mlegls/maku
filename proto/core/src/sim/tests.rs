@@ -893,7 +893,12 @@
     (spawn ((pose c[-2 0]) (curve {:u-max 6}))
            (capsule-chain-collider {:layer :beam :r 0.06 :width 1
                                     :resolution 0.1 :u-max 6})
-           (renderers {:shape [:polyline {:resolution 0.1 :u-max 6 :active 1}]}))))
+           {:render :test-beam})))
+(deftick
+  (map (fn [e]
+         (render {:shape (curve-samples e {:resolution 0.1 :u-max 6})
+                  :active 1}))
+       (entities-where (fn [e] (= e.render :test-beam)))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -990,24 +995,49 @@
     }
 
     #[test]
-    fn defrenderer_pose_emits_point_row() {
+    fn stock_dot_traced_entities_emit_point_rows_per_sample() {
         const CARD: &str = r#"
-(defrenderer sprite-renderer [e ctx]
-  {:shape [:point {:scale e.scale :opacity e.opacity :hue e.hue :facing e.facing}]})
+(defpattern p []
+  (spawn (pather 1 (linear c[1 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..5 {
+            sim.step().unwrap();
+        }
+        let points = sim.render()
+            .into_iter()
+            .filter(|r| matches!(r.data, RenderData::Point { .. }))
+            .count();
+        assert!(points >= 2, "expected one stock dot row per trace sample, got {points}");
+    }
+
+    #[test]
+    fn rule_render_pose_emits_point_row() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (render {:shape :point
+                  :x (:x (:pos e))
+                  :y (:y (:pos e))
+                  :scale e.scale
+                  :alpha e.opacity
+                  :hue e.hue
+                  :theta e.facing}))
+       (entities-where {:render :sprite})))
 (defpattern p []
   (spawn (pose c[1 2])
          {:style {:family :orb :color :blue}
-          :scale 2 :opacity 0.5 :hue 45 :facing 90}
-         sprite-renderer))
+          :render :sprite
+          :scale 2 :opacity 0.5 :hue 45 :facing 90}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         let items = sim.render();
         let Some(row) = items.first() else {
-            panic!("defrenderer should emit one point row");
+            panic!("rule render should emit one point row");
         };
         let RenderData::Point { x, y, theta: th, scale, alpha, hue } = &row.data else {
-            panic!("defrenderer should emit one point row");
+            panic!("rule render should emit one point row");
         };
         assert!((*x - 1.0).abs() < 1e-9, "x: {x}");
         assert!((*y - 2.0).abs() < 1e-9, "y: {y}");
@@ -1018,39 +1048,43 @@
     }
 
     #[test]
-    fn defrenderer_pose_reads_dyn_entity_meta_field() {
+    fn rule_render_pose_reads_dyn_entity_meta_field() {
         const CARD: &str = r#"
-(defrenderer sprite-renderer [e ctx]
-  {:shape [:point {:scale e.scale}]})
+(deftick
+  (map (fn [e]
+         (render {:shape :point :scale e.scale}))
+       (entities-where {:render :sprite})))
 (defpattern p []
-  (spawn (pose c[0 0]) {:scale (+ 1 t)} sprite-renderer))
+  (spawn (pose c[0 0]) {:render :sprite :scale (+ 1 t)}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         sim.step().unwrap();
         let items = sim.render();
         let Some(row) = items.first() else {
-            panic!("defrenderer should emit one point row");
+            panic!("rule render should emit one point row");
         };
         let RenderData::Point { scale, .. } = &row.data else {
-            panic!("defrenderer should emit one point row");
+            panic!("rule render should emit one point row");
         };
-        assert!((*scale - (1.0 + 2.0 / TICK_RATE)).abs() < 1e-9, "scale: {scale}");
+        assert!((*scale - (1.0 + 1.0 / TICK_RATE)).abs() < 1e-9, "scale: {scale}");
     }
 
     #[test]
-    fn defrenderer_parametric_reads_entity_meta() {
+    fn rule_render_parametric_reads_entity_meta() {
         const CARD: &str = r#"
-(defrenderer :parametric beam-renderer [e ctx]
-  {:shape [:polyline {:resolution e.resolution
-                      :u-max e.u-max
-                      :active 1
-                      :width e.width}]})
+(deftick
+  (map (fn [e]
+         (render {:shape (curve-samples e {:resolution e.resolution :u-max e.u-max})
+                  :active 1
+                  :width e.width
+                  :family e.family
+                  :color e.color}))
+       (entities-where {:render :beam})))
 (defpattern p []
   (spawn ((pose c[-2 0]) (curve {:u-max 6}))
          {:style {:family :laser :color :red}
-          :warn 0 :active 2 :u-max 6 :resolution 0.1 :width 1}
-         beam-renderer))
+          :render :beam :warn 0 :active 2 :u-max 6 :resolution 0.1 :width 1}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -1058,18 +1092,21 @@
             sim.render().iter().any(|r| {
                 matches!(&r.data, RenderData::Polyline { active, .. } if *active)
             }),
-            "defrenderer should emit a polyline row through the renderer bridge"
+            "rule render should emit a polyline row"
         );
     }
 
     #[test]
-    fn defrenderer_parametric_array_yields_multiple_polyline_rows() {
+    fn rule_render_parametric_yields_multiple_polyline_rows() {
         const CARD: &str = r#"
-(defrenderer :parametric beam-renderer [e ctx]
-  [{:shape [:polyline {:resolution 0.5 :u-max 1 :active 0}]}
-   {:shape [:polyline {:resolution 0.5 :u-max 2 :active 1}]}])
+(deftick
+  (map (fn [e]
+         (seq
+           (render {:shape (curve-samples e {:resolution 0.5 :u-max 1}) :active 0})
+           (render {:shape (curve-samples e {:resolution 0.5 :u-max 2}) :active 1})))
+       (entities-where {:render :beam})))
 (defpattern p []
-  (spawn (curve {:u-max 3}) beam-renderer))
+  (spawn (curve {:u-max 3}) {:render :beam}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
@@ -1110,17 +1147,54 @@
     }
 
     #[test]
-    fn defrenderer_rejects_unknown_figure_type() {
+    fn curve_samples_rejects_non_curve_entity() {
         const CARD: &str = r#"
-(defrenderer :polyline bad-renderer [e ctx]
-  {:shape [:polyline {:resolution 0.1}]})
-(defpattern p [] (spawn (pose c[0 0]) bad-renderer))
+(deftick
+  (map (fn [e]
+         (render {:shape (curve-samples e {:resolution 0.1})}))
+       (entities-where {:render :beam})))
+(defpattern p [] (spawn (pose c[0 0]) {:render :beam}))
 "#;
-        let Err(err) = Sim::load(CARD, Some("p")) else {
-            assert!(false, "unknown defrenderer figure type unexpectedly loaded");
-            return;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let Err(err) = sim.step() else {
+            panic!("curve-samples on a non-curve unexpectedly succeeded");
         };
-        assert!(err.contains("defrenderer: unsupported figure type :polyline"), "{err}");
+        assert!(err.contains("curve-samples entity is not a live curve"), "{err}");
+    }
+
+    #[test]
+    fn curve_samples_rejects_unknown_option_key() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (render {:shape (curve-samples e {:bogus 1})}))
+       (entities-where {:render :beam})))
+(defpattern p [] (spawn (curve {:u-max 3}) {:render :beam}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let Err(err) = sim.step() else {
+            panic!("curve-samples unknown option unexpectedly succeeded");
+        };
+        assert!(err.contains("curve-samples: unknown option :bogus"), "{err}");
+    }
+
+    #[test]
+    fn curve_samples_row_active_field_controls_polyline() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (render {:shape (curve-samples e {:resolution 0.5 :u-max 1})
+                  :active 0}))
+       (entities-where {:render :beam})))
+(defpattern p [] (spawn (curve {:u-max 3}) {:render :beam}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let rows = sim.render();
+        let Some(RenderData::Polyline { active, .. }) = rows.iter().map(|r| &r.data).next() else {
+            panic!("expected one curve-samples polyline row");
+        };
+        assert!(!*active);
     }
 
     #[test]
@@ -2074,16 +2148,21 @@
     }
 
     /// Dyn-valued top-level numeric fields are evaluated into SoA fields;
-    /// renderers/colliders read those fields like any other entity meta.
+    /// rules/colliders read those fields like any other entity meta.
     #[test]
     fn dyn_numeric_meta_fields() {
         const CARD: &str = r#"
-(defrenderer sprite-renderer [e ctx]
-  {:shape [:point {:scale e.scale :opacity e.opacity :facing e.facing}]})
+(deftick
+  (map (fn [e]
+         (render {:shape :point
+                  :scale e.scale
+                  :alpha e.opacity
+                  :theta e.facing}))
+       (entities-where {:render :sprite})))
 (defpattern tags []
   (spawn (still)
-         {:scale (+ 1 t) :opacity (- 1 (* 0.5 t)) :facing (* 90 t)}
-         sprite-renderer))
+         {:render :sprite
+          :scale (+ 1 t) :opacity (- 1 (* 0.5 t)) :facing (* 90 t)}))
 "#;
         let mut sim = Sim::load(CARD, Some("tags")).unwrap();
         for _ in 0..120 {

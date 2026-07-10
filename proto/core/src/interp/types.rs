@@ -18,7 +18,6 @@ pub enum Type {
     Meta,
     MetaEnv,
     ColliderProjector,
-    RendererProjectorSpec(RenderKind),
     EntitySet,
     Action,
     List(Box<Type>),
@@ -51,10 +50,6 @@ impl Type {
 
     pub fn spawn_colliders() -> Type {
         Type::list_of(Type::ColliderProjector)
-    }
-
-    pub fn spawn_renderers() -> Type {
-        Type::RendererProjectorSpec(RenderKind::Any)
     }
 
     pub fn spawn_meta() -> Type {

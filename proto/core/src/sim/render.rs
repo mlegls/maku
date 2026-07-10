@@ -1,18 +1,15 @@
 use super::*;
-use super::slots::eval_render_list_into;
 
 #[derive(Clone, Default)]
 pub(super) struct RenderScratch {
     rows: Vec<RenderData>,
     ranges: Vec<std::ops::Range<usize>>,
-    defs: Vec<DynRender>,
 }
 
 impl RenderScratch {
     fn clear_for_entities(&mut self, len: usize) {
         self.rows.clear();
         self.ranges.clear();
-        self.defs.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }
@@ -64,6 +61,44 @@ impl Sim {
         out.push(RenderRow { data: data.clone(), nums: Vec::new(), syms: syms.to_vec() });
     }
 
+    fn push_stock_dot_rows(
+        dyn_figure: &DynFigure,
+        pose: Option<Pose>,
+        trace: &[Pose],
+        traced: bool,
+        out: &mut Vec<RenderData>,
+    ) {
+        match dyn_figure.repr() {
+            FigureDynRepr::Curve { .. } => out.push(RenderData::None),
+            FigureDynRepr::Pose(_) if traced && !trace.is_empty() => {
+                for p in trace {
+                    out.push(RenderData::Point {
+                        x: p.x,
+                        y: p.y,
+                        theta: p.angle_or(0.0),
+                        scale: 1.0,
+                        alpha: 1.0,
+                        hue: 0.0,
+                    });
+                }
+            }
+            FigureDynRepr::Pose(_) => {
+                let Some(pose) = pose else {
+                    out.push(RenderData::None);
+                    return;
+                };
+                out.push(RenderData::Point {
+                    x: pose.x,
+                    y: pose.y,
+                    theta: pose.angle_or(0.0),
+                    scale: 1.0,
+                    alpha: 1.0,
+                    hue: 0.0,
+                });
+            }
+        }
+    }
+
     pub fn render(&mut self) -> Vec<RenderRow> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
@@ -79,14 +114,21 @@ impl Sim {
                 scratch.push_empty();
                 continue;
             }
-            let Some(render_projector) = self.world.entities.render_projector(i).cloned() else {
-                scratch.push_empty();
-                continue;
-            };
             let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
                 scratch.push_empty();
                 continue;
             };
+            if matches!(dyn_figure.repr(), FigureDynRepr::Curve { .. }) {
+                scratch.push_empty();
+                continue;
+            }
+            match self.world.sym_field_resolved_at(i, "render") {
+                Some("dot") | None => {}
+                Some(_) => {
+                    scratch.push_empty();
+                    continue;
+                }
+            }
             let syms = Sim::stock_style_syms(&mut self.world, i);
             let tau = self.world.entities.tau(i, self.world.tick);
             let readers = self.motion_readers(i);
@@ -95,23 +137,11 @@ impl Sim {
             let trace = self.world.entities.trace_samples(i);
             let traced = self.world.entities.is_traced(i);
             let start = scratch.begin_row();
-            let e_view = entity_view(i, &self.world, sig).ok();
-            let ctx_view = Val::Map(std::rc::Rc::new(vec![
-                (Val::Kw("age".into()), Val::Num(tau)),
-                (Val::Kw("t".into()), Val::Num(tau)),
-                (Val::Kw("tick".into()), Val::Num(self.world.tick as f64)),
-            ]));
-            eval_render_list_into(
+            Sim::push_stock_dot_rows(
                 &dyn_figure,
-                &render_projector,
-                tau,
-                sig,
-                e_view.as_ref(),
-                Some(&ctx_view),
                 pose,
                 trace,
                 traced,
-                &mut scratch.defs,
                 &mut scratch.rows,
             );
             scratch.finish_row(start);

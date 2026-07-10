@@ -76,18 +76,6 @@ pub struct CapsuleChainSlot {
 }
 
 #[derive(Debug, Clone)]
-pub struct CurveRenderSlot {
-    /// Sampling used by this render projection.
-    /// Abstract parametric figures do not own sampling.
-    pub sample_set: SampleSet,
-    pub u_max: f64,
-    /// Width multiplier for the current rendered stroke. The host still
-    /// controls final appearance.
-    pub width: f64,
-    pub active: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct TracePolicy {
     /// Optional retained history in seconds. None means tracing disabled.
     /// Shortening this only drops older samples, making the trace
@@ -121,7 +109,6 @@ struct EntitySpecStore {
     cache_policy: Vec<EntityCachePolicy>,
     dyn_cols: Vec<Rc<[(ColName, DynNum)]>>,
     collider_projector: Vec<ColliderProjector>,
-    render_projector: Vec<RenderProjector>,
     motion_schema: Vec<Rc<MotionStateSchema>>,
 }
 
@@ -132,7 +119,6 @@ impl EntitySpecStore {
             cache_policy: Vec::with_capacity(max),
             dyn_cols: Vec::with_capacity(max),
             collider_projector: Vec::with_capacity(max),
-            render_projector: Vec::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
         }
     }
@@ -143,14 +129,12 @@ impl EntitySpecStore {
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
-        render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) {
         self.dyn_figure.push(dyn_figure);
         self.cache_policy.push(cache_policy);
         self.dyn_cols.push(dyn_cols);
         self.collider_projector.push(collider_projector);
-        self.render_projector.push(render_projector);
         self.motion_schema.push(motion_schema);
     }
 
@@ -161,14 +145,12 @@ impl EntitySpecStore {
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
-        render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) {
         self.dyn_figure[row] = dyn_figure;
         self.cache_policy[row] = cache_policy;
         self.dyn_cols[row] = dyn_cols;
         self.collider_projector[row] = collider_projector;
-        self.render_projector[row] = render_projector;
         self.motion_schema[row] = motion_schema;
     }
 
@@ -177,7 +159,6 @@ impl EntitySpecStore {
         self.cache_policy.truncate(len);
         self.dyn_cols.truncate(len);
         self.collider_projector.truncate(len);
-        self.render_projector.truncate(len);
         self.motion_schema.truncate(len);
     }
 
@@ -193,9 +174,6 @@ impl EntitySpecStore {
         }
         if self.collider_projector.capacity() < max {
             self.collider_projector.reserve_exact(max - self.collider_projector.capacity());
-        }
-        if self.render_projector.capacity() < max {
-            self.render_projector.reserve_exact(max - self.render_projector.capacity());
         }
         if self.motion_schema.capacity() < max {
             self.motion_schema.reserve_exact(max - self.motion_schema.capacity());
@@ -391,14 +369,6 @@ impl EntityStore {
 
     pub fn collider_projector(&self, row: usize) -> Option<&ColliderProjector> {
         self.specs.collider_projector.get(row)
-    }
-
-    pub fn render_projector(&self, row: usize) -> Option<&RenderProjector> {
-        self.specs.render_projector.get(row)
-    }
-
-    pub fn render_projector_mut(&mut self, row: usize) -> Option<&mut RenderProjector> {
-        self.specs.render_projector.get_mut(row)
     }
 
     pub fn dyn_figure(&self, row: usize) -> Option<&DynFigure> {
@@ -637,7 +607,6 @@ impl EntityStore {
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
-        render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) -> usize {
         let i = self.free.swap_remove(slot);
@@ -647,7 +616,6 @@ impl EntityStore {
             cache_policy,
             dyn_cols,
             collider_projector,
-            render_projector,
             motion_schema,
         );
         self.generation[i] = self.generation[i].wrapping_add(1);
@@ -669,7 +637,6 @@ impl EntityStore {
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
-        render_projector: RenderProjector,
         motion_schema: Rc<MotionStateSchema>,
     ) -> Result<usize, String> {
         if self.len() >= self.max {
@@ -681,7 +648,6 @@ impl EntityStore {
             cache_policy,
             dyn_cols,
             collider_projector,
-            render_projector,
             motion_schema,
         );
         self.generation.push(0);
@@ -980,7 +946,6 @@ impl World {
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
-        render_projector: RenderProjector,
     ) -> Result<usize, String> {
         let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
         let scanned = is_scanned_figure(&dyn_figure);
@@ -995,7 +960,6 @@ impl World {
                 cache_policy,
                 dyn_cols,
                 collider_projector,
-                render_projector,
                 motion_schema,
             ))
         } else {
@@ -1006,7 +970,6 @@ impl World {
                 cache_policy,
                 dyn_cols,
                 collider_projector,
-                render_projector,
                 motion_schema,
             )
         }

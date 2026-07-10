@@ -14,8 +14,6 @@ mod slots;
 #[cfg(test)]
 mod tests;
 
-pub use slots::{sample_curve, sample_curve_frac};
-
 use exec::{new_task, step_task, Task, TF};
 
 const PLAYFIELD: f64 = 12.0; // cull margin (units)
@@ -74,7 +72,6 @@ struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynCollider>,
-    render_defs: Vec<DynRender>,
 }
 
 impl ColliderScratch {
@@ -82,7 +79,6 @@ impl ColliderScratch {
         self.rows.clear();
         self.ranges.clear();
         self.defs.clear();
-        self.render_defs.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }

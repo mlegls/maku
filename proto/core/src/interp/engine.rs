@@ -21,6 +21,7 @@ const NAMES: &[&str] = &[
     "sum-entities",
     "entities-where",
     "collisions",
+    "curve-samples",
     "render",
     "entity-pos",
     "entity-col",
@@ -188,8 +189,16 @@ pub(crate) fn special(
                 .collect::<Vec<_>>();
             Val::CollisionSet(pairs.into())
         }
+        "curve-samples" => {
+            let entity = curve_samples_entity(evaluate(&items[1], env, ctx, world)?)?;
+            let (u_max, resolution) = match items.get(2) {
+                Some(form) => curve_samples_options(evaluate(form, env, ctx, world)?)?,
+                None => (10.0, 0.1),
+            };
+            Val::CurveSamples(Rc::new(CurveSamples { entity, u_max, resolution }))
+        }
         "render" => {
-            let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?, world)?;
+            let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?, world, &ctx.sig)?;
             Val::Action(Rc::new(ActionV::Render { row }))
         }
         "entity-pos" => {
@@ -262,7 +271,48 @@ pub(crate) fn special(
     Ok(Some(val))
 }
 
-fn render_row_from_value(v: Val, world: &mut World) -> Result<RenderRow, String> {
+fn curve_samples_entity(v: Val) -> Result<EntityRef, String> {
+    match v {
+        Val::Handle(id) => Ok(id),
+        Val::Map(kvs) => kvs
+            .iter()
+            .find_map(|(k, v)| match (k, v) {
+                (Val::Kw(k), Val::Handle(id)) if &**k == "handle" => Some(*id),
+                _ => None,
+            })
+            .ok_or_else(|| "curve-samples: expected entity handle or entity view".to_string()),
+        other => Err(format!("curve-samples: expected entity handle or entity view, got {:?}", other)),
+    }
+}
+
+fn curve_samples_options(v: Val) -> Result<(f64, f64), String> {
+    let Val::Map(kvs) = v else {
+        return Err("curve-samples: options must be a map".into());
+    };
+    let mut u_max = 10.0;
+    let mut resolution = 0.1;
+    for (k, v) in kvs.iter() {
+        let Val::Kw(key) = k else {
+            return Err("curve-samples: option keys must be keywords".into());
+        };
+        match key.as_ref() {
+            "u-max" => u_max = v.num().map_err(|_| "curve-samples: :u-max must be a static number".to_string())?,
+            "resolution" => {
+                resolution = v.num().map_err(|_| "curve-samples: :resolution must be a static number".to_string())?
+            }
+            "warn" | "fill" | "fraction" | "frac" => {
+                return Err(format!(
+                    "curve-samples: :{} is lifecycle policy; put lifecycle logic in rule code over entity fields",
+                    key
+                ));
+            }
+            other => return Err(format!("curve-samples: unknown option :{}", other)),
+        }
+    }
+    Ok((u_max, resolution))
+}
+
+fn render_row_from_value(v: Val, world: &mut World, sig: &SigEnv) -> Result<RenderRow, String> {
     let Val::Map(kvs) = v else {
         return Err("render: expected row map".into());
     };
@@ -272,12 +322,14 @@ fn render_row_from_value(v: Val, world: &mut World) -> Result<RenderRow, String>
             _ => None,
         })
     };
-    let shape = match get("shape") {
-        Some(Val::Kw(k)) => k,
-        Some(Val::Arr(items)) => match items.first() {
+    let shape_value = get("shape").ok_or("render: missing :shape")?;
+    let shape = match &shape_value {
+        Val::Kw(k) => k.clone(),
+        Val::Arr(items) => match items.first() {
             Some(Val::Kw(k)) => k.clone(),
             _ => return Err("render: :shape vector must start with a keyword".into()),
         },
+        Val::CurveSamples(_) => "polyline".into(),
         _ => return Err("render: missing keyword :shape".into()),
     };
     let data = match &*shape {
@@ -290,14 +342,17 @@ fn render_row_from_value(v: Val, world: &mut World) -> Result<RenderRow, String>
             hue: get("hue").map(|v| v.num()).transpose()?.unwrap_or(0.0),
         },
         "polyline" => {
-            let points = match get("points").or_else(|| get("pts")) {
-                Some(Val::Arr(items)) => items
-                    .iter()
-                    .cloned()
-                    .map(render_point_xy)
-                    .collect::<Result<Vec<_>, _>>()?,
-                Some(v) => return Err(format!("render: :points must be an array, got {:?}", v)),
-                None => return Err("render: polyline missing :points".into()),
+            let points = match &shape_value {
+                Val::CurveSamples(samples) => sample_curve_shape(samples, world, sig)?,
+                _ => match get("points").or_else(|| get("pts")) {
+                    Some(Val::Arr(items)) => items
+                        .iter()
+                        .cloned()
+                        .map(render_point_xy)
+                        .collect::<Result<Vec<_>, _>>()?,
+                    Some(v) => return Err(format!("render: :points must be an array, got {:?}", v)),
+                    None => return Err("render: polyline missing :points".into()),
+                },
             };
             let active = get("active").map(|v| v.num()).transpose()?.unwrap_or(1.0) != 0.0;
             RenderData::Polyline { points, active }
@@ -326,6 +381,49 @@ fn render_row_from_value(v: Val, world: &mut World) -> Result<RenderRow, String>
         }
     }
     Ok(row)
+}
+
+fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Result<Vec<(f64, f64)>, String> {
+    let Some(i) = world.find(samples.entity) else {
+        return Err("render: curve-samples entity is not live".into());
+    };
+    let dyn_figure = world
+        .entities
+        .dyn_figure(i)
+        .ok_or_else(|| format!("render: curve-samples missing dyn figure for row {i}"))?;
+    let tau = world.entities.tau(i, world.tick);
+    let state = MotionState::new();
+    let Figure::Curve(curve) = eval_dyn_figure(dyn_figure, tau, &state, sig)
+        .map_err(|err| format!("render: curve-samples could not sample curve: {err}"))?
+    else {
+        return Err("render: curve-samples entity is not a live curve".into());
+    };
+    let min = match &curve.spec.domain {
+        CurveDomain::Range { min, .. } => *min,
+        CurveDomain::Values(vals) => *vals.first().ok_or("render: curve-samples empty domain")?,
+    };
+    let max = match &curve.spec.domain {
+        CurveDomain::Range { max, .. } => {
+            if samples.u_max.is_finite() { samples.u_max } else { *max }
+        }
+        CurveDomain::Values(vals) => *vals.last().ok_or("render: curve-samples empty domain")?,
+    };
+    let us: Vec<f64> = match &curve.spec.domain {
+        CurveDomain::Values(vals) => vals.iter().copied().filter(|u| *u <= samples.u_max).collect(),
+        CurveDomain::Range { .. } => {
+            let span = (max - min).abs().max(0.01);
+            let steps = ((span / samples.resolution).ceil() as usize).clamp(2, 400);
+            (0..=steps).map(|k| min + (max - min) * k as f64 / steps as f64).collect()
+        }
+    };
+    let mut pts = Vec::with_capacity(us.len());
+    for u in us {
+        let local = eval_curve_pose(&curve.spec.eval, tau, u, &state, sig)
+            .map_err(|err| format!("render: curve-samples could not evaluate curve: {err}"))?;
+        let w = curve.frame.compose(&local);
+        pts.push((w.x, w.y));
+    }
+    Ok(pts)
 }
 
 fn render_point_xy(v: Val) -> Result<(f64, f64), String> {

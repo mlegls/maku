@@ -113,17 +113,28 @@
 
 ;; the beam look: a dim telegraph along the full path, a bright polyline
 ;; along the hot extent.
-(defrenderer :parametric beam-renderer [e ctx]
-  (let [frac (laser-hot-fraction e ctx)
-        u-max (value-or e.u-max 10)
-        res (value-or e.resolution 0.1)
-        w (value-or e.width 1)]
-    (if (>= frac 1)
-      {:shape [:polyline {:u-max u-max :resolution res :width w :active 1}]}
-      (if (< frac 0.000001)
-        {:shape [:polyline {:u-max u-max :resolution res :width w :active 0}]}
-        [{:shape [:polyline {:u-max u-max :resolution res :width w :active 0}]}
-         {:shape [:polyline {:u-max (* frac u-max) :resolution res :width w :active 1}]}]))))
+(deftick
+  (map (fn [e]
+         (let [frac (laser-hot-fraction e {:t e.t :tick e.tick})
+               u-max (value-or e.u-max 10)
+               res (value-or e.resolution 0.1)
+               w (value-or e.width 1)]
+           (if (>= frac 1)
+             (render {:shape (curve-samples e {:u-max u-max :resolution res})
+                      :width w :active 1
+                      :family e.family :color e.color :variant e.variant})
+             (if (< frac 0.000001)
+               (render {:shape (curve-samples e {:u-max u-max :resolution res})
+                        :width w :active 0
+                        :family e.family :color e.color :variant e.variant})
+               (seq
+                 (render {:shape (curve-samples e {:u-max u-max :resolution res})
+                          :width w :active 0
+                          :family e.family :color e.color :variant e.variant})
+                 (render {:shape (curve-samples e {:u-max (* frac u-max) :resolution res})
+                          :width w :active 1
+                          :family e.family :color e.color :variant e.variant}))))))
+       (entities-where (fn [e] (* (= e.render :beam) (= e.kind :curve))))))
 
 ;; end-of-life: a beam past warn+active is culled — beam lifecycle is genre
 ;; policy, not an engine rule. Curves without :active live forever.
@@ -136,7 +147,6 @@
 (defmacro bullet [dyn & metas]
   `(spawn ~dyn
           bullet-collider
-          (renderers) ; drawn by the sprite rule, not projector rows
           {:render :touhou-sprite
            :damage ~(damage-value* metas 1)
            :hitbox ~(primary-hitbox-radius* metas 0.12)}
@@ -148,8 +158,7 @@
 (defmacro laser [dyn & metas]
   `(spawn ~dyn
           laser-collider
-          beam-renderer
-          {:damage ~(damage-value* metas 1)}
+          {:render :beam :damage ~(damage-value* metas 1)}
           ~@metas))
 
 ;; the genre name for sampling a pose along a live beam
@@ -159,15 +168,13 @@
 (defmacro laser-shot [dyn & metas]
   `(spawn ~dyn
           shot-laser-collider
-          beam-renderer
-          {:team :player :damage ~(damage-value* metas 1)}
+          {:render :beam :team :player :damage ~(damage-value* metas 1)}
           ~@metas))
 
 ;; player fire: omitted :damage defaults to 1 in the contact rule
 (defmacro shot [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :shot :r ~(primary-hitbox-radius* metas 0.12)})
-          (renderers)
           {:render :touhou-sprite
            :team :player :damage ~(damage-value* metas 1)}
           ~@metas))
@@ -177,7 +184,6 @@
 (defmacro enemy [dyn & metas]
   `(spawn ~dyn
           (circle-collider {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
-          (renderers)
           {:render :touhou-sprite
            :team :enemy :hp 1}
           ~@metas))
@@ -249,7 +255,6 @@
 (defmacro player [dyn & metas]
   `(let [player (spawn ~dyn
                        (circle-collider {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
-                       (renderers)
                        {:render :touhou-sprite
                         :team :player-body
                         :lives 3 :bombs 3 :graze 0 :hits 0}

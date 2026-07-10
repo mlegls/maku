@@ -6,7 +6,7 @@
 
 pub use super::{
     ColliderProjector, Curve, CurveEval, Dyn, DynFigure, DynKind, DynNum, DynPose, EntityStore,
-    Figure, FigureDynRepr, ParametricCurve, RenderProjector, World, WorldFields,
+    Figure, FigureDynRepr, ParametricCurve, World, WorldFields,
 };
 pub use crate::model::{
     ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, SampleSet, Symbol,
