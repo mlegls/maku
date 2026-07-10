@@ -166,6 +166,11 @@ pub struct MotionEvalCtx<'a> {
     pub sig: &'a SigEnv,
     pub readers: &'a MotionReaders,
     pub tick_rate: f64,
+    /// When false the caller provably discards theta, so nodes whose
+    /// heading costs extra evaluation (ClosedPt's second sample, Vel's
+    /// integrand, RotExpr) may skip it. Frame re-enables it for the
+    /// parent: compose rotates the child offset by the parent's theta.
+    pub need_theta: bool,
 }
 
 impl<'a> MotionEvalCtx<'a> {
@@ -179,7 +184,17 @@ impl<'a> MotionEvalCtx<'a> {
         readers: &'a MotionReaders,
         tick_rate: f64,
     ) -> MotionEvalCtx<'a> {
-        MotionEvalCtx { state, sig, readers, tick_rate }
+        MotionEvalCtx { state, sig, readers, tick_rate, need_theta: true }
+    }
+
+    pub fn pos_only(mut self) -> Self {
+        self.need_theta = false;
+        self
+    }
+
+    fn with_theta(mut self) -> Self {
+        self.need_theta = true;
+        self
     }
 
     pub fn node_key(&self, ptr: usize) -> MotionStateKey {
@@ -934,6 +949,25 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 .as_ref()
             {
                 let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None);
+                if !ctx.need_theta {
+                    if oracle_enabled() {
+                        let (ix, iy) = eval_pt_at_rate(
+                            a,
+                            b,
+                            *polar,
+                            env,
+                            sig,
+                            tau,
+                            u,
+                            Some(read_scan_in(state, key, readers.clone())),
+                            None,
+                            tick_rate,
+                        )?;
+                        assert_num_close("closed-pt/a", a, x, ix);
+                        assert_num_close("closed-pt/b", b, y, iy);
+                    }
+                    return Ok(Pose::point(x, y));
+                }
                 let eps = 1.0 / tick_rate;
                 let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None);
                 if oracle_enabled() {
@@ -980,6 +1014,9 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 None,
                 tick_rate,
             )?;
+            if !ctx.need_theta {
+                return Ok(Pose::point(x, y));
+            }
             let eps = 1.0 / tick_rate;
             let (x2, y2) = eval_pt_at_rate(
                 a,
@@ -1004,6 +1041,11 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     _ => None,
                 })
                 .unwrap_or([0.0, 0.0]);
+            if !ctx.need_theta {
+                // (x, y) come from the integrator state; the integrand
+                // eval below only feeds the heading.
+                return Ok(Pose::point(x, y));
+            }
             if let Some((ap, bp)) = programs
                 .get_or_init(|| lower_program_pair(a, b, env, sig, true))
                 .as_ref()
@@ -1050,6 +1092,10 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })
         }
         DynNode::RotExpr { form, env, program } => {
+            if !ctx.need_theta {
+                // a rot-expr's pose IS its theta; nothing else to compute
+                return Ok(Pose::point(0.0, 0.0));
+            }
             let key = d as *const DynNode as usize;
             if let Some(prog) = program
                 .get_or_init(|| lower_single_program(form, env, sig, true))
@@ -1141,7 +1187,9 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             dyn_node_pose_u_in(curve, tau, u, ctx)
         }
         DynNode::Frame(parent, child) => {
-            let pp = dyn_node_pose_u_in(parent, tau, u, ctx)?;
+            // compose rotates the child offset by the parent theta, so the
+            // parent needs its heading even when the caller discards ours
+            let pp = dyn_node_pose_u_in(parent, tau, u, ctx.with_theta())?;
             let cp = dyn_node_pose_u_in(child, tau, u, ctx)?;
             Ok(pp.compose(&cp))
         }

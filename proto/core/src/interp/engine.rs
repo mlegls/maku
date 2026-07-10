@@ -222,7 +222,8 @@ pub(crate) fn special(
                 let Ok(p) = dyn_figure_pose_in(
                     dyn_figure,
                     tau,
-                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()),
+                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate())
+                        .pos_only(),
                 ) else {
                     continue;
                 };

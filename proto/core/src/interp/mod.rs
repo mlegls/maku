@@ -1683,7 +1683,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()),
+        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()).pos_only(),
     )?;
     let vel = world.entity_velocity_from_samples(i, world.tick);
     let mut view = vec![
@@ -1858,7 +1858,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             let p = dyn_figure_pose_in(
                 dyn_figure,
                 tau,
-                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()),
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()).pos_only(),
             )?;
             Ok(Val::Pose(Pose::point(p.x, p.y)))
         }

@@ -139,10 +139,13 @@ impl Sim {
                     .ok_or_else(|| format!("colliders: missing dyn figure for row {i}"))?;
                 let readers = self.motion_readers(i);
                 let state = MotionState::new();
+                // pos_only: the sampled-pose cache and colliders read x/y
+                // (velocity-from-samples, exit snapshots re-derive heading)
                 dyn_figure_pose_in(
                     dyn_figure,
                     tau,
-                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
+                        .pos_only(),
                 )?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));

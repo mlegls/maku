@@ -636,7 +636,8 @@ impl Sim {
                     match dyn_figure_pose_in(
                         dyn_figure,
                         tau,
-                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
+                            .pos_only(),
                     ) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
