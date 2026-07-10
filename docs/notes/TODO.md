@@ -52,7 +52,11 @@ work.
   guard if a card needs it). Still missing: per-dyn-field epochs (fades
   surviving motion remats), soft-cull fades, the F1 lint, and the
   masked-SoA fast path (the lowering target for batch `map`-remat shapes).
-  Live-evolve integration keys on the per-slot epochs (milestone 3).
+  Live-evolve integration keys on the per-slot epochs (milestone 3;
+  implementation design in `docs/notes/live-evolve-design.md`: Val motion
+  cells + deferred init thunks + syntactic liveness classification +
+  on-clock advance in the scanned pass, which also de-quadratifies closed
+  evolves via the same cell).
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
