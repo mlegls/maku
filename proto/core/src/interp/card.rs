@@ -1,7 +1,7 @@
 //! Card loading: top-level defs, defns, defpatterns (callable).
 
 use crate::edn::Form;
-use super::FigureProjectorKind;
+use super::{rewrite_card, FigureProjectorKind};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -172,5 +172,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
             }
         }
     }
-    Ok(Card { patterns, order, defs, macros, channels, tick_rules })
+    let mut card = Card { patterns, order, defs, macros, channels, tick_rules };
+    rewrite_card(&mut card);
+    Ok(card)
 }

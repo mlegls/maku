@@ -39,6 +39,87 @@
         sim.world.entities.dyn_figure(row).unwrap()
     }
 
+    fn eval_with_card(card_src: &str, expr_src: &str) -> Val {
+        let expanded = crate::edn::expand_src(card_src).unwrap();
+        let forms = crate::edn::read_all(&expanded).unwrap();
+        let card = load_card(&forms).unwrap();
+        let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(card.defs.clone());
+        ctx.patterns = Rc::new(card.patterns.clone());
+        ctx.macros = Rc::new(card.macros.clone());
+        let expr = crate::edn::read_one(expr_src).unwrap();
+        evaluate(&expr, &Env::empty(), &mut ctx, &mut World::default()).unwrap()
+    }
+
+    fn loaded_def(card_src: &str, name: &str) -> Form {
+        let expanded = crate::edn::expand_src(card_src).unwrap();
+        let forms = crate::edn::read_all(&expanded).unwrap();
+        let card = load_card(&forms).unwrap();
+        card.defs.get(name).unwrap().clone()
+    }
+
+    fn form_contains_head(form: &Form, head: &str) -> bool {
+        match form {
+            Form::List(items) => {
+                matches!(items.first(), Some(Form::Sym(s)) if s.as_ref() == head)
+                    || items.iter().any(|f| form_contains_head(f, head))
+            }
+            Form::Vector(items) => items.iter().any(|f| form_contains_head(f, head)),
+            Form::Map(kvs) => kvs
+                .iter()
+                .any(|(k, v)| form_contains_head(k, head) || form_contains_head(v, head)),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn rewrite_value_or_call_preserves_results() {
+        let card = "(defn use-value-or [x d] (value-or x d))";
+        let rewritten = loaded_def(card, "use-value-or");
+        assert!(form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "not rewritten: {}", rewritten);
+
+        assert!(matches!(eval_with_card(card, "(use-value-or (channel $missing) 7)"), Val::Num(n) if n == 7.0));
+        assert!(matches!(eval_with_card(card, "(use-value-or 3 7)"), Val::Num(n) if n == 3.0));
+    }
+
+    #[test]
+    fn rewrite_hand_written_value_or_shape_matches_lib_route() {
+        let card = "(defn hand [x d] (if (nothing? x) d x))";
+        let rewritten = loaded_def(card, "hand");
+        assert!(form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "not rewritten: {}", rewritten);
+
+        assert!(matches!(eval_with_card(card, "(hand (channel $missing) 11)"), Val::Num(n) if n == 11.0));
+        assert!(matches!(eval_with_card(card, "(hand 5 11)"), Val::Num(n) if n == 5.0));
+    }
+
+    #[test]
+    fn rewrite_value_or_shape_rejects_impure_x() {
+        let rewritten = loaded_def(
+            "(defn impure [] (if (nothing? (rand 0 1)) 9 (rand 0 1)))",
+            "impure",
+        );
+        assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "impure form rewritten: {}", rewritten);
+        assert!(form_contains_head(&rewritten, "if"), "impure form no longer has original if: {}", rewritten);
+    }
+
+    #[test]
+    fn rewrite_respects_shadowed_names() {
+        let shadow_nothing = "(defn shadow-nothing [x]\n  ((fn [nothing?] (if (nothing? x) 1 x)) (fn [v] 0)))";
+        let rewritten = loaded_def(shadow_nothing, "shadow-nothing");
+        assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "shadowed nothing? rewritten: {}", rewritten);
+        assert!(matches!(eval_with_card(shadow_nothing, "(shadow-nothing (channel $missing))"), Val::Nothing));
+
+        let shadow_value_or = "(defn shadow-value-or []\n  (let [value-or (fn [x d] d)] (value-or 3 9)))";
+        let rewritten = loaded_def(shadow_value_or, "shadow-value-or");
+        assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "shadowed value-or inlined: {}", rewritten);
+        assert!(matches!(eval_with_card(shadow_value_or, "(shadow-value-or)"), Val::Num(n) if n == 9.0));
+
+        let top_level_nothing = "(defn nothing? [x] 0)\n(defn top-level [x] (if (nothing? x) 1 x))";
+        let rewritten = loaded_def(top_level_nothing, "top-level");
+        assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "top-level shadowed nothing? rewritten: {}", rewritten);
+        assert!(matches!(eval_with_card(top_level_nothing, "(top-level (channel $missing))"), Val::Nothing));
+    }
+
     /// Conformance: the real translation files, loaded verbatim from disk.
     #[test]
     #[ignore = "long corpus test; run with cargo test --lib -- --ignored --test-threads=1"]
