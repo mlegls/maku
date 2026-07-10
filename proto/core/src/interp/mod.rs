@@ -1088,7 +1088,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     child: child.into_node(),
                 }))));
             }
-            "cart" | "polar" if items[1..].iter().any(contains_t) => {
+            "cart" | "polar" if items[1..].iter().any(|f| contains_unbound_axis(f, env)) => {
                 if items.len() != 3 {
                     return Err(format!("{}: expected two components", s));
                 }
@@ -1192,28 +1192,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     None => Ok(figure),
                 };
             }
-            "sample" => {
-                // (sample dyn t) / (sample dyn t u): pure evaluation of a
-                // dyn at a given time (and curve parameter) — pose with
-                // tangent heading. The entity-free version of on-curve: any
-                // shape can be sampled without spawning an entity.
-                let dv = as_dyn_pose(evaluate(&items[1], env, ctx, world)?)?;
-                let tv = evaluate(&items[2], env, ctx, world)?.num()?;
-                let uv = match items.get(3) {
-                    Some(uf) => Some(evaluate(uf, env, ctx, world)?.num()?),
-                    None => None,
-                };
-                let st = MotionState::new();
-                return match uv {
-                    Some(u) => {
-                        let p0 = dyn_pose_u(&dv, tv, u, &st, &ctx.sig)?;
-                        let p1 = dyn_pose_u(&dv, tv, u + 0.01, &st, &ctx.sig)?;
-                        let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
-                        Ok(Val::Pose(Pose::oriented(p0.x, p0.y, th)))
-                    }
-                    None => Ok(Val::Pose(dyn_pose(&dv, tv, &st, &ctx.sig)?)),
-                };
-            }
             "live" => {
                 // in a scan context: the channel's current value (class b/d);
                 // at control level: a live pose signal usable as a frame
@@ -1272,7 +1250,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return sf_stateful(name, items, env, ctx, world);
             }
             "stages" => return sf_stages(items, env, ctx, world),
-            "rot" if items.len() == 2 && contains_t(&items[1]) => {
+            "rot" if items.len() == 2 && contains_unbound_axis(&items[1], env) => {
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::RotExpr {
                     form: items[1].clone(),
                     env: env.clone(),
@@ -1388,8 +1366,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
         }
         // signal-valued frame (live channel, rot-expr): compose dyns
         Val::DynPose(fd) => {
+            // (d t u): two args are unambiguously curve sampling — frame
+            // application takes exactly one child.
+            if items.len() == 3 {
+                let t = evaluate(&items[1], env, ctx, world)?.num()?;
+                let u = evaluate(&items[2], env, ctx, world)?.num()?;
+                return apply_dyn_pose_at(&fd, t, Some(u), &ctx.sig);
+            }
             if items.len() != 2 {
-                return Err("frame application takes exactly one child".into());
+                return Err("dyn application takes a sample time (and optional u) or one frame child".into());
             }
             let saved = ctx.ambient;
             let p0 = dyn_pose(&fd, 0.0, &MotionState::new(), &ctx.sig)
@@ -1397,8 +1382,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             ctx.ambient = ctx.ambient.compose(&p0);
             let child = evaluate(&items[1], env, ctx, world);
             ctx.ambient = saved;
-            let child = child?;
-            apply_dyn_frame(fd.into_node(), child)
+            // (d t): the child is evaluated ONCE (it may have effects — rand,
+            // cells); a numeric result means sampling, anything else frames.
+            match child? {
+                Val::Num(t) => apply_dyn_pose_at(&fd, t, None, &ctx.sig),
+                child => apply_dyn_frame(fd.into_node(), child),
+            }
         }
         Val::Arr(_) => {
             if items.len() != 2 {
@@ -1452,6 +1441,22 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             apply_fn(f, &args, ctx, world, false)
         }
         _ => Err(format!("cannot apply {:?}", hv)),
+    }
+}
+
+fn apply_dyn_pose_at(d: &DynPose, t: f64, u: Option<f64>, sig: &SigEnv) -> Result<Val, String> {
+    // Application sampling currently uses a fresh state, which is only
+    // semantically correct for closed/stateless dyns. Stateful dyn replay gets
+    // defined when `scan` lands.
+    let st = MotionState::new();
+    match u {
+        Some(u) => {
+            let p0 = dyn_pose_u(d, t, u, &st, sig)?;
+            let p1 = dyn_pose_u(d, t, u + 0.01, &st, sig)?;
+            let th = (p1.y - p0.y).atan2(p1.x - p0.x).to_degrees();
+            Ok(Val::Pose(Pose::oriented(p0.x, p0.y, th)))
+        }
+        None => Ok(Val::Pose(dyn_pose(d, t, &st, sig)?)),
     }
 }
 
@@ -2303,6 +2308,23 @@ pub(crate) fn truthy(v: &Val) -> bool {
     }
 }
 
+fn contains_unbound_axis(form: &Form, env: &Env) -> bool {
+    match form {
+        Form::Sym(s) if &**s == "t" || &**s == "u" => env.lookup(s).is_none(),
+        Form::List(items) => {
+            if matches!(items.first(), Some(Form::Sym(s)) if &**s == "live") {
+                return true;
+            }
+            items.iter().any(|f| contains_unbound_axis(f, env))
+        }
+        Form::Vector(items) => items.iter().any(|f| contains_unbound_axis(f, env)),
+        Form::Map(kvs) => kvs
+            .iter()
+            .any(|(k, v)| contains_unbound_axis(k, env) || contains_unbound_axis(v, env)),
+        _ => false,
+    }
+}
+
 fn as_action(v: Val) -> Result<Rc<ActionV>, String> {
     match v {
         Val::Action(a) => Ok(a),
@@ -2324,6 +2346,7 @@ fn as_dyn_pose(v: Val) -> Result<DynPose, String> {
     match v {
         Val::DynPose(d) => Ok(d),
         Val::Pose(p) => Ok(DynPose::pose_node(Rc::new(DynNode::Const(p)))),
+        Val::Fn { .. } => Ok(DynPose::pose_node(Rc::new(DynNode::FnPose(v)))),
         v => Err(format!("expected dyn pose, got {:?}", v)),
     }
 }
@@ -2334,6 +2357,7 @@ fn as_dyn_figure(v: Val) -> Result<DynFigure, String> {
         Val::DynPose(d) => Ok(DynFigure::pose(d)),
         Val::Figure(f) => Ok(DynFigure::figure_const(f)),
         Val::Pose(p) => Ok(DynFigure::pose_node(Rc::new(DynNode::Const(p)))),
+        Val::Fn { .. } => Ok(DynFigure::pose_node(Rc::new(DynNode::FnPose(v)))),
         v => Err(format!("expected dyn figure, got {:?}", v)),
     }
 }

@@ -239,6 +239,8 @@ pub enum DynNode {
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
     RotExpr { form: Form, env: Env },
+    /// A user function adapted to a stateless pose dyn by calling it as (f t).
+    FnPose(Val),
     /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state.
     /// Lazy segments are an interpreted compatibility island: they instantiate
     /// a segment dyn at the boundary and may extend dense motion state then.
@@ -361,6 +363,7 @@ fn seed_dyn_node_ids_with_ptr(
         | DynNode::Live { .. }
         | DynNode::Vel { .. }
         | DynNode::ClosedPt { .. }
+        | DynNode::FnPose(_)
         | DynNode::RotExpr { .. } => {}
     }
 }
@@ -406,7 +409,7 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
             collect_node_state(a, schema);
             collect_node_state(b, schema);
         }
-        DynNode::Const(_) | DynNode::Linear { .. } | DynNode::Live { .. } => {}
+        DynNode::Const(_) | DynNode::Linear { .. } | DynNode::Live { .. } | DynNode::FnPose(_) => {}
     }
 }
 
@@ -824,6 +827,24 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
             )?
             .num()?;
             Ok(Pose::oriented(0.0, 0.0, th))
+        }
+        DynNode::FnPose(f) => {
+            let mut call_ctx = Ctx {
+                sig: sig.clone(),
+                ambient: Pose::IDENTITY,
+                scan: None,
+                patterns: Rc::new(HashMap::new()),
+                macros: Rc::new(HashMap::new()),
+                deferred: Vec::new(),
+                projector_scope: None,
+            };
+            let mut w = World::default();
+            w.set_tick_rate_for_eval(tick_rate);
+            match apply_fn(f.clone(), &[Val::Num(tau)], &mut call_ctx, &mut w, false)? {
+                Val::Pose(p) => Ok(p),
+                Val::DynPose(d) => dyn_pose_with_tick_rate(&d, tau, state, sig, tick_rate),
+                other => Err(format!("fn-backed dyn expected fn to return pose, got {:?}", other)),
+            }
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;

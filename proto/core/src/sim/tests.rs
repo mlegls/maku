@@ -1393,14 +1393,46 @@
         assert!(hp(&sim) < 10.0, "damage flows after the window expires");
     }
 
-    /// Curves are values: (sample curve t u) evaluates a u-parameterized
-    /// dyn without expressing an entity — pose plus tangent heading.
+    /// Dyn application with a numeric first argument samples a named closed
+    /// dyn without expressing an entity.
     #[test]
-    fn sample_evaluates_curves() {
+    fn dyn_application_samples_named_closed_dyn() {
+        const CARD: &str = r#"
+(def d (cart (* 2 t) (+ 1 t)))
+(defpattern p []
+  (spawn (d 3.5) {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let (x, y) = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap_or((f64::NAN, f64::NAN));
+        assert!((x - 7.0).abs() < 1e-6 && (y - 4.5).abs() < 1e-6, "sampled pose: ({}, {})", x, y);
+    }
+
+    /// Plain functions are accepted in dyn pose slots and evaluated as f(t).
+    #[test]
+    fn fn_in_pose_slot_moves_entity() {
+        const CARD: &str = r#"
+(def wobble (fn [t] (cart (* 20 (cos (* 3 t))) 0)))
+(defpattern p []
+  (spawn wobble {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let state = MotionState::new();
+        let sig = SigEnv::default();
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
+        let want = 20.0 * (1.5f64).to_radians().cos();
+        assert!((p.x - want).abs() < 1e-6 && p.y.abs() < 1e-6, "fn-backed dyn pose: {:?}", p);
+    }
+
+    /// Curves are values: (curve t u) evaluates a u-parameterized dyn without
+    /// expressing an entity — pose plus tangent heading.
+    #[test]
+    fn dyn_application_samples_curves() {
         const CARD: &str = r#"
 (defpattern p []
-  (let [curve (polar m"2 * u" 0)]
-    (spawn ((pose (sample curve 0 1)) (pose c[0 0]))
+  (let [shape (polar m"2 * u" 0)]
+    (spawn ((pose (shape 0 1)) (pose c[0 0]))
            {:style {:family :gem}})))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();

@@ -95,6 +95,11 @@ Time-varying values:
   expecting slot, and named signal expressions rebind at the referencing slot
   as described in `language.md` section 3. A `Dyn<T>` value cannot be floated
   out with an unbound hidden axis.
+- `Fn<Num, Pose>` values can coerce to pose dyns at dyn-typed boundaries. The
+  function is called as `(f t)` during dyn evaluation and must return a pose.
+- Applying a dyn to numeric axes samples it: `(d t)` for the time axis, or
+  `(d t u)` for time plus materialization/curve axis. Applying a dyn to a
+  non-numeric child keeps frame-application semantics.
 
 Signal class is an inferred semantic property of `Dyn<T>`:
 
@@ -197,7 +202,7 @@ no keyword-as-field-access shortcut in override maps; use `e.hitbox`, not
 `:hitbox`, when reading an entity field. Time-dependent projector arguments
 normally use explicit context fields such as `ctx.t` or `ctx.age`. A free-`t`
 expression can still be defined inside projector code, but it remains a
-dyn-valued expression and must be explicitly applied/sampled before it can feed
+dyn-valued expression and must be explicitly applied before it can feed
 one of those concrete fields. The `m"..."` reader macro remains available
 inside projector code because it is only syntax. Direct dynamic collider/render
 row lists are not the public low-level surface. Purely local temporal behavior
