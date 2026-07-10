@@ -56,7 +56,6 @@ struct Builder<'a> {
     ops: Vec<NumOp>,
     next: u16,
     defs: &'a HashMap<String, Form>,
-    can_inline_defs: bool,
     inline_depth: usize,
 }
 
@@ -215,9 +214,6 @@ impl Builder<'_> {
     }
 
     fn lower_bare_def(&mut self, name: &str, env: &Env) -> Option<u16> {
-        if !self.can_inline_defs {
-            return None;
-        }
         let def = self.defs.get(name)?.clone();
         if literal_fn_parts(&def).is_some() {
             return None;
@@ -235,9 +231,6 @@ impl Builder<'_> {
         env: &Env,
         scope: LowerScope<'_>,
     ) -> Option<u16> {
-        if !self.can_inline_defs {
-            return None;
-        }
         let def = self.defs.get(name)?.clone();
         let (params, body) = literal_fn_parts(&def)?;
         if params.len() != args.len() {
@@ -435,13 +428,10 @@ fn special_or_channel_head(name: &str) -> bool {
 }
 
 pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
-    let mut b = Builder {
-        ops: Vec::new(),
-        next: 0,
-        defs,
-        can_inline_defs: env.lookup(CELLS_KEY).is_none(),
-        inline_depth: 0,
-    };
+    // Def inlining needs no cell-scope guard: signal evaluation skips bare
+    // cell reads (Ctx.signal_scope — signals read cells via (live name)
+    // only), so a def name can never be shadowed by a cell at runtime.
+    let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0 };
     b.lower(form, env, LowerScope::Current)?;
     Some(NumProgram { ops: b.ops, n_regs: b.next as usize })
 }
@@ -661,11 +651,13 @@ mod tests {
     }
 
     #[test]
-    fn cell_scope_disables_def_inlining() {
+    fn cell_scope_does_not_disable_def_inlining() {
+        // signals read cells only via (live name) (Ctx.signal_scope), so a
+        // captured cell scope cannot shadow defs during signal evaluation
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let defs = defs(&[("speed2", "3")]);
-        assert!(lower_num_form(&read("(* speed2 t)"), &env, &defs).is_none());
-        assert!(lower_num_form(&read("(* 2 t)"), &env, &defs).is_some());
+        let prog = lower_num_form(&read("(* speed2 t)"), &env, &defs).unwrap();
+        assert_eq!(run_num_program(&prog, 2.0, 0.0, None), 6.0);
     }
 
     #[test]

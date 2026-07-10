@@ -399,6 +399,7 @@ impl Sim {
             macros: Rc::new(std::collections::HashMap::new()),
             deferred: Vec::new(),
             projector_scope: None,
+            signal_scope: false,
         }
     }
 

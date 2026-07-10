@@ -356,6 +356,7 @@ fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate
         macros: Rc::new(HashMap::new()),
         deferred: Vec::new(),
         projector_scope: None,
+        signal_scope: false,
     };
     let mut w = World::for_eval(tick_rate);
     apply_fn(ev.step.clone(), &[state, step_ctx], &mut call_ctx, &mut w, false)
@@ -716,6 +717,7 @@ pub fn eval_sig_at_rate(
         macros: Rc::new(HashMap::new()),
         deferred: Vec::new(),
         projector_scope: None,
+        signal_scope: true,
     };
     let mut w = World::for_eval(tick_rate); // signals never touch the world (§2)
     evaluate(form, &e, &mut ctx, &mut w)
@@ -1179,6 +1181,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 macros: Rc::new(HashMap::new()),
                 deferred: Vec::new(),
                 projector_scope: None,
+                signal_scope: false,
             };
             let mut w = World::for_eval(tick_rate);
             match apply_fn(f.clone(), &[Val::Num(tau)], &mut call_ctx, &mut w, false)? {

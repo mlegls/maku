@@ -446,6 +446,12 @@ pub struct Ctx {
     /// projector constructors may reference only these names for entity-local
     /// and per-tick context data.
     pub projector_scope: Option<ProjectorScope>,
+    /// True while evaluating a signal slot (eval_sig_at_rate). Signals read
+    /// cells only via `(live name)` (language.md §control-cells: plain reads
+    /// belong to the control layer; snap-by-default applies to cells exactly
+    /// as to channels), so bare symbols skip the cell scope here — which also
+    /// makes def resolution static and inlinable for the signal lowerer.
+    pub signal_scope: bool,
 }
 
 impl Default for Ctx {
@@ -458,6 +464,7 @@ impl Default for Ctx {
             macros: Rc::new(HashMap::new()),
             deferred: Vec::new(),
             projector_scope: None,
+            signal_scope: false,
         }
     }
 }
@@ -489,11 +496,13 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                     }
                     return Ok(v);
                 }
-                if let Some(scope) = cell_scope(env) {
-                    let id = scope.borrow().get(name).copied();
-                    if let Some(id) = id {
-                        if let Some((_, v)) = ctx.sig.cells.borrow().get(&id) {
-                            return Ok(v.clone());
+                if !ctx.signal_scope {
+                    if let Some(scope) = cell_scope(env) {
+                        let id = scope.borrow().get(name).copied();
+                        if let Some(id) = id {
+                            if let Some((_, v)) = ctx.sig.cells.borrow().get(&id) {
+                                return Ok(v.clone());
+                            }
                         }
                     }
                 }
