@@ -151,8 +151,10 @@ work.
   `linear` is pos = v*t with STATIC velocity (it does not scan a dyn;
   lifting a dyn argument would mean v(t)*t, not integration) — velocity
   semantics come from the `scan` integrator (currently a reserved stub;
-  designing real `scan` is the kernel centerpiece), with `linear` as lib
-  sugar whose expansion lowers to the existing optimized node.
+  design now SETTLED — see `docs/notes/scan-design.md`: dyn<T> ≅ t -> T
+  with application-as-sampling, `(scan init (fn [s ctx] ...))` as the one
+  stateful constructor, closed-vs-live sampling rule), with `linear` as a
+  plain lib `(fn [t] ...)` — no lowering node needed.
 - Finish shared model extraction. `model::figure` is top-level and generic
   over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids,
   entity handles, primitive data atoms, and runtime collider/render boundary
