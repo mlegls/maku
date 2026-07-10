@@ -150,11 +150,13 @@ work.
   kernel-shrink worklist live in `docs/notes/builtins-audit.md`. Note
   `linear` is pos = v*t with STATIC velocity (it does not scan a dyn;
   lifting a dyn argument would mean v(t)*t, not integration) — velocity
-  semantics come from the `scan` integrator (currently a reserved stub;
-  design now SETTLED — see `docs/notes/scan-design.md`: dyn<T> ≅ t -> T
-  with application-as-sampling, `(scan init (fn [s ctx] ...))` as the one
-  stateful constructor, closed-vs-live sampling rule), with `linear` as a
-  plain lib `(fn [t] ...)` — no lowering node needed.
+  semantics come from the `evolve` integrator (currently the reserved
+  `scan` stub, to be renamed; design SETTLED — see
+  `docs/notes/evolve-design.md`: dyn<T> ≅ t -> T with
+  application-as-sampling, `(evolve init (fn [s ctx] ...))` as the one
+  stateful constructor, closed-vs-live sampling rule; `scan` stays free
+  for the array adverb), with `linear` as a plain lib `(fn [t] ...)` — no
+  lowering node needed.
 - Finish shared model extraction. `model::figure` is top-level and generic
   over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids,
   entity handles, primitive data atoms, and runtime collider/render boundary
