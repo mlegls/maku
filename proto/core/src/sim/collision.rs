@@ -130,7 +130,7 @@ impl Sim {
                 self.collider_scratch.push_empty();
                 continue;
             }
-            let tau = self.world.entity_tau(i, tick);
+            let tau = self.world.entity_motion_tau(i, tick);
             let p = {
                 let dyn_figure = self
                     .world

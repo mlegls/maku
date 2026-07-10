@@ -12,6 +12,13 @@ pub const DEFAULT_TICK_RATE: f64 = 120.0;
 #[derive(Clone, Debug)]
 pub enum PendingWrite {
     Field { target: EntityRef, col: ColName, f: Val },
+    Remat { target: EntityRef, spec: RematSpec },
+}
+
+#[derive(Clone, Debug)]
+pub struct RematSpec {
+    pub motion: Option<Val>,
+    pub fields: Vec<(ColName, Val)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -125,6 +132,7 @@ pub struct EntityStore {
     alive: Vec<bool>,
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
+    motion_birth: Vec<u64>,
     scanned: Vec<bool>,
     specs: EntitySpecStore,
     sampled_pose: [Vec<Option<Pose>>; 2],
@@ -323,6 +331,7 @@ impl EntityStore {
             alive: Vec::with_capacity(max),
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
+            motion_birth: Vec::with_capacity(max),
             scanned: Vec::with_capacity(max),
             specs: EntitySpecStore::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
@@ -371,8 +380,19 @@ impl EntityStore {
         tick.saturating_sub(birth) as f64 / tick_rate
     }
 
+    pub fn motion_tau(&self, row: usize, tick: u64, tick_rate: f64) -> f64 {
+        let birth = self.motion_birth[row];
+        tick.saturating_sub(birth) as f64 / tick_rate
+    }
+
     pub fn reset_birth(&mut self, row: usize, tick: u64) {
         if let Some(birth) = self.birth.get_mut(row) {
+            *birth = tick;
+        }
+    }
+
+    pub fn reset_motion_birth(&mut self, row: usize, tick: u64) {
+        if let Some(birth) = self.motion_birth.get_mut(row) {
             *birth = tick;
         }
     }
@@ -613,6 +633,7 @@ impl EntityStore {
         self.alive[i] = true;
         self.freed_at[i] = None;
         self.birth[i] = birth;
+        self.motion_birth[i] = birth;
         self.scanned[i] = scanned;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
@@ -645,6 +666,7 @@ impl EntityStore {
         self.alive.push(true);
         self.freed_at.push(None);
         self.birth.push(birth);
+        self.motion_birth.push(birth);
         self.scanned.push(scanned);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
@@ -675,6 +697,7 @@ impl Clone for EntityStore {
             alive: self.alive.clone(),
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
+            motion_birth: self.motion_birth.clone(),
             scanned: self.scanned.clone(),
             specs: self.specs.clone(),
             sampled_pose: self.sampled_pose.clone(),
@@ -727,7 +750,7 @@ pub struct World {
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
     pub collision_facts: Vec<CollisionFact>,
-    /// Field writes queued during the current tick, drained at the next tick boundary.
+    /// Writes queued during the current tick, drained at the next tick boundary.
     pub pending_writes: Vec<PendingWrite>,
 }
 
@@ -872,6 +895,10 @@ impl World {
         self.entities.tau(row, tick, self.tick_rate())
     }
 
+    pub fn entity_motion_tau(&self, row: usize, tick: u64) -> f64 {
+        self.entities.motion_tau(row, tick, self.tick_rate())
+    }
+
     pub fn entity_velocity_from_samples(&self, row: usize, tick: u64) -> (f64, f64) {
         self.entities.velocity_from_samples(row, tick, self.tick_rate())
     }
@@ -894,6 +921,7 @@ impl World {
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
             self.entities.birth.truncate(max_entities);
+            self.entities.motion_birth.truncate(max_entities);
             self.entities.scanned.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
@@ -935,6 +963,9 @@ impl World {
         }
         if self.entities.birth.capacity() < max_entities {
             self.entities.birth.reserve_exact(max_entities - self.entities.birth.capacity());
+        }
+        if self.entities.motion_birth.capacity() < max_entities {
+            self.entities.motion_birth.reserve_exact(max_entities - self.entities.motion_birth.capacity());
         }
         if self.entities.scanned.capacity() < max_entities {
             self.entities.scanned.reserve_exact(max_entities - self.entities.scanned.capacity());

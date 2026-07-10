@@ -130,7 +130,7 @@ impl Sim {
                 }
             }
             let syms = Sim::stock_style_syms(&mut self.world, i);
-            let tau = self.world.entity_tau(i, self.world.tick);
+            let tau = self.world.entity_motion_tau(i, self.world.tick);
             let readers = self.motion_readers(i);
             let state = MotionState::new();
             let pose = dyn_figure_pose_in(

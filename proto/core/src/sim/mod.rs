@@ -358,58 +358,156 @@ impl Sim {
         let closed_sig = SigEnv { defs: self.ctx.sig.defs.clone(), ..SigEnv::default() };
         let mut fuel: u32 = 100_000;
         for write in pending {
-            fuel -= 1;
-            if fuel == 0 {
-                return Err("change-col: fuel exhausted while draining pending writes".into());
-            }
-            let PendingWrite::Field { target, col, f } = write;
-            let Some(row) = self.world.find(target) else {
-                continue;
-            };
-            let cur = self
-                .world
-                .col_get_sym_at(row, col)
-                .map(Val::Num)
-                .or_else(|| {
-                    self.world.sym_field_value_at(row, col).and_then(|sym| {
-                        self.world.symbols.resolve(sym).map(|name| Val::Kw(name.into()))
-                    })
-                })
-                .unwrap_or(Val::Nothing);
-            let col_label = self.world.symbols.resolve(col).unwrap_or("<unknown>").to_string();
-            let mut call_ctx = Ctx {
-                sig: closed_sig.clone(),
-                ambient: Pose::IDENTITY,
-                scan: None,
-                patterns: Rc::new(std::collections::HashMap::new()),
-                macros: Rc::new(std::collections::HashMap::new()),
-                deferred: Vec::new(),
-                projector_scope: None,
-            };
-            let mut call_world = World::default();
-            call_world.set_tick_rate_for_eval(self.world.tick_rate());
-            let next = apply_fn(f, &[cur], &mut call_ctx, &mut call_world, false)?;
-            let Some(row) = self.world.find(target) else {
-                continue;
-            };
-            match next {
-                Val::Num(n) => {
-                    self.world.sym_field_clear_at(row, col);
-                    self.world.col_set_sym_at(row, col, n);
+            match write {
+                PendingWrite::Field { target, col, f } => {
+                    Self::bill_pending_write(&mut fuel)?;
+                    self.apply_pending_field(target, col, f, &closed_sig)?;
                 }
-                Val::Kw(v) => {
-                    self.world.col_clear_sym_at(row, col);
-                    let value = self.world.symbols.intern(v.as_ref());
-                    self.world.sym_field_set_at(row, col, value);
-                }
-                other => {
-                    return Err(format!(
-                        "change-col: :{} expected number or keyword value, got {:?}",
-                        col_label, other
-                    ));
+                PendingWrite::Remat { target, spec } => {
+                    let Some(row) = self.world.find(target) else {
+                        continue;
+                    };
+                    if let Some(motion) = spec.motion {
+                        Self::bill_pending_write(&mut fuel)?;
+                        self.apply_pending_motion(row, motion, &closed_sig)?;
+                    }
+                    for (col, f) in spec.fields {
+                        Self::bill_pending_write(&mut fuel)?;
+                        self.apply_pending_field(target, col, f, &closed_sig)?;
+                    }
                 }
             }
         }
+        Ok(())
+    }
+
+    fn bill_pending_write(fuel: &mut u32) -> Result<(), String> {
+        *fuel -= 1;
+        if *fuel == 0 {
+            return Err("pending write: fuel exhausted while draining pending writes".into());
+        }
+        Ok(())
+    }
+
+    fn closed_call_ctx(&self, sig: SigEnv) -> Ctx {
+        Ctx {
+            sig,
+            ambient: Pose::IDENTITY,
+            scan: None,
+            patterns: Rc::new(std::collections::HashMap::new()),
+            macros: Rc::new(std::collections::HashMap::new()),
+            deferred: Vec::new(),
+            projector_scope: None,
+        }
+    }
+
+    fn apply_pending_field(
+        &mut self,
+        target: EntityRef,
+        col: ColName,
+        f: Val,
+        closed_sig: &SigEnv,
+    ) -> Result<(), String> {
+        let Some(row) = self.world.find(target) else {
+            return Ok(());
+        };
+        let next = match f {
+            Val::Fn { .. } | Val::Builtin(_) => {
+                let cur = self
+                    .world
+                    .col_get_sym_at(row, col)
+                    .map(Val::Num)
+                    .or_else(|| {
+                        self.world.sym_field_value_at(row, col).and_then(|sym| {
+                            self.world.symbols.resolve(sym).map(|name| Val::Kw(name.into()))
+                        })
+                    })
+                    .unwrap_or(Val::Nothing);
+                let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
+                let mut call_world = World::default();
+                call_world.set_tick_rate_for_eval(self.world.tick_rate());
+                apply_fn(f, &[cur], &mut call_ctx, &mut call_world, false)?
+            }
+            constant => constant,
+        };
+        let Some(row) = self.world.find(target) else {
+            return Ok(());
+        };
+        let col_label = self.world.symbols.resolve(col).unwrap_or("<unknown>").to_string();
+        match next {
+            Val::Num(n) => {
+                self.world.sym_field_clear_at(row, col);
+                self.world.col_set_sym_at(row, col, n);
+            }
+            Val::Kw(v) => {
+                self.world.col_clear_sym_at(row, col);
+                let value = self.world.symbols.intern(v.as_ref());
+                self.world.sym_field_set_at(row, col, value);
+            }
+            other => {
+                return Err(format!(
+                    "change-col: :{} expected number or keyword value, got {:?}",
+                    col_label, other
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_pending_motion(
+        &mut self,
+        row: usize,
+        motion: Val,
+        closed_sig: &SigEnv,
+    ) -> Result<(), String> {
+        let (exit, anchor) = {
+            let dyn_figure = self
+                .world
+                .entities
+                .dyn_figure(row)
+                .cloned()
+                .ok_or_else(|| format!("remat: missing dyn figure for row {row}"))?;
+            let tau = self.world.entity_motion_tau(row, self.world.tick);
+            let readers = entity_motion_readers(row, &self.world);
+            let state = MotionState::new();
+            let p = dyn_figure_pose_in(
+                &dyn_figure,
+                tau,
+                MotionEvalCtx::with_tick_rate(&state, &self.ctx.sig, &readers, self.world.tick_rate()),
+            )?;
+            let vel = self.world.entity_velocity_from_samples(row, self.world.tick);
+            let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
+                p.angle_or(0.0)
+            } else {
+                vel.1.atan2(vel.0).to_degrees()
+            };
+            let exit = Val::Map(Rc::new(vec![
+                (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
+                (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
+                (Val::Kw("t".into()), Val::Num(tau)),
+            ]));
+            (exit, Pose::oriented(p.x, p.y, heading))
+        };
+        let new_dyn = match motion {
+            Val::Fn { .. } | Val::Builtin(_) => {
+                let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
+                let mut call_world = World::default();
+                call_world.set_tick_rate_for_eval(self.world.tick_rate());
+                as_dyn_pose(apply_fn(motion, &[exit], &mut call_ctx, &mut call_world, false)?)?
+            }
+            direct => as_dyn_pose(direct)?,
+        };
+        let dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
+            Rc::new(DynNode::Const(anchor)),
+            new_dyn.into_node(),
+        ))));
+        let scanned = is_scanned_figure(&dyn_figure);
+        let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
+        self.world.entities.set_motion_schema(row, motion_schema);
+        self.world.entities.set_sampled_pose(row, self.world.tick, Some(anchor));
+        self.world.entities.set_scanned(row, scanned);
+        self.world.entities.set_dyn_figure(row, dyn_figure);
+        self.world.entities.reset_motion_birth(row, self.world.tick);
         Ok(())
     }
 
@@ -453,7 +551,7 @@ impl Sim {
         let sig = self.ctx.sig.clone();
         for i in 0..self.world.entities.len() {
             if self.world.entities.is_alive(i) && self.world.entities.is_scanned(i) {
-                let tau = self.world.entity_tau(i, tick);
+                let tau = self.world.entity_motion_tau(i, tick);
                 let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
                     continue;
                 };
@@ -489,7 +587,7 @@ impl Sim {
                 if !self.world.entities.is_alive(i) {
                     continue;
                 }
-                let tau = self.world.entity_tau(i, tick);
+                let tau = self.world.entity_motion_tau(i, tick);
                 let readers = self.motion_readers(i);
                 if let Some(window) = self.world.entities.trace_window(i) {
                     let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
@@ -530,7 +628,7 @@ impl Sim {
             if self.world.sym_field_matches_at(i, "team", "player-body") {
                 continue; // the player rides a channel; never field-culled
             }
-            let tau = self.world.entity_tau(i, tick);
+            let tau = self.world.entity_motion_tau(i, tick);
             let readers = self.motion_readers(i);
             let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
                 continue;

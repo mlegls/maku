@@ -63,8 +63,8 @@ pub(crate) fn special(
             let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
                 return Err("remat: expected bullet handle".into());
             };
-            let f = evaluate(&items[2], env, ctx, world)?;
-            Val::Action(Rc::new(ActionV::Remat { target: id, f }))
+            let spec = parse_remat_spec_form(&items[2], env, ctx, world)?;
+            Val::Action(Rc::new(ActionV::Remat { target: id, spec }))
         }
         "change-col" => {
             let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
@@ -112,7 +112,7 @@ pub(crate) fn special(
             let Some(curve) = dyn_figure.curve() else {
                 return Err("on-curve: not a curve figure".into());
             };
-            let tau = world.entity_tau(i, world.tick);
+            let tau = world.entity_motion_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::new();
             let mctx = MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate());
@@ -216,7 +216,7 @@ pub(crate) fn special(
             let mut best: Option<(f64, (f64, f64))> = None;
             for i in idxs {
                 let Some(dyn_figure) = world.entities.dyn_figure(i) else { continue };
-                let tau = world.entity_tau(i, world.tick);
+                let tau = world.entity_motion_tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::new();
                 let Ok(p) = dyn_figure_pose_in(
@@ -262,6 +262,79 @@ pub(crate) fn special(
         _ => return Ok(None),
     };
     Ok(Some(val))
+}
+
+fn parse_remat_spec(v: Val, world: &mut World) -> Result<RematSpec, String> {
+    match v {
+        Val::Map(kvs) => {
+            if kvs.is_empty() {
+                return Err("remat: expected non-empty spec map".into());
+            }
+            let mut spec = RematSpec { motion: None, fields: Vec::new() };
+            for (k, v) in kvs.iter() {
+                let Val::Kw(name) = k else {
+                    return Err("remat: spec map keys must be keywords".into());
+                };
+                if name.as_ref() == "motion" {
+                    validate_remat_motion(v)?;
+                    spec.motion = Some(v.clone());
+                } else {
+                    validate_remat_field_value(v)?;
+                    spec.fields.push((world.intern_col(name.as_ref()), v.clone()));
+                }
+            }
+            Ok(spec)
+        }
+        other => {
+            validate_remat_motion(&other)?;
+            Ok(RematSpec { motion: Some(other), fields: Vec::new() })
+        }
+    }
+}
+
+fn parse_remat_spec_form(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<RematSpec, String> {
+    let Form::Map(kvs) = form else {
+        return parse_remat_spec(evaluate(form, env, ctx, world)?, world);
+    };
+    if kvs.is_empty() {
+        return Err("remat: expected non-empty spec map".into());
+    }
+    let mut spec = RematSpec { motion: None, fields: Vec::new() };
+    for (k, v) in kvs.iter() {
+        let Val::Kw(name) = evaluate(k, env, ctx, world)? else {
+            return Err("remat: spec map keys must be keywords".into());
+        };
+        let value = evaluate(v, env, ctx, world)?;
+        if name.as_ref() == "motion" {
+            validate_remat_motion(&value)?;
+            spec.motion = Some(value);
+        } else {
+            validate_remat_field_value(&value)?;
+            spec.fields.push((world.intern_col(name.as_ref()), value));
+        }
+    }
+    Ok(spec)
+}
+
+fn validate_remat_motion(v: &Val) -> Result<(), String> {
+    if matches!(v, Val::Fn { .. } | Val::Builtin(_)) {
+        Ok(())
+    } else {
+        as_dyn_pose(v.clone()).map(|_| ())
+    }
+}
+
+fn validate_remat_field_value(v: &Val) -> Result<(), String> {
+    if matches!(v, Val::Num(_) | Val::Kw(_) | Val::Fn { .. } | Val::Builtin(_)) {
+        Ok(())
+    } else {
+        Err(format!("remat: field value must be number, keyword, or function, got {:?}", v))
+    }
 }
 
 fn curve_samples_entity(v: Val) -> Result<EntityRef, String> {
@@ -476,7 +549,7 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
         .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("render: curve-samples missing dyn figure for row {i}"))?;
-    let tau = world.entity_tau(i, world.tick);
+    let tau = world.entity_motion_tau(i, world.tick);
     let state = MotionState::new();
     let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, world.tick_rate())
         .map_err(|err| format!("render: curve-samples could not sample curve: {err}"))?

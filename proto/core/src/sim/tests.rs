@@ -3096,6 +3096,127 @@
         assert_eq!(sim.world.col_get_at(0, "hp"), Some(7.0));
     }
 
+    #[test]
+    fn remat_field_only_leaves_motion_epoch_untouched() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (linear c[120 0]) {:hp 1})]
+    (remat (first bs) {:hp 5})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(1.0));
+        assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 1.0 / DEFAULT_TICK_RATE);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(5.0));
+        assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 2.0 / DEFAULT_TICK_RATE);
+        let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+        assert!((p.x - 1.0).abs() < 1e-9 && p.y.abs() < 1e-9, "field-only remat moved discontinuously: {p:?}");
+    }
+
+    #[test]
+    fn remat_motion_restarts_motion_but_retains_fields_and_entity_age() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (linear c[120 0]) {:hp 7})]
+    (remat (first bs) (linear c[0 120]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(7.0));
+        assert_eq!(sim.world.entity_tau(0, sim.world.tick), 2.0 / DEFAULT_TICK_RATE);
+        assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 1.0 / DEFAULT_TICK_RATE);
+        let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+        assert!((p.x - 1.0).abs() < 1e-9 && p.y.abs() < 1e-9, "motion remat did not anchor at exit: {p:?}");
+        sim.step().unwrap();
+        let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+        assert!((p.x - 1.0).abs() < 1e-9 && (p.y - 1.0).abs() < 1e-9, "new motion did not start at tau 0: {p:?}");
+    }
+
+    #[test]
+    fn remat_combined_map_applies_motion_and_fields_at_one_boundary() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (linear c[120 0]) {:hp 1})]
+    (remat (first bs) {:motion (linear c[0 120]) :hp (fn [hp] (+ hp 2))})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(3.0));
+        assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 1.0 / DEFAULT_TICK_RATE);
+        let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+        assert!((p.x - 1.0).abs() < 1e-9 && p.y.abs() < 1e-9, "combined remat boundary pose: {p:?}");
+    }
+
+    #[test]
+    fn remat_and_change_col_share_push_order() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 1})]
+    (let [b (first bs)]
+      (seq
+        (change-col b :hp (fn [hp] (+ hp 10)))
+        (remat b {:hp 5})))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(5.0));
+    }
+
+    #[test]
+    fn remat_to_dead_entity_is_dropped() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 1})]
+    (let [b (first bs)]
+      (seq
+        (remat b {:hp 5})
+        (cull b)))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(!sim.world.entities.is_alive(0));
+        sim.step().unwrap();
+        assert!(sim.world.pending_writes.is_empty());
+    }
+
+    #[test]
+    fn remat_direct_multi_element_figure_errors_at_action_exec() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]))]
+    (remat (first bs) (circle 2 (still)))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected dyn pose"), "{err}");
+        assert!(sim.world.pending_writes.is_empty(), "invalid remat must not queue");
+    }
+
+    #[test]
+    fn remat_reads_later_in_same_tick_see_old_values() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (linear c[120 0]) {:hp 1})]
+    (let [b (first bs)]
+      (seq
+        (remat b {:motion (linear c[0 120]) :hp 5})
+        (set-col b :seen (:hp b))
+        (set-col b :seen-x (:x (:pos b)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(1.0));
+        assert_eq!(sim.world.col_get_at(0, "seen"), None);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(5.0));
+        assert_eq!(sim.world.col_get_at(0, "seen"), Some(1.0));
+        assert_eq!(sim.world.col_get_at(0, "seen-x"), Some(0.0));
+    }
+
 /// Variadic macros (& rest) + macro-time form processing: a macro that
 /// walks its clause list with map/nth and splices the transforms — the
 /// mechanism the stdlib's `phases` is built from.

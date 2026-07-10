@@ -274,7 +274,7 @@ pub enum ActionV {
     Spawn { entities: Vec<EntitySpec> },
     Render { row: Rc<RenderRow> },
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
-    Remat { target: EntityRef, f: Val },
+    Remat { target: EntityRef, spec: RematSpec },
     /// Queue a functional column update on a live entity (dead handles are no-ops at drain).
     ChangeCol { target: EntityRef, col: ColName, f: Val },
     Cull { target: EntityRef },
@@ -1675,7 +1675,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("entity view: missing dyn figure for row {i}"))?;
-    let tau = world.entity_tau(i, world.tick);
+    let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::new();
     let p = dyn_figure_pose_in(
@@ -1850,7 +1850,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
                 .entities
                 .dyn_figure(i)
                 .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
-            let tau = world.entity_tau(i, world.tick);
+            let tau = world.entity_motion_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::new();
             let p = dyn_figure_pose_in(
@@ -2210,53 +2210,11 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             }
             Ok(Val::Nothing)
         }
-        ActionV::Remat { target, f } => {
-            let Some(i) = world.find(*target) else { return Ok(Val::Nothing) };
-            let (exit, anchor) = {
-                let dyn_figure = world
-                    .entities
-                    .dyn_figure(i)
-                    .ok_or_else(|| format!("remat: missing dyn figure for row {i}"))?;
-                let tau = world.entity_tau(i, world.tick);
-                let readers = entity_motion_readers(i, world);
-                let state = MotionState::new();
-                let p = dyn_figure_pose_in(
-                    dyn_figure,
-                    tau,
-                    MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate()),
-                )?;
-                let vel = world.entity_velocity_from_samples(i, world.tick);
-                let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
-                    p.angle_or(0.0)
-                } else {
-                    vel.1.atan2(vel.0).to_degrees()
-                };
-                let exit = Val::Map(Rc::new(vec![
-                    (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
-                    (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
-                    (Val::Kw("t".into()), Val::Num(tau)),
-                ]));
-                (exit, Pose::oriented(p.x, p.y, heading))
-            };
-            let new_dyn = match &f {
-                Val::Fn { .. } | Val::Builtin(_) => {
-                    as_dyn_pose(apply_fn(f.clone(), &[exit], ctx, world, false)?)?
-                }
-                direct => as_dyn_pose((*direct).clone())?,
-            };
-            // the new signal anchors at the snapped world pose (position +
-            // exit heading) and runs on a fresh epoch: τ restarts at 0
-            let dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
-                Rc::new(DynNode::Const(anchor)),
-                new_dyn.into_node(),
-            ))));
-            let scanned = is_scanned_figure(&dyn_figure);
-            let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
-            world.entities.reset_birth(i, world.tick);
-            world.entities.set_motion_schema(i, motion_schema);
-            world.entities.set_sampled_pose(i, world.tick, Some(anchor));
-            world.entities.set_scanned(i, scanned);
-            world.entities.set_dyn_figure(i, dyn_figure);
+        ActionV::Remat { target, spec } => {
+            world.pending_writes.push(PendingWrite::Remat {
+                target: *target,
+                spec: spec.clone(),
+            });
             Ok(Val::Nothing)
         }
         ActionV::ChangeCol { target, col, f } => {
@@ -2481,7 +2439,7 @@ fn as_pose(v: Val) -> Result<Pose, String> {
     }
 }
 
-fn as_dyn_pose(v: Val) -> Result<DynPose, String> {
+pub(crate) fn as_dyn_pose(v: Val) -> Result<DynPose, String> {
     match v {
         Val::DynPose(d) => Ok(d),
         Val::Pose(p) => Ok(DynPose::pose_node(Rc::new(DynNode::Const(p)))),
