@@ -30,6 +30,7 @@ mod engine;
 mod r#dyn;
 pub mod model;
 mod motion;
+pub mod profile;
 mod projectors;
 mod sem;
 mod specs;
@@ -705,6 +706,21 @@ pub(crate) fn wrap_elem_fields(figure: Val, fields: Vec<(Rc<str>, FieldSeed)>) -
 }
 
 fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    // profiling attributes by evaluated head symbol — special, builtin, and
+    // user defn alike; the profiler doesn't care what a name lowers to
+    if profile::enabled() {
+        if let Some(Form::Sym(s)) = items.first() {
+            let name = s.clone();
+            let frame = profile::open();
+            let r = evaluate_list_inner(items, env, ctx, world);
+            profile::close(&name, frame);
+            return r;
+        }
+    }
+    evaluate_list_inner(items, env, ctx, world)
+}
+
+fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let head = items.first().ok_or("cannot evaluate empty list")?;
 
     if let Form::Sym(s) = head {

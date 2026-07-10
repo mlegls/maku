@@ -119,10 +119,17 @@ work.
   investments that do survive: SoA layout, spec-store dedup, group
   evaluation of shared programs, fixed scratch, and hoisting
   per-spawn-site invariants to load time.
-- Add a profiling/benchmark harness before the audit and intrinsics
-  decisions: representative cards (bullet floods, laser-heavy, rule-heavy)
-  with per-special/per-builtin execution counts and time attribution.
-  Intrinsic promotion and lib-ification calls should cite its numbers.
+- DONE: profiling harness — `interp::profile` (flat self/inclusive-time
+  by evaluated head symbol + dyn-node variant, thread-local, off by
+  default) with `examples/profile.rs` running the representative set.
+  First numbers (aggregate self time over 8 cases): `dyn:vel` 1.96s,
+  `entities-where` 1.83s self / 7.8s incl (per-row predicate eval),
+  `dyn:closed-pt` 1.59s, `value-or` 1.25s at 4.6M calls (a two-line
+  prelude defn paying full interpreted-call overhead — the canonical
+  AST-rewrite-intrinsic candidate), `dyn:frame` 0.89s self / 13.7s incl,
+  `emit` 0.81s, then interpreter dispatch on `*`/`=`/`+`. `map` is 47ms
+  self but 10.7s inclusive — its bodies (mostly entity queries) dominate.
+  Intrinsic promotion and lib-ification calls should cite these numbers.
 - Keep dyn coercions as explicit language-semantic branches while the
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR

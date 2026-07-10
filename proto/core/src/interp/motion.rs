@@ -794,6 +794,34 @@ pub fn dyn_node_pose_u_with_tick_rate(
 }
 
 pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
+    if crate::interp::profile::enabled() {
+        let frame = crate::interp::profile::open();
+        let r = dyn_node_pose_u_in_inner(d, tau, u, ctx);
+        crate::interp::profile::close(dyn_node_name(d), frame);
+        return r;
+    }
+    dyn_node_pose_u_in_inner(d, tau, u, ctx)
+}
+
+fn dyn_node_name(d: &DynNode) -> &'static str {
+    match d {
+        DynNode::Const(_) => "dyn:const",
+        DynNode::Linear { .. } => "dyn:linear",
+        DynNode::ClosedPt { .. } => "dyn:closed-pt",
+        DynNode::Vel { .. } => "dyn:vel",
+        DynNode::Translate { .. } => "dyn:translate",
+        DynNode::Path { .. } => "dyn:path",
+        DynNode::Frame(..) => "dyn:frame",
+        DynNode::Live { .. } => "dyn:live",
+        DynNode::Clamp { .. } => "dyn:clamp",
+        DynNode::RotExpr { .. } => "dyn:rot-expr",
+        DynNode::FnPose(_) => "dyn:fn-pose",
+        DynNode::Evolve(_) => "dyn:evolve",
+        DynNode::Stages { .. } => "dyn:stages",
+    }
+}
+
+fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
     let state = ctx.state;
     let sig = ctx.sig;
     let readers = ctx.readers;
