@@ -65,7 +65,22 @@ Kernel-shrink direction from this principle (beyond the tables below):
   cell); `channel` is a read-with-default of `$name` — merge into `$name`
   syntax + an ordinary default combinator; `stages-action` is a reserved
   stub (action-level `stages` analogue) — decide or delete the reservation.
-- `event` stays: boundary effect emitting into the observable event stream.
+- `remat` (decided shape): handle-preserving remat IS the primitive,
+  `(remat handle spec)` — single handle, single-ELEMENT spec (multi-element
+  figures are an error in remat position; identity is 1:1). Figure KIND may
+  change (handles are generation-safe indirection; a kind change is a slot
+  move, not a semantic constraint). Batch remat is lib `map` over
+  handle/spec pairs, and the recognizer lowers that shape to the masked-SoA
+  pass. Open contract question: local-clock behavior (does remat bump the
+  tau epoch? — ties to the per-slot-epochs item).
+- `emit` unification (direction): `event` and `render` are the same
+  operation — push an open schema-checked row onto a named host-facing
+  stream. Kernel primitive `(emit :stream row)`; `render`, `event`, and
+  probably `export` become lib macros over it. The one-pass schema decision
+  covers all streams (event rows gain a schema for free); geometry
+  expansion (`curve-samples` values) is a field-kind concern of whichever
+  stream declares a geometry column, not an `emit` concern. Hot render
+  emission relies on pattern-lowering like everything else.
 
 ## Top-level card forms (`card.rs`)
 
