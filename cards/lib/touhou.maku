@@ -224,9 +224,9 @@
          (if (<= (col-or (:iframe-until b) 0) (:tick b))
            (seq
              (when (= (:kind a) :point) (cull a))
-             (set-col b :hits (+ (col-or (:hits b) 0) 1))
+             (change-col b :hits (fn [h] (+ (value-or h 0) 1)))
              (set-col b :iframe-until (+ (:tick b) (* (col-or (:iframes b) 0.5) 120)))
-             (set-col b :lives (- (col-or (:lives b) 0) 1))
+             (change-col b :lives (fn [l] (- (value-or l 0) 1)))
              (event :player-hit (:pos a)))))
        (collisions :damage :player-hurt)))
 
@@ -236,7 +236,7 @@
          (if (< (col-or (:grazed a) 0) 1)
            (seq
              (set-col a :grazed 1)
-             (set-col b :graze (+ (col-or (:graze b) 0) 1))
+             (change-col b :graze (fn [g] (+ (value-or g 0) 1)))
              (event :graze (:pos a)))))
        (collisions :graze :player-hurt)))
 
@@ -285,7 +285,7 @@
              (event :absorbed (:pos b))
              (let [dmg (col-or (:damage a) 1)]
                (seq
-                 (set-col b :hp (- (col-or (:hp b) 1) dmg))
+                 (change-col b :hp (fn [hp] (- (value-or hp 1) dmg)))
                  (event :enemy-hit (:pos b)))))))
        (collisions :shot :hurt)))
 

@@ -342,7 +342,7 @@ fn run_action(
         | ActionV::BindChannel { .. }
         | ActionV::Remat { .. }
         | ActionV::Render { .. }
-        | ActionV::SetCol { .. }
+        | ActionV::ChangeCol { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());

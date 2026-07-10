@@ -9,6 +9,11 @@ use std::rc::Rc;
 pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
 pub const DEFAULT_TICK_RATE: f64 = 120.0;
 
+#[derive(Clone, Debug)]
+pub enum PendingWrite {
+    Field { target: EntityRef, col: ColName, f: Val },
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TickTiming {
     rate: f64,
@@ -722,6 +727,8 @@ pub struct World {
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
     pub collision_facts: Vec<CollisionFact>,
+    /// Field writes queued during the current tick, drained at the next tick boundary.
+    pub pending_writes: Vec<PendingWrite>,
 }
 
 impl Clone for World {
@@ -740,6 +747,7 @@ impl Clone for World {
             render_schema: self.render_schema.clone(),
             standing_rules: self.standing_rules.clone(),
             collision_facts: self.collision_facts.clone(),
+            pending_writes: self.pending_writes.clone(),
         }
     }
 }
@@ -842,6 +850,7 @@ impl World {
             render_schema: HashMap::new(),
             standing_rules: Vec::new(),
             collision_facts: Vec::new(),
+            pending_writes: Vec::new(),
         }
     }
 }
@@ -1049,6 +1058,13 @@ impl World {
         values[bullet_idx] = Some(v);
     }
 
+    pub fn col_clear_sym_at(&mut self, bullet_idx: usize, name: ColName) {
+        let Some(slot) = self.col_slot(name) else { return };
+        if let Some(value) = self.fields.num_values[slot].get_mut(bullet_idx) {
+            *value = None;
+        }
+    }
+
     pub fn col_set_at(&mut self, bullet_idx: usize, name: &Rc<str>, v: f64) {
         let sym = self.intern_col(name.as_ref());
         self.col_set_sym_at(bullet_idx, sym, v);
@@ -1126,6 +1142,13 @@ impl World {
             values.resize(i + 1, None);
         }
         values[i] = Some(value);
+    }
+
+    pub fn sym_field_clear_at(&mut self, i: usize, field: FieldName) {
+        let Some(slot) = self.sym_field_slot(field) else { return };
+        if let Some(value) = self.fields.sym_values[slot].get_mut(i) {
+            *value = None;
+        }
     }
 
     pub fn sym_fields_for_view(&self, row: usize) -> Vec<(Rc<str>, Rc<str>)> {

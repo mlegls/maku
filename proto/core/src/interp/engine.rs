@@ -11,7 +11,7 @@ const NAMES: &[&str] = &[
     "matches",
     "manip",
     "remat",
-    "set-col",
+    "change-col",
     "cull",
     "pos",
     "on-curve",
@@ -66,18 +66,21 @@ pub(crate) fn special(
             let f = evaluate(&items[2], env, ctx, world)?;
             Val::Action(Rc::new(ActionV::Remat { target: id, f }))
         }
-        "set-col" => {
+        "change-col" => {
             let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                return Err("set-col: expected bullet handle".into());
+                return Err("change-col: expected bullet handle".into());
             };
             let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
-                return Err("set-col: expected keyword column name".into());
+                return Err("change-col: expected keyword column name".into());
             };
-            let val = evaluate(&items[3], env, ctx, world)?;
-            Val::Action(Rc::new(ActionV::SetCol {
+            let f = evaluate(&items[3], env, ctx, world)?;
+            if !matches!(f, Val::Fn { .. } | Val::Builtin(_)) {
+                return Err(format!("change-col: expected function, got {:?}", f));
+            }
+            Val::Action(Rc::new(ActionV::ChangeCol {
                 target: id,
                 col: world.intern_col(col.as_ref()),
-                val,
+                f,
             }))
         }
         "cull" => {

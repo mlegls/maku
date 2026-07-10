@@ -350,6 +350,69 @@ impl Sim {
         Ok(())
     }
 
+    fn drain_pending_writes(&mut self) -> Result<(), String> {
+        let pending = std::mem::take(&mut self.world.pending_writes);
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let closed_sig = SigEnv { defs: self.ctx.sig.defs.clone(), ..SigEnv::default() };
+        let mut fuel: u32 = 100_000;
+        for write in pending {
+            fuel -= 1;
+            if fuel == 0 {
+                return Err("change-col: fuel exhausted while draining pending writes".into());
+            }
+            let PendingWrite::Field { target, col, f } = write;
+            let Some(row) = self.world.find(target) else {
+                continue;
+            };
+            let cur = self
+                .world
+                .col_get_sym_at(row, col)
+                .map(Val::Num)
+                .or_else(|| {
+                    self.world.sym_field_value_at(row, col).and_then(|sym| {
+                        self.world.symbols.resolve(sym).map(|name| Val::Kw(name.into()))
+                    })
+                })
+                .unwrap_or(Val::Nothing);
+            let col_label = self.world.symbols.resolve(col).unwrap_or("<unknown>").to_string();
+            let mut call_ctx = Ctx {
+                sig: closed_sig.clone(),
+                ambient: Pose::IDENTITY,
+                scan: None,
+                patterns: Rc::new(std::collections::HashMap::new()),
+                macros: Rc::new(std::collections::HashMap::new()),
+                deferred: Vec::new(),
+                projector_scope: None,
+            };
+            let mut call_world = World::default();
+            call_world.set_tick_rate_for_eval(self.world.tick_rate());
+            let next = apply_fn(f, &[cur], &mut call_ctx, &mut call_world, false)?;
+            let Some(row) = self.world.find(target) else {
+                continue;
+            };
+            match next {
+                Val::Num(n) => {
+                    self.world.sym_field_clear_at(row, col);
+                    self.world.col_set_sym_at(row, col, n);
+                }
+                Val::Kw(v) => {
+                    self.world.col_clear_sym_at(row, col);
+                    let value = self.world.symbols.intern(v.as_ref());
+                    self.world.sym_field_set_at(row, col, value);
+                }
+                other => {
+                    return Err(format!(
+                        "change-col: :{} expected number or keyword value, got {:?}",
+                        col_label, other
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn run_standing_rules(&mut self) -> Result<(), String> {
         let rules = self.world.standing_rules.clone();
         for rule in rules {
@@ -367,6 +430,7 @@ impl Sim {
     }
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
+        self.drain_pending_writes()?;
         self.refresh_channels(inputs)?;
         self.world.render_rows.clear();
         // control layer

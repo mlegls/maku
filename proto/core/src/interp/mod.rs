@@ -275,8 +275,8 @@ pub enum ActionV {
     Render { row: RenderRow },
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
     Remat { target: EntityRef, f: Val },
-    /// Write a column on a live entity (dead handles are no-ops).
-    SetCol { target: EntityRef, col: ColName, val: Val },
+    /// Queue a functional column update on a live entity (dead handles are no-ops at drain).
+    ChangeCol { target: EntityRef, col: ColName, f: Val },
     Cull { target: EntityRef },
     /// (export cell): publish a pattern cell as a read-only channel of the
     /// same name — the pattern-level export surface (host renders it; the
@@ -2259,23 +2259,12 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.entities.set_dyn_figure(i, dyn_figure);
             Ok(Val::Nothing)
         }
-        ActionV::SetCol { target, col, val } => {
-            if let Some(i) = world.find(*target) {
-                match val {
-                    Val::Num(n) => world.col_set_sym_at(i, *col, *n),
-                    Val::Kw(v) => {
-                        let Some(name) = world.symbols.resolve(*col).map(str::to_string) else {
-                            return Err("set-col: unknown column name".into());
-                        };
-                        let field = world.field_sym(name.as_str());
-                        let value = world.symbols.intern(v.as_ref());
-                        world.sym_field_set_at(i, field, value);
-                    }
-                    other => {
-                        return Err(format!("set-col: expected number or keyword value, got {:?}", other));
-                    }
-                }
-            }
+        ActionV::ChangeCol { target, col, f } => {
+            world.pending_writes.push(PendingWrite::Field {
+                target: *target,
+                col: *col,
+                f: f.clone(),
+            });
             Ok(Val::Nothing)
         }
         ActionV::Seq { items, env } => {

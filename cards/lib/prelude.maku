@@ -30,6 +30,7 @@
 (defn dec [x] (- x 1))
 
 (defn value-or [x d] (if (nothing? x) d x))
+(defn set-col [e col v] (change-col e col (fn [_] v)))
 
 (defn rand-int [a b] (floor (rand a b)))
 (defn randpm1 [] (if (< (rand 0 1) 0.5) -1 1))

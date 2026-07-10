@@ -2876,6 +2876,105 @@
         assert_eq!(sim.world.entities.len(), 1, "gate opened at tick 5");
     }
 
+    #[test]
+    fn change_col_updates_accumulate_at_next_tick_boundary() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 10})]
+    (let [b (first bs)]
+      (seq
+        (change-col b :hp (fn [hp] (- (value-or hp 0) 3)))
+        (change-col b :hp (fn [hp] (- hp 4)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(10.0), "same tick reads pre-write value");
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(3.0), "both queued decrements compose");
+    }
+
+    #[test]
+    fn change_col_same_tick_reads_see_pre_tick_value() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 5})]
+    (let [b (first bs)]
+      (seq
+        (change-col b :hp (fn [hp] (+ hp 4)))
+        (set-col b :seen (:hp b))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(5.0));
+        assert_eq!(sim.world.col_get_at(0, "seen"), None);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(9.0));
+        assert_eq!(sim.world.col_get_at(0, "seen"), Some(5.0));
+    }
+
+    #[test]
+    fn change_col_order_is_deterministic() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 1})]
+    (let [b (first bs)]
+      (seq
+        (change-col b :hp (fn [hp] (* hp 2)))
+        (change-col b :hp (fn [hp] (+ hp 3)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(5.0));
+    }
+
+    #[test]
+    fn change_col_to_dead_entity_is_dropped() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 10})]
+    (let [b (first bs)]
+      (seq
+        (change-col b :hp (fn [hp] (- hp 9)))
+        (cull b)))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert!(!sim.world.entities.is_alive(0));
+        sim.step().unwrap();
+        assert!(!sim.world.entities.is_alive(0));
+        assert!(sim.world.pending_writes.is_empty());
+    }
+
+    #[test]
+    fn change_col_update_fn_cannot_read_channels() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 1})]
+    (let [b (first bs)]
+      (change-col b :hp (fn [hp] (+ hp $rank))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("host does not provide channel $rank"), "{err}");
+    }
+
+    #[test]
+    fn set_col_sugar_queues_constant_update() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (pose c[0 0]) {:hp 1})]
+    (let [b (first bs)]
+      (set-col b :hp 7))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(1.0));
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(7.0));
+    }
+
 /// Variadic macros (& rest) + macro-time form processing: a macro that
 /// walks its clause list with map/nth and splices the transforms — the
 /// mechanism the stdlib's `phases` is built from.
