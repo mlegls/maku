@@ -32,6 +32,7 @@ pub mod model;
 mod motion;
 pub mod profile;
 mod projectors;
+mod rewrite;
 mod sem;
 mod specs;
 mod spawn;
@@ -49,6 +50,7 @@ pub use crate::model::{
 };
 pub use motion::*;
 pub(crate) use projectors::*;
+pub(crate) use rewrite::*;
 pub use sem::*;
 pub(crate) use specs::*;
 pub(crate) use spawn::*;
@@ -762,6 +764,17 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     evaluate(&items[3], env, ctx, world)
                 } else {
                     Ok(Val::Nothing)
+                };
+            }
+            VALUE_OR_INTRINSIC => {
+                if items.len() != 3 {
+                    return Err(format!("{}: expected two arguments", VALUE_OR_INTRINSIC));
+                }
+                let value = evaluate(&items[1], env, ctx, world)?;
+                return if matches!(value, Val::Nothing) {
+                    evaluate(&items[2], env, ctx, world)
+                } else {
+                    Ok(value)
                 };
             }
             "cond" => {
