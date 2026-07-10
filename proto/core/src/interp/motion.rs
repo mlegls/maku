@@ -11,6 +11,7 @@ use std::rc::Rc;
 pub enum Cell {
     N([f64; 2]),
     D(DynPose),
+    V(EvolveCell),
 }
 pub type MotionState = HashMap<MotionStateKey, Cell>;
 
@@ -57,12 +58,17 @@ pub struct StateN2SlotId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StateDynSlotId(pub u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StateValSlotId(pub u32);
+
 #[derive(Clone, Debug, Default)]
 pub struct MotionStateSchema {
     pub n2_slots: HashMap<MotionStateKey, StateN2SlotId>,
     pub n2_keys: Vec<MotionStateKey>,
     pub dyn_slots: HashMap<MotionStateKey, StateDynSlotId>,
     pub dyn_keys: Vec<MotionStateKey>,
+    pub val_slots: HashMap<MotionStateKey, StateValSlotId>,
+    pub val_keys: Vec<MotionStateKey>,
     pub node_ids: HashMap<usize, MotionNodeId>,
     /// node_ids in the shape MotionReaders wants, built once per schema.
     /// Entity schemas are complete at load, so per-row readers can share
@@ -106,6 +112,16 @@ impl MotionStateSchema {
         self.dyn_slots.insert(key, slot);
         slot
     }
+
+    pub fn intern_val(&mut self, key: MotionStateKey) -> StateValSlotId {
+        if let Some(slot) = self.val_slots.get(&key).copied() {
+            return slot;
+        }
+        let slot = StateValSlotId(self.val_keys.len() as u32);
+        self.val_keys.push(key);
+        self.val_slots.insert(key, slot);
+        slot
+    }
 }
 
 /// Scan-context IO for stateful signal evaluation: carries the bullet's state
@@ -124,11 +140,13 @@ pub struct ScanIo {
 pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
 pub type N2Reader = Rc<dyn Fn(MotionStateKey) -> Option<[f64; 2]>>;
 pub type DynReader = Rc<dyn Fn(MotionStateKey) -> Option<DynPose>>;
+pub type ValReader = Rc<dyn Fn(MotionStateKey) -> Option<EvolveCell>>;
 
 #[derive(Clone)]
 pub struct MotionReaders {
     pub n2: N2Reader,
     pub dyns: DynReader,
+    pub vals: ValReader,
     pub node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>,
 }
 
@@ -137,6 +155,7 @@ impl MotionReaders {
         MotionReaders {
             n2: Rc::new(|_| None),
             dyns: Rc::new(|_| None),
+            vals: Rc::new(|_| None),
             node_ids: Rc::new(RefCell::new(HashMap::new())),
         }
     }
@@ -210,6 +229,7 @@ pub struct MotionStepCtx<'a> {
     pub mirror_legacy: bool,
     pub write_n2: &'a mut dyn FnMut(MotionStateKey, [f64; 2]),
     pub write_dyn: &'a mut dyn FnMut(MotionStateKey, DynPose),
+    pub write_val: &'a mut dyn FnMut(MotionStateKey, EvolveCell),
 }
 
 impl<'a> MotionStepCtx<'a> {
@@ -308,6 +328,39 @@ pub struct EvolveDyn {
     pub step: Val,
 }
 
+#[derive(Clone, Debug)]
+pub struct EvolveCell {
+    pub state: Val,
+    pub tick: u64,
+}
+
+pub(crate) fn evolve_tick(tau: f64, tick_rate: f64) -> u64 {
+    (tau * tick_rate + 1e-9).floor().max(0.0) as u64
+}
+
+fn evolve_step_ctx(k: u64, dt: f64) -> Val {
+    Val::Map(Rc::new(vec![
+        (Val::Kw("t".into()), Val::Num(k as f64 * dt)),
+        (Val::Kw("dt".into()), Val::Num(dt)),
+        (Val::Kw("tick".into()), Val::Num(k as f64)),
+    ]))
+}
+
+fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate: f64) -> Result<Val, String> {
+    let step_ctx = evolve_step_ctx(k, 1.0 / tick_rate);
+    let mut call_ctx = Ctx {
+        sig: sig.clone(),
+        ambient: Pose::IDENTITY,
+        scan: None,
+        patterns: Rc::new(HashMap::new()),
+        macros: Rc::new(HashMap::new()),
+        deferred: Vec::new(),
+        projector_scope: None,
+    };
+    let mut w = World::for_eval(tick_rate);
+    apply_fn(ev.step.clone(), &[state, step_ctx], &mut call_ctx, &mut w, false)
+}
+
 /// The value of a closed evolve at time tau: the fold of `step` over ticks
 /// 0..floor(tau·rate), starting from `init`. Steps evaluate against a
 /// CLOSED SigEnv — defs carry over (pure), but channels/cells are empty so
@@ -315,26 +368,10 @@ pub struct EvolveDyn {
 /// evolves get engine-clock advance in a later milestone).
 pub fn evolve_value(ev: &EvolveDyn, tau: f64, sig: &SigEnv, tick_rate: f64) -> Result<Val, String> {
     let closed_sig = SigEnv { defs: sig.defs.clone(), ..SigEnv::default() };
-    let dt = 1.0 / tick_rate;
-    let n = (tau * tick_rate + 1e-9).floor().max(0.0) as u64;
+    let n = evolve_tick(tau, tick_rate);
     let mut s = ev.init.clone();
     for k in 0..n {
-        let step_ctx = Val::Map(Rc::new(vec![
-            (Val::Kw("t".into()), Val::Num(k as f64 * dt)),
-            (Val::Kw("dt".into()), Val::Num(dt)),
-            (Val::Kw("tick".into()), Val::Num(k as f64)),
-        ]));
-        let mut call_ctx = Ctx {
-            sig: closed_sig.clone(),
-            ambient: Pose::IDENTITY,
-            scan: None,
-            patterns: Rc::new(HashMap::new()),
-            macros: Rc::new(HashMap::new()),
-            deferred: Vec::new(),
-            projector_scope: None,
-        };
-        let mut w = World::for_eval(tick_rate);
-        s = apply_fn(ev.step.clone(), &[s, step_ctx], &mut call_ctx, &mut w, false)?;
+        s = apply_evolve_step(ev, s, k, &closed_sig, tick_rate)?;
     }
     Ok(s)
 }
@@ -509,11 +546,13 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
             collect_node_state(a, schema);
             collect_node_state(b, schema);
         }
+        DynNode::Evolve(_) => {
+            schema.intern_val(MotionStateKey::Node(node_id));
+        }
         DynNode::Const(_)
         | DynNode::Linear { .. }
         | DynNode::Live { .. }
-        | DynNode::FnPose(_)
-        | DynNode::Evolve(_) => {}
+        | DynNode::FnPose(_) => {}
     }
 }
 
@@ -1148,13 +1187,27 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 other => Err(format!("fn-backed dyn expected fn to return pose, got {:?}", other)),
             }
         }
-        DynNode::Evolve(ev) => match evolve_value(ev, tau, sig, tick_rate)? {
-            Val::Pose(p) => Ok(p),
-            other => Err(format!(
-                "evolve in a pose slot expected pose state, got {:?}",
-                other
-            )),
-        },
+        DynNode::Evolve(ev) => {
+            let key = d as *const DynNode as usize;
+            let dense_key = ctx.node_key(key);
+            let tick = evolve_tick(tau, tick_rate);
+            let cell = (readers.vals)(dense_key)
+                .or_else(|| match state.get(&dense_key) {
+                    Some(Cell::V(v)) => Some(v.clone()),
+                    _ => None,
+                });
+            let value = match cell {
+                Some(cell) if cell.tick == tick => cell.state,
+                _ => evolve_value(ev, tau, sig, tick_rate)?,
+            };
+            match value {
+                Val::Pose(p) => Ok(p),
+                other => Err(format!(
+                    "evolve in a pose slot expected pose state, got {:?}",
+                    other
+                )),
+            }
+        }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
@@ -1221,6 +1274,7 @@ pub fn step_motion(
     let readers = MotionReaders::for_node(d);
     let mut ignore_n2 = |_, _| {};
     let mut ignore_dyn = |_, _| {};
+    let mut ignore_val = |_, _| {};
     let mut ctx = MotionStepCtx {
         state,
         sig,
@@ -1229,6 +1283,7 @@ pub fn step_motion(
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
         write_dyn: &mut ignore_dyn,
+        write_val: &mut ignore_val,
     };
     step_motion_in(d, tau, dt, &mut ctx)
 }
@@ -1412,6 +1467,27 @@ pub fn step_motion_in(
             );
             Ok(())
         }
+        DynNode::Evolve(ev) => {
+            let key = d as *const DynNode as usize;
+            let dense_key = ctx.node_key(key);
+            let target_tick = evolve_tick(tau, ctx.tick_rate);
+            let closed_sig = SigEnv { defs: ctx.sig.defs.clone(), ..SigEnv::default() };
+            let mut cell = (ctx.readers.vals)(dense_key)
+                .or_else(|| match ctx.state.get(&dense_key) {
+                    Some(Cell::V(v)) => Some(v.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| EvolveCell { state: ev.init.clone(), tick: 0 });
+            if cell.tick < target_tick {
+                let next = apply_evolve_step(ev, cell.state, cell.tick, &closed_sig, ctx.tick_rate)?;
+                cell = EvolveCell { state: next, tick: cell.tick + 1 };
+            }
+            if ctx.mirror_legacy {
+                ctx.state.insert(dense_key, Cell::V(cell.clone()));
+            }
+            (ctx.write_val)(dense_key, cell);
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -1426,6 +1502,7 @@ pub fn step_dyn_figure(
     let readers = MotionReaders::for_figure(d);
     let mut ignore_n2 = |_, _| {};
     let mut ignore_dyn = |_, _| {};
+    let mut ignore_val = |_, _| {};
     let mut ctx = MotionStepCtx {
         state,
         sig,
@@ -1434,6 +1511,7 @@ pub fn step_dyn_figure(
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
         write_dyn: &mut ignore_dyn,
+        write_val: &mut ignore_val,
     };
     step_dyn_figure_in(d, tau, dt, &mut ctx)
 }
@@ -1538,7 +1616,11 @@ pub(crate) fn advance_sites_with_writes<T>(
 
 pub fn is_scanned(d: &DynNode) -> bool {
     match d {
-        DynNode::Vel { .. } | DynNode::RotExpr { .. } | DynNode::Stages { .. } | DynNode::Path { .. } => true,
+        DynNode::Vel { .. }
+        | DynNode::RotExpr { .. }
+        | DynNode::Stages { .. }
+        | DynNode::Path { .. }
+        | DynNode::Evolve(_) => true,
         DynNode::Translate { child, .. } => is_scanned(child),
         DynNode::Frame(a, b) => is_scanned(a) || is_scanned(b),
         DynNode::Clamp { child, .. } => is_scanned(child),

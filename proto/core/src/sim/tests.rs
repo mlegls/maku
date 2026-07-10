@@ -1711,6 +1711,137 @@
         assert!((p.x - 1770.0).abs() < 1e-6, "evolved map state: {:?}", p);
     }
 
+    fn find_evolve(node: &Rc<DynNode>) -> Rc<EvolveDyn> {
+        match &**node {
+            DynNode::Evolve(ev) => ev.clone(),
+            DynNode::Translate { child, .. } | DynNode::Clamp { child, .. } => find_evolve(child),
+            DynNode::Frame(a, b) => {
+                if let DynNode::Evolve(_) = &**a {
+                    find_evolve(a)
+                } else {
+                    find_evolve(b)
+                }
+            }
+            other => panic!("expected evolve node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evolve_pose_slot_has_dense_val_state() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 1) (:y s))))
+         {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        assert_eq!(schema.val_keys.len(), 1);
+        assert!(schema.n2_keys.is_empty());
+        assert!(schema.dyn_keys.is_empty());
+        let key = schema.val_keys[0];
+        let cell = sim.world.entities.state_val(0, key).unwrap();
+        assert_eq!(cell.tick, 0);
+        assert!(matches!(cell.state, Val::Pose(p) if p.x.abs() < 1e-9 && p.y.abs() < 1e-9));
+    }
+
+    #[test]
+    fn evolve_on_clock_matches_replay_and_off_clock_still_replays() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 1) (:y s))))
+         {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..12 {
+            sim.step().unwrap();
+        }
+        let readers = sim.motion_readers(0);
+        let state = MotionState::new();
+        let sig = sim.ctx.sig.clone();
+        let ev = find_evolve(dyn_figure(&sim, 0).pose_dyn());
+        let settled_tau = (sim.world.tick - 1) as f64 / DEFAULT_TICK_RATE;
+        let memo = dyn_figure_pose_in(
+            dyn_figure(&sim, 0),
+            settled_tau,
+            MotionEvalCtx::new(&state, &sig, &readers),
+        )
+        .unwrap();
+        let replay = match evolve_value(&ev, settled_tau, &sig, DEFAULT_TICK_RATE).unwrap() {
+            Val::Pose(p) => p,
+            other => panic!("expected replay pose, got {other:?}"),
+        };
+        assert!((memo.x - replay.x).abs() < 1e-9 && (memo.y - replay.y).abs() < 1e-9);
+
+        let off_clock = dyn_figure_pose_in(
+            dyn_figure(&sim, 0),
+            3.5 / DEFAULT_TICK_RATE,
+            MotionEvalCtx::new(&state, &sig, &readers),
+        )
+        .unwrap();
+        assert!((off_clock.x - 3.0).abs() < 1e-9, "off-clock replay pose: {off_clock:?}");
+    }
+
+    #[test]
+    fn evolve_dense_state_advances_linearly() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 1) (:y s))))
+         {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..10 {
+            sim.step().unwrap();
+        }
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        assert_eq!(cell.tick, sim.world.tick - 1);
+        assert!(matches!(cell.state, Val::Pose(p) if (p.x - cell.tick as f64).abs() < 1e-9));
+    }
+
+    #[test]
+    fn evolve_snapshot_restore_is_deterministic() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 1) (:y s))))
+         {:style {:family :gem}}))
+"#;
+        let mut a = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 {
+            a.step().unwrap();
+        }
+        let mut b = a.clone();
+        for _ in 0..6 {
+            a.step().unwrap();
+            b.step().unwrap();
+        }
+        let a_schema = a.world.entities.motion_schema(0).unwrap();
+        let b_schema = b.world.entities.motion_schema(0).unwrap();
+        let ac = a.world.entities.state_val(0, a_schema.val_keys[0]).unwrap();
+        let bc = b.world.entities.state_val(0, b_schema.val_keys[0]).unwrap();
+        assert_eq!(ac.tick, bc.tick);
+        assert!(matches!((ac.state, bc.state), (Val::Pose(ap), Val::Pose(bp)) if (ap.x - bp.x).abs() < 1e-12 && (ap.y - bp.y).abs() < 1e-12));
+    }
+
+    #[test]
+    fn remat_motion_clears_evolve_state_epoch() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 1) 0)))
+                  {:style {:family :gem}})]
+    (seq (wait (ticks 3))
+         (remat (first bs) (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 10) 0)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..6 {
+            sim.step().unwrap();
+        }
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        assert!(cell.tick <= 2, "remat should restart evolve epoch, got {cell:?}");
+        assert!(matches!(cell.state, Val::Pose(p) if p.x <= 20.0));
+    }
+
     /// Slow lasers: the telegraph shows the whole path immediately, but
     /// the hitbox sweeps out from the source over the :fill window.
     #[test]

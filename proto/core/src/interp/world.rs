@@ -139,6 +139,7 @@ pub struct EntityStore {
     trace_cache: TraceCache,
     state_n2: Vec<Vec<[f64; 2]>>,
     state_dyn: Vec<Vec<Option<DynPose>>>,
+    state_val: Vec<Vec<Option<EvolveCell>>>,
     max: usize,
     free: Vec<usize>,
 }
@@ -338,6 +339,7 @@ impl EntityStore {
             trace_cache: TraceCache::with_capacity(max),
             state_n2: Vec::new(),
             state_dyn: Vec::new(),
+            state_val: Vec::new(),
             max,
             free: Vec::new(),
         }
@@ -506,6 +508,37 @@ impl EntityStore {
         true
     }
 
+    pub fn state_val(&self, row: usize, key: MotionStateKey) -> Option<EvolveCell> {
+        let schema = self.motion_schema(row)?;
+        let slot = schema.val_slots.get(&key)?.0 as usize;
+        self.state_val.get(slot)?.get(row)?.clone()
+    }
+
+    pub fn state_val_snapshot(&self, row: usize) -> HashMap<MotionStateKey, EvolveCell> {
+        let Some(schema) = self.motion_schema(row) else { return HashMap::new() };
+        let mut out = HashMap::with_capacity(schema.val_keys.len());
+        for key in schema.val_keys.iter().copied() {
+            if let Some(value) = self.state_val(row, key) {
+                out.insert(key, value);
+            }
+        }
+        out
+    }
+
+    pub fn set_state_val(&mut self, row: usize, key: MotionStateKey, value: EvolveCell) -> bool {
+        let Some(slot) = self
+            .motion_schema(row)
+            .and_then(|schema| schema.val_slots.get(&key).copied())
+            .map(|slot| slot.0 as usize)
+        else {
+            return false;
+        };
+        let Some(col) = self.state_val.get_mut(slot) else { return false };
+        let Some(cell) = col.get_mut(row) else { return false };
+        *cell = Some(value);
+        true
+    }
+
     fn ensure_motion_state_shape(&mut self, schema: &MotionStateSchema) {
         let rows = self.len();
         while self.state_n2.len() < schema.n2_keys.len() {
@@ -514,12 +547,20 @@ impl EntityStore {
         while self.state_dyn.len() < schema.dyn_keys.len() {
             self.state_dyn.push(vec![None; rows]);
         }
+        while self.state_val.len() < schema.val_keys.len() {
+            self.state_val.push(vec![None; rows]);
+        }
         for col in &mut self.state_n2 {
             if col.len() < rows {
                 col.resize(rows, [0.0, 0.0]);
             }
         }
         for col in &mut self.state_dyn {
+            if col.len() < rows {
+                col.resize(rows, None);
+            }
+        }
+        for col in &mut self.state_val {
             if col.len() < rows {
                 col.resize(rows, None);
             }
@@ -536,6 +577,11 @@ impl EntityStore {
         }
         for slot in 0..schema.dyn_keys.len() {
             if let Some(cell) = self.state_dyn.get_mut(slot).and_then(|col| col.get_mut(row)) {
+                *cell = None;
+            }
+        }
+        for slot in 0..schema.val_keys.len() {
+            if let Some(cell) = self.state_val.get_mut(slot).and_then(|col| col.get_mut(row)) {
                 *cell = None;
             }
         }
@@ -677,6 +723,9 @@ impl EntityStore {
         for col in &mut self.state_dyn {
             col.push(None);
         }
+        for col in &mut self.state_val {
+            col.push(None);
+        }
         self.reset_motion_state(i);
         Ok(i)
     }
@@ -704,6 +753,7 @@ impl Clone for EntityStore {
             trace_cache: self.trace_cache.clone(),
             state_n2: self.state_n2.clone(),
             state_dyn: self.state_dyn.clone(),
+            state_val: self.state_val.clone(),
             max: self.max,
             free: self.free.clone(),
         }
@@ -942,6 +992,9 @@ impl World {
             for col in &mut self.entities.state_dyn {
                 col.truncate(max_entities);
             }
+            for col in &mut self.entities.state_val {
+                col.truncate(max_entities);
+            }
             self.entities.free.retain(|i| *i < max_entities);
         }
         for values in &mut self.fields.num_values {
@@ -992,6 +1045,11 @@ impl World {
             }
         }
         for col in &mut self.entities.state_dyn {
+            if col.capacity() < max_entities {
+                col.reserve_exact(max_entities - col.capacity());
+            }
+        }
+        for col in &mut self.entities.state_val {
             if col.capacity() < max_entities {
                 col.reserve_exact(max_entities - col.capacity());
             }

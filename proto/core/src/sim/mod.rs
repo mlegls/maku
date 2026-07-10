@@ -294,6 +294,7 @@ impl Sim {
     pub(crate) fn motion_readers(&self, row: usize) -> MotionReaders {
         let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
         let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
+        let dense_val = Rc::new(self.world.entities.state_val_snapshot(row));
         let node_ids = self
             .world
             .entities
@@ -303,6 +304,7 @@ impl Sim {
         MotionReaders {
             n2: Rc::new(move |key| dense_n2.get(&key).copied()),
             dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
+            vals: Rc::new(move |key| dense_val.get(&key).cloned()),
             node_ids,
         }
     }
@@ -555,8 +557,10 @@ impl Sim {
                 let readers = self.motion_readers(i);
                 let mut state = MotionState::new();
                 let mut n2_writes = Vec::new();
+                let mut val_writes = Vec::new();
                 let mut write_n2 = |key, value| n2_writes.push((key, value));
                 let mut ignore_dyn = |_, _| {};
+                let mut write_val = |key, value| val_writes.push((key, value));
                 let mut motion = MotionStepCtx {
                     state: &mut state,
                     sig: &sig,
@@ -565,10 +569,14 @@ impl Sim {
                     mirror_legacy: false,
                     write_n2: &mut write_n2,
                     write_dyn: &mut ignore_dyn,
+                    write_val: &mut write_val,
                 };
                 step_dyn_figure_in(&dyn_figure, tau, dt, &mut motion)?;
                 for (key, value) in n2_writes {
                     self.world.entities.set_state_n2(i, key, value);
+                }
+                for (key, value) in val_writes {
+                    self.world.entities.set_state_val(i, key, value);
                 }
             }
         }

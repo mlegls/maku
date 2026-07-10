@@ -1660,6 +1660,7 @@ fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, world: &World) -> 
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
     let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
+    let dense_val = Rc::new(world.entities.state_val_snapshot(i));
     let node_ids = world
         .entities
         .motion_schema(i)
@@ -1668,6 +1669,7 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
     MotionReaders {
         n2: Rc::new(move |key| dense_n2.get(&key).copied()),
         dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
+        vals: Rc::new(move |key| dense_val.get(&key).cloned()),
         node_ids,
     }
 }
