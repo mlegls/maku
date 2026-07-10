@@ -27,6 +27,7 @@ mod card;
 mod colliders;
 mod coerce;
 mod engine;
+mod lower;
 mod r#dyn;
 pub mod model;
 mod motion;
@@ -43,6 +44,7 @@ pub(crate) use builtins::*;
 pub use card::*;
 pub use colliders::*;
 pub use coerce::*;
+pub(crate) use lower::*;
 pub use r#dyn::*;
 pub use crate::model::{
     ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, RenderFieldKind,
@@ -1133,6 +1135,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     b: items[2].clone(),
                     polar: &**s == "polar",
                     env: env.clone(),
+                    programs: std::cell::OnceCell::new(),
                 }))));
             }
             "vel" => return sf_vel(items, env, ctx, world),
@@ -1290,6 +1293,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::RotExpr {
                     form: items[1].clone(),
                     env: env.clone(),
+                    program: std::cell::OnceCell::new(),
                 }))));
             }
             "aim" => {
@@ -2777,6 +2781,7 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
         b: comps[1].clone(),
         polar,
         env: env.clone(),
+        programs: std::cell::OnceCell::new(),
     });
     match items.get(2) {
         None => Ok(Val::DynPose(DynPose::pose_node(node))),

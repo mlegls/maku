@@ -2425,6 +2425,50 @@
         assert_eq!(sim2.world.entities.len(), 5);
     }
 
+    #[test]
+    fn lowered_closed_pt_oracle_card_step() {
+        struct OracleGuard;
+        impl Drop for OracleGuard {
+            fn drop(&mut self) {
+                crate::interp::set_oracle_for_tests(false);
+            }
+        }
+
+        crate::interp::set_oracle_for_tests(true);
+        let _guard = OracleGuard;
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (polar (+ 2 (* 3 t) (sin (* 90 t)))
+                (+ 15 (* 45 t) (cos (* 30 t))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 {
+            sim.step().unwrap();
+            assert_eq!(sim.render().len(), 1);
+        }
+    }
+
+    #[test]
+    fn unlowerable_user_fn_signal_falls_back() {
+        const FALLBACK: &str = r#"
+(defn twice [x] (* 2 x))
+(defpattern p [] (spawn (cart (twice t) (+ 1 (* 3 t)))))
+"#;
+        const INLINE: &str = r#"
+(defpattern p [] (spawn (cart (* 2 t) (+ 1 (* 3 t)))))
+"#;
+        let mut fallback = Sim::load(FALLBACK, Some("p")).unwrap();
+        let mut inline = Sim::load(INLINE, Some("p")).unwrap();
+        for _ in 0..5 {
+            fallback.step().unwrap();
+            inline.step().unwrap();
+            let fallback_rows = fallback.render();
+            let inline_rows = inline.render();
+            assert_eq!(fallback_rows.len(), inline_rows.len());
+            assert_render_rows_eq(&fallback_rows[0], &inline_rows[0]);
+        }
+    }
+
     /// F15 in the sim: 200's variant (axis 0, len 3) and color (axis 1 via
     /// explicit length 6) must bind to their axes, not the flat index.
     #[test]

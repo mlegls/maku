@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::edn::Form;
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -241,9 +241,21 @@ pub enum DynNode {
     /// pos = v·τ in the local frame; θ = heading.
     Linear { vx: f64, vy: f64 },
     /// Closed pose expression over slot-bound t (and u, for curve shapes).
-    ClosedPt { a: Form, b: Form, polar: bool, env: Env },
+    ClosedPt {
+        a: Form,
+        b: Form,
+        polar: bool,
+        env: Env,
+        programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+    },
     /// Integrated velocity (Scanned): components over slot-bound t.
-    Vel { a: Form, b: Form, polar: bool, env: Env },
+    Vel {
+        a: Form,
+        b: Form,
+        polar: bool,
+        env: Env,
+        programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+    },
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
     Translate { dx: f64, dy: f64, child: Rc<DynNode> },
     /// Sample a curve dyn at u = progress(t). This is the point-motion
@@ -258,7 +270,7 @@ pub enum DynNode {
     /// distance, you slide and turn back instantly.
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
-    RotExpr { form: Form, env: Env },
+    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<NumProgram>>> },
     /// A user function adapted to a stateless pose dyn by calling it as (f t).
     FnPose(Val),
     /// A closed evolve used in a pose slot: the fold is replayed from epoch
@@ -678,6 +690,58 @@ pub(crate) fn eval_pt_at_rate(
     }
 }
 
+fn eval_num_program_pair(
+    a: &NumProgram,
+    b: &NumProgram,
+    polar: bool,
+    tau: f64,
+    u: f64,
+    pos: Option<(f64, f64)>,
+) -> (f64, f64) {
+    let av = run_num_program(a, tau, u, pos);
+    let bv = run_num_program(b, tau, u, pos);
+    if polar {
+        let (s, c) = bv.to_radians().sin_cos();
+        (av * c, av * s)
+    } else {
+        (av, bv)
+    }
+}
+
+fn lower_program_pair(
+    a: &Form,
+    b: &Form,
+    env: &Env,
+    sig: &SigEnv,
+    allow_pos: bool,
+) -> Option<(Rc<NumProgram>, Rc<NumProgram>)> {
+    let ap = lower_num_form(a, env, &sig.defs)?;
+    let bp = lower_num_form(b, env, &sig.defs)?;
+    if !allow_pos && (program_uses_pos(&ap) || program_uses_pos(&bp)) {
+        return None;
+    }
+    Some((Rc::new(ap), Rc::new(bp)))
+}
+
+fn lower_single_program(form: &Form, env: &Env, sig: &SigEnv, allow_pos: bool) -> Option<Rc<NumProgram>> {
+    let prog = lower_num_form(form, env, &sig.defs)?;
+    if !allow_pos && program_uses_pos(&prog) {
+        return None;
+    }
+    Some(Rc::new(prog))
+}
+
+fn assert_num_close(label: &str, form: &Form, got: f64, expected: f64) {
+    assert!(
+        (got - expected).abs() <= 1e-9,
+        "{} compiled/interpreted mismatch for {:?}: compiled={}, interpreted={}",
+        label,
+        form,
+        got,
+        expected
+    );
+}
+
 /// Read-only scan context over a clone of the bullet's state.
 pub(crate) fn read_scan_in(
     state: &MotionState,
@@ -831,8 +895,14 @@ fn dyn_node_name(d: &DynNode) -> &'static str {
     match d {
         DynNode::Const(_) => "dyn:const",
         DynNode::Linear { .. } => "dyn:linear",
-        DynNode::ClosedPt { .. } => "dyn:closed-pt",
-        DynNode::Vel { .. } => "dyn:vel",
+        DynNode::ClosedPt { programs, .. } => match programs.get() {
+            Some(Some(_)) => "dyn:closed-pt-c",
+            _ => "dyn:closed-pt",
+        },
+        DynNode::Vel { programs, .. } => match programs.get() {
+            Some(Some(_)) => "dyn:vel-c",
+            _ => "dyn:vel",
+        },
         DynNode::Translate { .. } => "dyn:translate",
         DynNode::Path { .. } => "dyn:path",
         DynNode::Frame(..) => "dyn:frame",
@@ -857,8 +927,47 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             y: vy * tau,
             theta: Some(vy.atan2(*vx).to_degrees()),
         }),
-        DynNode::ClosedPt { a, b, polar, env } => {
+        DynNode::ClosedPt { a, b, polar, env, programs } => {
             let key = d as *const DynNode as usize;
+            if let Some((ap, bp)) = programs
+                .get_or_init(|| lower_program_pair(a, b, env, sig, false))
+                .as_ref()
+            {
+                let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None);
+                let eps = 1.0 / tick_rate;
+                let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None);
+                if oracle_enabled() {
+                    let (ix, iy) = eval_pt_at_rate(
+                        a,
+                        b,
+                        *polar,
+                        env,
+                        sig,
+                        tau,
+                        u,
+                        Some(read_scan_in(state, key, readers.clone())),
+                        None,
+                        tick_rate,
+                    )?;
+                    let (ix2, iy2) = eval_pt_at_rate(
+                        a,
+                        b,
+                        *polar,
+                        env,
+                        sig,
+                        tau + eps,
+                        u,
+                        Some(read_scan_in(state, key, readers.clone())),
+                        None,
+                        tick_rate,
+                    )?;
+                    assert_num_close("closed-pt/a", a, x, ix);
+                    assert_num_close("closed-pt/b", b, y, iy);
+                    assert_num_close("closed-pt/a+eps", a, x2, ix2);
+                    assert_num_close("closed-pt/b+eps", b, y2, iy2);
+                }
+                return Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()));
+            }
             let (x, y) = eval_pt_at_rate(
                 a,
                 b,
@@ -886,7 +995,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             )?;
             Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
         }
-        DynNode::Vel { a, b, polar, env } => {
+        DynNode::Vel { a, b, polar, env, programs } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
             let [x, y] = (readers.n2)(dense_key)
@@ -895,6 +1004,29 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     _ => None,
                 })
                 .unwrap_or([0.0, 0.0]);
+            if let Some((ap, bp)) = programs
+                .get_or_init(|| lower_program_pair(a, b, env, sig, true))
+                .as_ref()
+            {
+                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, u, Some((x, y)));
+                if oracle_enabled() {
+                    let (ivx, ivy) = eval_pt_at_rate(
+                        a,
+                        b,
+                        *polar,
+                        env,
+                        sig,
+                        tau,
+                        u,
+                        Some(read_scan_in(state, key, readers.clone())),
+                        Some((x, y)),
+                        tick_rate,
+                    )?;
+                    assert_num_close("vel/a", a, vx, ivx);
+                    assert_num_close("vel/b", b, vy, ivy);
+                }
+                return Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()));
+            }
             let (vx, vy) = eval_pt_at_rate(
                 a,
                 b,
@@ -917,8 +1049,29 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let p = dyn_node_pose_u_in(child, tau, 0.0, ctx)?;
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })
         }
-        DynNode::RotExpr { form, env } => {
+        DynNode::RotExpr { form, env, program } => {
             let key = d as *const DynNode as usize;
+            if let Some(prog) = program
+                .get_or_init(|| lower_single_program(form, env, sig, true))
+                .as_ref()
+            {
+                let th = run_num_program(prog, tau, u, Some((0.0, 0.0)));
+                if oracle_enabled() {
+                    let ith = eval_sig_at_rate(
+                        form,
+                        env,
+                        sig,
+                        tau,
+                        u,
+                        Some(read_scan_in(state, key, readers.clone())),
+                        Some((0.0, 0.0)),
+                        tick_rate,
+                    )?
+                    .num()?;
+                    assert_num_close("rot-expr", form, th, ith);
+                }
+                return Ok(Pose::oriented(0.0, 0.0, th));
+            }
             let th = eval_sig_at_rate(
                 form,
                 env,
@@ -1039,7 +1192,7 @@ pub fn step_motion_in(
     ctx: &mut MotionStepCtx<'_>,
 ) -> Result<(), String> {
     match d {
-        DynNode::Vel { a, b, polar, env } => {
+        DynNode::Vel { a, b, polar, env, programs } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
             let state = &mut *ctx.state;
@@ -1054,18 +1207,43 @@ pub fn step_motion_in(
                     _ => None,
                 })
                 .unwrap_or([0.0, 0.0]);
-            let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
-            })?;
-            for (key, value) in writes {
-                write_n2(key, value);
-            }
+            // scan-free integrands (lowered programs) have no sites to
+            // advance, so the step is just the compiled velocity sample
+            let (vx, vy) = if let Some((ap, bp)) = programs
+                .get_or_init(|| lower_program_pair(a, b, env, sig, true))
+                .as_ref()
+            {
+                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)));
+                if oracle_enabled() {
+                    let ((ivx, ivy), _) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
+                        eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
+                    })?;
+                    assert_num_close("vel-step/a", a, vx, ivx);
+                    assert_num_close("vel-step/b", b, vy, ivy);
+                }
+                (vx, vy)
+            } else {
+                let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
+                    eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
+                })?;
+                for (key, value) in writes {
+                    write_n2(key, value);
+                }
+                (vx, vy)
+            };
             let next = [x + vx * dt, y + vy * dt];
             state.insert(dense_key, Cell::N(next));
             write_n2(dense_key, next);
             Ok(())
         }
-        DynNode::RotExpr { form, env } => {
+        DynNode::RotExpr { form, env, program } => {
+            // a lowered program is scan-free: nothing to advance
+            if program
+                .get_or_init(|| lower_single_program(form, env, ctx.sig, true))
+                .is_some()
+            {
+                return Ok(());
+            }
             let state = &mut *ctx.state;
             let sig = ctx.sig;
             let readers = ctx.readers;

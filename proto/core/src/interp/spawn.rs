@@ -413,21 +413,24 @@ pub(crate) fn subst_rand(f: &Form, world: &mut World) -> Form {
 
 pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode> {
     match &**d {
-        DynNode::ClosedPt { a, b, polar, env } => Rc::new(DynNode::ClosedPt {
+        DynNode::ClosedPt { a, b, polar, env, .. } => Rc::new(DynNode::ClosedPt {
             a: subst_rand(a, world),
             b: subst_rand(b, world),
             polar: *polar,
             env: env.clone(),
+            programs: std::cell::OnceCell::new(),
         }),
-        DynNode::Vel { a, b, polar, env } => Rc::new(DynNode::Vel {
+        DynNode::Vel { a, b, polar, env, .. } => Rc::new(DynNode::Vel {
             a: subst_rand(a, world),
             b: subst_rand(b, world),
             polar: *polar,
             env: env.clone(),
+            programs: std::cell::OnceCell::new(),
         }),
-        DynNode::RotExpr { form, env } => Rc::new(DynNode::RotExpr {
+        DynNode::RotExpr { form, env, .. } => Rc::new(DynNode::RotExpr {
             form: subst_rand(form, world),
             env: env.clone(),
+            program: std::cell::OnceCell::new(),
         }),
         DynNode::Translate { dx, dy, child } => Rc::new(DynNode::Translate {
             dx: *dx,
