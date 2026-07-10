@@ -272,7 +272,7 @@ pub enum ActionV {
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
     Spawn { entities: Vec<EntitySpec> },
-    Render { row: RenderRow },
+    Render { row: Rc<RenderRow> },
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
     Remat { target: EntityRef, f: Val },
     /// Queue a functional column update on a live entity (dead handles are no-ops at drain).

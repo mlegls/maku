@@ -720,7 +720,7 @@ pub struct World {
     pub fields: WorldFields,
     pub symbols: SymbolTable,
     /// Ephemeral host-facing render rows emitted by tick/render rules for the current tick.
-    pub render_rows: Vec<RenderRow>,
+    pub render_rows: Vec<Rc<RenderRow>>,
     /// Accreted schema for open host-facing render row fields.
     pub render_schema: HashMap<FieldName, RenderFieldKind>,
     /// Card-defined standing rules over row domains, run once per tick.

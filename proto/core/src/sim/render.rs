@@ -104,7 +104,7 @@ impl Sim {
         let mut out = Vec::new();
         for row in &self.world.render_rows {
             if !matches!(row.data, RenderData::None) {
-                out.push(row.clone());
+                out.push(row.as_ref().clone());
             }
         }
         let mut scratch = std::mem::take(&mut self.render_scratch);

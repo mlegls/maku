@@ -179,13 +179,19 @@ pub(crate) fn special(
             let Val::Kw(stream) = evaluate(&items[1], env, ctx, world)? else {
                 return Err("emit: expected stream keyword (:render or :events)".into());
             };
-            let row = evaluate(&items[2], env, ctx, world)?;
             match stream.as_ref() {
                 "render" => {
-                    let row = render_row_from_value(row, world, &ctx.sig)?;
-                    Val::Action(Rc::new(ActionV::Render { row }))
+                    let row = match render_row_from_literal_map(&items[2], env, ctx, world)? {
+                        Some(row) => row,
+                        None => {
+                            let row = evaluate(&items[2], env, ctx, world)?;
+                            render_row_from_value(row, world, &ctx.sig)?
+                        }
+                    };
+                    Val::Action(Rc::new(ActionV::Render { row: Rc::new(row) }))
                 }
                 "events" => {
+                    let row = evaluate(&items[2], env, ctx, world)?;
                     let (name, pos) = event_row_from_value(row, world)?;
                     Val::Action(Rc::new(ActionV::Event { name, pos }))
                 }
@@ -300,75 +306,137 @@ fn curve_samples_options(v: Val) -> Result<(f64, f64), String> {
     Ok((u_max, resolution))
 }
 
+#[derive(Default)]
+struct RenderRowFields {
+    shape: Option<Val>,
+    x: Option<Val>,
+    y: Option<Val>,
+    theta: Option<Val>,
+    facing: Option<Val>,
+    scale: Option<Val>,
+    alpha: Option<Val>,
+    opacity: Option<Val>,
+    hue: Option<Val>,
+    points: Option<Val>,
+    pts: Option<Val>,
+    active: Option<Val>,
+    extras: Vec<(Rc<str>, Val)>,
+}
+
+impl RenderRowFields {
+    fn push_kw(&mut self, key: Rc<str>, value: Val) {
+        match key.as_ref() {
+            "shape" => set_first(&mut self.shape, value),
+            "x" => set_first(&mut self.x, value),
+            "y" => set_first(&mut self.y, value),
+            "theta" => set_first(&mut self.theta, value),
+            "facing" => set_first(&mut self.facing, value),
+            "scale" => set_first(&mut self.scale, value),
+            "alpha" => set_first(&mut self.alpha, value),
+            "opacity" => set_first(&mut self.opacity, value),
+            "hue" => set_first(&mut self.hue, value),
+            "points" => set_first(&mut self.points, value),
+            "pts" => set_first(&mut self.pts, value),
+            "active" => set_first(&mut self.active, value),
+            _ => self.extras.push((key, value)),
+        }
+    }
+
+    fn finish(self, world: &mut World, sig: &SigEnv) -> Result<RenderRow, String> {
+        let shape_value = self.shape.ok_or("render: missing :shape")?;
+        let shape = match &shape_value {
+            Val::Kw(k) => k.clone(),
+            Val::Arr(items) => match items.first() {
+                Some(Val::Kw(k)) => k.clone(),
+                _ => return Err("render: :shape vector must start with a keyword".into()),
+            },
+            Val::CurveSamples(_) => "polyline".into(),
+            _ => return Err("render: missing keyword :shape".into()),
+        };
+        let data = match &*shape {
+            "point" | "dot" => RenderData::Point {
+                x: self.x.map(|v| v.num()).transpose()?.unwrap_or(0.0),
+                y: self.y.map(|v| v.num()).transpose()?.unwrap_or(0.0),
+                theta: self.theta.or(self.facing).map(|v| v.num()).transpose()?.unwrap_or(0.0),
+                scale: self.scale.map(|v| v.num()).transpose()?.unwrap_or(1.0),
+                alpha: self.alpha.or(self.opacity).map(|v| v.num()).transpose()?.unwrap_or(1.0),
+                hue: self.hue.map(|v| v.num()).transpose()?.unwrap_or(0.0),
+            },
+            "polyline" => {
+                let points = match &shape_value {
+                    Val::CurveSamples(samples) => sample_curve_shape(samples, world, sig)?,
+                    _ => match self.points.or(self.pts) {
+                        Some(Val::Arr(items)) => items
+                            .iter()
+                            .cloned()
+                            .map(render_point_xy)
+                            .collect::<Result<Vec<_>, _>>()?,
+                        Some(v) => return Err(format!("render: :points must be an array, got {:?}", v)),
+                        None => return Err("render: polyline missing :points".into()),
+                    },
+                };
+                let active = self.active.map(|v| v.num()).transpose()?.unwrap_or(1.0) != 0.0;
+                RenderData::Polyline { points, active }
+            }
+            other => return Err(format!("render: unsupported shape :{}", other)),
+        };
+        let mut row = RenderRow::plain(data);
+        for (key, v) in self.extras {
+            match v {
+                Val::Num(n) => {
+                    world.render_field_check(&key, RenderFieldKind::Num)?;
+                    row.nums.push((key, n));
+                }
+                Val::Kw(sym) => {
+                    world.render_field_check(&key, RenderFieldKind::Sym)?;
+                    row.syms.push((key, sym));
+                }
+                Val::Nothing => {}
+                _ => return Err(format!("render: field :{key} must be a number or keyword")),
+            }
+        }
+        Ok(row)
+    }
+}
+
+fn set_first(slot: &mut Option<Val>, value: Val) {
+    if slot.is_none() {
+        *slot = Some(value);
+    }
+}
+
 fn render_row_from_value(v: Val, world: &mut World, sig: &SigEnv) -> Result<RenderRow, String> {
     let Val::Map(kvs) = v else {
         return Err("render: expected row map".into());
     };
-    let get = |name: &str| {
-        kvs.iter().find_map(|(k, v)| match k {
-            Val::Kw(kw) if &**kw == name => Some(v.clone()),
-            _ => None,
-        })
-    };
-    let shape_value = get("shape").ok_or("render: missing :shape")?;
-    let shape = match &shape_value {
-        Val::Kw(k) => k.clone(),
-        Val::Arr(items) => match items.first() {
-            Some(Val::Kw(k)) => k.clone(),
-            _ => return Err("render: :shape vector must start with a keyword".into()),
-        },
-        Val::CurveSamples(_) => "polyline".into(),
-        _ => return Err("render: missing keyword :shape".into()),
-    };
-    let data = match &*shape {
-        "point" | "dot" => RenderData::Point {
-            x: get("x").map(|v| v.num()).transpose()?.unwrap_or(0.0),
-            y: get("y").map(|v| v.num()).transpose()?.unwrap_or(0.0),
-            theta: get("theta").or_else(|| get("facing")).map(|v| v.num()).transpose()?.unwrap_or(0.0),
-            scale: get("scale").map(|v| v.num()).transpose()?.unwrap_or(1.0),
-            alpha: get("alpha").or_else(|| get("opacity")).map(|v| v.num()).transpose()?.unwrap_or(1.0),
-            hue: get("hue").map(|v| v.num()).transpose()?.unwrap_or(0.0),
-        },
-        "polyline" => {
-            let points = match &shape_value {
-                Val::CurveSamples(samples) => sample_curve_shape(samples, world, sig)?,
-                _ => match get("points").or_else(|| get("pts")) {
-                    Some(Val::Arr(items)) => items
-                        .iter()
-                        .cloned()
-                        .map(render_point_xy)
-                        .collect::<Result<Vec<_>, _>>()?,
-                    Some(v) => return Err(format!("render: :points must be an array, got {:?}", v)),
-                    None => return Err("render: polyline missing :points".into()),
-                },
-            };
-            let active = get("active").map(|v| v.num()).transpose()?.unwrap_or(1.0) != 0.0;
-            RenderData::Polyline { points, active }
-        }
-        other => return Err(format!("render: unsupported shape :{}", other)),
-    };
-    let mut row = RenderRow::plain(data);
+    let mut fields = RenderRowFields::default();
     for (k, v) in kvs.iter() {
-        let Val::Kw(key) = k else { continue };
-        match key.as_ref() {
-            "shape" | "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity"
-            | "hue" | "points" | "pts" | "active" => continue,
-            _ => {}
-        }
-        match v {
-            Val::Num(n) => {
-                world.render_field_check(key, RenderFieldKind::Num)?;
-                row.nums.push((key.clone(), *n));
-            }
-            Val::Kw(sym) => {
-                world.render_field_check(key, RenderFieldKind::Sym)?;
-                row.syms.push((key.clone(), sym.clone()));
-            }
-            Val::Nothing => {}
-            _ => return Err(format!("render: field :{key} must be a number or keyword")),
+        if let Val::Kw(key) = k {
+            fields.push_kw(key.clone(), v.clone());
         }
     }
-    Ok(row)
+    fields.finish(world, sig)
+}
+
+fn render_row_from_literal_map(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Option<RenderRow>, String> {
+    let Form::Map(kvs) = form else {
+        return Ok(None);
+    };
+    if !kvs.iter().all(|(k, _)| matches!(k, Form::Kw(_))) {
+        return Ok(None);
+    }
+    let mut fields = RenderRowFields::default();
+    for (k, v) in kvs.iter() {
+        let Form::Kw(key) = k else { unreachable!() };
+        let value = evaluate(v, env, ctx, world)?;
+        fields.push_kw(key.clone(), value);
+    }
+    fields.finish(world, &ctx.sig).map(Some)
 }
 
 fn event_row_from_value(v: Val, world: &mut World) -> Result<(Symbol, Option<(f64, f64)>), String> {

@@ -39,6 +39,33 @@
         sim.world.entities.dyn_figure(row).unwrap()
     }
 
+    fn assert_render_rows_eq(a: &RenderRow, b: &RenderRow) {
+        match (&a.data, &b.data) {
+            (
+                RenderData::Point { x: ax, y: ay, theta: at, scale: ascale, alpha: aa, hue: ah },
+                RenderData::Point { x: bx, y: by, theta: bt, scale: bscale, alpha: ba, hue: bh },
+            ) => {
+                assert!((*ax - *bx).abs() < 1e-9, "x: {ax} != {bx}");
+                assert!((*ay - *by).abs() < 1e-9, "y: {ay} != {by}");
+                assert!((*at - *bt).abs() < 1e-9, "theta: {at} != {bt}");
+                assert!((*ascale - *bscale).abs() < 1e-9, "scale: {ascale} != {bscale}");
+                assert!((*aa - *ba).abs() < 1e-9, "alpha: {aa} != {ba}");
+                assert!((*ah - *bh).abs() < 1e-9, "hue: {ah} != {bh}");
+            }
+            (
+                RenderData::Polyline { points: ap, active: aa },
+                RenderData::Polyline { points: bp, active: ba },
+            ) => {
+                assert_eq!(ap, bp);
+                assert_eq!(aa, ba);
+            }
+            (RenderData::None, RenderData::None) => {}
+            _ => panic!("render data mismatch: {:?} != {:?}", a.data, b.data),
+        }
+        assert_eq!(a.nums, b.nums);
+        assert_eq!(a.syms, b.syms);
+    }
+
     fn eval_with_card(card_src: &str, expr_src: &str) -> Val {
         let expanded = crate::edn::expand_src(card_src).unwrap();
         let forms = crate::edn::read_all(&expanded).unwrap();
@@ -1066,6 +1093,100 @@
         assert!((*scale - 2.0).abs() < 1e-9, "scale: {scale}");
         assert!((*alpha - 0.75).abs() < 1e-9, "alpha: {alpha}");
         assert!((*hue - 120.0).abs() < 1e-9, "hue: {hue}");
+    }
+
+    #[test]
+    fn literal_and_computed_render_maps_match() {
+        const LITERAL: &str = r#"
+(deftick
+  (render {:shape :point
+           :x 1
+           :y 2
+           :theta 30
+           :scale 3
+           :alpha 0.5
+           :hue 120
+           :team :enemy
+           :damage 4}))
+(defpattern p [] (wait 1))
+"#;
+        const COMPUTED: &str = r#"
+(deftick
+  (let [row {:shape :point
+             :x 1
+             :y 2
+             :theta 30
+             :scale 3
+             :alpha 0.5
+             :hue 120
+             :team :enemy
+             :damage 4}]
+    (render row)))
+(defpattern p [] (wait 1))
+"#;
+        let mut literal = Sim::load(LITERAL, Some("p")).unwrap();
+        let mut computed = Sim::load(COMPUTED, Some("p")).unwrap();
+        literal.step().unwrap();
+        computed.step().unwrap();
+        let literal_rows = literal.render();
+        let computed_rows = computed.render();
+        assert_eq!(literal_rows.len(), 1);
+        assert_eq!(computed_rows.len(), 1);
+        assert_render_rows_eq(&literal_rows[0], &computed_rows[0]);
+    }
+
+    #[test]
+    fn literal_render_map_alias_precedence() {
+        const FACING: &str = r#"
+(deftick (render {:shape :point :facing 45}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(FACING, Some("p")).unwrap();
+        sim.step().unwrap();
+        let RenderData::Point { theta, .. } = sim.render()[0].data else {
+            panic!("render should emit one point row");
+        };
+        assert!((theta - 45.0).abs() < 1e-9, "theta: {theta}");
+
+        const THETA_WINS: &str = r#"
+(deftick (render {:shape :point :facing 45 :theta 90}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(THETA_WINS, Some("p")).unwrap();
+        sim.step().unwrap();
+        let RenderData::Point { theta, .. } = sim.render()[0].data else {
+            panic!("render should emit one point row");
+        };
+        assert!((theta - 90.0).abs() < 1e-9, "theta: {theta}");
+    }
+
+    #[test]
+    fn literal_render_map_extra_fields_keep_schema_checks() {
+        const CARD: &str = r#"
+(deftick
+  (render {:shape :point
+           :family :orb
+           :damage 3}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let rows = sim.render();
+        assert_eq!(rows[0].sym("family"), Some("orb"));
+        assert_eq!(rows[0].num("damage"), Some(3.0));
+
+        const BAD: &str = r#"
+(deftick
+  (seq
+    (render {:shape :point :damage 3})
+    (render {:shape :point :damage :big})))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(BAD, Some("p")).unwrap();
+        let Err(err) = sim.step() else {
+            panic!("mismatched render field kind unexpectedly succeeded");
+        };
+        assert!(err.contains("render: field :damage is Sym here but Num elsewhere"), "{err}");
     }
 
     #[test]
