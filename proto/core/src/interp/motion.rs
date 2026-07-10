@@ -64,9 +64,20 @@ pub struct MotionStateSchema {
     pub dyn_slots: HashMap<MotionStateKey, StateDynSlotId>,
     pub dyn_keys: Vec<MotionStateKey>,
     pub node_ids: HashMap<usize, MotionNodeId>,
+    /// node_ids in the shape MotionReaders wants, built once per schema.
+    /// Entity schemas are complete at load, so per-row readers can share
+    /// this instead of cloning the map per entity per phase; only ad-hoc
+    /// direct evaluation seeds ids lazily, through its own fresh maps.
+    shared_node_ids: std::cell::OnceCell<Rc<RefCell<HashMap<usize, MotionNodeId>>>>,
 }
 
 impl MotionStateSchema {
+    pub fn shared_node_ids(&self) -> Rc<RefCell<HashMap<usize, MotionNodeId>>> {
+        self.shared_node_ids
+            .get_or_init(|| Rc::new(RefCell::new(self.node_ids.clone())))
+            .clone()
+    }
+
     pub fn intern_node(&mut self, ptr: usize) -> MotionNodeId {
         if let Some(id) = self.node_ids.get(&ptr).copied() {
             return id;

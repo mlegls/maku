@@ -1656,13 +1656,11 @@ fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, world: &World) -> 
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
     let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
-    let node_ids = Rc::new(std::cell::RefCell::new(
-        world
-            .entities
-            .motion_schema(i)
-            .map(|schema| schema.node_ids.clone())
-            .unwrap_or_default(),
-    ));
+    let node_ids = world
+        .entities
+        .motion_schema(i)
+        .map(|schema| schema.shared_node_ids())
+        .unwrap_or_default();
     MotionReaders {
         n2: Rc::new(move |key| dense_n2.get(&key).copied()),
         dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
