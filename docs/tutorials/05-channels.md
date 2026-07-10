@@ -86,7 +86,7 @@ without mutating fields in a shared structure.
 (`ex5-export`):
 
 ```clojure
-(defvar volleys 0)
+(defcell volleys 0)
 (export volleys)
 …
 (set! volleys (+ volleys 1))

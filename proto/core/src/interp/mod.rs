@@ -13,7 +13,7 @@
 //!  - `let` in action position defers action-valued bindings to scheduler
 //!    reach-time (a spawn executed at evaluation time would miss the ambient
 //!    frame the distribution law owes it).
-//!  - Ambient frames do not cross `fn` boundaries (manipulate callbacks spawn
+//!  - Ambient frames do not cross `fn` boundaries (manip callbacks spawn
 //!    in world coordinates; lexical distribution stops at lambdas, the same
 //!    way it stops at embedded patterns).
 
@@ -120,7 +120,7 @@ pub enum Val {
     DynFigure(DynFigure),
     CurveV(Rc<ExtCurve>),
     ElemV(Rc<ElemFields>),
-    /// A form as a value — what macros manipulate and quasiquote builds.
+    /// A form as a value — what macro code inspects and quasiquote builds.
     FormV(Rc<Form>),
     Action(Rc<ActionV>),
     Fn { params: Rc<[Form]>, body: Rc<[Form]>, env: Env },
@@ -255,14 +255,6 @@ pub struct StateClause {
 #[derive(Debug)]
 pub enum ActionV {
     Seq { items: Rc<[Form]>, env: Env },
-    Dotimes {
-        var: Rc<str>,
-        n: f64,
-        seq_binds: Vec<(Rc<str>, Val)>,
-        every_ticks: u64,
-        body: Rc<[Form]>,
-        env: Env,
-    },
     Loop { names: Vec<Rc<str>>, inits: Vec<Val>, body: Rc<[Form]>, env: Env },
     Recur(Vec<Val>),
     InFrame { frame: FrameSpec, inner: Rc<ActionV> },
@@ -274,8 +266,7 @@ pub enum ActionV {
     Manipulate { targets: Vec<EntityRef>, query: Option<Val>, callback: Val },
     Remat { target: EntityRef, f: Val },
     /// Write a column on a live entity (dead handles are no-ops).
-    SetCol { target: EntityRef, col: ColName, val: f64 },
-    SetStyle { target: EntityRef, style: Val },
+    SetCol { target: EntityRef, col: ColName, val: Val },
     Cull { target: EntityRef },
     /// (export cell): publish a pattern cell as a read-only channel of the
     /// same name — the pattern-level export surface (host renders it; the
@@ -286,7 +277,7 @@ pub enum ActionV {
     BindChannel { name: Rc<str>, expr: Form, env: Env },
     /// Pattern invocation: args pre-evaluated in the CALLER's scope (ir
     /// values); params fill from defaults. The §10 embedding adapter:
-    /// fresh_cells=true (the default — isolated defvar state per instance),
+    /// fresh_cells=true (the default — isolated defcell state per instance),
     /// false for (inline …) — the embedded pattern shares the caller's
     /// cells ("binds into the embedding pattern's scope").
     CallPattern {
@@ -315,8 +306,9 @@ pub enum ActionV {
     /// (goto label?): scoped non-local exit — cancel the enclosing state
     /// body (finalizers run), re-enter at the label; bare (goto) takes the
     /// default successor (state order). Labels are VALUES (evaluated), so
-    /// routing may be computed — `(goto (nth [:a :b] (rand-int 0 2)))` is a
-    /// Markov chain. The cell identifies the innermost lexical machine
+    /// routing may be computed from ordinary values, so random Markov
+    /// routing is card code rather than a special case.
+    /// The cell identifies the innermost lexical machine
     /// (bound as #state-cell in state bodies, so outer machines' labels
     /// are simply not in scope).
     Goto { cell: u64, label: Option<Rc<str>> },
@@ -434,7 +426,7 @@ pub struct Ctx {
     pub patterns: Rc<HashMap<String, Pattern>>,
     /// Card macros: expanded at application, before pattern resolution.
     pub macros: Rc<HashMap<String, Macro>>,
-    /// Forks issued inside instantaneous contexts (manipulate callbacks —
+    /// Forks issued inside instantaneous contexts (manip callbacks —
     /// DMK's temporal-control-at-a-bullet case): collected here, adopted as
     /// child tasks by the executing task's scope after the instant returns.
     pub deferred: Vec<Rc<ActionV>>,
@@ -713,8 +705,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
 
     if let Form::Sym(s) = head {
         match &**s {
-            // "for" is the surface name; "dotimes" kept as an alias
-            "for" | "dotimes" => return sf_dotimes(items, env, ctx, world),
             "loop" => return sf_loop(items, env, ctx, world),
             "recur" => {
                 let vals = items[1..]
@@ -1113,9 +1103,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     child: child.into_node(),
                 }))));
             }
-            "circle" => return sf_circle(items, env, ctx, world),
-            "arrow" => return sf_arrow(items, env, ctx, world),
-            "fan" => return sf_fan(items, env, ctx, world),
             "cart" | "polar" if items[1..].iter().any(contains_t) => {
                 if items.len() != 3 {
                     return Err(format!("{}: expected two components", s));
@@ -1318,12 +1305,12 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     world_ang - ctx.ambient.angle_or(0.0),
                 )));
             }
-            "defvar" => {
+            "defcell" => {
                 let Some(Form::Sym(name)) = items.get(1) else {
-                    return Err("defvar: expected name".into());
+                    return Err("defcell: expected name".into());
                 };
                 let init = evaluate(&items[2], env, ctx, world)?;
-                let scope = cell_scope(env).ok_or("defvar: no cell scope")?;
+                let scope = cell_scope(env).ok_or("defcell: no cell scope")?;
                 return Ok(Val::Action(Rc::new(ActionV::DefVar { scope, name: name.clone(), init })));
             }
             "set!" => {
@@ -1355,17 +1342,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 );
                 return Ok(Val::Num(a + world.next_rand() * (b - a)));
             }
-            "rand-int" => {
-                let (a, b) = (
-                    evaluate(&items[1], env, ctx, world)?.num()?,
-                    evaluate(&items[2], env, ctx, world)?.num()?,
-                );
-                return Ok(Val::Num((a + world.next_rand() * (b - a)).floor()));
-            }
-            "randpm1" => {
-                return Ok(Val::Num(if world.next_rand() < 0.5 { -1.0 } else { 1.0 }));
-            }
-            "stages-action" | "scan" => {
+            "scan" => {
                 return Err(format!("'{}' not implemented in this milestone", s));
             }
             _ => {}
@@ -1523,7 +1500,7 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 }
 
 /// Apply a user fn or builtin. Ambient frames do not cross fn boundaries
-/// (F18). `exec_actions` is set only for manipulate callbacks, whose bodies
+/// (F18). `exec_actions` is set only for manip callbacks, whose bodies
 /// run instantaneously; ordinary fns RETURN action values for composition.
 fn map_path_get(v: &Val, path: &str) -> Option<Val> {
     let mut cur = v.clone();
@@ -1533,7 +1510,7 @@ fn map_path_get(v: &Val, path: &str) -> Option<Val> {
     Some(cur)
 }
 
-/// Entity view passed to predicate queries and manipulate callbacks.
+/// Entity view passed to predicate queries and manip callbacks.
 /// The entity view contains current kinematic fields, sym fields, and columns.
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
@@ -2144,20 +2121,18 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         }
         ActionV::SetCol { target, col, val } => {
             if let Some(i) = world.find(*target) {
-                world.col_set_sym_at(i, *col, *val);
-            }
-            Ok(Val::Nothing)
-        }
-        ActionV::SetStyle { target, style } => {
-            if let Some(i) = world.find(*target) {
-                if let Val::Map(kvs) = style {
-                    for (k, v) in kvs.iter() {
-                        let (Val::Kw(k), Val::Kw(v)) = (k, v) else {
-                            continue;
+                match val {
+                    Val::Num(n) => world.col_set_sym_at(i, *col, *n),
+                    Val::Kw(v) => {
+                        let Some(name) = world.symbols.resolve(*col).map(str::to_string) else {
+                            return Err("set-col: unknown column name".into());
                         };
-                        let field = world.field_sym(k.as_ref());
+                        let field = world.field_sym(name.as_str());
                         let value = world.symbols.intern(v.as_ref());
                         world.sym_field_set_at(i, field, value);
+                    }
+                    other => {
+                        return Err(format!("set-col: expected number or keyword value, got {:?}", other));
                     }
                 }
             }
@@ -2652,62 +2627,6 @@ fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     }
 }
 
-fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
-    let Some(Form::Vector(spec)) = items.get(1) else {
-        return Err("dotimes: expected binding vector".into());
-    };
-    let mut every_ticks: u64 = 0;
-    let mut pairs: Vec<(&Form, &Form)> = Vec::new();
-    let mut k = 0;
-    while k < spec.len() {
-        if let Form::Kw(kw) = &spec[k] {
-            if &**kw == "every" {
-                let secs = evaluate(&spec[k + 1], env, ctx, world)?.num()?;
-                every_ticks = (secs * world.tick_rate()).round().max(0.0) as u64;
-                k += 2;
-                continue;
-            }
-        }
-        if k + 1 >= spec.len() {
-            return Err("dotimes: dangling binding".into());
-        }
-        pairs.push((&spec[k], &spec[k + 1]));
-        k += 2;
-    }
-    let (counter, rest) = pairs.split_first().ok_or("dotimes: missing counter")?;
-    let Form::Sym(var) = counter.0 else {
-        return Err("dotimes: bad counter name".into());
-    };
-    // an ARRAY in the leading position iterates its elements:
-    // (for [b handles] …) — the loop var binds each element in turn
-    let (n, lead_seq) = match evaluate(counter.1, env, ctx, world)? {
-        Val::Arr(xs) => (xs.len() as f64, Some(Val::Arr(xs))),
-        v => (v.num()?, None),
-    };
-    let mut seq_binds: Vec<(Rc<str>, Val)> = Vec::new();
-    if let Some(xs) = lead_seq {
-        seq_binds.push((var.clone(), xs));
-    }
-    let rest_binds = rest
-        .iter()
-        .map(|(name, src)| {
-            let Form::Sym(nm) = name else {
-                return Err("dotimes: bad seq binding name".to_string());
-            };
-            Ok((nm.clone(), evaluate(src, env, ctx, world)?))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    seq_binds.extend(rest_binds);
-    Ok(Val::Action(Rc::new(ActionV::Dotimes {
-        var: var.clone(),
-        n,
-        seq_binds,
-        every_ticks,
-        body: items[2..].to_vec().into(),
-        env: env.clone(),
-    })))
-}
-
 fn sf_loop(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let Some(Form::Vector(binds)) = items.get(1) else {
         return Err("loop: expected binding vector".into());
@@ -3011,6 +2930,17 @@ mod tests {
         evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap()
     }
 
+    fn ev_prelude(src: &str) -> Val {
+        let expanded = crate::edn::expand_src("").unwrap();
+        let forms = read_all(&expanded).unwrap();
+        let card = load_card(&forms).unwrap();
+        let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(card.defs.clone());
+        ctx.macros = Rc::new(card.macros.clone());
+        let f = read_one(src).unwrap();
+        evaluate(&f, &Env::empty(), &mut ctx, &mut World::default()).unwrap()
+    }
+
     fn ev_err(src: &str) -> String {
         let f = read_one(src).unwrap();
         evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap_err()
@@ -3089,7 +3019,7 @@ mod tests {
     fn fn_map_and_easings() {
         assert_eq!(ev("((fn [x] (* x x)) 5)").num().unwrap(), 25.0);
         assert_eq!(ev("((fn [[x y]] (+ x y)) [2 3])").num().unwrap(), 5.0);
-        let Val::Arr(items) = ev("(map (fn [x] (inc x)) [1 2 3])") else { panic!() };
+        let Val::Arr(items) = ev_prelude("(map (fn [x] (inc x)) [1 2 3])") else { panic!() };
         assert_eq!(items[2].num().unwrap(), 4.0);
         assert!((ev("(eoutsine 1)").num().unwrap() - 1.0).abs() < 1e-9);
         let v = ev("(lerpsmooth eoutsine 0 4 2 0 480)").num().unwrap();
@@ -3203,7 +3133,7 @@ mod tests {
 
     #[test]
     fn circle_returns_poses() {
-        let Val::Arr(items) = ev("(circle 4)") else { panic!() };
+        let Val::Arr(items) = ev_prelude("(circle 4)") else { panic!() };
         assert_eq!(items.len(), 4);
         let Val::Pose(p) = &items[1] else { panic!() };
         assert!((p.angle_or(0.0) - 90.0).abs() < 1e-9);
@@ -3283,7 +3213,7 @@ mod tests {
     #[test]
     fn vel_with_trailing_child() {
         // 200's guide: (vel c[..] (circle 7 (polar ...)))
-        let Val::Arr(items) = ev("(vel c[1 0] (circle 7 (linear c[1 0])))") else { panic!() };
+        let Val::Arr(items) = ev_prelude("(vel c[1 0] (circle 7 (linear c[1 0])))") else { panic!() };
         assert_eq!(items.len(), 7);
         assert!(matches!(&items[0], Val::DynPose(d) if is_scanned(d.node())));
     }
@@ -3291,7 +3221,7 @@ mod tests {
     #[test]
     fn laser_value_and_framing() {
         let Val::Arr(items) =
-            ev("(circle 6 (curve p[m\"2*t\" m\"-14*u\"] {:warn 1.5 :active inf :u-max 3.5 :resolution 0.4}))")
+            ev_prelude("(circle 6 (curve p[m\"2*t\" m\"-14*u\"] {:warn 1.5 :active inf :u-max 3.5 :resolution 0.4}))")
         else {
             panic!()
         };
@@ -3330,7 +3260,7 @@ mod tests {
 
     #[test]
     fn plus_translates_formations() {
-        let Val::Arr(items) = ev("(+ c[-7 0] (arrow 3 1.0 0.5))") else { panic!() };
+        let Val::Arr(items) = ev_prelude("(+ c[-7 0] (arrow 3 1.0 0.5))") else { panic!() };
         assert_eq!(items.len(), 3);
         let Val::Pose(center) = &items[1] else { panic!() };
         assert!((center.x - -7.0).abs() < 1e-9 && center.y.abs() < 1e-9);

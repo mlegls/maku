@@ -540,7 +540,7 @@ mod tests {
         );
         let mut inst = Instance::new(Some(rig));
         inst.boot("../../cards/translations/130_bowap.maku".into(), None);
-        assert!(inst.running());
+        assert!(inst.running(), "{}", inst.status());
         assert!(inst.patterns().len() >= 2, "menu populated");
 
         let mut inputs = Inputs::classic((0.0, -4.0), (0.0, 3.0));

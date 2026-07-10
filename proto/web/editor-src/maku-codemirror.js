@@ -14,7 +14,7 @@ import {
 import { tags } from '@lezer/highlight';
 
 const FORM_WORDS = new Set([
-  'def', 'defn', 'defmacro', 'defpattern', 'defvar', 'defcell', 'defchannel',
+  'def', 'defn', 'defmacro', 'defpattern', 'defcell', 'defchannel',
   'bind-channel!', 'export', 'import', 'fn', 'let', 'if', 'when', 'unless',
   'seq', 'par', 'fork', 'finally', 'wait', 'wait-for', 'until', 'race',
   'states', 'goto', 'phases', 'spawn', 'spawn-bullet', 'spawn-shot',

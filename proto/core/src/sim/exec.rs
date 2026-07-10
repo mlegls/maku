@@ -6,16 +6,6 @@ pub(super) enum TF {
     /// (until pred ...) scope marker: while on the stack, the predicate
     /// cancels this task; forks under it inherit it as a task guard.
     Guard { pred: Form, env: Env },
-    Dot {
-        var: Rc<str>,
-        n: f64,
-        seq_binds: Vec<(Rc<str>, Val)>,
-        every: u64,
-        body: Rc<[Form]>,
-        env: Env,
-        i: f64,
-        started: bool,
-    },
     Loop {
         names: Vec<Rc<str>>,
         body: Rc<[Form]>,
@@ -237,33 +227,6 @@ pub(super) fn step_task(
                     Some((f, env.clone()))
                 }
             },
-            TF::Dot { var, n, seq_binds, every, body, env, i, started } => {
-                if *i >= *n {
-                    task.stack.pop();
-                    continue;
-                }
-                if *started && *every > 0 {
-                    *started = false;
-                    task.wait = *every;
-                    return Ok(false);
-                }
-                let mut e = env.bind(var.clone(), Val::Num(*i));
-                let idx_i = *i as i64;
-                for (nm, src) in seq_binds.iter() {
-                    let v = match src {
-                        Val::Arr(items) if !items.is_empty() => {
-                            items[(idx_i.rem_euclid(items.len() as i64)) as usize].clone()
-                        }
-                        other => other.clone(),
-                    };
-                    e = e.bind(nm.clone(), v);
-                }
-                *i += 1.0;
-                *started = true;
-                let body = body.clone();
-                task.stack.push(TF::Seq { items: body, idx: 0, env: e });
-                continue;
-            }
             TF::Loop { names, body, env, cur, idx } => {
                 if *idx >= body.len() {
                     task.stack.pop();
@@ -380,7 +343,6 @@ fn run_action(
         | ActionV::Remat { .. }
         | ActionV::Render { .. }
         | ActionV::SetCol { .. }
-        | ActionV::SetStyle { .. }
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
@@ -433,19 +395,6 @@ fn run_action(
         ActionV::InFrame { frame, inner } => {
             task.stack.push(TF::Frame(frame.clone()));
             run_action(inner, task, ctx, world, new_tasks)
-        }
-        ActionV::Dotimes { var, n, seq_binds, every_ticks, body, env } => {
-            task.stack.push(TF::Dot {
-                var: var.clone(),
-                n: *n,
-                seq_binds: seq_binds.clone(),
-                every: *every_ticks,
-                body: body.clone(),
-                env: env.clone(),
-                i: 0.0,
-                started: false,
-            });
-            Ok(false)
         }
         ActionV::Loop { names, inits, body, env } => {
             task.stack.push(TF::Loop {
@@ -596,7 +545,7 @@ fn run_action(
         }
         ActionV::CallPattern { params, body, args, caller_cells, fresh_cells } => {
             // the §10 embedding adapter: fresh cells by default (isolated
-            // defvar state per instance), the caller's for (inline …)
+            // defcell state per instance), the caller's for (inline …)
             let cells = if *fresh_cells {
                 fresh_cell_scope()
             } else {

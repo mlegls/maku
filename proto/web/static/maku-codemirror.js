@@ -20750,7 +20750,6 @@ var FORM_WORDS = new Set([
   "defn",
   "defmacro",
   "defpattern",
-  "defvar",
   "defcell",
   "defchannel",
   "bind-channel!",

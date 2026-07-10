@@ -132,7 +132,7 @@ Ours: bullets ride the guide frame (F14, unexpressed dyn) with no flags; the
 reflection control is an event-driven remat:
 
 ```edn
-(manipulate (query (= :family :scircle) (colliding-with :reflector))
+(manip (query (= :family :scircle) (colliding-with :reflector))
   (fn [b] (remat b :motion (linear (reflect (vel b) (surface-normal b))))))
 ```
 

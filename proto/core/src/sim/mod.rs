@@ -511,7 +511,7 @@ impl Sim {
         self.ctx.sig.channel(name)
     }
 
-    /// DEBUG/tooling read of the pattern-scoped control cells (defvar).
+    /// DEBUG/tooling read of the pattern-scoped control cells (defcell).
     /// Cells are deliberately NOT part of the host game contract — the
     /// export surface is channels/events/tags (§3) — but an inspector
     /// wants to see them (sorted for stable display).

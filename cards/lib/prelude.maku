@@ -18,6 +18,78 @@
 (defmacro unless [pred & body]
   `(if (not ~pred) (seq ~@body)))
 
+(defn inc [x] (+ x 1))
+(defn dec [x] (- x 1))
+
+(defn value-or [x d] (if (nothing? x) d x))
+
+(defn rand-int [a b] (floor (rand a b)))
+(defn randpm1 [] (if (< (rand 0 1) 0.5) -1 1))
+
+(defn circle [n & child]
+  (let [frames (if (= n 0)
+                 (nth [] 0)
+                 (map (fn [k] (rot (* k (/ 360 n)))) (iota n)))]
+    (if (= (count child) 0) frames (frames (first child)))))
+
+(defn fan [n step & child]
+  (let [frames (map (fn [k] (rot (* (- k (/ (- n 1) 2)) step))) (iota n))]
+    (if (= (count child) 0) frames (frames (first child)))))
+
+(defn arrow [n back side & child]
+  (let [half (floor (/ (- n 1) 2))]
+    (let [frames (map (fn [k]
+                        (let [j (- k half)]
+                          (cart (* (- 0 back) (abs j)) (* side j))))
+                      (iota n))]
+      (if (= (count child) 0) frames (frames (first child))))))
+
+(defn for-spec* [spec]
+  (loop [xs (forms spec) pairs [] every 0]
+    (if (= (count xs) 0)
+      {:pairs pairs :every every}
+      (if (= (form-name (first xs)) :every)
+        (recur (drop 2 xs) pairs (nth xs 1))
+        (recur (drop 2 xs)
+               (concat pairs [[(nth xs 0) (nth xs 1)]])
+               every)))))
+
+(defn for-bind* [src i]
+  (if (seq? src)
+    (if (= (count src) 0) src (nth src i))
+    src))
+
+(defn for-bindings* [pairs]
+  (loop [xs pairs out []]
+    (if (= (count xs) 0)
+      out
+      (let [p (first xs)]
+        (recur (rest xs)
+               (concat out [(nth p 0) `(for-bind* ~(nth p 1) __for-i)]))))))
+
+(defmacro for [spec & body]
+  (let [parsed (for-spec* spec)
+        pairs (get parsed :pairs)
+        first-pair (first pairs)
+        var (nth first-pair 0)
+        src (nth first-pair 1)
+        rest-pairs (rest pairs)
+        every (get parsed :every)
+        wait-form (if (= every 0) [] [`(when (< (inc __for-i) __for-n) (wait ~every))])]
+    `(let [__for-lead ~src
+           __for-n (if (seq? __for-lead) (count __for-lead) __for-lead)]
+       (loop [__for-i 0]
+         (if (< __for-i __for-n)
+           (seq
+             (let [~var (if (seq? __for-lead) (for-bind* __for-lead __for-i) __for-i)
+                   ~@(for-bindings* rest-pairs)]
+               ~@body)
+             ~@wait-form
+             (recur (inc __for-i))))))))
+
+(defmacro dotimes [spec & body]
+  `(for ~spec ~@body))
+
 ;; A laser :fill helper: fraction reaches 0 at `warn` and 1 at
 ;; `warn + dur`. The laser clamps the sampled fraction to 0..1.
 (defn fill-linear [warn dur]

@@ -85,7 +85,7 @@
     (spell-2-with-root root)))
 
 (defpattern spell-2-with-root [root []]
-  (defvar mode 1)                          ; F16: pattern-scoped control cell
+  (defcell mode 1)                          ; F16: pattern-scoped control cell
   (let [root-main (nth root 0)]
     (seq
       (bind-channel! $boss (:pos root-main))
@@ -144,7 +144,7 @@
 ;; ---------------------------------------------------------------------------
 ;; What this exercised (all recent machinery at once)
 ;;
-;;   defvar/set!/live (F16)   DMK's exec b{ hvar isAccel } + whiletrue polling
+;;   defcell/set!/live (F16)   DMK's exec b{ hvar isAccel } + whiletrue polling
 ;;                            + mode-multiplied facing. Control layer reads
 ;;                            the cell plainly ((= mode 1) -- it owns it);
 ;;                            SIGNAL slots must mark live(mode) (snap-by-

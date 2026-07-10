@@ -1,7 +1,7 @@
 use super::*;
 
 const NAMES: &[&str] = &[
-    "forms", "get", "form-type", "form-name", "nothing?", "num?",
+    "forms", "get", "form-type", "form-name", "nothing?", "num?", "seq?",
 ];
 
 pub(crate) fn is_builtin(name: &str) -> bool {
@@ -48,6 +48,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
         })),
         "nothing?" => Ok(mask(matches!(args[0], Val::Nothing))),
         "num?" => Ok(mask(matches!(args[0], Val::Num(_)))),
+        "seq?" => Ok(mask(seq_view(&args[0]).is_some())),
         _ => return Ok(None),
     };
     r.map(Some)

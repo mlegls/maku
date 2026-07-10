@@ -28,12 +28,14 @@ clock (`ex1-restyle`):
       (seq
         (wait 1)
         (event :sfx "x-transform-1")
-        (set-style b {:family :arrow :color :red :variant :b})))))
+        (set-col b :family :arrow)
+        (set-col b :color :red)
+        (set-col b :variant :b)))))
 ```
 
 Read the forked `seq` as the bullet's *biography*: fly for a second,
-announce, turn into a red arrow. `(set-style b {…})` changes a live
-bullet's appearance in place.
+announce, turn into a red arrow. `set-col` writes live bullet fields in
+place.
 
 A timeline can also end the bullet's life and start others
 (`ex2-burst`):

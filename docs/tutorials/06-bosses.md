@@ -141,7 +141,7 @@ branch — three lines, next to the phase they judge.
 Two structural notes:
 
 - **There is no setup phase.** Setup is code before the machine — the
-  `move` above, a `defvar`, whatever. While developing, point a `goto`
+  `move` above, a `defcell`, whatever. While developing, point a `goto`
   at the state under test, or just reorder the clauses.
 - **Explicit routing is rare.** Since a state's default successor is
   the next state in order, a linear fight writes no `goto` at all;

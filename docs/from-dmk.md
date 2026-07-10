@@ -39,7 +39,7 @@ The old `spawn-*` macro names remain as aliases.
 | `flipygt(4, _)` | `(remat b (linear c[b.vel.x (- 0 b.vel.y)]))` — the reflection written out |
 | `cull(y < -2)` | `(manip (fn [b] (< b.pos.y -2)) (fn [b] (cull b)))` |
 | `batch(pred, { … })` | a `seq` in the callback |
-| `restyleeffect(style, fx, _)` | `(set-style b {...})`, plus an effect spawn if wanted |
+| `restyleeffect(style, fx, _)` | `(set-col b :family :arrow)` / other style-field writes, plus an effect spawn if wanted |
 | `sm(_, sync …)` | spawn directly in the callback, anchored by `((pose (pos b)) …)` |
 | `softcull(fx, _)` | effect spawn + `(cull b)` |
 | enforced control ordering (SM before cull) | explicit `seq` order; post-cull verbs are dead-handle no-ops |

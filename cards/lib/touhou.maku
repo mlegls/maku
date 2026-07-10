@@ -48,8 +48,6 @@
                      next (if (nothing? here) default here)]
                  (damage-value* rest next))))
 
-(defn value-or [x d] (if (nothing? x) d x))
-
 ;; Beam lifecycle is ordinary fields (:warn :active :fill), translated each
 ;; tick into static collider/render extents by the projector bodies below.
 (defn laser-hot-fraction [e ctx]

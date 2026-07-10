@@ -10,10 +10,8 @@ use super::*;
 const NAMES: &[&str] = &[
     "matches",
     "manip",
-    "manipulate",
     "remat",
     "set-col",
-    "set-style",
     "cull",
     "pos",
     "on-curve",
@@ -23,7 +21,6 @@ const NAMES: &[&str] = &[
     "collisions",
     "curve-samples",
     "render",
-    "entity-pos",
     "entity-col",
     "nearest-entity",
     "export",
@@ -43,8 +40,7 @@ pub(crate) fn special(
 ) -> Result<Option<Val>, String> {
     let val = match name {
         "matches" => sf_matches(items, env)?,
-        // "manip" is the surface name; "manipulate" kept as an alias.
-        "manip" | "manipulate" => {
+        "manip" => {
             let target = evaluate(&items[1], env, ctx, world)?;
             let callback = evaluate(&items[2], env, ctx, world)?;
             if is_query_value(&target) {
@@ -77,19 +73,12 @@ pub(crate) fn special(
             let Val::Kw(col) = evaluate(&items[2], env, ctx, world)? else {
                 return Err("set-col: expected keyword column name".into());
             };
-            let val = evaluate(&items[3], env, ctx, world)?.num()?;
+            let val = evaluate(&items[3], env, ctx, world)?;
             Val::Action(Rc::new(ActionV::SetCol {
                 target: id,
                 col: world.intern_col(col.as_ref()),
                 val,
             }))
-        }
-        "set-style" => {
-            let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                return Err("set-style: expected bullet handle".into());
-            };
-            let style = evaluate(&items[2], env, ctx, world)?;
-            Val::Action(Rc::new(ActionV::SetStyle { target: id, style }))
         }
         "cull" => {
             if items.len() == 1 {
@@ -102,25 +91,8 @@ pub(crate) fn special(
             }
         }
         "pos" => {
-            let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
-                return Err("pos: expected bullet handle".into());
-            };
-            let Some(i) = world.find(id) else {
-                return Err("pos: dead handle".into());
-            };
-            let dyn_figure = world
-                .entities
-                .dyn_figure(i)
-                .ok_or_else(|| format!("pos: missing dyn figure for row {i}"))?;
-            let tau = world.entity_tau(i, world.tick);
-            let readers = entity_motion_readers(i, world);
-            let state = MotionState::new();
-            let p = dyn_figure_pose_in(
-                dyn_figure,
-                tau,
-                MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate()),
-            )?;
-            Val::Pose(Pose::point(p.x, p.y))
+            let target = evaluate(&items[1], env, ctx, world)?;
+            entity_field_value(target, "pos", world, &ctx.sig)?
         }
         "on-curve" => {
             let Val::Handle(id) = evaluate(&items[1], env, ctx, world)? else {
@@ -200,10 +172,6 @@ pub(crate) fn special(
         "render" => {
             let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?, world, &ctx.sig)?;
             Val::Action(Rc::new(ActionV::Render { row }))
-        }
-        "entity-pos" => {
-            let target = evaluate(&items[1], env, ctx, world)?;
-            entity_field_value(target, "pos", world, &ctx.sig)?
         }
         "entity-col" => {
             let target = evaluate(&items[1], env, ctx, world)?;

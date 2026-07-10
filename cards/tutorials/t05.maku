@@ -48,7 +48,7 @@
 ;; and other patterns read both the same way.
 (defpattern ex5-export []
   (seq
-    (defvar volleys 0)
+    (defcell volleys 0)
     (export volleys)
     (fork
       (for [i inf :every 1.5]

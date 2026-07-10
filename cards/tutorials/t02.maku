@@ -19,7 +19,9 @@
           (seq
             (wait 1)
             (event :sfx "x-transform-1")
-            (set-style b {:family :arrow :color :red :variant :b})))))))
+            (set-col b :family :arrow)
+            (set-col b :color :red)
+            (set-col b :variant :b)))))))
 
 ;; 2. burst at an age: the timeline ends the bullet's life and starts
 ;; new ones where it died. A dead handle (player bombed it first) makes

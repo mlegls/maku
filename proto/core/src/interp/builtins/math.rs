@@ -1,9 +1,9 @@
 use super::*;
 
 const NAMES: &[&str] = &[
-    "+", "-", "*", "/", "mod", "pow", "inc", "dec", "=", "<", ">", "<=", ">=", "min",
-    "max", "abs", "quot", "ticks", "not", "sin", "cos", "sine", "lssht", "lerp", "lerp3",
-    "lerpsmooth", "einsine", "eoutsine", "eiosine",
+    "+", "-", "*", "/", "mod", "pow", "=", "<", ">", "<=", ">=", "min", "max",
+    "abs", "floor", "ceil", "round", "sqrt", "quot", "ticks", "not", "sin", "cos",
+    "sine", "lssht", "lerp", "lerp3", "lerpsmooth", "einsine", "eoutsine", "eiosine",
 ];
 
 pub(crate) fn is_builtin(name: &str) -> bool {
@@ -42,8 +42,6 @@ pub(crate) fn builtin(name: &str, args: &[Val], tick_rate: f64) -> Result<Option
         "/" => fold_num(args, 1.0, |a, b| a / b),
         "mod" => Ok(Val::Num(arg_num(name, args, 0)?.rem_euclid(arg_num(name, args, 1)?))),
         "pow" => Ok(Val::Num(arg_num(name, args, 0)?.powf(arg_num(name, args, 1)?))),
-        "inc" => Ok(Val::Num(arg_num(name, args, 0)? + 1.0)),
-        "dec" => Ok(Val::Num(arg_num(name, args, 0)? - 1.0)),
         "=" => Ok(mask(val_eq(&args[0], &args[1]))),
         "<" => Ok(mask(arg_num(name, args, 0)? < arg_num(name, args, 1)?)),
         ">" => Ok(mask(arg_num(name, args, 0)? > arg_num(name, args, 1)?)),
@@ -52,6 +50,10 @@ pub(crate) fn builtin(name: &str, args: &[Val], tick_rate: f64) -> Result<Option
         "min" => Ok(Val::Num(arg_num(name, args, 0)?.min(arg_num(name, args, 1)?))),
         "max" => Ok(Val::Num(arg_num(name, args, 0)?.max(arg_num(name, args, 1)?))),
         "abs" => Ok(Val::Num(arg_num(name, args, 0)?.abs())),
+        "floor" => Ok(Val::Num(arg_num(name, args, 0)?.floor())),
+        "ceil" => Ok(Val::Num(arg_num(name, args, 0)?.ceil())),
+        "round" => Ok(Val::Num(arg_num(name, args, 0)?.round())),
+        "sqrt" => Ok(Val::Num(arg_num(name, args, 0)?.sqrt())),
         "quot" => Ok(Val::Num((arg_num(name, args, 0)? / arg_num(name, args, 1)?).trunc())),
         "ticks" => Ok(Val::Num(arg_num(name, args, 0)? / tick_rate)),
         "not" => Ok(mask(arg_num(name, args, 0)? == 0.0)),

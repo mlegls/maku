@@ -55,9 +55,9 @@ sampled (`snap`), never applied; BOTH constructors are pure (`Closed` a pure
 fn of t; `Scanned`'s step a pure `(s, Inputs) → (s, a)` transition — a
 "procedural" signal waits by *state*, a countdown in s, never by `wait`).
 Functions are ordinary pure lambdas; there is no separate procedure arrow —
-a procedure is a function whose *codomain* is `Action` (manipulate
+a procedure is a function whose *codomain* is `Action` (manip
 callbacks). `Action` is an inert first-class effect description
-(`wait : Float → Action`; spawn/event/manipulate/fork construct, seq/par/
+(`wait : Float → Action`; spawn/event/manip/fork construct, seq/par/
 race/loop compose); only the control-layer scheduler executes them.
 Enforcement of signal purity is structural, not analytical: no signal slot
 accepts an Action, no primitive evaluates an Action inside a signal, and
@@ -371,7 +371,7 @@ identity bundling render class, collision class, and addressability. Ours:
 registry (render contract: unknown family fails at card load), color/variant
 as keywords. **Pool identity = the interned record**; **style is `ir`, never
 signal-valued** — it determines SoA residency, and residency changes are
-events (manipulate/remat-level pool migration), not signals; animatable
+events (manip/remat-level pool migration), not signals; animatable
 appearance (`:hue`, alpha, scale) stays in separate signal tags (§7). Queries
 become typed predicates over axes (`(= :family :star)` for `"star-*/w"`);
 card recolor = `assoc` on the `:color` axis.
@@ -508,7 +508,7 @@ Corpus forcing case: 060's `polar(2*t, lr*20*t)` mixes slot-bound `t` with
 lexically captured `lr`. Pending language.md §3/§11 amendment.
 
 **F13 — `spawn` returns Bullet handles (adopted).** The control layer may hold
-them; `manipulate` accepts a handle where it accepts a query (a handle is a
+them; `manip` accepts a handle where it accepts a query (a handle is a
 degenerate predicate); dead handles are no-ops (generation-safe). This
 dissolves DMK's hoist-index-into-bullet-state + persistent-control +
 per-frame-predicate idiom whenever the trigger schedule is static (110: all
@@ -536,7 +536,7 @@ Possible future sugar: `(on-axis k xs)`. DMK avoids the ambiguity by
 attaching modifiers to repeater levels — positional information our
 spawn-level meta must encode by length or annotation.
 
-**F16 — pattern-scoped control cells (adopted).** `(defvar name init)` +
+**F16 — pattern-scoped control cells (adopted).** `(defcell name init)` +
 `(set! name v)` actions + reads. The internal analogue of injected channels
 (SC control-bus precedent): writes are frame-stamped events on the log, so
 replay/scrub survives; the control layer reads the cell plainly (it owns it,
@@ -557,11 +557,11 @@ their results (spawn handles) bind. Pure lets are unaffected. Pending
 language.md §4/§6 amendment.
 
 **F18 (from the prototype) — ambient frames do not cross `fn` boundaries.**
-110's manipulate callback spawns at `(+ (pos b) …)` — world coordinates; if
+110's manip callback spawns at `(+ (pos b) …)` — world coordinates; if
 the lexically enclosing anchor frame leaked into the callback, the explosion
 would be double-anchored. Rule: lexical distribution stops at lambdas, the
 same way it stops at embedded patterns (the adapter/caller decides). Verified
-by test (`handles_and_manipulate`). Pending language.md §4 amendment.
+by test (`handles_and_manip`). Pending language.md §4 amendment.
 
 **F19 (from the prototype) — difficulty must thread explicitly; pure loops
 fold inline.** Two catches from running Spell 2: (a) `guide-rig` referenced
@@ -584,7 +584,7 @@ The ambient itch decomposes:
    anywhere without threading. F19(a)'s root cause was misclassification:
    DMK's `dl` IS rank, already an injected channel per §3 —
    `(def factor (pow rank 0.3))` and the threading disappears.
-2. **Read-write ambient = cells** (`defvar`/`set!`, F16): already a shared
+2. **Read-write ambient = cells** (`defcell`/`set!`, F16): already a shared
    namespace, but pattern-scoped; embedding adapters decide sharing.
 3. **Scoped overrides** `(with {rank 0.5} body)` — dynamic *binding*, not
    mutation: channel values overridden for a lexical subtree. Delimited
@@ -649,7 +649,7 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   transition; the boss script's `switch(reflected, …)` idiom decoded as
   hand-rolled rematerialization.
 - `ph_boss2_spell2.maku` — complete (the ceiling test). Exercises everything
-  at once: `defvar` cells (F16), the first genuinely *shared* scan (the
+  at once: `defcell` cells (F16), the first genuinely *shared* scan (the
   guide), summons-as-fork-in-frame, `whiletrue` = pause (verified) →
   `wait-for`, random-walk fold, rand/brand dissolution, macros→functions.
   ~60 lines vs ~100; the whole card except two parked guides is piecewise-

@@ -54,7 +54,7 @@
       (seq
         (wait 0.6)
         (dotimes [j n, col palette :every 0.3]
-          (manipulate (nth stars j)
+          (manip (nth stars j)
             (fn [b]
               (event :sfx "x-fire-burst-1")
               (bullet (+ (pos b) (circle 22 (vel c[(lerp 0.2 1 t 0 4) 0]))) {:style {:family :star :color col :variant :w}
@@ -63,7 +63,7 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Adopted surface (F13): `spawn` returns an array of Bullet handles, which
-;; the control layer may hold. `manipulate` accepts a handle (or array) where
+;; the control layer may hold. `manip` accepts a handle (or array) where
 ;; it accepts a query -- a handle is a degenerate predicate. Handles are
 ;; generation-safe: manipulating a dead handle is a no-op (star already culled
 ;; by a bomb => its explosion silently doesn't happen, same as DMK, where the
@@ -101,7 +101,7 @@
 ;;   :facing signals          Closed; consumed by render contract ....... ar
 ;;   stars (handle array)     control-layer value; generation-safe refs
 ;;   explosion schedule       dotimes: input-independent timeline
-;;   (pos b) at manipulate    snap at event tick -- rematerialization-
+;;   (pos b) at manip    snap at event tick -- rematerialization-
 ;;                            style capture (SS9); the child ring's anchor
 ;;                            is an ir constant thereafter
 ;;   whole pattern            no injected signals; scrubbable given the

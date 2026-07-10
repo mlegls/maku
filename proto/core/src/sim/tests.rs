@@ -83,8 +83,8 @@
                    period (ticks 8)]
   ((pose c[0 2])
     (dotimes [i inf :every period]
-      (spawn ((rot m"0.2*(i+1)*(i+2)")
-               (circle arms (linear c[speed 0])))
+      (spawn ((rot (* 0.2 (+ i 1) (+ i 2)))
+              (circle arms (linear c[speed 0])))
              {:style {:family :gem :variant :w
                       :color [:yellow :orange :red :pink :purple]}}))))
 "#;
@@ -153,16 +153,16 @@
     }
 
     /// 110's mechanism end-to-end: let-bound spawn handles + scheduled
-    /// manipulate with explode-and-cull.
+    /// manip with explode-and-cull.
     #[test]
-    fn handles_and_manipulate() {
+    fn handles_and_manip() {
         const CARD: &str = r#"
 (defpattern boom []
   ((pose c[0 1])
     (let [stars (spawn (circle 4 (linear c[1 0])) {:style {:family :lstar}})]
       (seq
         (wait 0.5)
-        (manipulate (nth stars 0)
+        (manip (nth stars 0)
           (fn [b]
             (spawn (+ (pos b) (circle 8 (linear c[2 0])))
                    {:style {:family :star}})
@@ -1587,7 +1587,7 @@
     fn until_cancels_subtree() {
         const CARD: &str = r#"
 (defpattern u []
-  (defvar stop 0)
+  (defcell stop 0)
   (par
     (until (= stop 1)
       (par (fork (dotimes [i inf :every (ticks 5)]
@@ -1682,7 +1682,7 @@
     (spawn (circle 4 (linear c[0.5 0]))
            {:style {:family :seed} :ci (iota 4)})
     (wait (ticks 2))
-    (manipulate (fn [b] (* (= b.family :seed) (> b.ci 2.5)))
+    (manip (fn [b] (* (= b.family :seed) (> b.ci 2.5)))
       (fn [b]
         (seq
           (fork (seq (wait (ticks 10))
@@ -1720,10 +1720,10 @@
         const CARD: &str = r#"
 (defpattern p []
   (seq
-    (defvar probe 0)
+    (defcell probe 0)
     (export probe)
     (spawn (pose c[3 4]) {:style {:family :circle}})
-    (manipulate (fn [b] (* (= b.family :circle) (> b.pos.y 1)))
+    (manip (fn [b] (* (= b.family :circle) (> b.pos.y 1)))
       (fn [b] (set! probe b.pos.y)))))
 (defpattern gather []
   (spawn ((rot m"(30 * iota(12)).[iota(3)]") (linear c[1 0]))))
@@ -1802,7 +1802,7 @@
     }
 
     /// The §10 embedding adapters: pattern instances get ISOLATED cells by
-    /// default (two embeddings of the same pattern don't share defvar
+    /// default (two embeddings of the same pattern don't share defcell
     /// state); (inline …) shares the caller's scope; defns called from a
     /// pattern see its cells dynamically (spell-2's guide-rig idiom).
     #[test]
@@ -1811,12 +1811,12 @@
 (defn helper-reads [] (spawn (circle (live n) (linear c[1 0]))))
 (defpattern counter [start 1]
   (seq
-    (defvar n start)
+    (defcell n start)
     (set! n (+ (live n) 1))
     (helper-reads)))                      ; defn sees THIS instance's n
 (defpattern outer []
   (seq
-    (defvar n 100)
+    (defcell n 100)
     (export n)
     (par (counter 1) (counter 5))         ; isolated: 2 and 6, not shared
     (wait (ticks 2))
@@ -1851,7 +1851,7 @@
 (defchannel $target-hp 0)
 (defpattern e []
   (seq
-    (defvar phase 1)
+    (defcell phase 1)
     (export phase)
     (let [target (enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
       (bind-channel! $target-hp (value-or (:hp (nth target 0)) 0)))
@@ -2309,7 +2309,7 @@
         const CARD: &str = r#"
 (defpattern uc []
   (seq
-    (defvar stop 0)
+    (defcell stop 0)
     (fork (seq (wait 0.1) (set! stop 1)))
     (until (> stop 0)
       (for [i inf :every (ticks 2)]
@@ -2358,7 +2358,7 @@
         const CARD: &str = r#"
 (defpattern f []
   (seq
-    (defvar stop 0)
+    (defcell stop 0)
     (fork (seq (wait 0.05) (set! stop 1)))
     (until (> stop 0)
       (finally
@@ -2385,7 +2385,7 @@
         const CARD: &str = r#"
 (defpattern f []
   (seq
-    (defvar p 0)
+    (defcell p 0)
     (fork (seq (wait 0.05) (set! p 1)))
     (until (> p 0)
       (fork (finally
@@ -2490,7 +2490,7 @@
         const CARD: &str = r#"
 (defpattern m []
   (seq
-    (defvar hp 10)
+    (defcell hp 10)
     (export hp)
     (states
       (:spell
@@ -2570,7 +2570,7 @@
 (import "touhou")
 (defpattern m []
   (seq
-    (defvar hp 5)
+    (defcell hp 5)
     (export hp)
     (fork (seq (wait 0.2) (set! hp 0)))
     (phases
@@ -2826,7 +2826,7 @@ fn bind_channel_closes_over_handles_and_cells() {
 (defchannel $dummy {:hp 0 :phase :none})
 (defpattern p []
   (seq
-    (defvar phase :warmup)
+    (defcell phase :warmup)
     (let [e (enemy (pose c[0 2]) {:hp 5})]
       (let [b (nth e 0)]
         (bind-channel! $dummy {:hp (:hp b) :phase phase})
@@ -2913,13 +2913,13 @@ fn entity_sets_broadcast_keyword_accessors() {
 }
 
 #[test]
-fn predicate_queries_drive_manipulate() {
+fn predicate_queries_drive_manip() {
     const CARD: &str = r#"
 (defpattern p []
   (seq
     (spawn (pose c[0 0]) {:team :enemy :hp 4 :style {:color :red}})
     (spawn (pose c[0 0]) {:team :enemy :hp 6 :style {:color :blue}})
-    (manipulate (matches :team :enemy :color :red)
+    (manip (matches :team :enemy :color :red)
       (fn [b] (set-col b :hp 1)))
     (wait (ticks 1))))
 "#;
@@ -2946,7 +2946,7 @@ fn keyword_metadata_fields_query_and_access() {
   (seq
     (spawn (pose c[0 0]) {:team :enemy :role :boss :hp 4})
     (spawn (pose c[1 0]) {:team :enemy :role :elite :hp 6})
-    (manipulate (matches :role :boss)
+    (manip (matches :role :boss)
       (fn [b] (set-col b :hp 1)))
     (wait (ticks 1))))
 "#;
