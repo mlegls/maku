@@ -189,16 +189,19 @@ Kernel-shrink direction from this principle (beyond the tables below):
 3. **`set-style`**: confirm nothing calls it (cards/corpus), then delete.
 4. **`linear` / integrator**: recorded in TODO under stratification.
 
-## Suggested first moves (safe now, no design blockers)
+## First moves — DONE (kernel shrink wave 1)
 
-- `for`/`dotimes` → prelude macros; delete `sf_dotimes`.
-- `inc`, `dec` → prelude.
-- `circle`/`fan`/`arrow` → prelude over `iota`+`rot`/`cart` (verify
-  element-seed and style-axis broadcast shapes survive: formations must
-  still produce the same §5 shape paths for F15 axis rules — the nested
-  array structure from `map` should reproduce it; test with the axis tests).
-- Drop the `manipulate` alias; merge `pos`/`entity-pos`.
-- Delete `set-style` after a corpus grep.
+Landed: `defvar`→`defcell`; `manipulate` alias and `entity-pos` gone (`pos`
+takes handle or view); `stages-action` stub deleted; `set-style` replaced
+by `set-col` (now writes sym fields too); `for`/`dotimes`, `inc`/`dec`,
+`circle`/`fan`/`arrow`, `rand-int`/`randpm1` (identical draw counts), and
+`value-or` are prelude macros/defns; `floor`/`ceil`/`round`/`sqrt` added to
+the math intrinsics. The `emit` unification (render/event → prelude macros
+over `(emit :stream row)`) is a separate follow-up change.
 
 Everything else waits on: profiling harness (easings, derived array verbs),
-the schema/manifest pass (nothing here), or flags 1/2.
+the schema/manifest pass (`channel` merge included — the
+`(defchannel $x (channel $x default))` host-read idiom is manifest
+territory), top-level macro expansion in the card loader (`defcollider` →
+lib), the `scan` design (flag 2), or the remat implementation
+(`change-col`).
