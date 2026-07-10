@@ -31,16 +31,20 @@ pattern bodies); a `(channel init)` constructor with unsigiled handles
 position reads by today's channel conventions.
 
 ```clojure
-(def $player :injected)     ; top level: host-provided, manifest-checked
-(def $tick (world-clock))   ; top level: computed, refresh-in-order
-                            ; (defchannel dissolves into def + sigil)
+(def $player)                                ; declare
+(bind! $player (from-host))                  ; produce (host is just a producer)
+(export! $player)                            ; publish
+
+(def $num-enemies)
+(bind! $num-enemies (sum (entities-where ...)))
+(export! $num-enemies)
+                            ; (defchannel dissolves into def + bind! + export!)
 
 (defpattern turret [$ammo]  ; sigiled param: receives the stream (handle)
   (set! $ammo (- $ammo 1))) ; unsigiled param would snap instead
 
 (defpattern boss []
   (let [$shared 30]         ; local sigiled binding = fresh private stream
-    (bind-channel! ...)     ; (see lifecycle below)
     (par (turret $shared) (turret $shared))))  ; explicit sharing
 ```
 
@@ -55,23 +59,31 @@ scoping.
 
 ## Lifecycle: everything starts private and assigned
 
-Two independent attributes:
+Declare, produce, publish are three orthogonal ops:
 
-- writer: `set!` (assigned) | `bind!` producer expr (computed, per-tick
-  refresh) | `:injected` (host);
-- visibility: private (default for `let`-bound) | `(export $x)`
-  (published to the host/registry; `def`-bound streams are public).
+- declare: `(def $x)` / `(def $x init)` top level, `(let [$x init] ...)`
+  local;
+- produce: `(bind! $x expr)` attaches a per-tick refresh producer. Host
+  injection is NOT special syntax — `(from-host)` is just a producer
+  (name inferred from the stream, or explicit), so the writer axis is
+  simply set!-only (no producer) vs bind!ed;
+- publish: `(export! $x)` registers the stream with the host/registry.
 
-Today's cells = assigned+private; today's channels = computed/injected
-+public. Computed-private and assigned-public become expressible.
+Today's cells = unbound+unpublished; today's channels = bind!ed+
+published (injected ones bind!ed to `(from-host)`). The other quadrants
+(bind!ed-private, set!-only-public) become expressible. The channel
+manifest = the set of `(from-host)` bind sites, checked at load against
+what the host provides.
 
 `set!` vs `bind!` coexistence — resolved by the EXISTING defchannel
-fallback rule rather than a seal: the producer runs at refresh and
-overwrites, unless it yields `nothing`, in which case the last `set!`
-stands. An always-writing producer effectively seals (a `set!` is
-visible only until the next refresh — well-defined; refresh order is
-already pinned: defs in order, then bound producers). A lint for "set!
-on a stream with an always-writing producer" beats a hard error.
+fallback rule rather than a seal, and keyed purely on bind!ed-ness (no
+host special case): the producer runs at refresh and overwrites, unless
+it yields `nothing`, in which case the last `set!` stands. An
+always-writing producer — `(from-host)` included — effectively seals (a
+`set!` is visible only until the next refresh — well-defined; refresh
+order is already pinned: defs in order, then bound producers). A lint
+for "set! on a stream with an always-writing producer" beats a hard
+error.
 
 ## What each cell mechanism maps to
 
@@ -79,7 +91,7 @@ on a stream with an always-writing producer" beats a hard error.
   scoping becomes ordinary evaluation, no parallel scope machinery);
 - adapter-gated `(inline)` cell sharing → explicit handle passing
   (sigiled params / closure capture) — capability-style;
-- export → visibility flip into the public registry;
+- export → `(export! $x)`, a visibility flip into the public registry;
 - (live cell) frame gap → closes: `DynNode::Live` holds a handle, local
   and global streams frame identically;
 - lowering: `$x` is structurally a stream; captured handles classify as
@@ -97,10 +109,10 @@ frame-stamped action — scrub story unchanged).
 ## [decide]
 
 - Export/registration collisions across instances of one pattern:
-  rename form (`(export $vol :as $p1-vol)`) + collision as load error
+  rename form (`(export! $vol :as $p1-vol)`) + collision as load error
   (lean), vs latest-wins like bound channels today.
-- `set!` on an `:injected` stream: error (lean — the host is the
-  writer), vs host-overwrites-at-refresh.
+- `(from-host)` name resolution: inferred from the bound stream's name
+  vs explicit `(from-host :player)` (explicit survives export renames).
 - Exact surface of `bind!` vs today's `bind-channel!` (local producer
   attachment vs global-name registration — likely one form once names
   are scoped).
