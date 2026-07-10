@@ -52,23 +52,43 @@ work.
   stored dyn slots), and beam end-of-life is a lib cull rule. The
   circle->capsule adaptation that borrowed collider truth from render
   specs is deleted; a :pose collider on a curve element yields no collider.
-- Projector constructor target surface: `(collider :pose|:parametric
-  [e ctx] body)` as the builtin that constructs a parameterized projector
-  value (kind annotation intact, not a callable fn, capture discipline
-  owned by the special); `defcollider`/`defrenderer` become `def` plus
-  that form. Bare `(fn [e ctx] ...)` is deliberately NOT a projector:
-  no kind annotation, and closure capture fights spec-store dedup.
-- Continue renderer migration toward the §7 target surface. The Rust-side
-  `Style`/`RenderItem` bridge is gone: hosts consume `RenderRow` values
-  (structural point/polyline geometry plus open keyed num/sym fields checked
-  against an accreted per-world schema), style axes are ordinary sym fields
-  flattened from the `:style` spawn map, the stock sprite row is a lib
-  deftick rule, and the default dot is a spawn-injected `{:shape :point}`
-  spec (trace-backed elements carry it per-element). Remaining work:
-  per-kind registered row schemas with manifest negotiation (the current
-  schema is one global key->kind map), `defrenderer` bodies returning
-  schema-checked row maps directly instead of point/polyline slot specs,
-  the builtin field rename/pick adapter, and a mesh/sprite-batch kind.
+- Projector constructor target surface (collider-only): `(collider
+  :pose|:parametric [e ctx] body)` as the builtin that constructs a
+  parameterized projector value (kind annotation intact, not a callable
+  fn, capture discipline owned by the special); `defcollider` becomes
+  `def` plus that form. Bare `(fn [e ctx] ...)` is deliberately NOT a
+  projector: no kind annotation, and closure capture fights spec-store
+  dedup. Bodies return `primitive | [primitive] | nothing` — plain lists
+  are the composition, flattened one level (with the same-figure-kind
+  check) at the spawn slot and body-return boundaries; a list of lists is
+  an error. This retires the `(colliders ...)` special and the
+  `ColliderProjectorExpr::ColliderSum` variant; `(colliders)`-as-empty
+  becomes `[]`/`nothing`. There is no renderer counterpart (see below).
+- Retire the renderer-projector machinery in favor of rules + `render`.
+  The Rust-side `Style`/`RenderItem` bridge is gone: hosts consume
+  `RenderRow` values (open keyed num/sym fields checked against an
+  accreted per-world schema), style axes are ordinary sym fields
+  flattened from the `:style` spawn map, and the stock sprite row is a
+  lib deftick rule dispatched on ordinary fields. Direction: that is the
+  ONLY mechanism — a "look" is a lib defn + rule keyed on e.g.
+  `e.render`, not an attached projector. Delete `defrenderer`,
+  `RendererProjectorSpec`, and render slots; the spawn-injected default
+  dot becomes a default field plus a stock rule; per-element looks ride
+  the element field-seed mechanism. Curve geometry stays hot-buffer
+  sampled via an opaque deferred-geometry VALUE from an ordinary builtin
+  constructor (e.g. `(curve-samples e {:u-max h :resolution r})`, static
+  numbers, validated at construction) placed in the row's geometry field
+  and expanded by the render pass — not via a keyword-tagged shape DSL
+  inside `render`'s argument. Rationale for the collider/render
+  asymmetry: collision is engine-pulled closed algebra (opaque values
+  attached at spawn; user code never emits collider rows), rendering is
+  host-pushed open data (rule code emits rows; deferred expansion hides
+  behind opaque geometry values from a closed constructor set). Known
+  trade: rule-emitted rows are tick-cadence snapshots, so frame-time
+  re-evaluation/interpolation becomes a host concern. Remaining work
+  after the deletion: per-kind registered row schemas with manifest
+  negotiation (the current schema is one global key->kind map), the
+  builtin field rename/pick adapter, and a mesh/sprite-batch kind.
   Host palette tables (`style_rgb`, `dot_radius`) remain stock host policy
   in `host.rs`; move them behind host/profile config when a second
   frontend needs different vocabulary.
