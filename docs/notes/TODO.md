@@ -38,9 +38,9 @@ work.
 
 - Deduplicate `EntitySpecStore` cold dyn/projector data into shared
   spawn-site/program/archetype storage where possible.
-- Remove pointer-keyed compatibility fallback from legacy scratch motion
-  evaluation. Live entity stepping now requires stable lowered node ids, while
-  old direct evaluation still accepts pointer keys.
+- (done) Motion state is keyed by stable lowered ids only; the pointer-keyed
+  compatibility variants are gone and direct evaluation seeds ids via
+  `MotionReaders::for_node/for_pose/for_figure`.
 - Lower lazy `stages` to a closed set of dyns at load time. Until then, it is
   isolated as an interpreted compatibility path: only lazy-stage dyn writes may
   extend dense schemas at runtime when a lazy segment is first constructed.
@@ -274,7 +274,10 @@ work.
 - Write `docs/host-api.md` from `core::host::Instance` as the first
   non-macroquad frontend exercises it.
 - Add signal tapping/plotting: select a subexpression and plot over `t`.
-- Remove fixed 120 Hz assumptions where `TICK_RATE` leaks into APIs or data.
+- (done) The tick rate is a World-owned `TickTiming` (single
+  `DEFAULT_TICK_RATE = 120.0`); runtime paths read it, standalone eval
+  helpers default. Host-facing rate configurability remains a later policy
+  decision.
 - AOT/wasm compiler work is unstarted.
 
 ## Docs
