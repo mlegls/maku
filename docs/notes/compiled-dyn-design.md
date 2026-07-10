@@ -20,8 +20,10 @@ pays, per COMPONENT eval (`eval_sig_at_rate`):
    empty HashMaps.
 3. `env.bind("t").bind("u")` (+"pos") — fresh Env nodes and Rc<str> key
    allocs per eval.
-4. `read_scan_in` — clones the entity's ENTIRE MotionState HashMap into a
-   fresh Rc<RefCell<ScanIo>>, plus a node_ids borrow + key lookup.
+4. `read_scan_in` — clones the passed MotionState into a fresh
+   Rc<RefCell<ScanIo>> (empty in the dense-reader era, so cheap — the real
+   per-eval state cost is item 5's setup, not this clone), plus a node_ids
+   borrow + key lookup.
 5. Interpreting the Form tree: per node an enum dispatch, symbol lookups
    through Env (linked lookup), builtin dispatch by string match, Val
    allocations for every intermediate.
@@ -163,10 +165,16 @@ deterministic merge), per the TODO stance.
 Ordered by expected value; all are interpreter-path fixes the compiled path
 obsoletes but that de-risk the interim:
 
-1. `read_scan_in` clones the whole MotionState per component eval — the
-   dense readers already cover steady-state reads; the clone exists for the
-   legacy/direct path. Borrow instead of clone (or clone only when
-   `readers` is absent).
+1. `Sim::motion_readers(row)` is called per entity per PHASE (scanned step,
+   trace, cull, collision, render, entity-view pose reads) and each call
+   builds a `state_n2_snapshot` HashMap, a `state_dyn_snapshot` HashMap, a
+   full CLONE of the schema's `node_ids` map into a fresh RefCell, three Rc
+   allocations, and two boxed closures. All of it is derivable from
+   (schema, row) without copying: share the schema's node_ids as an
+   Rc built once per schema (entity schemas are complete — lazy seeding
+   only exists for ad-hoc direct evaluation), and make the readers close
+   over the SoA columns + row index instead of snapshots. This is the
+   dominant fixed overhead multiplier on every dyn row in the profile.
 2. `eval_sig_at_rate` builds `World::default()` + fresh Ctx per eval —
    thread-local scratch World (reset tick-rate only) and a reusable Ctx
    template would cut fixed overhead from every remaining interpreted eval.
