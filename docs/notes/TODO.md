@@ -17,8 +17,22 @@ work.
   render row schemas, and entity field tables are ONE load-time schema
   collection pass — shared machinery, separate tables where the columns
   differ.
-- `remat` / `manipulate`: still missing per-slot epochs, soft-cull fades,
-  the F1 lint, and the masked-SoA fast path. Current callbacks all bill fuel.
+- `remat` / `manip`: semantics decided — `(remat handle spec)` is the
+  handle-preserving primitive, strictly 1:1 (single handle, single-element
+  spec; multi-element figures error). The spec is PARTIAL: supplied slots
+  replace, absent slots retain. Epochs are per-slot: a rematted slot's
+  local `t` restarts and its runtime state (scan cells) is cleared — the
+  new figure has no relation to the old — while untouched slots keep clock
+  and state, so field-only remats (the `set-col` story) never disturb
+  motion. Writes apply at/right before the NEXT tick: all reads within a
+  tick see pre-tick state, keeping ephemeral row indices
+  (`entities-where`) stable within the tick; multiple writes land in
+  deterministic action-execution order, per-slot last-writer-wins. A new
+  figure evaluates anchored where the entity currently IS (current world
+  pose); callers wanting the old parent frame store/pass it explicitly.
+  Still missing in the implementation: per-slot epochs, soft-cull fades,
+  the F1 lint, and the masked-SoA fast path (the lowering target for
+  batch `map`-remat shapes). Current callbacks all bill fuel.
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions

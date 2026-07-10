@@ -65,14 +65,21 @@ Kernel-shrink direction from this principle (beyond the tables below):
   cell); `channel` is a read-with-default of `$name` — merge into `$name`
   syntax + an ordinary default combinator; `stages-action` is a reserved
   stub (action-level `stages` analogue) — decide or delete the reservation.
-- `remat` (decided shape): handle-preserving remat IS the primitive,
+- `remat` (decided): handle-preserving remat IS the primitive,
   `(remat handle spec)` — single handle, single-ELEMENT spec (multi-element
   figures are an error in remat position; identity is 1:1). Figure KIND may
   change (handles are generation-safe indirection; a kind change is a slot
   move, not a semantic constraint). Batch remat is lib `map` over
   handle/spec pairs, and the recognizer lowers that shape to the masked-SoA
-  pass. Open contract question: local-clock behavior (does remat bump the
-  tau epoch? — ties to the per-slot-epochs item).
+  pass. Contract (all decided, see TODO.md): PARTIAL spec (absent slots
+  retain); PER-SLOT epochs (rematted slot restarts `t` and clears scan
+  state; untouched slots keep both — field-only remats never disturb
+  motion); writes land at/right before the NEXT tick (within-tick reads see
+  pre-tick state, ephemeral indices stay stable; deterministic action
+  order, per-slot last-writer-wins); new figures anchor at the entity's
+  CURRENT world pose (store/pass the old parent frame explicitly if
+  wanted). This unblocks `set-col`-as-remat once pattern-lowering can
+  reduce field-only remats to stores.
 - `emit` unification (direction): `event` and `render` are the same
   operation — push an open schema-checked row onto a named host-facing
   stream. Kernel primitive `(emit :stream row)`; `render`, `event`, and
