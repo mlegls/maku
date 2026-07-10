@@ -115,6 +115,7 @@ pub enum Val {
     ColliderProjector(Rc<[ColliderProjectorValue]>),
     CurveSamples(Rc<CurveSamples>),
     EntitySet(Rc<[usize]>),
+    EntityView(EntityRef),
     CollisionSet(Rc<[(usize, usize)]>),
     Arr(Seq),
     Map(Rc<Vec<(Val, Val)>>),
@@ -1396,7 +1397,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     fresh_cells: true,
                 })));
             }
-            return builtin_with_eval_ctx(name, &args, ctx, world.tick_rate());
+            return builtin_with_eval_ctx(name, &args, ctx, world);
         }
     }
     let hv = evaluate(head, env, ctx, world)?;
@@ -1484,6 +1485,12 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     return Ok(Val::StageExitPose { slot: slot.clone(), field: StageExitField::Pos });
                 }
                 _ => {}
+            }
+            if let Val::EntityView(id) = arg {
+                return match world.entities.generation(id.row).filter(|generation| *generation == id.generation) {
+                    Some(_) => entity_field_at(id.row, &k, world, &ctx.sig),
+                    None => Ok(Val::Nothing),
+                };
             }
             if matches!(arg, Val::Handle(_) | Val::EntitySet(_)) {
                 return entity_field_value(arg, &k, world, &ctx.sig);
@@ -1603,7 +1610,35 @@ fn resolve_stage_exit_value(v: Val, ctx: &Ctx) -> Result<Val, String> {
     }
 }
 
-fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, tick_rate: f64) -> Result<Val, String> {
+fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, world: &World) -> Result<Val, String> {
+    if name == "get" {
+        if let (Some(Val::EntityView(id)), Some(Val::Kw(field))) = (args.get(0), args.get(1)) {
+            return match world.entities.generation(id.row).filter(|generation| *generation == id.generation) {
+                Some(_) => {
+                    let v = entity_field_at(id.row, field, world, &ctx.sig)?;
+                    if matches!(v, Val::Nothing) {
+                        Ok(args.get(2).cloned().unwrap_or(Val::Nothing))
+                    } else {
+                        Ok(v)
+                    }
+                }
+                None => Ok(args.get(2).cloned().unwrap_or(Val::Nothing)),
+            };
+        }
+    }
+    let materialized;
+    let args = if args.iter().any(|v| matches!(v, Val::EntityView(_))) {
+        materialized = args
+            .iter()
+            .map(|v| match v {
+                Val::EntityView(id) => entity_view(id.row, world, &ctx.sig),
+                v => Ok(v.clone()),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        materialized.as_slice()
+    } else {
+        args
+    };
     // deferred stage-exit reads are rare; keep the common path clone-free
     if args.iter().any(|v| matches!(v, Val::StageExitPose { .. })) {
         let args = args
@@ -1611,9 +1646,9 @@ fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, tick_rate: f64) ->
             .cloned()
             .map(|v| resolve_stage_exit_value(v, ctx))
             .collect::<Result<Vec<_>, _>>()?;
-        return builtin_with_tick_rate(name, &args, tick_rate);
+        return builtin_with_tick_rate(name, &args, world.tick_rate());
     }
-    builtin_with_tick_rate(name, args, tick_rate)
+    builtin_with_tick_rate(name, args, world.tick_rate())
 }
 
 /// Entity view passed to predicate queries and manip callbacks.
@@ -1715,7 +1750,6 @@ pub(crate) fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result
 }
 
 fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
-    let sig = ctx.sig.clone();
     let candidates = world
         .entities
         .iter()
@@ -1724,7 +1758,7 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
         .collect::<Vec<_>>();
     let mut out = Vec::new();
     for i in candidates {
-        let view = entity_view(i, world, &sig)?;
+        let view = Val::EntityView(world.entity_ref(i));
         if truthy(&apply_fn(q.clone(), &[view], ctx, world, false)?) {
             out.push(i);
         }
@@ -1979,7 +2013,7 @@ pub fn apply_fn(
     exec_actions: bool,
 ) -> Result<Val, String> {
     match f {
-        Val::Builtin(name) => builtin_with_eval_ctx(&name, args, ctx, world.tick_rate()),
+        Val::Builtin(name) => builtin_with_eval_ctx(&name, args, ctx, world),
         Val::Fn { params, body, env } => {
             let e = bind_fn_params(env.clone(), &params, args)?;
             let saved_ambient = ctx.ambient;

@@ -258,6 +258,7 @@ pub(crate) fn special(
 fn curve_samples_entity(v: Val) -> Result<EntityRef, String> {
     match v {
         Val::Handle(id) => Ok(id),
+        Val::EntityView(id) => Ok(id),
         Val::Map(kvs) => kvs
             .iter()
             .find_map(|(k, v)| match (k, v) {
