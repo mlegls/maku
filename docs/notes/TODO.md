@@ -79,16 +79,24 @@ work.
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
   Stance (decided): this is a load-time lowering (AOT at card load), not a
-  JIT, and the interpreter is the semantic reference — do NOT invest in
-  speculative interpreter optimization. Parallelizing the tree-walk fights
-  the determinism contract (sequential splitmix RNG, ordered effects,
-  native/wasm replay identity), and precomputing future ticks is
-  invalidated by per-tick input/channel reads and the scrub/snapshot
-  session model. Parallelism/vectorization belongs after lowering,
-  per-column over entities where no effect ordering is involved. The
-  interpreter investments that survive are architectural: SoA layout,
-  spec-store dedup, group evaluation of shared programs, fixed scratch,
-  and hoisting per-spawn-site invariants to load time.
+  JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
+  macros, the scheduler/action tree, states/phases, live eval/swap) stays
+  interpreted and user-facing permanently — it is cold and tooling wants
+  it; the PER-ENTITY HOT LOOPS (dyn columns, projector bodies, tick rules
+  over entity sets) are a prototype stand-in that the lowering replaces,
+  with rules/projectors following dyn onto the same flat-program
+  machinery. Do not parallelize the interpreted hot loops: the value
+  representation is Rc-saturated (non-Send; threading means Arc-ifying or
+  arena copies of exactly what gets replaced), rules emit ordered effects
+  and draw from the sequential splitmix stream (parallel entity order
+  changes RNG unless entities are independently seeded), and none of that
+  work transfers to the compiled form — which gets data-parallelism nearly
+  free (pure lanes over fixed scratch, deterministic merge points).
+  Precomputing future ticks is likewise out: per-tick input/channel reads
+  and the scrub/snapshot session model invalidate it. Interim interpreter
+  investments that do survive: SoA layout, spec-store dedup, group
+  evaluation of shared programs, fixed scratch, and hoisting
+  per-spawn-site invariants to load time.
 - Add a profiling/benchmark harness before the audit and intrinsics
   decisions: representative cards (bullet floods, laser-heavy, rule-heavy)
   with per-special/per-builtin execution counts and time attribution.
