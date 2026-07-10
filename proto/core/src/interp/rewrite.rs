@@ -15,8 +15,18 @@ pub(crate) fn rewrite_card(card: &mut Card) {
     let empty = HashMap::new();
     rewrite_card_forms(card, &empty);
 
-    let trivial = collect_trivial_defs(&card.defs);
-    rewrite_card_forms(card, &trivial);
+    // fixpoint: inlining a trivial defn's body can make its wrappers
+    // trivial in turn (col-or over value-or), so recollect until the
+    // trivial set stops growing — bounded by the number of defs
+    let mut trivial = collect_trivial_defs(&card.defs);
+    loop {
+        rewrite_card_forms(card, &trivial);
+        let next = collect_trivial_defs(&card.defs);
+        if next.len() <= trivial.len() {
+            break;
+        }
+        trivial = next;
+    }
 }
 
 fn rewrite_card_forms(card: &mut Card, trivial: &HashMap<String, TrivialDef>) {

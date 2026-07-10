@@ -149,9 +149,10 @@ work.
   Hand-written shapes optimize identically to the lib defn, per the
   no-name-magic principle. Result: `value-or` 1252ms + `nothing?` 380ms +
   most of `if`/`fn` dispatch → `%value-or` 253ms; interpreted calls down
-  4.6M. Follow-ups: (a) trivial-defn collection is single-pass, so wrappers
-  of wrappers (`col-or`, 419ms/1.5M calls) don't inline transitively — make
-  it a fixpoint; (b) macro-expansion output is not rewritten (expansion is
+  4.6M. Trivial-defn collection runs to a fixpoint, so wrappers of wrappers
+  inline transitively (`col-or`'s 419ms/1.5M interpreted calls folded into
+  `%value-or`). Follow-ups: (b) macro-expansion output is not rewritten
+  (expansion is
   lazy per-eval; shapes inside macro-generated forms keep interpreted
   cost); (c) purity edge: a pure higher-order builtin applying an impure
   user fn passed BY NAME is classified pure — conservative table fix if it

@@ -83,6 +83,21 @@
     }
 
     #[test]
+    fn rewrite_inlines_wrappers_transitively() {
+        // col-or's shape: a trivial wrapper around a defn that only becomes
+        // trivial after its own body is rewritten — needs the fixpoint
+        let card = "(defn base [x d] (if (nothing? x) d x))\n\
+                    (defn wrap [x d] (base x d))\n\
+                    (defn use-wrap [x] (wrap x 5))";
+        let rewritten = loaded_def(card, "use-wrap");
+        assert!(form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "wrapper not inlined transitively: {}", rewritten);
+        assert!(!form_contains_head(&rewritten, "wrap"), "wrap call survived: {}", rewritten);
+
+        assert!(matches!(eval_with_card(card, "(use-wrap (channel $missing))"), Val::Num(n) if n == 5.0));
+        assert!(matches!(eval_with_card(card, "(use-wrap 3)"), Val::Num(n) if n == 3.0));
+    }
+
+    #[test]
     fn rewrite_hand_written_value_or_shape_matches_lib_route() {
         let card = "(defn hand [x d] (if (nothing? x) d x))";
         let rewritten = loaded_def(card, "hand");
