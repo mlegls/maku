@@ -76,10 +76,15 @@ Kernel-shrink direction from this principle (beyond the tables below):
   state; untouched slots keep both — field-only remats never disturb
   motion); writes land at/right before the NEXT tick (within-tick reads see
   pre-tick state, ephemeral indices stay stable; deterministic action
-  order, per-slot last-writer-wins); new figures anchor at the entity's
-  CURRENT world pose (store/pass the old parent frame explicitly if
-  wanted). This unblocks `set-col`-as-remat once pattern-lowering can
-  reduce field-only remats to stores.
+  order); new figures anchor at the entity's CURRENT world pose (store/
+  pass the old parent frame explicitly if wanted). Field writes (decided):
+  the primitive is functional — `(change-col e col f)` queues f, and a
+  slot's queued updates COMPOSE in deterministic action order at the tick
+  boundary. `set-col` becomes lib sugar for the constant function;
+  aggregate-over-domain remains the preferred idiom (and the fusion
+  target); update functions must be pure. Remat's partial spec admits
+  values or update functions per field, so `change-col` is the
+  single-field case of remat.
 - `emit` unification (direction): `event` and `render` are the same
   operation — push an open schema-checked row onto a named host-facing
   stream. Kernel primitive `(emit :stream row)`; `render`, `event`, and

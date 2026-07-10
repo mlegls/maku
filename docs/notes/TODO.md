@@ -26,8 +26,16 @@ work.
   and state, so field-only remats (the `set-col` story) never disturb
   motion. Writes apply at/right before the NEXT tick: all reads within a
   tick see pre-tick state, keeping ephemeral row indices
-  (`entities-where`) stable within the tick; multiple writes land in
-  deterministic action-execution order, per-slot last-writer-wins. A new
+  (`entities-where`) stable within the tick. The field-write primitive is
+  the FUNCTIONAL update `(change-col e col f)`: writes queue their update
+  function, and at the tick boundary a slot's queued functions compose in
+  deterministic action-execution order over the pre-tick value — so
+  concurrent decrements accumulate instead of losing updates, a plain set
+  is the constant function (`set-col` = lib sugar `(fn [_] v)`, making
+  last-writer-wins a consequence, not a rule), and the aggregate-over-domain
+  form stays the preferred idiom that the recognizer fuses. Remat's partial
+  spec admits values or update functions per field; `change-col` is the
+  single-field case. Update functions must be pure. A new
   figure evaluates anchored where the entity currently IS (current world
   pose); callers wanting the old parent frame store/pass it explicitly.
   Still missing in the implementation: per-slot epochs, soft-cull fades,
