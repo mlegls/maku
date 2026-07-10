@@ -56,6 +56,16 @@ struct Builder<'a> {
     ops: Vec<NumOp>,
     next: u16,
     defs: &'a HashMap<String, Form>,
+    can_inline_defs: bool,
+    inline_depth: usize,
+}
+
+const MAX_INLINE_DEPTH: usize = 32;
+
+#[derive(Clone, Copy)]
+enum LowerScope<'a> {
+    Current,
+    Def { params: &'a HashMap<String, u16> },
 }
 
 impl Builder<'_> {
@@ -71,7 +81,7 @@ impl Builder<'_> {
         Some(dst)
     }
 
-    fn lower(&mut self, form: &Form, env: &Env) -> Option<u16> {
+    fn lower(&mut self, form: &Form, env: &Env, scope: LowerScope<'_>) -> Option<u16> {
         match form {
             Form::Num(v) => {
                 let dst = self.reg()?;
@@ -81,7 +91,15 @@ impl Builder<'_> {
                 let dst = self.reg()?;
                 self.push(NumOp::Const { dst, v: if *b { 1.0 } else { 0.0 } })
             }
-            Form::Sym(s) => match &**s {
+            Form::Sym(s) => self.lower_sym(s, env, scope),
+            Form::List(items) => self.lower_list(items, env, scope),
+            _ => None,
+        }
+    }
+
+    fn lower_sym(&mut self, s: &str, env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+        match scope {
+            LowerScope::Current => match s {
                 "t" => {
                     if env.lookup("t").is_some() {
                         return None;
@@ -104,30 +122,77 @@ impl Builder<'_> {
                     let dst = self.reg()?;
                     self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 })
                 }
+                name if name.starts_with('$') => None,
                 name => match env.lookup(name) {
                     Some(Val::Num(v)) => {
                         let dst = self.reg()?;
                         self.push(NumOp::Const { dst, v })
                     }
+                    None => self.lower_bare_def(name, env),
                     _ => None,
                 },
             },
-            Form::List(items) => self.lower_list(items, env),
-            _ => None,
+            LowerScope::Def { params } => {
+                if let Some(r) = params.get(s) {
+                    return Some(*r);
+                }
+                match s {
+                    "t" => {
+                        if env.lookup("t").is_some() {
+                            return None;
+                        }
+                        let dst = self.reg()?;
+                        self.push(NumOp::T { dst })
+                    }
+                    "u" => {
+                        if env.lookup("u").is_some() {
+                            return None;
+                        }
+                        let dst = self.reg()?;
+                        self.push(NumOp::U { dst })
+                    }
+                    "inf" => {
+                        let dst = self.reg()?;
+                        self.push(NumOp::Const { dst, v: f64::INFINITY })
+                    }
+                    "phi" => {
+                        let dst = self.reg()?;
+                        self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 })
+                    }
+                    name if name.starts_with('$') => None,
+                    name => self.lower_bare_def(name, env),
+                }
+            }
         }
     }
 
-    fn lower_list(&mut self, items: &[Form], env: &Env) -> Option<u16> {
+    fn lower_list(&mut self, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<u16> {
         let Some(Form::Sym(head)) = items.first() else {
             return None;
         };
         let name = &**head;
-        // defs shadow builtins at eval time (and signal eval runs with empty
-        // macros/patterns, so defs are the only other shadowing channel)
-        if env.lookup(name).is_some() || self.defs.contains_key(name) {
+        if special_or_channel_head(name) {
             return None;
         }
-        if items.len() == 3 && matches!(name, ":x" | ":y") {
+        match scope {
+            LowerScope::Current => {
+                if env.lookup(name).is_some() {
+                    return None;
+                }
+                if self.defs.contains_key(name) {
+                    return self.lower_def_call(name, &items[1..], env, scope);
+                }
+            }
+            LowerScope::Def { params } => {
+                if params.contains_key(name) {
+                    return None;
+                }
+                if self.defs.contains_key(name) {
+                    return self.lower_def_call(name, &items[1..], env, scope);
+                }
+            }
+        }
+        if matches!(scope, LowerScope::Current) && items.len() == 3 && matches!(name, ":x" | ":y") {
             let Form::Sym(sym) = &items[2] else {
                 return None;
             };
@@ -144,9 +209,67 @@ impl Builder<'_> {
 
         let args = items[1..]
             .iter()
-            .map(|f| self.lower(f, env))
+            .map(|f| self.lower(f, env, scope))
             .collect::<Option<Vec<_>>>()?;
         self.lower_call(name, &args)
+    }
+
+    fn lower_bare_def(&mut self, name: &str, env: &Env) -> Option<u16> {
+        if !self.can_inline_defs {
+            return None;
+        }
+        let def = self.defs.get(name)?.clone();
+        if literal_fn_parts(&def).is_some() {
+            return None;
+        }
+        self.with_inline_depth(|this| {
+            let params = HashMap::new();
+            this.lower(&def, env, LowerScope::Def { params: &params })
+        })
+    }
+
+    fn lower_def_call(
+        &mut self,
+        name: &str,
+        args: &[Form],
+        env: &Env,
+        scope: LowerScope<'_>,
+    ) -> Option<u16> {
+        if !self.can_inline_defs {
+            return None;
+        }
+        let def = self.defs.get(name)?.clone();
+        let (params, body) = literal_fn_parts(&def)?;
+        if params.len() != args.len() {
+            return None;
+        }
+        let arg_regs = args
+            .iter()
+            .map(|f| self.lower(f, env, scope))
+            .collect::<Option<Vec<_>>>()?;
+        let mut param_regs = HashMap::new();
+        for (param, reg) in params.iter().zip(arg_regs) {
+            let Form::Sym(param) = param else {
+                return None;
+            };
+            if &**param == "&" {
+                return None;
+            }
+            param_regs.insert(param.to_string(), reg);
+        }
+        self.with_inline_depth(|this| {
+            this.lower(body, env, LowerScope::Def { params: &param_regs })
+        })
+    }
+
+    fn with_inline_depth<T>(&mut self, f: impl FnOnce(&mut Self) -> Option<T>) -> Option<T> {
+        if self.inline_depth >= MAX_INLINE_DEPTH {
+            return None;
+        }
+        self.inline_depth += 1;
+        let out = f(self);
+        self.inline_depth -= 1;
+        out
     }
 
     fn lower_call(&mut self, name: &str, args: &[u16]) -> Option<u16> {
@@ -289,9 +412,37 @@ fn op_dst(op: NumOp) -> u16 {
     }
 }
 
+fn literal_fn_parts(form: &Form) -> Option<(&[Form], &Form)> {
+    let Form::List(items) = form else {
+        return None;
+    };
+    match (&items[..]).split_first()? {
+        (Form::Sym(head), rest) if &**head == "fn" && rest.len() == 2 => {
+            let Form::Vector(params) = &rest[0] else {
+                return None;
+            };
+            if params.iter().any(|p| !matches!(p, Form::Sym(s) if &**s != "&")) {
+                return None;
+            }
+            Some((params, &rest[1]))
+        }
+        _ => None,
+    }
+}
+
+fn special_or_channel_head(name: &str) -> bool {
+    matches!(name, "t" | "u" | "inf" | "phi") || name.starts_with('$')
+}
+
 pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
-    let mut b = Builder { ops: Vec::new(), next: 0, defs };
-    b.lower(form, env)?;
+    let mut b = Builder {
+        ops: Vec::new(),
+        next: 0,
+        defs,
+        can_inline_defs: env.lookup(CELLS_KEY).is_none(),
+        inline_depth: 0,
+    };
+    b.lower(form, env, LowerScope::Current)?;
     Some(NumProgram { ops: b.ops, n_regs: b.next as usize })
 }
 
@@ -418,6 +569,23 @@ mod tests {
         HashMap::new()
     }
 
+    fn defs(pairs: &[(&str, &str)]) -> HashMap<String, Form> {
+        pairs
+            .iter()
+            .map(|(name, form)| ((*name).to_string(), read(form)))
+            .collect()
+    }
+
+    fn eval_num(src: &str, env: &Env, defs: &HashMap<String, Form>, t: f64, u: f64) -> f64 {
+        let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(defs.clone());
+        let eval_env = env.bind("t".into(), Val::Num(t)).bind("u".into(), Val::Num(u));
+        evaluate(&read(src), &eval_env, &mut ctx, &mut World::for_eval(60.0))
+            .unwrap()
+            .num()
+            .unwrap()
+    }
+
     #[test]
     fn lowers_basic_t_arithmetic() {
         let prog = lower_num_form(&read("(* 2 t)"), &Env::empty(), &no_defs()).unwrap();
@@ -446,7 +614,71 @@ mod tests {
         // a card defn named after a builtin shadows it at eval time
         let mut defs = HashMap::new();
         defs.insert("sin".to_string(), read("(fn [x] x)"));
-        assert!(lower_num_form(&read("(sin t)"), &Env::empty(), &defs).is_none());
+        let prog = lower_num_form(&read("(sin t)"), &Env::empty(), &defs).unwrap();
+        assert_eq!(run_num_program(&prog, 45.0, 0.0, None), 45.0);
         assert!(lower_num_form(&read("(* 2 t)"), &Env::empty(), &defs).is_some());
+
+        defs.insert("$ch".to_string(), read("(fn [x] x)"));
+        defs.insert("inf".to_string(), read("(fn [x] x)"));
+        assert!(lower_num_form(&read("($ch t)"), &Env::empty(), &defs).is_none());
+        assert!(lower_num_form(&read("(inf t)"), &Env::empty(), &defs).is_none());
+    }
+
+    #[test]
+    fn inlines_defn_helper_call() {
+        let defs = defs(&[("half", "(fn [x] (/ x 2))")]);
+        let prog = lower_num_form(&read("(half t)"), &Env::empty(), &defs).unwrap();
+        let got = run_num_program(&prog, 9.0, 0.0, None);
+        let want = eval_num("(half t)", &Env::empty(), &defs, 9.0, 0.0);
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn inlines_bare_numeric_def() {
+        let defs = defs(&[("speed2", "3")]);
+        let prog = lower_num_form(&read("(* speed2 t)"), &Env::empty(), &defs).unwrap();
+        assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 12.0);
+    }
+
+    #[test]
+    fn inlines_def_chain_and_bails_on_cycle() {
+        let chain_defs = defs(&[("base", "3"), ("speed2", "(* base 2)")]);
+        let prog = lower_num_form(&read("(* speed2 t)"), &Env::empty(), &chain_defs).unwrap();
+        assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 24.0);
+
+        let cyclic = defs(&[("a", "b"), ("b", "a")]);
+        assert!(lower_num_form(&read("a"), &Env::empty(), &cyclic).is_none());
+    }
+
+    #[test]
+    fn def_scope_does_not_see_pos_or_caller_env() {
+        let pos_defs = defs(&[("xpos", "(:x pos)")]);
+        assert!(lower_num_form(&read("xpos"), &Env::empty(), &pos_defs).is_none());
+
+        let env = Env::empty().bind("speed".into(), Val::Num(4.0));
+        let caller_defs = defs(&[("uses-speed", "(* speed 2)")]);
+        assert!(lower_num_form(&read("uses-speed"), &env, &caller_defs).is_none());
+    }
+
+    #[test]
+    fn cell_scope_disables_def_inlining() {
+        let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+        let defs = defs(&[("speed2", "3")]);
+        assert!(lower_num_form(&read("(* speed2 t)"), &env, &defs).is_none());
+        assert!(lower_num_form(&read("(* 2 t)"), &env, &defs).is_some());
+    }
+
+    #[test]
+    fn env_shadowed_def_still_wins() {
+        let env = Env::empty().bind("speed2".into(), Val::Num(5.0));
+        let defs = defs(&[("speed2", "3")]);
+        let prog = lower_num_form(&read("(* speed2 t)"), &env, &defs).unwrap();
+        assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 20.0);
+    }
+
+    #[test]
+    fn defn_arity_mismatch_bails() {
+        let defs = defs(&[("half", "(fn [x] (/ x 2))")]);
+        assert!(lower_num_form(&read("(half t 1)"), &Env::empty(), &defs).is_none());
     }
 }
