@@ -121,10 +121,15 @@ work.
   move them behind host/profile config when a second frontend needs
   different vocabulary.
 - Compile dyn evaluation to a flat program with fixed scratch storage.
-  Design: `docs/notes/compiled-dyn-design.md` (flat f64 register program
-  with an Interp fallback op; rand sites and spawn-env captures become
-  per-entity input slots so one program serves a spawn group; dual-run
-  oracle for equivalence; group evaluation as milestone B). The
+  Design: `docs/notes/compiled-dyn-design.md`. Milestone A (first slice)
+  is DONE: fully-numeric ClosedPt/Vel/RotExpr component forms lower to
+  flat f64 register programs (all-or-nothing per form, interpreter as
+  per-node fallback, defs-shadowing guarded, oracle-verified via
+  MAKU_LOWER_ORACLE=1); Vel/RotExpr step arms reuse the programs. 40%/58%
+  of closed-pt/vel evals compile at ~30x per-eval; `*` interpreted count
+  down 1M. Next levers: the Interp fallback op + richer classification
+  (user-defn inlining via the rewrite pass's trivial-defn machinery)
+  for coverage, then milestone B (input slots + group evaluation). The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
   Stance (decided): this is a load-time lowering (AOT at card load), not a

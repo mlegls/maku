@@ -113,7 +113,31 @@ when absent.
 
 ## Milestones
 
-### A — closed numeric expressions under ClosedPt/Vel (the profiled 1.7s)
+### A — closed numeric expressions under ClosedPt/Vel — DONE (first slice)
+
+Landed. Deviations/notes vs the plan below:
+- Lowering is per-node at first eval (OnceCell on ClosedPt/Vel/RotExpr),
+  over the POST-rand-substitution form — no capture-vector plumbing yet.
+  Rand-free nodes are Rc-shared per spawn site so they lower once;
+  rand-bearing nodes lower per entity at spawn (cold). The input-slot
+  treatment moves to milestone B where sharing becomes load-bearing.
+- All-or-nothing per form; no Interp fallback op yet. Unlowerable forms
+  keep the interpreter per node.
+- Heads shadowed by sig.defs bail (signal eval runs with empty
+  macros/patterns, so defs are the only shadowing channel besides env).
+- The Vel and RotExpr STEP arms reuse the programs: lowered integrands
+  are scan-free, so the Vel step is a compiled sample and the RotExpr
+  step is a no-op.
+- Oracle: MAKU_LOWER_ORACLE=1 dual-runs and asserts 1e-9 agreement;
+  card suites pass with it on.
+- Coverage/result: 40% of closed-pt and 58% of vel evals compile
+  (compiled evals ~30x cheaper: dyn:vel-c 305k evals / 19.5ms).
+  Aggregate: dyn:closed-pt 277→179 + 11ms-c, dyn:vel 257→114 + 20ms-c,
+  `*` 587→461ms (count 3.8M→2.8M). Remaining uncompiled evals are forms
+  using user defns/scan sites/non-numeric captures — the Interp fallback
+  op and richer classification are the coverage levers.
+
+Original plan:
 
 1. `interp/lower.rs`: `NumProgram` + `lower_sig` classifying: literals, `t`,
    `u`, `pos` component reads, captured numeric env vars, pure numeric
