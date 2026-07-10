@@ -38,9 +38,13 @@ work.
   single-field case. Update functions must be pure. A new
   figure evaluates anchored where the entity currently IS (current world
   pose); callers wanting the old parent frame store/pass it explicitly.
-  Still missing in the implementation: per-slot epochs, soft-cull fades,
-  the F1 lint, and the masked-SoA fast path (the lowering target for
-  batch `map`-remat shapes). Current callbacks all bill fuel.
+  Still missing in the implementation: the write queue / `change-col`,
+  partial remat specs, per-slot epochs, soft-cull fades, the F1 lint, and
+  the masked-SoA fast path (the lowering target for batch `map`-remat
+  shapes). Current callbacks all bill fuel. Implementation plan:
+  `docs/notes/remat-design.md` (milestone 1 = queue + `change-col` +
+  `set-col`-as-sugar + lib migration; milestone 2 = partial spec +
+  per-slot epochs; live-evolve integration keys on those epochs).
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
