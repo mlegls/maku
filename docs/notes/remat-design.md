@@ -90,7 +90,26 @@ pre-tick values; order determinism (two writers, non-commutative fns);
 queued write to a dead entity is dropped; a step fn touching a channel
 errors.
 
-### Milestone 2 — partial remat spec + per-slot epochs
+### Milestone 2 — partial remat spec + per-slot epochs — DONE
+
+Landed as planned. Notes on the landed shape:
+- `motion_birth` is the motion-slot epoch; `birth` remains the entity clock.
+  Motion-pose sampling (step/trace/cull/collision/render/view reads,
+  curve sampling, nearest-entity, drain-time exit snapshot) reads motion
+  tau; `(:t e)` and dyn meta fields (`refresh_dyn_cols`) keep the spawn
+  clock — so a motion remat no longer resets entity age. Corpus audit
+  found no card depending on the old whole-entity reset.
+- Spec map: reserved `:motion` key; every other keyword key is a field
+  entry (Num/Kw constant or update fn) applied through the same code path
+  as `PendingWrite::Field`, motion first, then fields in spec order.
+- Queue-time validation: a direct (non-fn) motion value must be a single
+  pose dyn (`as_dyn_pose`); fn-valued motion is checked at drain when its
+  result is coerced. Field values must be Num/Kw/Fn/Builtin.
+- Motion fns apply against the same closed defs-only env as field fns.
+- Per-dyn-field epochs (fades surviving motion remats) remain the "later"
+  slice, as planned.
+
+Original plan:
 
 1. `RematSpec`: motion slot (dyn or `(fn [exit] ...)`) and/or field
    entries (value or update fn). Surface: `(remat h spec-map)` with the

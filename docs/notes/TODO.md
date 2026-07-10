@@ -43,13 +43,16 @@ work.
   single-field case. Update functions must be pure. A new
   figure evaluates anchored where the entity currently IS (current world
   pose); callers wanting the old parent frame store/pass it explicitly.
-  Milestone 1 is DONE (write queue + `change-col` + `set-col`-as-prelude-
-  sugar + lib migration; see `docs/notes/remat-design.md` for the landed
-  shape and known edges — notably the same-tick multi-contact iframe guard,
-  which needs milestone 2's atomic multi-field spec). Still missing:
-  partial remat specs, per-slot epochs, soft-cull fades, the F1 lint, and
-  the masked-SoA fast path (the lowering target for batch `map`-remat
-  shapes). Live-evolve integration keys on the per-slot epochs.
+  Milestones 1 AND 2 are DONE (write queue + `change-col` + `set-col`-as-
+  prelude-sugar + lib migration; partial `(remat h spec-map)` with the
+  reserved `:motion` key, remat on the queue with drain-time exit snapshot,
+  and the motion-slot epoch split from the entity clock — see
+  `docs/notes/remat-design.md` for landed shapes and known edges; the
+  atomic multi-field spec now covers the same-tick multi-contact iframe
+  guard if a card needs it). Still missing: per-dyn-field epochs (fades
+  surviving motion remats), soft-cull fades, the F1 lint, and the
+  masked-SoA fast path (the lowering target for batch `map`-remat shapes).
+  Live-evolve integration keys on the per-slot epochs (milestone 3).
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
@@ -113,7 +116,11 @@ work.
   (`style_rgb`, `dot_radius`) remain stock host policy in `host.rs`;
   move them behind host/profile config when a second frontend needs
   different vocabulary.
-- Compile dyn evaluation to a flat program with fixed scratch storage. The
+- Compile dyn evaluation to a flat program with fixed scratch storage.
+  Design: `docs/notes/compiled-dyn-design.md` (flat f64 register program
+  with an Interp fallback op; rand sites and spawn-env captures become
+  per-entity input slots so one program serves a spawn group; dual-run
+  oracle for equivalence; group evaluation as milestone B). The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
   Stance (decided): this is a load-time lowering (AOT at card load), not a
@@ -168,9 +175,23 @@ work.
   builtin use materializes the old map view. Eager views were also
   force-sampling every entity's pose per row, so dyn eval halved too.
   Aggregate: entities-where 1825→184ms self; dyn:vel 2030→972, closed-pt
-  1706→878, dyn:frame 895→412ms self. Post-merge table now leads with
-  dyn:vel/dyn:closed-pt ~880ms and emit 819ms — the compiled-dyn chain and
-  emit row construction are the next profiled targets.
+  1706→878, dyn:frame 895→412ms self.
+- DONE: emit :render fast path — literal keyword-map row forms build the
+  RenderRow directly (no intermediate Val::Map, no linear rescans; both
+  paths share `RenderRowFields` so they can't drift), and render actions/
+  `world.render_rows` hold `Rc<RenderRow>` (host boundary clones). emit
+  333ms self (was ~810ms).
+- DONE: scratch worlds for closed evaluation — `World::default()`
+  preallocates DEFAULT_ENTITY_CAPACITY (8192) rows across ~17 vectors and
+  was constructed PER COMPONENT EVAL in `eval_sig_at_rate` (plus FnPose,
+  evolve steps, projector bodies, boundary-write fns). `World::for_eval`
+  skips the preallocation: dyn:vel 1029→258ms, dyn:closed-pt 915→271ms
+  self; cradle wall halved. Moral for the compiled-dyn pass: fixed-cost
+  eval SETUP dominated the interpreted path more than form interpretation
+  itself; the lowering must keep per-eval setup at zero (scratch reuse),
+  and the remaining interpreted rows (`*` 589ms, `=` 463ms, dyn:frame
+  429ms self) are now genuine per-node dispatch — the compiled program's
+  actual target.
 - Keep dyn coercions as explicit language-semantic branches while the
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR
