@@ -136,6 +136,22 @@ work.
   model/ as a backend-parametric `Dyn<E>`, AFTER the evolve re-expression
   shrinks the kernel (moving now would enshrine Vel/Stages, which become
   lib shapes). Direction + sequencing: `docs/notes/model-split.md`.
+- Compile entities-where predicates to row filters. Profiled (2026-07,
+  post-need_theta): `=` 3.6M calls / 442ms self and much of `*` 2.7M /
+  447ms are lib projector predicates like
+  `(fn [e] (* (= e.render :beam) (= e.kind :curve)))` run per entity per
+  tick via `resolve_predicate_query` (full apply_fn interpretation per
+  row: env alloc, builtin string dispatch, keyword field access).
+  reimu_vs_mima alone: `=` 2.58M/322ms. The predicate BODY SHAPE is a
+  conjunction (`*`/`and`) of `(= (:field e) :kw)` and numeric col
+  comparisons — recognize the expansion shape (never names) and lower to
+  a RowPredicate over interned sym columns / cols (the machinery
+  `sym_field_matches_at` and resolve_map_query already use), falling back
+  to apply_fn for anything unclassified. Cache the lowering per predicate
+  body Rc ptr (Fn vals are rebuilt per tick; their body Rc is site-stable
+  — verify). Kills the top two remaining profile rows in one pass and is
+  the row-filter half of compiled-dyn milestone C (rule/projector
+  lowering).
   Stance (decided): this is a load-time lowering (AOT at card load), not a
   JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays
