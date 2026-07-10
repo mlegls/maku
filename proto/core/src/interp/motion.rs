@@ -295,8 +295,7 @@ pub fn evolve_value(ev: &EvolveDyn, tau: f64, sig: &SigEnv, tick_rate: f64) -> R
             deferred: Vec::new(),
             projector_scope: None,
         };
-        let mut w = World::default();
-        w.set_tick_rate_for_eval(tick_rate);
+        let mut w = World::for_eval(tick_rate);
         s = apply_fn(ev.step.clone(), &[s, step_ctx], &mut call_ctx, &mut w, false)?;
     }
     Ok(s)
@@ -641,8 +640,7 @@ pub fn eval_sig_at_rate(
         deferred: Vec::new(),
         projector_scope: None,
     };
-    let mut w = World::default(); // signals never touch the world (§2)
-    w.set_tick_rate_for_eval(tick_rate);
+    let mut w = World::for_eval(tick_rate); // signals never touch the world (§2)
     evaluate(form, &e, &mut ctx, &mut w)
 }
 
@@ -933,8 +931,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 deferred: Vec::new(),
                 projector_scope: None,
             };
-            let mut w = World::default();
-            w.set_tick_rate_for_eval(tick_rate);
+            let mut w = World::for_eval(tick_rate);
             match apply_fn(f.clone(), &[Val::Num(tau)], &mut call_ctx, &mut w, false)? {
                 Val::Pose(p) => Ok(p),
                 Val::DynPose(d) => dyn_pose_with_tick_rate(&d, tau, state, sig, tick_rate),

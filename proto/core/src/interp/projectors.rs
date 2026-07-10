@@ -269,7 +269,7 @@ pub(crate) fn materialize_circle_projector(
 ) -> Result<DynCollider, String> {
     let mut run_ctx = Ctx::default();
     run_ctx.sig = sig.clone();
-    let mut run_world = World::default();
+    let mut run_world = World::with_entity_capacity(0);
     let radius = match &spec.radius {
         ProjectorNum::Const(n) => *n,
         ProjectorNum::Expr(form) => {
@@ -287,7 +287,7 @@ pub(crate) fn materialize_capsule_chain_projector(
 ) -> Result<DynCollider, String> {
     let mut run_ctx = Ctx::default();
     run_ctx.sig = sig.clone();
-    let mut run_world = World::default();
+    let mut run_world = World::with_entity_capacity(0);
     run_world.symbols = symbols.clone();
     let mut eval_num = |n: &ProjectorNum| -> Result<f64, String> {
         match n {

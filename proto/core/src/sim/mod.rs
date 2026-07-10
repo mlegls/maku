@@ -424,8 +424,7 @@ impl Sim {
                     })
                     .unwrap_or(Val::Nothing);
                 let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
-                let mut call_world = World::default();
-                call_world.set_tick_rate_for_eval(self.world.tick_rate());
+                let mut call_world = World::for_eval(self.world.tick_rate());
                 apply_fn(f, &[cur], &mut call_ctx, &mut call_world, false)?
             }
             constant => constant,
@@ -491,8 +490,7 @@ impl Sim {
         let new_dyn = match motion {
             Val::Fn { .. } | Val::Builtin(_) => {
                 let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
-                let mut call_world = World::default();
-                call_world.set_tick_rate_for_eval(self.world.tick_rate());
+                let mut call_world = World::for_eval(self.world.tick_rate());
                 as_dyn_pose(apply_fn(motion, &[exit], &mut call_ctx, &mut call_world, false)?)?
             }
             direct => as_dyn_pose(direct)?,

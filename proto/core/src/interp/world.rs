@@ -858,6 +858,16 @@ impl Default for World {
 }
 
 impl World {
+    /// Scratch world for closed evaluation (signals, projector bodies,
+    /// boundary-write fns). Entity storage never grows in these, so skip
+    /// the DEFAULT_ENTITY_CAPACITY preallocation `default()` pays — these
+    /// are constructed per evaluation on hot paths.
+    pub fn for_eval(tick_rate: f64) -> World {
+        let mut w = World::with_entity_capacity(0);
+        w.set_tick_rate_for_eval(tick_rate);
+        w
+    }
+
     pub fn with_entity_capacity(max_entities: usize) -> World {
         World {
             tick: 0,
