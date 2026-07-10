@@ -67,9 +67,16 @@ work.
 - (done) Motion state is keyed by stable lowered ids only; the pointer-keyed
   compatibility variants are gone and direct evaluation seeds ids via
   `MotionReaders::for_node/for_pose/for_figure`.
-- Lower lazy `stages` to a closed set of dyns at load time. Until then, it is
-  isolated as an interpreted compatibility path: only lazy-stage dyn writes may
-  extend dense schemas at runtime when a lazy segment is first constructed.
+- DONE: lazy `stages` lower at construction to load-time-closed dyns. The
+  `(fn [exit] ...)` closure runs once against a symbolic `StageExit` token;
+  exit reads become deferred `StageExitPose` values resolved from fixed
+  pos/vel cells (stable lowered ids, seeded like node ids) written at the
+  stage boundary. `StageMake::Lazy`, `MotionStateKey::LazyStage`, and the
+  runtime dense-schema extension path are gone — motion schemas are closed
+  at load. Known limit: a closure that forces a numeric exit read EAGERLY
+  at construction (outside a deferred dyn component form) errors at load
+  ("stage exit can only be read inside a staged signal"); corpus bodies are
+  all pure constructors and unaffected.
 - Move remaining gameplay-domain behavior out of core: bare hostile
   `(cull)`. Core no longer knows style axes or lasers; the remaining
   family->color/radius tables are stock host policy in `host.rs` (see the
@@ -134,6 +141,21 @@ work.
   `emit` 0.81s, then interpreter dispatch on `*`/`=`/`+`. `map` is 47ms
   self but 10.7s inclusive — its bodies (mostly entity queries) dominate.
   Intrinsic promotion and lib-ification calls should cite these numbers.
+- DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
+  pass over card forms (hooked in `load_card`): structural, alpha-invariant,
+  shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
+  (purity-guarded: `?x` must be re-eval-safe), plus trivial-defn inlining
+  (single pure-builtin-call bodies inline at call sites with pure args).
+  Hand-written shapes optimize identically to the lib defn, per the
+  no-name-magic principle. Result: `value-or` 1252ms + `nothing?` 380ms +
+  most of `if`/`fn` dispatch → `%value-or` 253ms; interpreted calls down
+  4.6M. Follow-ups: (a) trivial-defn collection is single-pass, so wrappers
+  of wrappers (`col-or`, 419ms/1.5M calls) don't inline transitively — make
+  it a fixpoint; (b) macro-expansion output is not rewritten (expansion is
+  lazy per-eval; shapes inside macro-generated forms keep interpreted
+  cost); (c) purity edge: a pure higher-order builtin applying an impure
+  user fn passed BY NAME is classified pure — conservative table fix if it
+  ever bites.
 - Keep dyn coercions as explicit language-semantic branches while the
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR
