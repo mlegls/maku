@@ -85,14 +85,16 @@ Kernel-shrink direction from this principle (beyond the tables below):
   target); update functions must be pure. Remat's partial spec admits
   values or update functions per field, so `change-col` is the
   single-field case of remat.
-- `emit` unification (direction): `event` and `render` are the same
-  operation — push an open schema-checked row onto a named host-facing
-  stream. Kernel primitive `(emit :stream row)`; `render`, `event`, and
-  probably `export` become lib macros over it. The one-pass schema decision
-  covers all streams (event rows gain a schema for free); geometry
-  expansion (`curve-samples` values) is a field-kind concern of whichever
-  stream declares a geometry column, not an `emit` concern. Hot render
-  emission relies on pattern-lowering like everything else.
+- `emit` unification: DONE. `(emit :render row)` / `(emit :events
+  {:name kw :pos pose?})` is the kernel primitive; `render` and `event`
+  are prelude macros. Event row keys stay closed until the manifest pass
+  introduces declared/open event streams (then they gain schemas via the
+  one-pass machinery). `export` does NOT fold in — it publishes a pattern
+  cell as a read-only channel (channel machinery, not a row stream) and
+  stays a kernel primitive. Geometry expansion (`curve-samples` values)
+  remains a field-kind concern of the stream that declares a geometry
+  column. Hot render emission relies on pattern-lowering like everything
+  else.
 
 ## Top-level card forms (`card.rs`)
 
