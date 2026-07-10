@@ -211,7 +211,7 @@
         for (i, _) in a.world.entities.iter().zip(b.world.entities.iter()).enumerate() {
             assert_eq!(a.world.entities.generation(i), b.world.entities.generation(i));
             assert_eq!(a.world.entities.is_alive(i), b.world.entities.is_alive(i));
-            let tau = a.world.entities.tau(i, a.world.tick);
+            let tau = a.world.entity_tau(i, a.world.tick);
             let state = MotionState::new();
             let ax = a.motion_readers(i);
             let by = b.motion_readers(i);
@@ -1067,7 +1067,7 @@
         let RenderData::Point { scale, .. } = &row.data else {
             panic!("rule render should emit one point row");
         };
-        assert!((*scale - (1.0 + 1.0 / TICK_RATE)).abs() < 1e-9, "scale: {scale}");
+        assert!((*scale - (1.0 + 1.0 / DEFAULT_TICK_RATE)).abs() < 1e-9, "scale: {scale}");
     }
 
     #[test]
@@ -1470,7 +1470,7 @@
         for _ in 0..60 {
             sim.step().unwrap();
         }
-        let tau = sim.world.entities.tau(0, sim.world.tick);
+        let tau = sim.world.entity_tau(0, sim.world.tick);
         let state = MotionState::new();
         let readers = sim.motion_readers(0);
         let p = dyn_figure_pose_in(dyn_figure(&sim, 0), tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
@@ -1480,7 +1480,7 @@
         for _ in 0..70 {
             sim.step().unwrap();
         }
-        let tau = sim.world.entities.tau(0, sim.world.tick);
+        let tau = sim.world.entity_tau(0, sim.world.tick);
         let state = MotionState::new();
         let readers = sim.motion_readers(0);
         let p = dyn_figure_pose_in(dyn_figure(&sim, 0), tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
@@ -2029,7 +2029,7 @@
             .find(|(i, _)| style(&sim, *i).family == "amulet")
             .unwrap();
         let sig = sim.ctx.sig.clone();
-        let tau = sim.world.entities.tau(i, sim.world.tick);
+        let tau = sim.world.entity_tau(i, sim.world.tick);
         let readers = sim.motion_readers(i);
         let state = MotionState::new();
         let p = dyn_figure_pose_in(dyn_figure(&sim, i), tau, MotionEvalCtx::new(&state, &sig, &readers)).unwrap();
@@ -2293,7 +2293,7 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         assert_eq!(sim.world.entities.len(), 3);
-        let tau = 1.0 / TICK_RATE;
+        let tau = 1.0 / DEFAULT_TICK_RATE;
         for i in 0..3 {
             let hue = sim.world.col_get_at(i, "hue").unwrap();
             let want = 100.0 * i as f64 + tau;
@@ -2740,6 +2740,7 @@ fn variadic_macro_unquotes_inside_maps() {
         .map(|(i, _)| i)
         .unwrap();
     let projector = sim.world.entities.collider_projector(row).unwrap();
+    let tick_rate = sim.world.tick_rate();
     let mut slots = Vec::new();
     crate::sim::slots::materialize_collider_defs_into(
         projector,
@@ -2750,6 +2751,7 @@ fn variadic_macro_unquotes_inside_maps() {
         None,
         &mut sim.world.symbols,
         &mut slots,
+        tick_rate,
     )
     .unwrap();
     let (_, radius) = slots.iter().find_map(|slot| match slot.slot().shape {
@@ -3045,7 +3047,7 @@ fn vel_motion_writes_dense_state_slot() {
         .find(|key| matches!(key, MotionStateKey::Node(_)))
         .unwrap();
     let [x, y] = sim.world.entities.state_n2(0, key).unwrap();
-    assert!((x - (3.0 / TICK_RATE)).abs() < 1e-9, "dense vel x: {x}");
+    assert!((x - (3.0 / DEFAULT_TICK_RATE)).abs() < 1e-9, "dense vel x: {x}");
     assert_eq!(y, 0.0);
 }
 

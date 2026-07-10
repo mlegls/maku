@@ -534,7 +534,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             } else {
                 lifted
                     .iter()
-                    .map(|v| v.eval(0.0, &MotionState::new(), &ctx.sig))
+                    .map(|v| v.eval_with_tick_rate(0.0, &MotionState::new(), &ctx.sig, world.tick_rate()))
                     .collect::<Result<Vec<_>, _>>()
                     .map(Val::arr)
             }
@@ -569,7 +569,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             } else {
                 pairs
                     .iter()
-                    .map(|(k, v)| Ok((k.to_val(), v.eval(0.0, &MotionState::new(), &ctx.sig)?)))
+                    .map(|(k, v)| Ok((k.to_val(), v.eval_with_tick_rate(0.0, &MotionState::new(), &ctx.sig, world.tick_rate())?)))
                     .collect::<Result<Vec<_>, String>>()
                     .map(|pairs| Val::Map(Rc::new(pairs)))
             }
@@ -846,7 +846,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             "wait" => {
                 let secs = evaluate(&items[1], env, ctx, world)?.num()?;
                 return Ok(Val::Action(Rc::new(ActionV::Wait {
-                    ticks: (secs * TICK_RATE).round().max(0.0) as u64,
+                    ticks: (secs * world.tick_rate()).round().max(0.0) as u64,
                 })));
             }
             "event" => {
@@ -1408,7 +1408,7 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     fresh_cells: true,
                 })));
             }
-            return builtin(name, &args);
+            return builtin_with_tick_rate(name, &args, world.tick_rate());
         }
     }
     let hv = evaluate(head, env, ctx, world)?;
@@ -1557,11 +1557,15 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("entity view: missing dyn figure for row {i}"))?;
-    let tau = world.entities.tau(i, world.tick);
+    let tau = world.entity_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::new();
-    let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers))?;
-    let vel = world.entities.velocity_from_samples(i, world.tick);
+    let p = dyn_figure_pose_in(
+        dyn_figure,
+        tau,
+        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()),
+    )?;
+    let vel = world.entity_velocity_from_samples(i, world.tick);
     let mut view = vec![
         (Val::Kw("pos".into()), Val::Pose(Pose::point(p.x, p.y))),
         (Val::Kw("vel".into()), Val::Pose(Pose::point(vel.0, vel.1))),
@@ -1729,18 +1733,22 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
                 .entities
                 .dyn_figure(i)
                 .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
-            let tau = world.entities.tau(i, world.tick);
+            let tau = world.entity_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::new();
-            let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers))?;
+            let p = dyn_figure_pose_in(
+                dyn_figure,
+                tau,
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()),
+            )?;
             Ok(Val::Pose(Pose::point(p.x, p.y)))
         }
         "vel" => {
-            let vel = world.entities.velocity_from_samples(i, world.tick);
+            let vel = world.entity_velocity_from_samples(i, world.tick);
             Ok(Val::Pose(Pose::point(vel.0, vel.1)))
         }
         "t" => {
-            Ok(Val::Num(world.entities.tau(i, world.tick)))
+            Ok(Val::Num(world.entity_tau(i, world.tick)))
         }
         "tick" => Ok(Val::Num(world.tick as f64)),
         "handle" => Ok(Val::Handle(world.entity_ref(i))),
@@ -1888,7 +1896,7 @@ pub fn apply_fn(
     exec_actions: bool,
 ) -> Result<Val, String> {
     match f {
-        Val::Builtin(name) => builtin(&name, args),
+        Val::Builtin(name) => builtin_with_tick_rate(&name, args, world.tick_rate()),
         Val::Fn { params, body, env } => {
             let e = bind_fn_params(env.clone(), &params, args)?;
             let saved_ambient = ctx.ambient;
@@ -2092,11 +2100,15 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     .entities
                     .dyn_figure(i)
                     .ok_or_else(|| format!("remat: missing dyn figure for row {i}"))?;
-                let tau = world.entities.tau(i, world.tick);
+                let tau = world.entity_tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::new();
-                let p = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &ctx.sig, &readers))?;
-                let vel = world.entities.velocity_from_samples(i, world.tick);
+                let p = dyn_figure_pose_in(
+                    dyn_figure,
+                    tau,
+                    MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate()),
+                )?;
+                let vel = world.entity_velocity_from_samples(i, world.tick);
                 let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
                     p.angle_or(0.0)
                 } else {
@@ -2651,7 +2663,7 @@ fn sf_dotimes(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Re
         if let Form::Kw(kw) = &spec[k] {
             if &**kw == "every" {
                 let secs = evaluate(&spec[k + 1], env, ctx, world)?.num()?;
-                every_ticks = (secs * TICK_RATE).round().max(0.0) as u64;
+                every_ticks = (secs * world.tick_rate()).round().max(0.0) as u64;
                 k += 2;
                 continue;
             }
@@ -3116,25 +3128,26 @@ mod tests {
         let subject = ev("[1 2 3 4]");
         let Val::Arr(orig) = &subject else { panic!() };
         let orig_ptr = orig.backing_ptr();
+        let tick_rate = TickTiming::default().rate();
 
-        let rest = builtin("rest", &[subject.clone()]).unwrap();
+        let rest = builtin_with_tick_rate("rest", &[subject.clone()], tick_rate).unwrap();
         let Val::Arr(rest_seq) = &rest else { panic!() };
         assert_eq!(rest_seq.len(), 3);
         assert!(matches!(&rest_seq[0], Val::Num(n) if (*n - 2.0).abs() < 1e-9));
         assert_eq!(rest_seq.backing_ptr(), orig_ptr);
 
-        let rest_rest = builtin("rest", &[rest.clone()]).unwrap();
+        let rest_rest = builtin_with_tick_rate("rest", &[rest.clone()], tick_rate).unwrap();
         let Val::Arr(rest_rest_seq) = &rest_rest else { panic!() };
         assert_eq!(rest_rest_seq.backing_ptr(), orig_ptr);
         assert_eq!(rest_rest_seq.len(), 2);
         assert!(matches!(&rest_rest_seq[0], Val::Num(n) if (*n - 3.0).abs() < 1e-9));
 
-        let taken = builtin("take", &[Val::Num(2.0), rest.clone()]).unwrap();
+        let taken = builtin_with_tick_rate("take", &[Val::Num(2.0), rest.clone()], tick_rate).unwrap();
         let Val::Arr(taken_seq) = &taken else { panic!() };
         assert_eq!(taken_seq.backing_ptr(), orig_ptr);
         assert_eq!(taken_seq.len(), 2);
 
-        let dropped = builtin("drop", &[Val::Num(2.0), subject.clone()]).unwrap();
+        let dropped = builtin_with_tick_rate("drop", &[Val::Num(2.0), subject.clone()], tick_rate).unwrap();
         let Val::Arr(dropped_seq) = &dropped else { panic!() };
         assert_eq!(dropped_seq.backing_ptr(), orig_ptr);
         assert_eq!(dropped_seq.len(), 2);
@@ -3220,7 +3233,7 @@ mod tests {
     fn vel_integrates() {
         let Val::DynPose(d) = ev("(vel c[4 0])") else { panic!() };
         let mut st = MotionState::new();
-        let dt = 1.0 / TICK_RATE;
+        let dt = 1.0 / DEFAULT_TICK_RATE;
         let sig = SigEnv::default();
         for k in 0..120 {
             step_motion(d.node(), k as f64 * dt, dt, &mut st, &sig).unwrap();

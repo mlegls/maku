@@ -85,10 +85,15 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
             .motion_schema(i)
             .is_some_and(|schema| schema.node_ids.contains_key(&key));
         if world.entities.is_alive(i) && carries_node {
-            let tau = world.entities.tau(i, world.tick);
+            let tau = world.entity_tau(i, world.tick);
             let state = MotionState::new();
             let readers = crate::interp::entity_motion_readers(i, world);
-            if let Ok(p) = dyn_node_pose_u_in(node, tau, 0.0, MotionEvalCtx::new(&state, sig, &readers)) {
+            if let Ok(p) = dyn_node_pose_u_in(
+                node,
+                tau,
+                0.0,
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()),
+            ) {
                 return p;
             }
         }

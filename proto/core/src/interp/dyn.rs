@@ -51,11 +51,12 @@ impl DynKind for Figure {
 }
 
 pub trait DynEval: DynKind + Sized {
-    fn eval_dyn(
+    fn eval_dyn_with_tick_rate(
         d: &Dyn<Self>,
         tau: f64,
         state: &MotionState,
         sig: &SigEnv,
+        tick_rate: f64,
     ) -> Result<Self, String>;
 }
 
@@ -65,7 +66,17 @@ pub fn eval_dyn<T: DynEval>(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<T, String> {
-    T::eval_dyn(d, tau, state, sig)
+    eval_dyn_with_tick_rate(d, tau, state, sig, TickTiming::default().rate())
+}
+
+pub fn eval_dyn_with_tick_rate<T: DynEval>(
+    d: &Dyn<T>,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    tick_rate: f64,
+) -> Result<T, String> {
+    T::eval_dyn_with_tick_rate(d, tau, state, sig, tick_rate)
 }
 
 pub type DynNum = Dyn<f64>;

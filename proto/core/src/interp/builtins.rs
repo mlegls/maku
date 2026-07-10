@@ -198,8 +198,8 @@ pub(crate) fn ease(name: &str, r: f64) -> f64 {
     }
 }
 
-pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Val, String> {
-    if let Some(r) = math::builtin(name, args)? {
+pub(crate) fn builtin_with_tick_rate(name: &str, args: &[Val], tick_rate: f64) -> Result<Val, String> {
+    if let Some(r) = math::builtin(name, args, tick_rate)? {
         return Ok(r);
     }
     if let Some(r) = geometry::builtin(name, args)? {

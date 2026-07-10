@@ -10,7 +10,7 @@ pub(crate) fn is_builtin(name: &str) -> bool {
     NAMES.contains(&name)
 }
 
-pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
+pub(crate) fn builtin(name: &str, args: &[Val], tick_rate: f64) -> Result<Option<Val>, String> {
     let r = match name {
         "+" => {
             let mut acc = args.first().cloned().unwrap_or(Val::Num(0.0));
@@ -53,7 +53,7 @@ pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
         "max" => Ok(Val::Num(arg_num(name, args, 0)?.max(arg_num(name, args, 1)?))),
         "abs" => Ok(Val::Num(arg_num(name, args, 0)?.abs())),
         "quot" => Ok(Val::Num((arg_num(name, args, 0)? / arg_num(name, args, 1)?).trunc())),
-        "ticks" => Ok(Val::Num(arg_num(name, args, 0)? / TICK_RATE)),
+        "ticks" => Ok(Val::Num(arg_num(name, args, 0)? / tick_rate)),
         "not" => Ok(mask(arg_num(name, args, 0)? == 0.0)),
         "sin" => Ok(Val::Num(arg_num(name, args, 0)?.to_radians().sin())),
         "cos" => Ok(Val::Num(arg_num(name, args, 0)?.to_radians().cos())),

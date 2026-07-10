@@ -325,9 +325,9 @@ impl Sim {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
-            let tau = self.world.entities.tau(i, tick);
+            let tau = self.world.entity_tau(i, tick);
             for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
-                let value = eval_dyn(dyn_num, tau, &state, &sig)
+                let value = eval_dyn_with_tick_rate(dyn_num, tau, &state, &sig, self.world.tick_rate())
                     .map_err(|e| format!("dyn meta field: {}", e))?;
                 self.world.col_set_sym_at(i, *col, value);
             }
@@ -384,12 +384,12 @@ impl Sim {
             self.tasks.extend(new_tasks);
         }
         // integrate Scanned motion
-        let dt = 1.0 / TICK_RATE;
+        let dt = self.world.tick_dt();
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
         for i in 0..self.world.entities.len() {
             if self.world.entities.is_alive(i) && self.world.entities.is_scanned(i) {
-                let tau = self.world.entities.tau(i, tick);
+                let tau = self.world.entity_tau(i, tick);
                 let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
                     continue;
                 };
@@ -403,6 +403,7 @@ impl Sim {
                     state: &mut state,
                     sig: &sig,
                     readers: &readers,
+                    tick_rate: self.world.tick_rate(),
                     mirror_legacy: false,
                     write_n2: &mut write_n2,
                     write_dyn: &mut write_dyn,
@@ -433,15 +434,19 @@ impl Sim {
                 if !self.world.entities.is_alive(i) {
                     continue;
                 }
-                let tau = self.world.entities.tau(i, tick);
+                let tau = self.world.entity_tau(i, tick);
                 let readers = self.motion_readers(i);
                 if let Some(window) = self.world.entities.trace_window(i) {
                     let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
                         continue;
                     };
                     let state = MotionState::new();
-                    if let Ok(p) = dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
-                        let cap = (window * TICK_RATE).ceil() as usize + 1;
+                    if let Ok(p) = dyn_figure_pose_in(
+                        dyn_figure,
+                        tau,
+                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                    ) {
+                        let cap = (window * self.world.tick_rate()).ceil() as usize + 1;
                         self.world.entities.push_trace_sample(i, p, cap);
                     }
                 }
@@ -470,7 +475,7 @@ impl Sim {
             if self.world.sym_field_matches_at(i, "team", "player-body") {
                 continue; // the player rides a channel; never field-culled
             }
-            let tau = self.world.entities.tau(i, tick);
+            let tau = self.world.entity_tau(i, tick);
             let readers = self.motion_readers(i);
             let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
                 continue;
@@ -478,7 +483,11 @@ impl Sim {
             let keep = match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
                     let state = MotionState::new();
-                    match dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers)) {
+                    match dyn_figure_pose_in(
+                        dyn_figure,
+                        tau,
+                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                    ) {
                     Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                     Err(e) => {
                         err = Some(e);

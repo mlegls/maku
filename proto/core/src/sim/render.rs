@@ -130,10 +130,15 @@ impl Sim {
                 }
             }
             let syms = Sim::stock_style_syms(&mut self.world, i);
-            let tau = self.world.entities.tau(i, self.world.tick);
+            let tau = self.world.entity_tau(i, self.world.tick);
             let readers = self.motion_readers(i);
             let state = MotionState::new();
-            let pose = dyn_figure_pose_in(&dyn_figure, tau, MotionEvalCtx::new(&state, sig, &readers)).ok();
+            let pose = dyn_figure_pose_in(
+                &dyn_figure,
+                tau,
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, self.world.tick_rate()),
+            )
+            .ok();
             let trace = self.world.entities.trace_samples(i);
             let traced = self.world.entities.is_traced(i);
             let start = scratch.begin_row();

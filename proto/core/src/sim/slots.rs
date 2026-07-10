@@ -7,8 +7,9 @@ fn sample_curve_collider_frac(
     tau: f64,
     sig: &SigEnv,
     projection: &CapsuleChainSlot,
+    tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    sample_curve_projection(dyn_figure, tau, sig, 1.0, &projection.sample_set, projection.u_max)
+    sample_curve_projection(dyn_figure, tau, sig, 1.0, &projection.sample_set, projection.u_max, tick_rate)
 }
 
 fn sample_curve_projection(
@@ -18,9 +19,10 @@ fn sample_curve_projection(
     frac: f64,
     sample_set: &SampleSet,
     u_max: f64,
+    tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
     let state = MotionState::new();
-    let Figure::Curve(curve) = eval_dyn_figure(dyn_figure, tau, &state, sig).ok()? else {
+    let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, tick_rate).ok()? else {
         return None;
     };
     if frac <= 0.0 {
@@ -52,7 +54,7 @@ fn sample_curve_projection(
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = eval_curve_pose(&curve.spec.eval, tau, u, &state, sig).ok()?;
+        let local = eval_curve_pose_with_tick_rate(&curve.spec.eval, tau, u, &state, sig, tick_rate).ok()?;
         let w = curve.frame.compose(&local);
         pts.push((w.x, w.y));
     }
@@ -88,6 +90,7 @@ pub fn materialize_collider_defs_into(
     ctx_view: Option<&Val>,
     symbols: &mut SymbolTable,
     out: &mut Vec<DynCollider>,
+    tick_rate: f64,
 ) -> Result<(), String> {
     for list in projector.projectors.iter() {
         match &list.expr {
@@ -127,6 +130,7 @@ pub fn materialize_collider_defs_into(
                     _ => None,
                 };
                 let mut run_world = World::default();
+                run_world.set_tick_rate_for_eval(tick_rate);
                 run_world.symbols = symbols.clone();
                 let mut last = Val::Nothing;
                 for form in body.iter() {
@@ -143,6 +147,7 @@ pub fn materialize_collider_defs_into(
                     Some(&ctx_bound),
                     symbols,
                     out,
+                    tick_rate,
                 )?;
             }
             ColliderProjectorExpr::Cond { clauses, env, scope } => {
@@ -157,6 +162,7 @@ pub fn materialize_collider_defs_into(
                 run_ctx.sig = sig.clone();
                 run_ctx.projector_scope = scope.clone();
                 let mut run_world = World::default();
+                run_world.set_tick_rate_for_eval(tick_rate);
                 run_world.symbols = symbols.clone();
                 for (pred, child) in clauses.iter() {
                     let enabled = match pred {
@@ -174,6 +180,7 @@ pub fn materialize_collider_defs_into(
                             Some(&ctx_bound),
                             symbols,
                             out,
+                            tick_rate,
                         )?;
                         return Ok(());
                     }
@@ -194,12 +201,13 @@ pub fn eval_collider_slot(
     pose: Pose,
     trace: &[Pose],
     traced: bool,
+    tick_rate: f64,
 ) -> ColliderData {
     match slot.repr() {
         ColliderDynRepr::Slot(projection) => match &projection.shape {
             ColliderSlotShape::Circle { radius } => {
                 let state = MotionState::new();
-                let radius = eval_dyn(radius, tau, &state, sig).unwrap_or(0.0);
+                let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
                 match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if traced => {
                         let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
@@ -223,7 +231,7 @@ pub fn eval_collider_slot(
             }
             ColliderSlotShape::CapsuleChain { radius, slot: curve_slot } => {
                 let state = MotionState::new();
-                let radius = eval_dyn(radius, tau, &state, sig).unwrap_or(0.0);
+                let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
                 match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if traced => {
                         let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
@@ -243,6 +251,7 @@ pub fn eval_collider_slot(
                             tau,
                             sig,
                             curve_slot,
+                            tick_rate,
                         ) else {
                             return ColliderData::None;
                         };

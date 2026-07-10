@@ -65,21 +65,31 @@ impl DynLike {
     }
 
     pub fn eval(&self, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Val, String> {
+        self.eval_with_tick_rate(tau, state, sig, TickTiming::default().rate())
+    }
+
+    pub fn eval_with_tick_rate(
+        &self,
+        tau: f64,
+        state: &MotionState,
+        sig: &SigEnv,
+        tick_rate: f64,
+    ) -> Result<Val, String> {
         match self {
             DynLike::Atom(v) => Ok(v.to_val()),
-            DynLike::Dyn(DynVal::Pose(d)) => eval_dyn(d, tau, state, sig).map(Val::Pose),
-            DynLike::Dyn(DynVal::Figure(d)) => eval_dyn(d, tau, state, sig).map(Val::Figure),
+            DynLike::Dyn(DynVal::Pose(d)) => eval_dyn_with_tick_rate(d, tau, state, sig, tick_rate).map(Val::Pose),
+            DynLike::Dyn(DynVal::Figure(d)) => eval_dyn_with_tick_rate(d, tau, state, sig, tick_rate).map(Val::Figure),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
-                eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, MotionNodeId(0))), None)
+                eval_sig_at_rate(form, env, sig, tau, 0.0, Some(read_scan(state, MotionNodeId(0))), None, tick_rate)
             }
             DynLike::List(items) => items
                 .iter()
-                .map(|v| v.eval(tau, state, sig))
+                .map(|v| v.eval_with_tick_rate(tau, state, sig, tick_rate))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Val::arr),
             DynLike::Map(kvs) => kvs
                 .iter()
-                .map(|(k, v)| Ok((k.to_val(), v.eval(tau, state, sig)?)))
+                .map(|(k, v)| Ok((k.to_val(), v.eval_with_tick_rate(tau, state, sig, tick_rate)?)))
                 .collect::<Result<Vec<_>, String>>()
                 .map(|pairs| Val::Map(Rc::new(pairs))),
         }

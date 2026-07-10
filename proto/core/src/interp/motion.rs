@@ -6,8 +6,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub const TICK_RATE: f64 = 120.0;
-
 /// Per-bullet scanned state keyed by stable lowered motion ids.
 #[derive(Debug, Clone)]
 pub enum Cell {
@@ -132,11 +130,21 @@ pub struct MotionEvalCtx<'a> {
     pub state: &'a MotionState,
     pub sig: &'a SigEnv,
     pub readers: &'a MotionReaders,
+    pub tick_rate: f64,
 }
 
 impl<'a> MotionEvalCtx<'a> {
     pub fn new(state: &'a MotionState, sig: &'a SigEnv, readers: &'a MotionReaders) -> MotionEvalCtx<'a> {
-        MotionEvalCtx { state, sig, readers }
+        MotionEvalCtx::with_tick_rate(state, sig, readers, TickTiming::default().rate())
+    }
+
+    pub fn with_tick_rate(
+        state: &'a MotionState,
+        sig: &'a SigEnv,
+        readers: &'a MotionReaders,
+        tick_rate: f64,
+    ) -> MotionEvalCtx<'a> {
+        MotionEvalCtx { state, sig, readers, tick_rate }
     }
 
     pub fn node_key(&self, ptr: usize) -> MotionStateKey {
@@ -152,6 +160,7 @@ pub struct MotionStepCtx<'a> {
     pub state: &'a mut MotionState,
     pub sig: &'a SigEnv,
     pub readers: &'a MotionReaders,
+    pub tick_rate: f64,
     pub mirror_legacy: bool,
     pub write_n2: &'a mut dyn FnMut(MotionStateKey, [f64; 2]),
     pub write_dyn: &'a mut dyn FnMut(MotionStateKey, DynPose),
@@ -437,17 +446,18 @@ pub fn collect_scan_sites(
 }
 
 impl DynEval for f64 {
-    fn eval_dyn(
+    fn eval_dyn_with_tick_rate(
         d: &Dyn<f64>,
         tau: f64,
         _state: &MotionState,
         sig: &SigEnv,
+        tick_rate: f64,
     ) -> Result<f64, String> {
         match d.repr() {
             NumDynRepr::Const(n) => Ok(*n),
-            NumDynRepr::Expr { form, env } => eval_sig(form, env, sig, tau, 0.0, None, None)?.num(),
+            NumDynRepr::Expr { form, env } => eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate)?.num(),
             NumDynRepr::AxisSel { form, env, path, flat } => {
-                let v = eval_sig(form, env, sig, tau, 0.0, None, None)?;
+                let v = eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate)?;
                 super::spawn::axis_select_val(&v, path, *flat).num()
             }
         }
@@ -455,16 +465,17 @@ impl DynEval for f64 {
 }
 
 impl DynEval for Figure {
-    fn eval_dyn(
+    fn eval_dyn_with_tick_rate(
         d: &Dyn<Figure>,
         tau: f64,
         state: &MotionState,
         sig: &SigEnv,
+        tick_rate: f64,
     ) -> Result<Figure, String> {
         match d.repr() {
-            FigureDynRepr::Pose(p) => Ok(Figure::Pose(dyn_pose(p, tau, state, sig)?)),
+            FigureDynRepr::Pose(p) => Ok(Figure::Pose(dyn_pose_with_tick_rate(p, tau, state, sig, tick_rate)?)),
             FigureDynRepr::Curve { frame, curve } => Ok(Figure::Curve(Curve {
-                frame: dyn_pose(frame, tau, state, sig)?,
+                frame: dyn_pose_with_tick_rate(frame, tau, state, sig, tick_rate)?,
                 spec: curve.clone(),
             })),
         }
@@ -472,13 +483,14 @@ impl DynEval for Figure {
 }
 
 impl DynEval for Pose {
-    fn eval_dyn(
+    fn eval_dyn_with_tick_rate(
         d: &Dyn<Pose>,
         tau: f64,
         state: &MotionState,
         sig: &SigEnv,
+        tick_rate: f64,
     ) -> Result<Pose, String> {
-        dyn_node_pose(d.node(), tau, state, sig)
+        dyn_node_pose_with_tick_rate(d.node(), tau, state, sig, tick_rate)
     }
 }
 
@@ -489,9 +501,20 @@ pub fn eval_curve_pose(
     state: &MotionState,
     sig: &SigEnv,
 ) -> Result<Pose, String> {
+    eval_curve_pose_with_tick_rate(eval, tau, u, state, sig, TickTiming::default().rate())
+}
+
+pub fn eval_curve_pose_with_tick_rate(
+    eval: &CurveEval,
+    tau: f64,
+    u: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    tick_rate: f64,
+) -> Result<Pose, String> {
     match eval {
         CurveEval::Straight => Ok(Pose::oriented(u, 0.0, 0.0)),
-        CurveEval::Expr(d) => dyn_pose_u(d, tau, u, state, sig),
+        CurveEval::Expr(d) => dyn_node_pose_u_with_tick_rate(d.node(), tau, u, state, sig, tick_rate),
     }
 }
 
@@ -522,6 +545,19 @@ pub fn eval_sig(
     scan: Option<ScanShared>,
     pos: Option<(f64, f64)>,
 ) -> Result<Val, String> {
+    eval_sig_at_rate(form, env, sig, tau, u, scan, pos, TickTiming::default().rate())
+}
+
+pub fn eval_sig_at_rate(
+    form: &Form,
+    env: &Env,
+    sig: &SigEnv,
+    tau: f64,
+    u: f64,
+    scan: Option<ScanShared>,
+    pos: Option<(f64, f64)>,
+    tick_rate: f64,
+) -> Result<Val, String> {
     let mut e = env.bind("t".into(), Val::Num(tau)).bind("u".into(), Val::Num(u));
     if let Some((px, py)) = pos {
         e = e.bind("pos".into(), Val::Pose(Pose::point(px, py)));
@@ -536,11 +572,12 @@ pub fn eval_sig(
         projector_scope: None,
     };
     let mut w = World::default(); // signals never touch the world (§2)
+    w.set_tick_rate_for_eval(tick_rate);
     evaluate(form, &e, &mut ctx, &mut w)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn eval_pt(
+pub(crate) fn eval_pt_at_rate(
     a: &Form,
     b: &Form,
     polar: bool,
@@ -550,9 +587,10 @@ pub(crate) fn eval_pt(
     u: f64,
     scan: Option<ScanShared>,
     pos: Option<(f64, f64)>,
+    tick_rate: f64,
 ) -> Result<(f64, f64), String> {
-    let av = eval_sig(a, env, sig, tau, u, scan.clone(), pos)?.num()?;
-    let bv = eval_sig(b, env, sig, tau, u, scan, pos)?.num()?;
+    let av = eval_sig_at_rate(a, env, sig, tau, u, scan.clone(), pos, tick_rate)?.num()?;
+    let bv = eval_sig_at_rate(b, env, sig, tau, u, scan, pos, tick_rate)?.num()?;
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         Ok((av * c, av * s))
@@ -603,9 +641,31 @@ pub fn dyn_node_pose(d: &DynNode, tau: f64, state: &MotionState, sig: &SigEnv) -
     dyn_node_pose_u_in(d, tau, 0.0, ctx)
 }
 
+pub fn dyn_node_pose_with_tick_rate(
+    d: &DynNode,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    tick_rate: f64,
+) -> Result<Pose, String> {
+    dyn_node_pose_u_with_tick_rate(d, tau, 0.0, state, sig, tick_rate)
+}
+
 pub fn dyn_pose(d: &DynPose, tau: f64, state: &MotionState, sig: &SigEnv) -> Result<Pose, String> {
     let readers = MotionReaders::for_pose(d);
     let ctx = MotionEvalCtx::new(state, sig, &readers);
+    dyn_pose_in(d, tau, ctx)
+}
+
+pub fn dyn_pose_with_tick_rate(
+    d: &DynPose,
+    tau: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    tick_rate: f64,
+) -> Result<Pose, String> {
+    let readers = MotionReaders::for_pose(d);
+    let ctx = MotionEvalCtx::with_tick_rate(state, sig, &readers, tick_rate);
     dyn_pose_in(d, tau, ctx)
 }
 
@@ -665,10 +725,24 @@ pub fn dyn_node_pose_u(
     dyn_node_pose_u_in(d, tau, u, ctx)
 }
 
+pub fn dyn_node_pose_u_with_tick_rate(
+    d: &DynNode,
+    tau: f64,
+    u: f64,
+    state: &MotionState,
+    sig: &SigEnv,
+    tick_rate: f64,
+) -> Result<Pose, String> {
+    let readers = MotionReaders::for_node(d);
+    let ctx = MotionEvalCtx::with_tick_rate(state, sig, &readers, tick_rate);
+    dyn_node_pose_u_in(d, tau, u, ctx)
+}
+
 pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
     let state = ctx.state;
     let sig = ctx.sig;
     let readers = ctx.readers;
+    let tick_rate = ctx.tick_rate;
     match d {
         DynNode::Const(p) => Ok(*p),
         DynNode::Linear { vx, vy } => Ok(Pose {
@@ -678,7 +752,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }),
         DynNode::ClosedPt { a, b, polar, env } => {
             let key = d as *const DynNode as usize;
-            let (x, y) = eval_pt(
+            let (x, y) = eval_pt_at_rate(
                 a,
                 b,
                 *polar,
@@ -688,9 +762,10 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 u,
                 Some(read_scan_in(state, key, readers.clone())),
                 None,
+                tick_rate,
             )?;
-            let eps = 1.0 / TICK_RATE;
-            let (x2, y2) = eval_pt(
+            let eps = 1.0 / tick_rate;
+            let (x2, y2) = eval_pt_at_rate(
                 a,
                 b,
                 *polar,
@@ -700,6 +775,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 u,
                 Some(read_scan_in(state, key, readers.clone())),
                 None,
+                tick_rate,
             )?;
             Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
         }
@@ -712,7 +788,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                     _ => None,
                 })
                 .unwrap_or([0.0, 0.0]);
-            let (vx, vy) = eval_pt(
+            let (vx, vy) = eval_pt_at_rate(
                 a,
                 b,
                 *polar,
@@ -722,6 +798,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 u,
                 Some(read_scan_in(state, key, readers.clone())),
                 Some((x, y)),
+                tick_rate,
             )?;
             Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()))
         }
@@ -735,7 +812,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }
         DynNode::RotExpr { form, env } => {
             let key = d as *const DynNode as usize;
-            let th = eval_sig(
+            let th = eval_sig_at_rate(
                 form,
                 env,
                 sig,
@@ -743,6 +820,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 u,
                 Some(read_scan_in(state, key, readers.clone())),
                 Some((0.0, 0.0)),
+                tick_rate,
             )?
             .num()?;
             Ok(Pose::oriented(0.0, 0.0, th))
@@ -765,7 +843,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
         }
         DynNode::Path { curve, progress, env } => {
             let key = d as *const DynNode as usize;
-            let u = eval_sig(
+            let u = eval_sig_at_rate(
                 progress,
                 env,
                 sig,
@@ -773,6 +851,7 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 0.0,
                 Some(read_scan_in(state, key, readers.clone())),
                 None,
+                tick_rate,
             )?
             .num()?;
             dyn_node_pose_u_in(curve, tau, u, ctx)
@@ -823,6 +902,7 @@ pub fn step_motion(
         state,
         sig,
         readers: &readers,
+        tick_rate: TickTiming::default().rate(),
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
         write_dyn: &mut ignore_dyn,
@@ -843,6 +923,7 @@ pub fn step_motion_in(
             let state = &mut *ctx.state;
             let sig = ctx.sig;
             let readers = ctx.readers;
+            let tick_rate = ctx.tick_rate;
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
             let [x, y] = (readers.n2)(dense_key)
@@ -852,7 +933,7 @@ pub fn step_motion_in(
                 })
                 .unwrap_or([0.0, 0.0]);
             let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                eval_pt(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)))
+                eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
             })?;
             for (key, value) in writes {
                 write_n2(key, value);
@@ -866,11 +947,12 @@ pub fn step_motion_in(
             let state = &mut *ctx.state;
             let sig = ctx.sig;
             let readers = ctx.readers;
+            let tick_rate = ctx.tick_rate;
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
             let key = d as *const DynNode as usize;
             let (_, writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                eval_sig(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)))?.num()
+                eval_sig_at_rate(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)), tick_rate)?.num()
             })?;
             for (key, value) in writes {
                 write_n2(key, value);
@@ -882,11 +964,12 @@ pub fn step_motion_in(
                 let state = &mut *ctx.state;
                 let sig = ctx.sig;
                 let readers = ctx.readers;
+                let tick_rate = ctx.tick_rate;
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
                 let key = d as *const DynNode as usize;
                 let (_, writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                    eval_sig(progress, env, sig, tau, 0.0, Some(scan), None)?.num()
+                    eval_sig_at_rate(progress, env, sig, tau, 0.0, Some(scan), None, tick_rate)?.num()
                 })?;
                 for (key, value) in writes {
                     write_n2(key, value);
@@ -901,6 +984,7 @@ pub fn step_motion_in(
                 let state = &mut *ctx.state;
                 let sig = ctx.sig;
                 let readers = ctx.readers;
+                let tick_rate = ctx.tick_rate;
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
                 let write_dyn = &mut *ctx.write_dyn;
@@ -916,14 +1000,14 @@ pub fn step_motion_in(
                     StageTerm::Dur(dsec) => local >= *dsec,
                     StageTerm::Until(pred, penv) => {
                         let scan = read_scan_in(state, key, readers.clone());
-                        truthy(&eval_sig(pred, penv, sig, local, 0.0, Some(scan), None)?)
+                        truthy(&eval_sig_at_rate(pred, penv, sig, local, 0.0, Some(scan), None, tick_rate)?)
                     }
                     StageTerm::Forever => false,
                 };
                 let mut local_lazy_key = None;
                 if done && (idx as usize) + 1 < segs.len() {
                     let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
-                    let eval_ctx = MotionEvalCtx::new(state, sig, readers);
+                    let eval_ctx = MotionEvalCtx::with_tick_rate(state, sig, readers, tick_rate);
                     let p1 = dyn_node_pose_u_in(cur.node(), local, 0.0, eval_ctx)?;
                     let p0 = dyn_node_pose_u_in(cur.node(), (local - dt).max(0.0), 0.0, eval_ctx)?;
                     let exit = Val::Map(Rc::new(vec![
@@ -947,6 +1031,7 @@ pub fn step_motion_in(
                             projector_scope: None,
                         };
                         let mut w = World::default();
+                        w.set_tick_rate_for_eval(tick_rate);
                         let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
                         let dyn_pose = as_dyn_pose(dv)?;
                         seed_reader_pose_nodes(&dyn_pose, readers);
@@ -1009,6 +1094,7 @@ pub fn step_dyn_figure(
         state,
         sig,
         readers: &readers,
+        tick_rate: TickTiming::default().rate(),
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
         write_dyn: &mut ignore_dyn,

@@ -112,13 +112,13 @@ pub(crate) fn special(
                 .entities
                 .dyn_figure(i)
                 .ok_or_else(|| format!("pos: missing dyn figure for row {i}"))?;
-            let tau = world.entities.tau(i, world.tick);
+            let tau = world.entity_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::new();
             let p = dyn_figure_pose_in(
                 dyn_figure,
                 tau,
-                MotionEvalCtx::new(&state, &ctx.sig, &readers),
+                MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate()),
             )?;
             Val::Pose(Pose::point(p.x, p.y))
         }
@@ -137,13 +137,13 @@ pub(crate) fn special(
             let Some(curve) = dyn_figure.curve() else {
                 return Err("on-curve: not a curve figure".into());
             };
-            let tau = world.entities.tau(i, world.tick);
+            let tau = world.entity_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::new();
-            let mctx = MotionEvalCtx::new(&state, &ctx.sig, &readers);
+            let mctx = MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate());
             let anchor = dyn_figure_pose_in(dyn_figure, tau, mctx)?;
             let at = |uu: f64| -> Result<Pose, String> {
-                let local = eval_curve_pose(&curve.eval, tau, uu, &state, &ctx.sig)?;
+                let local = eval_curve_pose_with_tick_rate(&curve.eval, tau, uu, &state, &ctx.sig, world.tick_rate())?;
                 Ok(anchor.compose(&local))
             };
             let p0 = at(u)?;
@@ -223,13 +223,13 @@ pub(crate) fn special(
             let mut best: Option<(f64, (f64, f64))> = None;
             for i in idxs {
                 let Some(dyn_figure) = world.entities.dyn_figure(i) else { continue };
-                let tau = world.entities.tau(i, world.tick);
+                let tau = world.entity_tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::new();
                 let Ok(p) = dyn_figure_pose_in(
                     dyn_figure,
                     tau,
-                    MotionEvalCtx::new(&state, &sig, &readers),
+                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()),
                 ) else {
                     continue;
                 };
@@ -391,9 +391,9 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
         .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("render: curve-samples missing dyn figure for row {i}"))?;
-    let tau = world.entities.tau(i, world.tick);
+    let tau = world.entity_tau(i, world.tick);
     let state = MotionState::new();
-    let Figure::Curve(curve) = eval_dyn_figure(dyn_figure, tau, &state, sig)
+    let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, world.tick_rate())
         .map_err(|err| format!("render: curve-samples could not sample curve: {err}"))?
     else {
         return Err("render: curve-samples entity is not a live curve".into());
@@ -418,7 +418,7 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = eval_curve_pose(&curve.spec.eval, tau, u, &state, sig)
+        let local = eval_curve_pose_with_tick_rate(&curve.spec.eval, tau, u, &state, sig, world.tick_rate())
             .map_err(|err| format!("render: curve-samples could not evaluate curve: {err}"))?;
         let w = curve.frame.compose(&local);
         pts.push((w.x, w.y));

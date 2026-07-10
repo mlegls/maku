@@ -97,13 +97,15 @@ fn materialize_colliders_into(
     symbols: &mut SymbolTable,
     defs: &mut Vec<DynCollider>,
     out: &mut Vec<ColliderData>,
+    tick_rate: f64,
 ) -> Result<(), String> {
     let state = MotionState::new();
     defs.clear();
-    materialize_collider_defs_into(projector, tau, &state, sig, Some(e_view), Some(ctx_view), symbols, defs)
+    materialize_collider_defs_into(projector, tau, &state, sig, Some(e_view), Some(ctx_view), symbols, defs, tick_rate)
         .map_err(|e| format!("colliders: {}", e))?;
     out.extend(
-        defs.drain(..).map(|slot| eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced)),
+        defs.drain(..)
+            .map(|slot| eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced, tick_rate)),
     );
     Ok(())
 }
@@ -128,7 +130,7 @@ impl Sim {
                 self.collider_scratch.push_empty();
                 continue;
             }
-            let tau = self.world.entities.tau(i, tick);
+            let tau = self.world.entity_tau(i, tick);
             let p = {
                 let dyn_figure = self
                     .world
@@ -137,7 +139,11 @@ impl Sim {
                     .ok_or_else(|| format!("colliders: missing dyn figure for row {i}"))?;
                 let readers = self.motion_readers(i);
                 let state = MotionState::new();
-                dyn_figure_pose_in(dyn_figure, tau, MotionEvalCtx::new(&state, &sig, &readers))?
+                dyn_figure_pose_in(
+                    dyn_figure,
+                    tau,
+                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                )?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
@@ -150,6 +156,7 @@ impl Sim {
                 .clone();
             let trace = self.world.entities.trace_samples(i);
             let traced = self.world.entities.is_traced(i);
+            let tick_rate = self.world.tick_rate();
             let collider_projector = self
                 .world
                 .entities
@@ -177,6 +184,7 @@ impl Sim {
                 &mut self.world.symbols,
                 &mut self.collider_scratch.defs,
                 &mut self.collider_scratch.rows,
+                tick_rate,
             )?;
             self.collider_scratch.finish_row(start);
         }

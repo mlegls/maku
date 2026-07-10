@@ -7,6 +7,33 @@ use std::rc::Rc;
 // World: entities + events. The control layer's mutable half.
 
 pub const DEFAULT_ENTITY_CAPACITY: usize = 8192;
+pub const DEFAULT_TICK_RATE: f64 = 120.0;
+
+#[derive(Clone, Copy, Debug)]
+pub struct TickTiming {
+    rate: f64,
+    dt: f64,
+}
+
+impl TickTiming {
+    pub fn new(rate: f64) -> TickTiming {
+        TickTiming { rate, dt: 1.0 / rate }
+    }
+
+    pub fn rate(&self) -> f64 {
+        self.rate
+    }
+
+    pub fn dt(&self) -> f64 {
+        self.dt
+    }
+}
+
+impl Default for TickTiming {
+    fn default() -> Self {
+        TickTiming::new(DEFAULT_TICK_RATE)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldKind {
@@ -334,9 +361,9 @@ impl EntityStore {
         self.birth.get(row).copied()
     }
 
-    pub fn tau(&self, row: usize, tick: u64) -> f64 {
+    pub fn tau(&self, row: usize, tick: u64, tick_rate: f64) -> f64 {
         let birth = self.birth[row];
-        tick.saturating_sub(birth) as f64 / TICK_RATE
+        tick.saturating_sub(birth) as f64 / tick_rate
     }
 
     pub fn reset_birth(&mut self, row: usize, tick: u64) {
@@ -546,9 +573,9 @@ impl EntityStore {
         self.sampled_pose(row, tick).map(|p| (p.x, p.y))
     }
 
-    pub fn velocity_from_samples(&self, row: usize, tick: u64) -> (f64, f64) {
+    pub fn velocity_from_samples(&self, row: usize, tick: u64, tick_rate: f64) -> (f64, f64) {
         match (self.sampled_pose(row, tick), self.previous_sampled_pose(row, tick)) {
-            (Some(p), Some(prev)) => ((p.x - prev.x) * TICK_RATE, (p.y - prev.y) * TICK_RATE),
+            (Some(p), Some(prev)) => ((p.x - prev.x) * tick_rate, (p.y - prev.y) * tick_rate),
             _ => (0.0, 0.0),
         }
     }
@@ -713,6 +740,7 @@ pub struct CollisionFact {
 
 pub struct World {
     pub tick: u64,
+    timing: TickTiming,
     pub next_id: u64,
     pub entities: EntityStore,
     /// The event log is SHARED across snapshots (Rc): the log is monotonic,
@@ -741,6 +769,7 @@ impl Clone for World {
     fn clone(&self) -> World {
         World {
             tick: self.tick,
+            timing: self.timing,
             next_id: self.next_id,
             entities: self.entities.clone(),
             log: self.log.clone(),
@@ -842,6 +871,7 @@ impl World {
     pub fn with_entity_capacity(max_entities: usize) -> World {
         World {
             tick: 0,
+            timing: TickTiming::default(),
             next_id: 0,
             entities: EntityStore::with_capacity(max_entities),
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
@@ -858,6 +888,26 @@ impl World {
 }
 
 impl World {
+    pub fn tick_rate(&self) -> f64 {
+        self.timing.rate()
+    }
+
+    pub fn tick_dt(&self) -> f64 {
+        self.timing.dt()
+    }
+
+    pub(crate) fn set_tick_rate_for_eval(&mut self, tick_rate: f64) {
+        self.timing = TickTiming::new(tick_rate);
+    }
+
+    pub fn entity_tau(&self, row: usize, tick: u64) -> f64 {
+        self.entities.tau(row, tick, self.tick_rate())
+    }
+
+    pub fn entity_velocity_from_samples(&self, row: usize, tick: u64) -> (f64, f64) {
+        self.entities.velocity_from_samples(row, tick, self.tick_rate())
+    }
+
     pub fn resize_entity_capacity(&mut self, max_entities: usize) -> Result<(), String> {
         let live_past_new = self
             .entities
