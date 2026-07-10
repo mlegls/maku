@@ -13,7 +13,10 @@ work.
 - Pattern embedding scope adapters: callable patterns currently embed bare
   defaults only, without argument passing or shared-cell adapters.
 - Channel manifest/load-time checking: missing host channels such as `$wind`
-  should fail at load, not mid-run.
+  should fail at load, not mid-run. Decided: channel manifests, per-kind
+  render row schemas, and entity field tables are ONE load-time schema
+  collection pass — shared machinery, separate tables where the columns
+  differ.
 - `remat` / `manipulate`: still missing per-slot epochs, soft-cull fades,
   the F1 lint, and the masked-SoA fast path. Current callbacks all bill fuel.
 - Extraction and 3D embedding remain unimplemented.
@@ -75,6 +78,21 @@ work.
 - Compile dyn evaluation to a flat program with fixed scratch storage. The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
+  Stance (decided): this is a load-time lowering (AOT at card load), not a
+  JIT, and the interpreter is the semantic reference — do NOT invest in
+  speculative interpreter optimization. Parallelizing the tree-walk fights
+  the determinism contract (sequential splitmix RNG, ordered effects,
+  native/wasm replay identity), and precomputing future ticks is
+  invalidated by per-tick input/channel reads and the scrub/snapshot
+  session model. Parallelism/vectorization belongs after lowering,
+  per-column over entities where no effect ordering is involved. The
+  interpreter investments that survive are architectural: SoA layout,
+  spec-store dedup, group evaluation of shared programs, fixed scratch,
+  and hoisting per-spawn-site invariants to load time.
+- Add a profiling/benchmark harness before the audit and intrinsics
+  decisions: representative cards (bullet floods, laser-heavy, rule-heavy)
+  with per-special/per-builtin execution counts and time attribution.
+  Intrinsic promotion and lib-ification calls should cite its numbers.
 - Keep dyn coercions as explicit language-semantic branches while the
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR
@@ -93,6 +111,16 @@ work.
     handles, rows, channels, or action construction.
   Specials are the IR; pure builtins are intrinsics. Anything expressible in
   `.maku` without hot-path or boundary semantics should move toward lib code.
+  First step (decided): audit EVERY special form, builtin, and reserved
+  keyword for expressibility in terms of a more generic primitive, before
+  moving anything. Expected outcomes: shape/figure constructors (`cart`,
+  `polar`, `rot`, and repeaters like `circle`/`fan`) become lib code over
+  arrays/math plus a small figure/dyn kernel, with their lowered nodes kept
+  as compiler-recognized fast paths. Note `linear` is pos = v*t with STATIC
+  velocity (it does not scan a dyn; lifting a dyn argument would mean
+  v(t)*t, not integration) — if velocity semantics are wanted, the generic
+  primitive is a dyn integrator (`scan` over signals), and `linear` becomes
+  lib sugar over it that lowers to the existing optimized node.
 - Finish shared model extraction. `model::figure` is top-level and generic
   over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids,
   entity handles, primitive data atoms, and runtime collider/render boundary
@@ -197,8 +225,9 @@ work.
 - Richer spellcard templates (:name/:type/hp bars) should be lib macros over
   `states`, `phases`, `boss`, `finally`, and ordinary fields.
 - Candidate stdlib moves:
-  - `for` / `dotimes`, after deciding the lib-visible wait-loop primitive
-    needed for scheduler performance;
+  - `for` / `dotimes`: decided — `loop`/`recur` (+ `wait`) is the primitive
+    and is sufficient; per-iteration action-tree rebuild cost is a job for
+    compiled scheduling, not a fused wait-loop special. Move them to lib;
   - family->hitbox-radius data currently repeated at call sites.
   (The short spawner names — `bullet`, `shot`, `enemy`, `player`, `boss`,
   `laser`, `laser-shot` — are done; `spawn-*` remain as aliases.)
