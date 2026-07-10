@@ -419,47 +419,6 @@ impl EntityStore {
         self.reset_motion_state(row);
     }
 
-    pub fn extend_motion_schema_for_lazy_stage(
-        &mut self,
-        row: usize,
-        key: MotionStateKey,
-        dyn_pose: &DynPose,
-    ) -> Result<Vec<(usize, MotionNodeId)>, String> {
-        if !matches!(key, MotionStateKey::LazyStage { .. }) {
-            return Err(format!(
-                "motion schema extension is only supported for lazy stages, got {key:?}"
-            ));
-        }
-        let Some(current) = self.specs.motion_schema.get(row).cloned() else { return Ok(Vec::new()) };
-        let old_n2 = current.n2_keys.len();
-        let old_dyn = current.dyn_keys.len();
-        let mut next = (*current).clone();
-        collect_pose_state(dyn_pose, &mut next);
-        if next.n2_keys.len() == old_n2 && next.dyn_keys.len() == old_dyn {
-            return Ok(Vec::new());
-        }
-        let new_nodes = next
-            .node_ids
-            .iter()
-            .filter_map(|(ptr, id)| (!current.node_ids.contains_key(ptr)).then_some((*ptr, *id)))
-            .collect::<Vec<_>>();
-        if let Some(slot) = self.specs.motion_schema.get_mut(row) {
-            *slot = Rc::new(next.clone());
-        }
-        self.ensure_motion_state_shape(&next);
-        for slot in old_n2..next.n2_keys.len() {
-            if let Some(cell) = self.state_n2.get_mut(slot).and_then(|col| col.get_mut(row)) {
-                *cell = [0.0, 0.0];
-            }
-        }
-        for slot in old_dyn..next.dyn_keys.len() {
-            if let Some(cell) = self.state_dyn.get_mut(slot).and_then(|col| col.get_mut(row)) {
-                *cell = None;
-            }
-        }
-        Ok(new_nodes)
-    }
-
     pub fn state_n2(&self, row: usize, key: MotionStateKey) -> Option<[f64; 2]> {
         let schema = self.motion_schema(row)?;
         let slot = schema.n2_slots.get(&key)?.0 as usize;
@@ -1239,18 +1198,5 @@ mod tests {
         cache.clear(0);
         assert!(cache.samples(0).is_empty());
         assert_eq!(cache.samples(1), &[p(10.0)]);
-    }
-
-    #[test]
-    fn runtime_schema_extension_is_lazy_stage_only() {
-        let mut store = EntityStore::with_capacity(1);
-        let dyn_pose = DynPose::pose_node(Rc::new(DynNode::Const(Pose::IDENTITY)));
-
-        let err = store
-            .extend_motion_schema_for_lazy_stage(0, MotionStateKey::Node(MotionNodeId(0)), &dyn_pose)
-            .unwrap_err();
-
-        assert!(err.contains("only supported for lazy stages"));
-
     }
 }

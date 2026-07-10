@@ -136,6 +136,8 @@ pub enum Val {
     /// A deferred signal expression (shared stateful instance, §5): forced
     /// when referenced inside a scan context.
     Thunk(Rc<(Form, Env)>),
+    StageExit(Rc<StageExitSlot>),
+    StageExitPose { slot: Rc<StageExitSlot>, field: StageExitField },
     /// The pattern instance's cell scope (name → cell id), bound in the Env
     /// under "#cells" — it rides every captured (Form, Env) pair, so signal
     /// reads resolve the right instance's cells at tick time. Shared-map
@@ -1394,7 +1396,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     fresh_cells: true,
                 })));
             }
-            return builtin_with_tick_rate(name, &args, world.tick_rate());
+            return builtin_with_eval_ctx(name, &args, ctx, world.tick_rate());
         }
     }
     let hv = evaluate(head, env, ctx, world)?;
@@ -1460,6 +1462,27 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 ("x", Val::Pose(p)) => return Ok(Val::Num(p.x)),
                 ("y", Val::Pose(p)) => return Ok(Val::Num(p.y)),
                 ("th", Val::Pose(p)) => return Ok(Val::Num(p.angle_or(0.0))),
+                ("x", Val::StageExitPose { .. })
+                | ("y", Val::StageExitPose { .. })
+                | ("th", Val::StageExitPose { .. }) => {
+                    let Val::Pose(p) = resolve_stage_exit_value(arg, ctx)? else {
+                        unreachable!("stage exit pose resolves to a pose")
+                    };
+                    return match &*k {
+                        "x" => Ok(Val::Num(p.x)),
+                        "y" => Ok(Val::Num(p.y)),
+                        _ => Ok(Val::Num(p.angle_or(0.0))),
+                    };
+                }
+                ("pos", Val::StageExit(slot)) => {
+                    return Ok(Val::StageExitPose { slot: slot.clone(), field: StageExitField::Pos });
+                }
+                ("vel", Val::StageExit(slot)) => {
+                    return Ok(Val::StageExitPose { slot: slot.clone(), field: StageExitField::Vel });
+                }
+                ("pose", Val::StageExit(slot)) => {
+                    return Ok(Val::StageExitPose { slot: slot.clone(), field: StageExitField::Pos });
+                }
                 _ => {}
             }
             if matches!(arg, Val::Handle(_) | Val::EntitySet(_)) {
@@ -1547,12 +1570,50 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
 /// Apply a user fn or builtin. Ambient frames do not cross fn boundaries
 /// (F18). `exec_actions` is set only for manip callbacks, whose bodies
 /// run instantaneously; ordinary fns RETURN action values for composition.
-fn map_path_get(v: &Val, path: &str) -> Option<Val> {
+pub(crate) fn map_path_get(v: &Val, path: &str) -> Option<Val> {
     let mut cur = v.clone();
     for key in path.split('.') {
         cur = map_get(&cur, key)?;
     }
     Some(cur)
+}
+
+fn read_stage_exit_pose(ctx: &Ctx, slot: &Rc<StageExitSlot>, field: StageExitField) -> Result<Pose, String> {
+    let Some(scan) = &ctx.scan else {
+        return Err("stage exit can only be read inside a staged signal".into());
+    };
+    let io = scan.borrow();
+    let Some(key_readers) = io.readers.as_ref() else {
+        return Err("stage exit requires motion readers".into());
+    };
+    let key = stage_exit_key(slot, key_readers, field);
+    let value = match io.state.get(&key) {
+        Some(Cell::N(v)) => Some(*v),
+        _ => None,
+    }
+    .or_else(|| io.readers.as_ref().and_then(|readers| (readers.n2)(key)))
+    .ok_or("stage exit has not been written")?;
+    Ok(Pose::point(value[0], value[1]))
+}
+
+fn resolve_stage_exit_value(v: Val, ctx: &Ctx) -> Result<Val, String> {
+    match v {
+        Val::StageExitPose { slot, field } => read_stage_exit_pose(ctx, &slot, field).map(Val::Pose),
+        other => Ok(other),
+    }
+}
+
+fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, tick_rate: f64) -> Result<Val, String> {
+    // deferred stage-exit reads are rare; keep the common path clone-free
+    if args.iter().any(|v| matches!(v, Val::StageExitPose { .. })) {
+        let args = args
+            .iter()
+            .cloned()
+            .map(|v| resolve_stage_exit_value(v, ctx))
+            .collect::<Result<Vec<_>, _>>()?;
+        return builtin_with_tick_rate(name, &args, tick_rate);
+    }
+    builtin_with_tick_rate(name, args, tick_rate)
 }
 
 /// Entity view passed to predicate queries and manip callbacks.
@@ -1918,7 +1979,7 @@ pub fn apply_fn(
     exec_actions: bool,
 ) -> Result<Val, String> {
     match f {
-        Val::Builtin(name) => builtin_with_tick_rate(&name, args, world.tick_rate()),
+        Val::Builtin(name) => builtin_with_eval_ctx(&name, args, ctx, world.tick_rate()),
         Val::Fn { params, body, env } => {
             let e = bind_fn_params(env.clone(), &params, args)?;
             let saved_ambient = ctx.ambient;
@@ -2972,17 +3033,27 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             h => return Err(format!("stages: unknown clause '{}'", h)),
         };
         let v = evaluate(sig_form, env, ctx, world)?;
-        let make = match v {
-            Val::Fn { .. } => StageMake::Lazy(v),
-            other => StageMake::Ready(as_dyn_pose(other)?),
+        let (make, exit_slot) = match v {
+            Val::Fn { .. } => {
+                if segs.is_empty() {
+                    return Err("stages: first segment cannot be lazy (no exit yet)".into());
+                }
+                let slot = Rc::new(StageExitSlot);
+                let lowered = apply_fn(
+                    v,
+                    &[Val::StageExit(slot.clone())],
+                    ctx,
+                    world,
+                    false,
+                )?;
+                (StageMake::Ready(as_dyn_pose(lowered)?), Some(slot))
+            }
+            other => (StageMake::Ready(as_dyn_pose(other)?), None),
         };
-        segs.push(StageSeg { term, make });
+        segs.push(StageSeg { term, make, exit_slot });
     }
     if segs.is_empty() {
         return Err("stages: no segments".into());
-    }
-    if matches!(segs[0].make, StageMake::Lazy(_)) {
-        return Err("stages: first segment cannot be lazy (no exit yet)".into());
     }
     Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Stages { segs }))))
 }
@@ -3265,15 +3336,23 @@ mod tests {
     #[test]
     fn motion_state_schema_collects_lazy_stage_slots() {
         let ready = DynPose::pose_node(std::rc::Rc::new(DynNode::Linear { vx: 1.0, vy: 0.0 }));
+        let exit_slot = Rc::new(StageExitSlot);
         let staged = DynPose::pose_node(std::rc::Rc::new(DynNode::Stages {
             segs: vec![
-                StageSeg { term: StageTerm::Dur(1.0), make: StageMake::Ready(ready) },
-                StageSeg { term: StageTerm::Forever, make: StageMake::Lazy(Val::Nothing) },
+                StageSeg { term: StageTerm::Dur(1.0), make: StageMake::Ready(ready), exit_slot: None },
+                StageSeg {
+                    term: StageTerm::Forever,
+                    make: StageMake::Ready(DynPose::pose_node(std::rc::Rc::new(DynNode::Linear {
+                        vx: 0.0,
+                        vy: 1.0,
+                    }))),
+                    exit_slot: Some(exit_slot),
+                },
             ],
         }));
         let schema = collect_motion_state_schema(&DynFigure::pose(staged));
-        assert_eq!(schema.n2_keys.len(), 1, "stages has idx/epoch numeric state");
-        assert_eq!(schema.dyn_keys.len(), 1, "lazy segment keeps compatibility dyn state");
+        assert_eq!(schema.n2_keys.len(), 3, "stages has idx/epoch plus exit pos/vel state");
+        assert_eq!(schema.dyn_keys.len(), 0, "lowered stage segments do not keep dyn state");
     }
 
     #[test]

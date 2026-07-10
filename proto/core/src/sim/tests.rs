@@ -3264,12 +3264,12 @@ fn numeric_motion_reads_dense_state_before_legacy_map() {
 }
 
 #[test]
-fn lazy_stages_extend_dense_motion_schema() {
+fn lazy_stages_lower_to_closed_exit_cells() {
     const CARD: &str = r#"
 (defpattern p []
   (spawn (stages
-           (stage (ticks 1) (vel c[120 0]))
-           (forever (fn [exit] (vel c[0 120]))))))
+           (stage (ticks 1) (linear c[120 0]))
+           (forever (fn [exit] (vel c[0 (* 2 (mag (:vel exit)))]))))))
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
@@ -3278,14 +3278,15 @@ fn lazy_stages_extend_dense_motion_schema() {
     assert!(schema
         .n2_keys
         .iter()
-        .any(|key| matches!(key, MotionStateKey::Node(_))));
+        .any(|key| matches!(key, MotionStateKey::StageExit { field: StageExitField::Pos, .. })));
     assert!(schema
-        .dyn_keys
+        .n2_keys
         .iter()
-        .any(|key| matches!(key, MotionStateKey::LazyStage { .. })));
+        .any(|key| matches!(key, MotionStateKey::StageExit { field: StageExitField::Vel, .. })));
+    assert!(schema.dyn_keys.is_empty());
     sim.step().unwrap();
     let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
-    assert!((p.y - 2.0).abs() < 1e-9, "lazy stage dense y after schema extension: {}", p.y);
+    assert!((p.y - 4.0).abs() < 1e-9, "lowered stage dense y from exit velocity: {}", p.y);
 }
 
 #[test]

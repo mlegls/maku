@@ -24,7 +24,31 @@ pub enum MotionStateKey {
     /// Expression-local stateful sites under a scanned node. These are
     /// discovered from scan builtin specs during expression lowering.
     ScanSite { base: MotionNodeId, index: u32 },
-    LazyStage { base: MotionNodeId },
+    /// A stage segment's exit parameter cell (pos/vel), written at the stage
+    /// boundary. Keyed by the slot token's stable lowered id — slot ptrs are
+    /// seeded into node_ids alongside node ptrs.
+    StageExit { base: MotionNodeId, field: StageExitField },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StageExitField {
+    Pos,
+    Vel,
+}
+
+#[derive(Debug)]
+pub struct StageExitSlot;
+
+pub(crate) fn stage_exit_key(
+    slot: &Rc<StageExitSlot>,
+    readers: &MotionReaders,
+    field: StageExitField,
+) -> MotionStateKey {
+    let ptr = Rc::as_ptr(slot) as usize;
+    if let Some(base) = readers.node_ids.borrow().get(&ptr).copied() {
+        return MotionStateKey::StageExit { base, field };
+    }
+    panic!("stage exit slot has no stable lowered id for pointer {ptr:#x}")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -150,10 +174,6 @@ impl<'a> MotionEvalCtx<'a> {
     pub fn node_key(&self, ptr: usize) -> MotionStateKey {
         state_key_for_node(ptr, self.readers)
     }
-
-    pub fn lazy_key(&self, ptr: usize) -> MotionStateKey {
-        lazy_state_key_for_node(ptr, self.readers)
-    }
 }
 
 pub struct MotionStepCtx<'a> {
@@ -169,10 +189,6 @@ pub struct MotionStepCtx<'a> {
 impl<'a> MotionStepCtx<'a> {
     pub fn node_key(&self, ptr: usize) -> MotionStateKey {
         state_key_for_node(ptr, self.readers)
-    }
-
-    pub fn lazy_key(&self, ptr: usize) -> MotionStateKey {
-        lazy_state_key_for_node(ptr, self.readers)
     }
 }
 
@@ -198,13 +214,6 @@ pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionS
         return MotionStateKey::Node(id);
     }
     panic!("motion node has no stable lowered id for pointer {ptr:#x}")
-}
-
-pub(crate) fn lazy_state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
-    if let Some(base) = readers.node_ids.borrow().get(&ptr).copied() {
-        return MotionStateKey::LazyStage { base };
-    }
-    panic!("lazy stage has no stable lowered id for pointer {ptr:#x}")
 }
 
 pub(crate) fn shortest_arc(from: f64, to: f64) -> f64 {
@@ -247,8 +256,7 @@ pub enum DynNode {
     /// optimization, not a semantic need.
     Evolve(Rc<EvolveDyn>),
     /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state.
-    /// Lazy segments are an interpreted compatibility island: they instantiate
-    /// a segment dyn at the boundary and may extend dense motion state then.
+    /// Closure segments are lowered at construction with fixed exit-pose cells.
     Stages { segs: Vec<StageSeg> },
 }
 
@@ -298,6 +306,7 @@ pub fn evolve_value(ev: &EvolveDyn, tau: f64, sig: &SigEnv, tick_rate: f64) -> R
 pub struct StageSeg {
     pub term: StageTerm,
     pub make: StageMake,
+    pub exit_slot: Option<Rc<StageExitSlot>>,
 }
 
 #[derive(Debug)]
@@ -310,9 +319,6 @@ pub enum StageTerm {
 #[derive(Debug)]
 pub enum StageMake {
     Ready(DynPose),
-    /// An `(fn [exit] ...)` closure instantiated at the boundary. This is the
-    /// only live path still allowed to extend an entity's motion schema.
-    Lazy(Val),
 }
 
 pub fn collect_motion_state_schema(d: &DynFigure) -> MotionStateSchema {
@@ -393,9 +399,17 @@ fn seed_dyn_node_ids_with_ptr(
         DynNode::Path { curve, .. } => seed_reader_node_ids(curve, node_ids, next),
         DynNode::Stages { segs } => {
             for seg in segs {
-                if let StageMake::Ready(d) = &seg.make {
-                    seed_reader_node_ids(d.node(), node_ids, next);
+                // slot before child: must mirror collect_node_state's order
+                // so lowered ids line up between schema and readers
+                if let Some(slot) = &seg.exit_slot {
+                    let slot_ptr = Rc::as_ptr(slot) as usize;
+                    if let std::collections::hash_map::Entry::Vacant(entry) = node_ids.entry(slot_ptr) {
+                        entry.insert(MotionNodeId(*next));
+                        *next += 1;
+                    }
                 }
+                let StageMake::Ready(d) = &seg.make;
+                seed_reader_node_ids(d.node(), node_ids, next);
             }
         }
         DynNode::Translate { child, .. } | DynNode::Clamp { child, .. } => {
@@ -438,16 +452,17 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
         }
         DynNode::Stages { segs } => {
             schema.intern_n2(MotionStateKey::Node(node_id));
-            if segs.iter().any(|seg| matches!(seg.make, StageMake::Lazy(_))) {
-                schema.intern_dyn(MotionStateKey::LazyStage { base: node_id });
-            }
             for seg in segs {
                 if let StageTerm::Until(pred, _) = &seg.term {
                     collect_scan_sites(pred, node_id, 0, schema);
                 }
-                if let StageMake::Ready(d) = &seg.make {
-                    collect_pose_state(d, schema);
+                if let Some(slot) = &seg.exit_slot {
+                    let base = schema.intern_node(Rc::as_ptr(slot) as usize);
+                    schema.intern_n2(MotionStateKey::StageExit { base, field: StageExitField::Pos });
+                    schema.intern_n2(MotionStateKey::StageExit { base, field: StageExitField::Vel });
                 }
+                let StageMake::Ready(d) = &seg.make;
+                collect_pose_state(d, schema);
             }
         }
         DynNode::Translate { child, .. } | DynNode::Clamp { child, .. } => {
@@ -976,22 +991,13 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
 pub(crate) fn stage_dyn_in(
     segs: &[StageSeg],
     idx: usize,
-    state: &MotionState,
-    key: usize,
-    readers: &MotionReaders,
+    _state: &MotionState,
+    _key: usize,
+    _readers: &MotionReaders,
 ) -> Result<DynPose, String> {
     let seg = segs.get(idx).ok_or("stages: segment index out of range")?;
     match &seg.make {
         StageMake::Ready(d) => Ok(d.clone()),
-        StageMake::Lazy(_) => {
-            let lazy_key = lazy_state_key_for_node(key, readers);
-            (readers.dyns)(lazy_key)
-            .or_else(|| match state.get(&lazy_key) {
-                Some(Cell::D(d)) => Some(d.clone()),
-                _ => None,
-            })
-            .ok_or_else(|| "stages: lazy segment not instantiated".into())
-        }
     }
 }
 
@@ -1087,7 +1093,7 @@ pub fn step_motion_in(
         }
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
-            let (cur, epoch, local_lazy_key, mirror_legacy) = {
+            let (cur, epoch, _mirror_legacy) = {
                 let dense_key = ctx.node_key(key);
                 let state = &mut *ctx.state;
                 let sig = ctx.sig;
@@ -1095,7 +1101,6 @@ pub fn step_motion_in(
                 let tick_rate = ctx.tick_rate;
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
-                let write_dyn = &mut *ctx.write_dyn;
                 let [mut idx, mut epoch] = (readers.n2)(dense_key)
                     .or_else(|| match state.get(&dense_key) {
                         Some(Cell::N(v)) => Some(*v),
@@ -1112,7 +1117,6 @@ pub fn step_motion_in(
                     }
                     StageTerm::Forever => false,
                 };
-                let mut local_lazy_key = None;
                 if done && (idx as usize) + 1 < segs.len() {
                     let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
                     let eval_ctx = MotionEvalCtx::with_tick_rate(state, sig, readers, tick_rate);
@@ -1128,41 +1132,31 @@ pub fn step_motion_in(
                     ]));
                     idx += 1.0;
                     epoch = tau;
-                    if let StageMake::Lazy(f) = &segs[idx as usize].make {
-                        let mut ctx = Ctx {
-                            sig: sig.clone(),
-                            ambient: Pose::IDENTITY,
-                            scan: None,
-                            patterns: Rc::new(HashMap::new()),
-                            macros: Rc::new(HashMap::new()),
-                            deferred: Vec::new(),
-                            projector_scope: None,
+                    if let Some(slot) = &segs[idx as usize].exit_slot {
+                        let pos_key = stage_exit_key(slot, readers, StageExitField::Pos);
+                        let vel_key = stage_exit_key(slot, readers, StageExitField::Vel);
+                        let pos = match map_path_get(&exit, "pos") {
+                            Some(Val::Pose(p)) => [p.x, p.y],
+                            _ => return Err("stages: internal exit pos missing".into()),
                         };
-                        let mut w = World::default();
-                        w.set_tick_rate_for_eval(tick_rate);
-                        let dv = apply_fn(f.clone(), &[exit], &mut ctx, &mut w, false)?;
-                        let dyn_pose = as_dyn_pose(dv)?;
-                        seed_reader_pose_nodes(&dyn_pose, readers);
-                        let lazy_key = lazy_state_key_for_node(key, readers);
-                        state.insert(lazy_key, Cell::D(dyn_pose.clone()));
-                        local_lazy_key = Some(lazy_key);
-                        write_dyn(lazy_key, dyn_pose);
+                        let vel = match map_path_get(&exit, "vel") {
+                            Some(Val::Pose(p)) => [p.x, p.y],
+                            _ => return Err("stages: internal exit vel missing".into()),
+                        };
+                        state.insert(pos_key, Cell::N(pos));
+                        state.insert(vel_key, Cell::N(vel));
+                        write_n2(pos_key, pos);
+                        write_n2(vel_key, vel);
                     }
                 }
                 let next = [idx, epoch];
                 state.insert(dense_key, Cell::N(next));
                 write_n2(dense_key, next);
                 let cur = stage_dyn_in(segs, idx as usize, state, key, readers)?;
-                (cur, epoch, local_lazy_key, mirror_legacy)
+                (cur, epoch, mirror_legacy)
             };
             // step the inner dyn on the segment-local clock
-            let result = step_motion_in(cur.node(), tau - epoch, dt, ctx);
-            if !mirror_legacy {
-                if let Some(key) = local_lazy_key {
-                    ctx.state.remove(&key);
-                }
-            }
-            result
+            step_motion_in(cur.node(), tau - epoch, dt, ctx)
         }
         DynNode::Translate { child, .. } => {
             step_motion_in(child, tau, dt, ctx)

@@ -396,9 +396,8 @@ impl Sim {
                 let readers = self.motion_readers(i);
                 let mut state = MotionState::new();
                 let mut n2_writes = Vec::new();
-                let mut dyn_writes = Vec::new();
                 let mut write_n2 = |key, value| n2_writes.push((key, value));
-                let mut write_dyn = |key, value| dyn_writes.push((key, value));
+                let mut ignore_dyn = |_, _| {};
                 let mut motion = MotionStepCtx {
                     state: &mut state,
                     sig: &sig,
@@ -406,19 +405,11 @@ impl Sim {
                     tick_rate: self.world.tick_rate(),
                     mirror_legacy: false,
                     write_n2: &mut write_n2,
-                    write_dyn: &mut write_dyn,
+                    write_dyn: &mut ignore_dyn,
                 };
                 step_dyn_figure_in(&dyn_figure, tau, dt, &mut motion)?;
-                for (key, value) in &dyn_writes {
-                    for (ptr, id) in self.world.entities.extend_motion_schema_for_lazy_stage(i, *key, value)? {
-                        readers.node_ids.borrow_mut().insert(ptr, id);
-                    }
-                }
                 for (key, value) in n2_writes {
                     self.world.entities.set_state_n2(i, key, value);
-                }
-                for (key, value) in dyn_writes {
-                    self.world.entities.set_state_dyn(i, key, value);
                 }
             }
         }
