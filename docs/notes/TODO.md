@@ -12,6 +12,11 @@ work.
 - Scoped channel overrides: `(with {$chan v} body)`.
 - Pattern embedding scope adapters: callable patterns currently embed bare
   defaults only, without argument passing or shared-cell adapters.
+- Entity-view predicates don't support destructuring params
+  (`(fn [{:keys [hp]}] ...)` errors "did not match pattern"): pre-existing
+  (eager map views failed identically), independent of the lazy
+  `Val::EntityView` row tokens. Teach `match_pattern` map destructuring
+  over entity views if the idiom is wanted.
 - Channel manifest/load-time checking: missing host channels such as `$wind`
   should fail at load, not mid-run. Decided: channel manifests, per-kind
   render row schemas, and entity field tables are ONE load-time schema
@@ -38,13 +43,13 @@ work.
   single-field case. Update functions must be pure. A new
   figure evaluates anchored where the entity currently IS (current world
   pose); callers wanting the old parent frame store/pass it explicitly.
-  Still missing in the implementation: the write queue / `change-col`,
+  Milestone 1 is DONE (write queue + `change-col` + `set-col`-as-prelude-
+  sugar + lib migration; see `docs/notes/remat-design.md` for the landed
+  shape and known edges — notably the same-tick multi-contact iframe guard,
+  which needs milestone 2's atomic multi-field spec). Still missing:
   partial remat specs, per-slot epochs, soft-cull fades, the F1 lint, and
   the masked-SoA fast path (the lowering target for batch `map`-remat
-  shapes). Current callbacks all bill fuel. Implementation plan:
-  `docs/notes/remat-design.md` (milestone 1 = queue + `change-col` +
-  `set-col`-as-sugar + lib migration; milestone 2 = partial spec +
-  per-slot epochs; live-evolve integration keys on those epochs).
+  shapes). Live-evolve integration keys on the per-slot epochs.
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
@@ -157,6 +162,15 @@ work.
   cost); (c) purity edge: a pure higher-order builtin applying an impure
   user fn passed BY NAME is classified pure — conservative table fix if it
   ever bites.
+- DONE: entities-where lazy row tokens — predicate queries pass a
+  generation-checked `Val::EntityView` instead of eagerly materializing a
+  map per row; keyword access/`get` read entity storage directly, any other
+  builtin use materializes the old map view. Eager views were also
+  force-sampling every entity's pose per row, so dyn eval halved too.
+  Aggregate: entities-where 1825→184ms self; dyn:vel 2030→972, closed-pt
+  1706→878, dyn:frame 895→412ms self. Post-merge table now leads with
+  dyn:vel/dyn:closed-pt ~880ms and emit 819ms — the compiled-dyn chain and
+  emit row construction are the next profiled targets.
 - Keep dyn coercions as explicit language-semantic branches while the
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR

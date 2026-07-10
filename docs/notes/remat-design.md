@@ -40,7 +40,20 @@ but both apply IMMEDIATELY mid-tick:
 
 ## Plan
 
-### Milestone 1 — write queue + `change-col` (fields only)
+### Milestone 1 — write queue + `change-col` (fields only) — DONE
+
+Landed as described below (drain at the start of `Sim::step_with` before
+channel refresh; closed-SigEnv application; set-col as prelude sugar; lib
+read-modify-write sites migrated). Deviations/known edges:
+- Fuel: a local 100k-writes drain cap instead of engine fuel billing per
+  application — revisit when fuel policy is unified.
+- The player-hit iframe guard reads pre-tick state, so two damage contacts
+  in ONE tick both pass the guard and both decrement `:lives`/`:hits` (old
+  immediate set-col let the first write block the second). The guard spans
+  columns, so it cannot fold into a single change-col fn — this is the
+  atomic multi-field case milestone 2's partial remat spec covers. Same
+  shape applies to the `:grazed` latch. No corpus card exhibits same-tick
+  double contacts; the suites stayed green.
 
 1. `World` gains a pending-write queue drained at the tick boundary, before
    any reads of the new tick:
