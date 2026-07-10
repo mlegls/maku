@@ -52,11 +52,16 @@ work.
   guard if a card needs it). Still missing: per-dyn-field epochs (fades
   surviving motion remats), soft-cull fades, the F1 lint, and the
   masked-SoA fast path (the lowering target for batch `map`-remat shapes).
-  Live-evolve integration keys on the per-slot epochs (milestone 3;
-  implementation design in `docs/notes/live-evolve-design.md`: Val motion
-  cells + deferred init thunks + syntactic liveness classification +
-  on-clock advance in the scanned pass, which also de-quadratifies closed
-  evolves via the same cell).
+  Live-evolve integration keys on the per-slot epochs (implementation
+  design in `docs/notes/live-evolve-design.md`). Milestones 1–2 are DONE:
+  EvolveCell Val motion cells (schema/store/snapshot/reader/write_val
+  plumbing), evolves are scanned, step_motion_in advances closed evolves
+  once per tick boundary against the closed SigEnv, on-clock pose reads
+  hit the settled cell and off-clock sampling replays unchanged — closed
+  evolves stopped being O(n²); a motion remat's schema swap restarts the
+  epoch. Milestone 3 (deferred init thunks + syntactic liveness
+  classification + real-env live steps + off-clock error) remains, and
+  unblocks evolve-design step 3 (vel/slew/smooth/stages/pather in lib).
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
@@ -127,11 +132,19 @@ work.
   per-node fallback, defs-shadowing guarded, oracle-verified via
   MAKU_LOWER_ORACLE=1); Vel/RotExpr step arms reuse the programs. 40%/58%
   of closed-pt/vel evals compile at ~30x per-eval; `*` interpreted count
-  down 1M. Next levers: the Interp fallback op + richer classification
-  (user-defn inlining via the rewrite pass's trivial-defn machinery)
-  for coverage, then milestone B (input slots + group evaluation). The
-  interpreter path may remain as a compatibility implementation, but hot
-  steady-state execution should not allocate or hash by node pointer.
+  down 1M. User-defn inlining is also DONE (hygienic beta-reduction at
+  lower time; required pinning live-only cell reads in signal slots —
+  Ctx.signal_scope — since a captured cell scope otherwise disabled it
+  for 100% of corpus lowerings) but bought no corpus coverage: the bail
+  census shows the remaining interpreted volume is (a) homing-slew nodes
+  (scan + channel inputs → milestones B/C), (b) `lerpsmooth` with a
+  static easing-kind sym (an op away, 389k calls/83ms), (c) keyword
+  reads on captured poses/maps (foldable to Const at lower time). Those
+  are the next coverage levers, in that expected-value order — see the
+  design doc's milestone A follow-up notes. Then milestone B (input
+  slots + group evaluation). The interpreter path may remain as a
+  compatibility implementation, but hot steady-state execution should
+  not allocate or hash by node pointer.
 - Move the dyn kernel (and entity spec / state-schema semantic halves) to
   model/ as a backend-parametric `Dyn<E>`, AFTER the evolve re-expression
   shrinks the kernel (moving now would enshrine Vel/Stages, which become

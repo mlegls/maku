@@ -136,6 +136,25 @@ Landed. Deviations/notes vs the plan below:
   `*` 587→461ms (count 3.8M→2.8M). Remaining uncompiled evals are forms
   using user defns/scan sites/non-numeric captures — the Interp fallback
   op and richer classification are the coverage levers.
+- Follow-up (landed): user-defn INLINING — bare numeric defs and literal
+  `(fn [..] body)` def heads beta-reduce at lower time under the
+  interpreter's def-scope rules (params → slot t/u → defs → builtins;
+  never caller captures/pos/channels; depth-capped). Sound because
+  signal slots now enforce live-only cell reads (Ctx.signal_scope,
+  language.md control-cells) — without that pin, every pattern env's
+  cell scope disabled inlining (measured: 100% of corpus lowerings).
+- Measured after inlining: corpus coverage UNCHANGED (the corpus' defs
+  don't sit on the hot bail paths). The actual remaining interpreted
+  volume, by bail census (MAKU_LOWER_STATS-style dump, 2026-07): (a)
+  225 per-entity homing-slew nodes
+  `(slew 60 90 (angle-of (- (live $chan) pos)))` — needs ReadScan +
+  Channel ops (milestones B/C) and angle-of/pose math over input pairs;
+  (b) `lerpsmooth` with a static easing-kind symbol arg — an op away
+  (389k builtin calls / 83ms aggregate); (c) keyword reads on captured
+  values (`(:x delta)` on a captured pose could fold to Const at lower
+  time; `(:vel exit)` map reads likewise when the capture is a literal
+  map of nums/poses). These, not defs or the Interp fallback op, are
+  the next coverage levers in expected-value order.
 
 Original plan:
 
