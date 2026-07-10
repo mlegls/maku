@@ -104,11 +104,16 @@ shapes for the optimized paths, never the names.
 
 ## Implementation order
 
-1. Dyn values callable in application position (`(d t)`, `(d t u)`);
-   accept `(fn [t] ...)` in dyn slots; delete `sample`. (In progress.)
-2. `evolve` special (rename the reserved `scan` stub): closed evolves
-   first (replayable), live reads erroring off-clock; wire to existing
-   ScanSite state + per-slot epochs.
+1. DONE — dyn values callable in application position (`(d t)`, `(d t u)`);
+   `(fn [t] ...)` accepted in dyn slots; `sample` deleted.
+2. DONE (closed form) — `evolve` special replaces the reserved `scan`
+   stub. Closed evolves only: evaluation replays the fold from epoch
+   start (pure in tau; `Val::Evolve` + stateless `DynNode::Evolve`, no
+   per-entity motion state). Steps run against a closed SigEnv (defs
+   yes, channels/cells no), enforcing the closed rule. Live evolves
+   (engine-clock advance through ScanSite state + per-slot epochs) and
+   memoized monotone sampling are the follow-up — driven by remat and
+   profiling respectively.
 3. Re-express `vel`/`slew`/`smooth`/`stages`/`pather` in lib; keep the
    builtins as recognized expansion shapes (or delete + rewrite-match,
    per profiling).

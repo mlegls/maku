@@ -167,12 +167,23 @@ Rate inference is shape inference; hoisting is automatic. The REPL uses inferred
 
 **[spec]** A **dyn** is `Signal Pose` — the trajectory of *one* position (with orientation) over time. Not privileged: position is a signal the express-action hands to collision and rendering.
 
-- Constructors: closed-form (`f(t) → Pose`, with cartesian and polar point variants; `pos`/`vel`/`acc` variants are `integrate` applied 0/1/2 times — vel/acc are scans by construction, with self-state slot bindings per §3), and procedural per-tick (`scan` directly). `lerp`-family speed profiles in vel slots are the common Scanned case; see the F1 lint in §9.
+- Constructors: closed-form (`f(t) → Pose`, with cartesian and polar point variants; `pos`/`vel`/`acc` variants are `integrate` applied 0/1/2 times — vel/acc are scans by construction, with self-state slot bindings per §3), and procedural per-tick (`evolve` directly). `lerp`-family speed profiles in vel slots are the common Scanned case; see the F1 lint in §9.
 - Static poses / pose arrays (e.g. `(circle 8)`) are **not dyns** — they are values. Promotion `pose → Closed(λt. pose)` (constants are the unit of both the signal and broadcast algebras) lets them serve in frame slots without ceremony.
 - Plain functions from time to pose are accepted where a pose dyn is expected:
   `(fn [t] (cart (* 20 (cos (* 3 t))) 0))` is a stateless closed dyn in a
   spawn pose slot. Calling that value directly is still ordinary function
   application; the dyn coercion happens only at dyn-typed boundaries.
+- `(evolve init step)` is the one stateful dyn constructor (see
+  `docs/notes/evolve-design.md`): it returns a dyn whose value at tick n of its
+  epoch is the n-fold application of `step`, a `(fn [s ctx] ...)`, to `init`
+  (evaluated at construction = epoch start). `ctx` is a map `{:t :dt :tick}`
+  (epoch-local); rate-independence is the step body's job via `:dt`. The
+  carried state is any value — a pose-state evolve coerces into pose/figure
+  slots; scalar or map state is read by applying the evolve to a time inside
+  an ordinary `(fn [t] ...)`. Steps evaluate CLOSED: defs resolve, but live
+  channel reads error and cell reads miss — a closed evolve is a pure function
+  of epoch time, and sampling replays the fold from epoch start (live evolves
+  advanced on the entity clock are a later milestone).
 - Dyns are applicable. A dyn in head position with a numeric first argument
   samples it at that time: `(d 3.5)`. With a second numeric argument it samples
   a curve/materialization axis as well: `(d 0 1)` returns the pose at `t = 0`,

@@ -1441,6 +1441,59 @@
         assert!((x - 2.0).abs() < 1e-6 && y.abs() < 1e-6, "point at u=1 on a straight radial curve: ({}, {})", x, y);
     }
 
+    /// A scalar evolve sampled by application inside a fn-backed dyn: the
+    /// fold replays from epoch start, one step per tick.
+    #[test]
+    fn evolve_scalar_state_integrates() {
+        const CARD: &str = r#"
+(def rise (evolve 0 (fn [s c] (+ s (* 60 (:dt c))))))
+(defpattern p []
+  (spawn (fn [t] (cart (rise t) 0)) {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let state = MotionState::new();
+        // top-level defs resolve via SigEnv::defs, so use the sim's sig
+        let sig = sim.ctx.sig.clone();
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
+        // 120 Hz: 60 steps of +60·dt = +0.5 each.
+        assert!((p.x - 30.0).abs() < 1e-6 && p.y.abs() < 1e-6, "evolved scalar: {:?}", p);
+    }
+
+    /// A pose-state evolve coerces into a pose slot directly.
+    #[test]
+    fn evolve_pose_state_in_pose_slot() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) 1) (:y s))))
+         {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let state = MotionState::new();
+        let sig = SigEnv::default();
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
+        assert!((p.x - 60.0).abs() < 1e-6 && p.y.abs() < 1e-6, "evolved pose: {:?}", p);
+    }
+
+    /// Evolve state is any value: a map-carrying evolve sampled by
+    /// application, with the ctx tick counter driving the step.
+    #[test]
+    fn evolve_map_state_samples_any_value() {
+        const CARD: &str = r#"
+(def m (evolve {:x 0} (fn [s c] {:x (+ (:x s) (:tick c))})))
+(defpattern p []
+  (spawn (fn [t] (cart (:x (m t)) 0)) {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let state = MotionState::new();
+        let sig = sim.ctx.sig.clone();
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
+        // ticks 0..59 summed = 1770.
+        assert!((p.x - 1770.0).abs() < 1e-6, "evolved map state: {:?}", p);
+    }
+
     /// Slow lasers: the telegraph shows the whole path immediately, but
     /// the hitbox sweeps out from the source over the :fill window.
     #[test]

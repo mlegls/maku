@@ -241,10 +241,57 @@ pub enum DynNode {
     RotExpr { form: Form, env: Env },
     /// A user function adapted to a stateless pose dyn by calling it as (f t).
     FnPose(Val),
+    /// A closed evolve used in a pose slot: the fold is replayed from epoch
+    /// start at each evaluation (pure in tau), so the node carries no
+    /// per-entity motion state. Memoized monotone advance is a later
+    /// optimization, not a semantic need.
+    Evolve(Rc<EvolveDyn>),
     /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state.
     /// Lazy segments are an interpreted compatibility island: they instantiate
     /// a segment dyn at the boundary and may extend dense motion state then.
     Stages { segs: Vec<StageSeg> },
+}
+
+/// `(evolve init step)` — the kernel's stateful signal constructor
+/// (docs/notes/evolve-design.md). `init` is the state at epoch start
+/// (already evaluated: construction is epoch start until remat lands);
+/// `step` is a callable `(fn [s ctx] ...)` applied once per tick.
+#[derive(Debug)]
+pub struct EvolveDyn {
+    pub init: Val,
+    pub step: Val,
+}
+
+/// The value of a closed evolve at time tau: the fold of `step` over ticks
+/// 0..floor(tau·rate), starting from `init`. Steps evaluate against a
+/// CLOSED SigEnv — defs carry over (pure), but channels/cells are empty so
+/// live channel reads error, enforcing the closed-evolve rule (live
+/// evolves get engine-clock advance in a later milestone).
+pub fn evolve_value(ev: &EvolveDyn, tau: f64, sig: &SigEnv, tick_rate: f64) -> Result<Val, String> {
+    let closed_sig = SigEnv { defs: sig.defs.clone(), ..SigEnv::default() };
+    let dt = 1.0 / tick_rate;
+    let n = (tau * tick_rate + 1e-9).floor().max(0.0) as u64;
+    let mut s = ev.init.clone();
+    for k in 0..n {
+        let step_ctx = Val::Map(Rc::new(vec![
+            (Val::Kw("t".into()), Val::Num(k as f64 * dt)),
+            (Val::Kw("dt".into()), Val::Num(dt)),
+            (Val::Kw("tick".into()), Val::Num(k as f64)),
+        ]));
+        let mut call_ctx = Ctx {
+            sig: closed_sig.clone(),
+            ambient: Pose::IDENTITY,
+            scan: None,
+            patterns: Rc::new(HashMap::new()),
+            macros: Rc::new(HashMap::new()),
+            deferred: Vec::new(),
+            projector_scope: None,
+        };
+        let mut w = World::default();
+        w.set_tick_rate_for_eval(tick_rate);
+        s = apply_fn(ev.step.clone(), &[s, step_ctx], &mut call_ctx, &mut w, false)?;
+    }
+    Ok(s)
 }
 
 #[derive(Debug)]
@@ -364,6 +411,7 @@ fn seed_dyn_node_ids_with_ptr(
         | DynNode::Vel { .. }
         | DynNode::ClosedPt { .. }
         | DynNode::FnPose(_)
+        | DynNode::Evolve(_)
         | DynNode::RotExpr { .. } => {}
     }
 }
@@ -409,7 +457,11 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
             collect_node_state(a, schema);
             collect_node_state(b, schema);
         }
-        DynNode::Const(_) | DynNode::Linear { .. } | DynNode::Live { .. } | DynNode::FnPose(_) => {}
+        DynNode::Const(_)
+        | DynNode::Linear { .. }
+        | DynNode::Live { .. }
+        | DynNode::FnPose(_)
+        | DynNode::Evolve(_) => {}
     }
 }
 
@@ -846,6 +898,13 @@ pub fn dyn_node_pose_u_in(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>)
                 other => Err(format!("fn-backed dyn expected fn to return pose, got {:?}", other)),
             }
         }
+        DynNode::Evolve(ev) => match evolve_value(ev, tau, sig, tick_rate)? {
+            Val::Pose(p) => Ok(p),
+            other => Err(format!(
+                "evolve in a pose slot expected pose state, got {:?}",
+                other
+            )),
+        },
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);

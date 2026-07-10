@@ -124,6 +124,10 @@ pub enum Val {
     FormV(Rc<Form>),
     Action(Rc<ActionV>),
     Fn { params: Rc<[Form]>, body: Rc<[Form]>, env: Env },
+    /// `(evolve init step)`: the kernel's stateful signal constructor.
+    /// Callable like any dyn — `(d t)` replays the fold — and coercible to
+    /// a pose/figure dyn when the carried state is a pose.
+    Evolve(Rc<EvolveDyn>),
     Builtin(Rc<str>),
     Handle(EntityRef),
     /// A deferred signal expression (shared stateful instance, §5): forced
@@ -1305,8 +1309,21 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 );
                 return Ok(Val::Num(a + world.next_rand() * (b - a)));
             }
-            "scan" => {
-                return Err(format!("'{}' not implemented in this milestone", s));
+            "evolve" => {
+                // (evolve init step): the stateful signal constructor
+                // (docs/notes/evolve-design.md). init is evaluated HERE —
+                // construction is epoch start (per-slot epoch resets arrive
+                // with remat). The result is a dyn value: apply it to a time
+                // to sample, or put it in a pose/figure slot.
+                if items.len() != 3 {
+                    return Err("evolve: expected (evolve init step)".into());
+                }
+                let init = evaluate(&items[1], env, ctx, world)?;
+                let step = evaluate(&items[2], env, ctx, world)?;
+                if !matches!(step, Val::Fn { .. } | Val::Builtin(_)) {
+                    return Err(format!("evolve: step must be callable, got {:?}", step));
+                }
+                return Ok(Val::Evolve(Rc::new(EvolveDyn { init, step })));
             }
             _ => {}
         }
@@ -1365,6 +1382,15 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
             apply_frame_val(p, child?)
         }
         // signal-valued frame (live channel, rot-expr): compose dyns
+        // An evolve applied to a time replays its fold: the value at tick n
+        // is the n-fold step application (any state type — pose, num, map).
+        Val::Evolve(ev) => {
+            if items.len() != 2 {
+                return Err("evolve application takes exactly one sample time".into());
+            }
+            let t = evaluate(&items[1], env, ctx, world)?.num()?;
+            evolve_value(&ev, t, &ctx.sig, world.tick_rate())
+        }
         Val::DynPose(fd) => {
             // (d t u): two args are unambiguously curve sampling — frame
             // application takes exactly one child.
@@ -2347,6 +2373,7 @@ fn as_dyn_pose(v: Val) -> Result<DynPose, String> {
         Val::DynPose(d) => Ok(d),
         Val::Pose(p) => Ok(DynPose::pose_node(Rc::new(DynNode::Const(p)))),
         Val::Fn { .. } => Ok(DynPose::pose_node(Rc::new(DynNode::FnPose(v)))),
+        Val::Evolve(ev) => Ok(DynPose::pose_node(Rc::new(DynNode::Evolve(ev)))),
         v => Err(format!("expected dyn pose, got {:?}", v)),
     }
 }
@@ -2358,6 +2385,7 @@ fn as_dyn_figure(v: Val) -> Result<DynFigure, String> {
         Val::Figure(f) => Ok(DynFigure::figure_const(f)),
         Val::Pose(p) => Ok(DynFigure::pose_node(Rc::new(DynNode::Const(p)))),
         Val::Fn { .. } => Ok(DynFigure::pose_node(Rc::new(DynNode::FnPose(v)))),
+        Val::Evolve(ev) => Ok(DynFigure::pose_node(Rc::new(DynNode::Evolve(ev)))),
         v => Err(format!("expected dyn figure, got {:?}", v)),
     }
 }

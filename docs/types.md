@@ -97,6 +97,9 @@ Time-varying values:
   out with an unbound hidden axis.
 - `Fn<Num, Pose>` values can coerce to pose dyns at dyn-typed boundaries. The
   function is called as `(f t)` during dyn evaluation and must return a pose.
+- `(evolve init step)` values are dyns with any carried state type. Applying
+  one to a time replays its fold (any value results); coercion into a pose or
+  figure slot requires pose state and errors otherwise.
 - Applying a dyn to numeric axes samples it: `(d t)` for the time axis, or
   `(d t u)` for time plus materialization/curve axis. Applying a dyn to a
   non-numeric child keeps frame-application semantics.
