@@ -1,0 +1,194 @@
+# compiled dyn — implementation design
+
+Status: stance SETTLED (docs/notes/TODO.md "Compile dyn evaluation to a flat
+program"): load-time lowering (AOT at card load / figure construction), not a
+JIT; the control plane stays interpreted permanently; per-entity hot loops
+(dyn columns, projector bodies, tick rules) are the replacement target, dyn
+first. This doc turns the stance into a plan. Profile motivation (aggregate,
+8 representative cards, post entities-where/value-or work): dyn:vel 879ms and
+dyn:closed-pt 846ms self are the top two rows; dyn:frame 410ms is mostly
+dispatch around them.
+
+## Cost anatomy (what the interpreter pays per entity per tick)
+
+A `DynNode::ClosedPt`/`Vel` evaluation (`motion.rs::dyn_node_pose_u_in`)
+pays, per COMPONENT eval (`eval_sig_at_rate`):
+
+1. A fresh `World::default()` — full World construction, immediately dropped
+   ("signals never touch the world", but the evaluator signature demands one).
+2. `sig.clone()` (SigEnv Rc clones) + a fresh `Ctx` with two fresh Rc-wrapped
+   empty HashMaps.
+3. `env.bind("t").bind("u")` (+"pos") — fresh Env nodes and Rc<str> key
+   allocs per eval.
+4. `read_scan_in` — clones the entity's ENTIRE MotionState HashMap into a
+   fresh Rc<RefCell<ScanIo>>, plus a node_ids borrow + key lookup.
+5. Interpreting the Form tree: per node an enum dispatch, symbol lookups
+   through Env (linked lookup), builtin dispatch by string match, Val
+   allocations for every intermediate.
+
+ClosedPt does this ×2 components ×2 samples (finite-difference heading) = 4
+full passes; Vel ×2 plus the dense-state read. `dyn:frame` then composes
+poses it re-derived from scratch. None of this work varies at steady state:
+the forms, envs, scan-site set, and state slots are all fixed at spawn.
+
+## Shape of the fix
+
+Lower each signal Form to a flat register program once, share it across the
+spawn group, and evaluate it against fixed scratch:
+
+```rust
+struct NumProgram {
+    ops: Vec<NumOp>,          // topological, register-addressed
+    n_regs: u16,
+    inputs: Vec<InputSlot>,   // t, u, pos.x, pos.y, dt, captures…
+    scan_sites: Vec<ScanSlot> // resolved n2 slot ids (schema keys)
+}
+
+enum NumOp {
+    Const { dst, v: f64 },
+    Input { dst, slot: u16 },
+    Add { dst, a, b }, Sub…, Mul…, Div…, Neg…,
+    Sin…, Cos…, Atan2…, Sqrt…, Pow…, Min…, Max…, Abs…, Floor…, Mod…,
+    Select { dst, cond, then_r, else_r },       // strict if over nums
+    ValueOr { dst, x, d },                      // %value-or over num-or-NaN
+    ReadScan { dst, site: u16 },                // slew/smooth state read
+    Channel { dst, chan: u16 },                 // per-tick refreshed input
+    Interp { dst, form: u16 },                  // FALLBACK: boxed interpreter call
+}
+```
+
+- Registers are `f64`; evaluation is a dumb `for op in ops` loop over a
+  scratch `Vec<f64>` owned by the caller (Sim), reused across entities.
+- `Interp` is the coverage escape hatch: any subform the lowering can't
+  classify becomes one boxed call back into `eval_sig_at_rate` for THAT
+  subtree only. A program that is 100% Interp is exactly today's cost; every
+  classified node is pure win. This makes the pass incremental and never
+  blocks a card from loading.
+- Nothing/keyword-valued signal exprs stay on the interpreter (numeric
+  programs only); the lowering rejects them at classification time.
+
+### Inputs, not substitution (rand + env captures)
+
+Two things currently SPECIALIZE the form tree per entity and would defeat
+program sharing:
+
+- `instantiate_rand` (`spawn.rs`) rewrites `(rand a b)` sites to per-entity
+  `Form::Num` — fresh Form trees per spawn element.
+- Spawn-local env bindings (repeater vars, spawn params) differ per element
+  while the form is shared.
+
+The compiled form inverts both: compile the PRE-substitution form once, with
+each rand site and each free env variable classified as an `Input` slot. The
+per-entity data is then a small capture vector (`Vec<f64>` or slots in the
+entity SoA), filled at spawn — one program per spawn SITE, shared by the
+whole group, which is also what group evaluation (TODO: AxisSel/SS5
+interchange) needs. Env variables bound to non-numeric values make the
+referencing subtree an `Interp` fallback.
+
+RNG determinism is preserved: rand draws still happen at spawn in the same
+order (they fill capture slots instead of rewriting forms).
+
+### Scan sites and state
+
+`slew`/`smooth` (ScanSite keys) become `ReadScan` ops in the eval program;
+their per-tick ADVANCE stays where it is (`step_motion_in` writes n2 cells)
+until milestone C. The program stores resolved `StateN2SlotId`s from the
+existing motion schema — the schema is closed at load (stages lowering
+guaranteed this), so slot resolution at compile time is total. `t`/`u`/`pos`
+are ordinary inputs. Channels are inputs refreshed once per tick per program
+run, not per entity.
+
+### Where compilation hooks
+
+`DynNode::ClosedPt`/`Vel`/`RotExpr`/`Path{progress}` gain an
+`Option<Rc<NumProgram>>` (or a compiled/interpreted enum) built by a
+`lower_sig(form, env, scan_schema) -> Option<NumProgram>` pass at DynNode
+construction — which happens at card load for spec-store dyns and at spawn
+for ad-hoc constructions; both are cold. `dyn_node_pose_u_in` checks for the
+program and runs it with a scratch buffer from `MotionEvalCtx` (add
+`scratch: &RefCell<Vec<f64>>` or pass through Sim); fallback to today's path
+when absent.
+
+## Milestones
+
+### A — closed numeric expressions under ClosedPt/Vel (the profiled 1.7s)
+
+1. `interp/lower.rs`: `NumProgram` + `lower_sig` classifying: literals, `t`,
+   `u`, `pos` component reads, captured numeric env vars, pure numeric
+   builtins (the `is_builtin` pure table ∩ numeric ops), `if` with numeric
+   arms (as strict Select — NOTE semantic check: interpreter `if` is lazy;
+   Select is safe only when both arms are total numeric exprs, i.e. cannot
+   error/diverge — division is total over f64, so numeric arms qualify;
+   anything else → Interp fallback for the whole `if`), `%value-or` (numeric
+   arms; Nothing encoded as NaN-boxing is NOT safe — instead classify only
+   when `?x` is a scan read or channel with a known-num default, else
+   fallback), rand-site inputs, channel reads.
+2. Capture vector plumbing through spawn (replaces `instantiate_rand`'s form
+   rewrite for compiled programs; keep the rewrite for fallback nodes).
+3. Eval integration for ClosedPt (2 components × 2 taus over one program —
+   run the program twice with different `t` inputs, no re-setup) and Vel.
+4. Oracle: a debug/test mode that runs both paths and asserts agreement
+   within 1e-9 per eval (behind a cfg or env flag, used by the corpus
+   suites in CI once, not in release).
+
+Exit criteria: corpus suites green; profile shows dyn:vel/closed-pt self
+collapsing into a new `dyn:compiled` row that is a small fraction of the
+current 1.7s.
+
+### B — group evaluation + AxisSel lanes
+
+Evaluate one program once per GROUP per tick where the only per-entity
+inputs are `t`-offsets and capture slots: batch rows sharing a spawn site,
+loop entities in the inner loop per op (SoA scratch: `Vec<f64>` per
+register over the batch). This is where AxisSel (array-valued shared meta)
+stops being evaluated per entity: the shared program runs once, lanes
+scatter. Requires spec-store dedup of spawn-site programs (the existing
+`EntitySpecStore` dedup TODO becomes load-bearing here).
+
+### C — beyond figure signals
+
+- Scan ADVANCE (step_motion) ops join the program (fused eval+step).
+- dyn cols (`refresh_dyn_cols`) run their `DynNum` programs on the same
+  machinery.
+- Projector bodies and tick-rule bodies follow onto flat programs
+  (rules emit ordered effects — those stay sequential; only the pure
+  per-row math compiles).
+
+Data-parallelism (rayon over batches) is deliberately NOT part of A/B; the
+compiled form makes it nearly free later (pure lanes, fixed scratch,
+deterministic merge), per the TODO stance.
+
+## Cheap wins worth pulling forward (independent of the IR)
+
+Ordered by expected value; all are interpreter-path fixes the compiled path
+obsoletes but that de-risk the interim:
+
+1. `read_scan_in` clones the whole MotionState per component eval — the
+   dense readers already cover steady-state reads; the clone exists for the
+   legacy/direct path. Borrow instead of clone (or clone only when
+   `readers` is absent).
+2. `eval_sig_at_rate` builds `World::default()` + fresh Ctx per eval —
+   thread-local scratch World (reset tick-rate only) and a reusable Ctx
+   template would cut fixed overhead from every remaining interpreted eval.
+3. ClosedPt evaluates a and b at tau AND tau+eps solely for heading; when
+   the consumer discards theta (e.g. `:pos` reads, collider centers) the
+   second sample is waste — plumb a `need_theta: bool` through
+   `dyn_figure_pose_in` call sites that provably drop theta.
+
+## Testing strategy
+
+- The dual-run oracle (milestone A.4) is the primary equivalence tool.
+- Unit tests per op class: lowering rejects (impure builtin, non-numeric
+  env capture, keyword result) fall back to Interp and still evaluate
+  correctly end-to-end.
+- Determinism test: spawn group with rand sites — same seed produces
+  identical trajectories pre/post compilation (capture-vector draws happen
+  in the old substitution order).
+- The 4 ignored card suites remain the semantic oracle.
+
+## Order of work
+
+Milestone A is self-contained and directly attacks the top two profile rows.
+B rides on A + spec-store dedup. C is post-B, sequenced with the rule/
+projector lowering. The cheap wins can land any time (small, reviewable,
+suite-verified) and are worth doing first if A takes more than a session.
