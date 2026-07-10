@@ -21,7 +21,13 @@ work.
   should fail at load, not mid-run. Decided: channel manifests, per-kind
   render row schemas, and entity field tables are ONE load-time schema
   collection pass — shared machinery, separate tables where the columns
-  differ.
+  differ. NOTE: the channel/cell unification design
+  (`docs/notes/channel-unification.md`, converged 2026-07, not yet
+  ratified) makes the manifest check fall out of scoping — a free `$name`
+  neither bound nor def'd is a load error; `(def $x :injected)` is the
+  manifest entry. Cells dissolve into let-bound sigiled streams; the
+  dynamic cell scope (CELLS_KEY/cell_scope/adapter caller-cells) becomes
+  deletable kernel surface.
 - `remat` / `manip`: semantics decided — `(remat handle spec)` is the
   handle-preserving primitive, strictly 1:1 (single handle, single-element
   spec; multi-element figures error). The spec is PARTIAL: supplied slots
