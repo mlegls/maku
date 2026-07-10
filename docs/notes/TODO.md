@@ -132,6 +132,10 @@ work.
   for coverage, then milestone B (input slots + group evaluation). The
   interpreter path may remain as a compatibility implementation, but hot
   steady-state execution should not allocate or hash by node pointer.
+- Move the dyn kernel (and entity spec / state-schema semantic halves) to
+  model/ as a backend-parametric `Dyn<E>`, AFTER the evolve re-expression
+  shrinks the kernel (moving now would enshrine Vel/Stages, which become
+  lib shapes). Direction + sequencing: `docs/notes/model-split.md`.
   Stance (decided): this is a load-time lowering (AOT at card load), not a
   JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays
