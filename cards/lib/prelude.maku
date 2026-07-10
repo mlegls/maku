@@ -18,6 +18,14 @@
 (defmacro unless [pred & body]
   `(if (not ~pred) (seq ~@body)))
 
+(defmacro render [row]
+  `(emit :render ~row))
+
+(defmacro event [name & pos]
+  (if (= (count pos) 0)
+    `(emit :events {:name ~name})
+    `(emit :events {:name ~name :pos ~(first pos)})))
+
 (defn inc [x] (+ x 1))
 (defn dec [x] (- x 1))
 

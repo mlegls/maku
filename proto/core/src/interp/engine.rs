@@ -20,7 +20,7 @@ const NAMES: &[&str] = &[
     "entities-where",
     "collisions",
     "curve-samples",
-    "render",
+    "emit",
     "entity-col",
     "nearest-entity",
     "export",
@@ -169,9 +169,25 @@ pub(crate) fn special(
             };
             Val::CurveSamples(Rc::new(CurveSamples { entity, u_max, resolution }))
         }
-        "render" => {
-            let row = render_row_from_value(evaluate(&items[1], env, ctx, world)?, world, &ctx.sig)?;
-            Val::Action(Rc::new(ActionV::Render { row }))
+        "emit" => {
+            if items.len() != 3 {
+                return Err("emit: expected (emit :render|:events row-map)".into());
+            }
+            let Val::Kw(stream) = evaluate(&items[1], env, ctx, world)? else {
+                return Err("emit: expected stream keyword (:render or :events)".into());
+            };
+            let row = evaluate(&items[2], env, ctx, world)?;
+            match stream.as_ref() {
+                "render" => {
+                    let row = render_row_from_value(row, world, &ctx.sig)?;
+                    Val::Action(Rc::new(ActionV::Render { row }))
+                }
+                "events" => {
+                    let (name, pos) = event_row_from_value(row, world)?;
+                    Val::Action(Rc::new(ActionV::Event { name, pos }))
+                }
+                other => return Err(format!("emit: unknown stream :{} (known: :render, :events)", other)),
+            }
         }
         "entity-col" => {
             let target = evaluate(&items[1], env, ctx, world)?;
@@ -349,6 +365,35 @@ fn render_row_from_value(v: Val, world: &mut World, sig: &SigEnv) -> Result<Rend
         }
     }
     Ok(row)
+}
+
+fn event_row_from_value(v: Val, world: &mut World) -> Result<(Symbol, Option<(f64, f64)>), String> {
+    let Val::Map(kvs) = v else {
+        return Err("emit :events: expected row map".into());
+    };
+    let mut name = None;
+    let mut pos = None;
+    for (k, v) in kvs.iter() {
+        let Val::Kw(key) = k else {
+            return Err("emit :events: row keys must be keywords".into());
+        };
+        match key.as_ref() {
+            "name" => match v {
+                Val::Kw(n) => name = Some(world.symbols.intern(n.as_ref())),
+                other => return Err(format!("emit :events: :name must be a keyword, got {:?}", other)),
+            },
+            "pos" => match v {
+                Val::Pose(p) => pos = Some((p.x, p.y)),
+                Val::Nothing => pos = None,
+                _ => pos = None,
+            },
+            // Event row schemas are intentionally closed until the manifest pass
+            // introduces declared/open host-facing event streams.
+            other => return Err(format!("emit :events: unknown field :{}", other)),
+        }
+    }
+    let name = name.ok_or("emit :events: missing :name")?;
+    Ok((name, pos))
 }
 
 fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Result<Vec<(f64, f64)>, String> {

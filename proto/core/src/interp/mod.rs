@@ -839,21 +839,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     ticks: (secs * world.tick_rate()).round().max(0.0) as u64,
                 })));
             }
-            "event" => {
-                let name = match evaluate(&items[1], env, ctx, world)? {
-                    Val::Kw(k) => world.symbols.intern(k.as_ref()),
-                    v => return Err(format!("event: expected keyword symbol, got {:?}", v)),
-                };
-                let pos = if let Some(p) = items.get(2) {
-                    match evaluate(p, env, ctx, world)? {
-                        Val::Pose(p) => Some((p.x, p.y)),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                return Ok(Val::Action(Rc::new(ActionV::Event { name, pos })));
-            }
             "deftick" => return sf_deftick(items, env, ctx, world),
             "collider" => {
                 let (figure, params_idx, body_idx) = match items.get(1) {

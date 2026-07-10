@@ -39,8 +39,8 @@ are already the same ones boss phases use:
   inside the section.
 - `finally` states the phase-edge policy. If this stage segment should
   clear the field, write `(cull)` there. If it should not, leave it out.
-- `(event ...)` is the host-facing hook for logs, UI messages, music
-  changes, or practice markers.
+- `(event ...)` is the prelude macro for host-facing event emits: logs,
+  UI messages, music changes, or practice markers.
 
 DMK's `stage` phase property combines timer, UI label, practice segment,
 and cleanup convention. Here those are card code plus host policy.
