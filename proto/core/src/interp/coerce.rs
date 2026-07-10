@@ -70,7 +70,7 @@ impl DynLike {
             DynLike::Dyn(DynVal::Pose(d)) => eval_dyn(d, tau, state, sig).map(Val::Pose),
             DynLike::Dyn(DynVal::Figure(d)) => eval_dyn(d, tau, state, sig).map(Val::Figure),
             DynLike::Dyn(DynVal::Expr { form, env }) => {
-                eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, 0)), None)
+                eval_sig(form, env, sig, tau, 0.0, Some(read_scan(state, MotionNodeId(0))), None)
             }
             DynLike::List(items) => items
                 .iter()

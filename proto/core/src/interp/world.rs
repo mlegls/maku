@@ -404,7 +404,6 @@ impl EntityStore {
             ));
         }
         let Some(current) = self.specs.motion_schema.get(row).cloned() else { return Ok(Vec::new()) };
-        let old_nodes = current.node_ptrs.len();
         let old_n2 = current.n2_keys.len();
         let old_dyn = current.dyn_keys.len();
         let mut next = (*current).clone();
@@ -412,9 +411,10 @@ impl EntityStore {
         if next.n2_keys.len() == old_n2 && next.dyn_keys.len() == old_dyn {
             return Ok(Vec::new());
         }
-        let new_nodes = next.node_ptrs[old_nodes..]
+        let new_nodes = next
+            .node_ids
             .iter()
-            .filter_map(|ptr| next.node_ids.get(ptr).copied().map(|id| (*ptr, id)))
+            .filter_map(|(ptr, id)| (!current.node_ids.contains_key(ptr)).then_some((*ptr, *id)))
             .collect::<Vec<_>>();
         if let Some(slot) = self.specs.motion_schema.get_mut(row) {
             *slot = Rc::new(next.clone());
@@ -1202,10 +1202,5 @@ mod tests {
 
         assert!(err.contains("only supported for lazy stages"));
 
-        let err = store
-            .extend_motion_schema_for_lazy_stage(0, MotionStateKey::LazyStagePtr { base: 0 }, &dyn_pose)
-            .unwrap_err();
-
-        assert!(err.contains("only supported for lazy stages"));
     }
 }

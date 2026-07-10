@@ -1549,7 +1549,6 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
         n2: Rc::new(move |key| dense_n2.get(&key).copied()),
         dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
         node_ids,
-        stable_required: true,
     }
 }
 
@@ -2880,12 +2879,10 @@ fn sf_stateful(
     let scan = ctx.scan.clone().unwrap();
     let (key, site, advance, dt) = {
         let mut io = scan.borrow_mut();
-        let site = io
-            .dense_base
-            .map(|base| MotionStateKey::ScanSite { base, index: io.counter as u32 });
-        let k = site_key(io.base, io.counter);
+        let base = io.dense_base.expect("scan context missing stable lowered base id");
+        let site = MotionStateKey::ScanSite { base, index: io.counter as u32 };
         io.counter += 1;
-        (k, site, io.advance, io.dt)
+        (site, site, io.advance, io.dt)
     };
     match which {
         "slew" => {
@@ -2901,7 +2898,7 @@ fn sf_stateful(
                 let io = scan.borrow();
                 io.readers
                     .as_ref()
-                    .and_then(|readers| site.and_then(|site| (readers.n2)(site)))
+                    .and_then(|readers| (readers.n2)(site))
                     .or_else(|| match io.state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -2917,9 +2914,7 @@ fn sf_stateful(
                 if io.mirror_legacy {
                     io.state.insert(key, Cell::N(next));
                 }
-                if let Some(site) = site {
-                    io.n2_writes.push((site, next));
-                }
+                io.n2_writes.push((site, next));
             }
             Ok(Val::Num(cur))
         }
@@ -2936,7 +2931,7 @@ fn sf_stateful(
                 let io = scan.borrow();
                 io.readers
                     .as_ref()
-                    .and_then(|readers| site.and_then(|site| (readers.n2)(site)))
+                    .and_then(|readers| (readers.n2)(site))
                     .or_else(|| match io.state.get(&key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -2951,9 +2946,7 @@ fn sf_stateful(
                 if io.mirror_legacy {
                     io.state.insert(key, Cell::N(next));
                 }
-                if let Some(site) = site {
-                    io.n2_writes.push((site, next));
-                }
+                io.n2_writes.push((site, next));
             }
             Ok(Val::Pose(Pose::point(x, y)))
         }

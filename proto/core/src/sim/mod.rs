@@ -305,7 +305,6 @@ impl Sim {
             n2: Rc::new(move |key| dense_n2.get(&key).copied()),
             dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
             node_ids,
-            stable_required: true,
         }
     }
 

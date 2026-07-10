@@ -3024,8 +3024,6 @@ fn spawned_entity_rows_carry_motion_schema() {
     let schema = sim.world.entities.motion_schema(0).unwrap();
     assert_eq!(schema.n2_keys.len(), 2, "vel plus slew scan-site state");
     assert_eq!(schema.dyn_keys.len(), 0);
-    assert!(schema.n2_keys.iter().all(|key| !matches!(key, MotionStateKey::NodePtr(_))));
-    assert!(schema.dyn_keys.iter().all(|key| !matches!(key, MotionStateKey::LazyStagePtr { .. })));
 }
 
 #[test]
@@ -3117,7 +3115,6 @@ fn lazy_stages_extend_dense_motion_schema() {
         .dyn_keys
         .iter()
         .any(|key| matches!(key, MotionStateKey::LazyStage { .. })));
-    assert!(schema.dyn_keys.iter().all(|key| !matches!(key, MotionStateKey::LazyStagePtr { .. })));
     sim.step().unwrap();
     let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
     assert!((p.y - 2.0).abs() < 1e-9, "lazy stage dense y after schema extension: {}", p.y);
