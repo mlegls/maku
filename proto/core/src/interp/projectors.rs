@@ -329,38 +329,6 @@ pub(crate) fn materialize_capsule_chain_projector(
     Ok(slot)
 }
 
-pub(crate) fn sf_colliders(
-    items: &[Form],
-    env: &Env,
-    ctx: &mut Ctx,
-    world: &mut World,
-) -> Result<Val, String> {
-    if items.len() == 1 {
-        let figure = ctx
-            .projector_scope
-            .as_ref()
-            .map(|scope| scope.figure)
-            .unwrap_or(FigureProjectorKind::Pose);
-        return Ok(Val::ColliderProjector(Rc::new(
-            ColliderProjectorValue::stable_for(figure, Vec::new()),
-        )));
-    }
-    let mut projectors = Vec::new();
-    for item in &items[1..] {
-        match evaluate(item, env, ctx, world)? {
-            Val::ColliderProjector(projector) => {
-                projectors.push(projector.as_ref().clone());
-            }
-            other => {
-                return Err(format!("colliders: expected collider projector, got {:?}", other));
-            }
-        }
-    }
-    Ok(Val::ColliderProjector(Rc::new(
-        ColliderProjectorValue::compose(projectors)?,
-    )))
-}
-
 pub(crate) fn sf_circle_collider(
     items: &[Form],
     env: &Env,
@@ -385,13 +353,13 @@ pub(crate) fn sf_circle_collider(
         .is_some_and(|form| contains_bound_projector_context(form, ctx.projector_scope.as_ref()))
     {
         let spec = circle_projector_spec_from_form(opts_form, env, ctx, world)?;
-        return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::circle(spec))));
+        return Ok(collider_projector_value(ColliderProjectorValue::circle(spec)));
     }
     let opts = eval_opts("circle-collider", opts_form.as_ref(), env, ctx, world)?;
     let slot = circle_projector_from_opts(&opts, &mut world.symbols)?;
-    Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::stable(vec![
+    Ok(collider_projector_value(ColliderProjectorValue::stable(vec![
         slot,
-    ]))))
+    ])))
 }
 
 pub(crate) fn sf_capsule_chain_collider(
@@ -408,26 +376,26 @@ pub(crate) fn sf_capsule_chain_collider(
     }
     if let Some(scope) = ctx.projector_scope.clone() {
         let spec = capsule_chain_projector_spec_from_form(opts_form, env, ctx, world)?;
-        return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
+        return Ok(collider_projector_value(ColliderProjectorValue::capsule_chain(
             scope.figure,
             spec,
-        ))));
+        )));
     }
     if opts_form
         .as_ref()
         .is_some_and(|form| contains_bound_projector_context(form, ctx.projector_scope.as_ref()))
     {
         let spec = capsule_chain_projector_spec_from_form(opts_form, env, ctx, world)?;
-        return Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::capsule_chain(
+        return Ok(collider_projector_value(ColliderProjectorValue::capsule_chain(
             FigureProjectorKind::Pose,
             spec,
-        ))));
+        )));
     }
     let opts = eval_opts("capsule-chain-collider", opts_form.as_ref(), env, ctx, world)?;
     let slot = capsule_chain_projector_from_opts(&opts, &mut world.symbols)?;
-    Ok(Val::ColliderProjector(Rc::new(ColliderProjectorValue::stable(vec![
+    Ok(collider_projector_value(ColliderProjectorValue::stable(vec![
         slot,
-    ]))))
+    ])))
 }
 
 pub(crate) fn sf_renderers(

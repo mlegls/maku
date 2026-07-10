@@ -81,9 +81,9 @@
   (circle-collider {:layer :graze :r 0.35}))
 
 (defcollider :pose bullet-collider [e ctx]
-  (colliders
+  [
     (circle-collider {:layer :damage :r e.hitbox})
-    (circle-collider {:layer :graze :r 0.35})))
+    (circle-collider {:layer :graze :r 0.35})])
 
 ;; hostile beam: a damage core inside a graze ring, swept along the hot
 ;; extent of the curve. Cold (telegraph/afterlife) means no colliders at all.
@@ -92,19 +92,19 @@
         hot (* frac (value-or e.u-max 10))
         res (value-or e.resolution 0.1)]
     (if (< frac 0.000001)
-      (colliders)
-      (colliders
+      []
+      [
         (capsule-chain-collider {:layer :damage
                                  :r (value-or e.radius (value-or e.r 0.08))
                                  :u-max hot :resolution res :width 0})
         (capsule-chain-collider {:layer :graze :r 0.35
-                                 :u-max hot :resolution res :width 0})))))
+                                 :u-max hot :resolution res :width 0})])))
 
 ;; player beam: same lifecycle, :shot layer
 (defcollider :parametric shot-laser-collider [e ctx]
   (let [frac (laser-hot-fraction e ctx)]
     (if (< frac 0.000001)
-      (colliders)
+      []
       (capsule-chain-collider {:layer :shot
                                :r (value-or e.radius (value-or e.r 0.08))
                                :u-max (* frac (value-or e.u-max 10))

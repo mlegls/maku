@@ -113,8 +113,7 @@ pub enum ColliderProjectorExpr {
     Circle(CircleProjectorSpec),
     CapsuleChain(CapsuleChainProjectorSpec),
     Callable { params: Rc<[Rc<str>]>, body: Rc<[Form]>, env: Env },
-    Cond { clauses: Rc<[(Option<Form>, ColliderProjectorValue)]>, env: Env, scope: Option<ProjectorScope> },
-    ColliderSum(Rc<[ColliderProjectorValue]>),
+    Cond { clauses: Rc<[(Option<Form>, Rc<[ColliderProjectorValue]>)]>, env: Env, scope: Option<ProjectorScope> },
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -171,7 +170,7 @@ impl ColliderProjectorValue {
 
     pub(crate) fn cond(
         figure: FigureProjectorKind,
-        clauses: Vec<(Option<Form>, ColliderProjectorValue)>,
+        clauses: Vec<(Option<Form>, Rc<[ColliderProjectorValue]>)>,
         env: Env,
         scope: Option<ProjectorScope>,
     ) -> ColliderProjectorValue {
@@ -183,42 +182,6 @@ impl ColliderProjectorValue {
 
     pub(crate) fn empty() -> ColliderProjectorValue {
         ColliderProjectorValue::stable(Vec::new())
-    }
-
-    pub(crate) fn compose(projectors: Vec<ColliderProjectorValue>) -> Result<ColliderProjectorValue, String> {
-        let mut flat: Vec<ColliderProjectorValue> = Vec::new();
-        let figure = projectors
-            .first()
-            .map(|p| p.figure)
-            .unwrap_or(FigureProjectorKind::Pose);
-        for projector in projectors {
-            if projector.figure != figure {
-                return Err(format!(
-                    "collider projector kind mismatch: :{} vs :{}",
-                    figure.name(),
-                    projector.figure.name()
-                ));
-            }
-            match &projector.expr {
-                ColliderProjectorExpr::ColliderSum(items) => {
-                    flat.extend(items.iter().cloned());
-                }
-                _ => flat.push(projector),
-            }
-        }
-        if flat.iter().all(|p| matches!(p.expr, ColliderProjectorExpr::Stable(_))) {
-            let mut slots = Vec::new();
-            for projector in flat {
-                let ColliderProjectorExpr::Stable(items) = projector.expr else { unreachable!() };
-                slots.extend(items.iter().cloned());
-            }
-            Ok(ColliderProjectorValue::stable(slots))
-        } else {
-            Ok(ColliderProjectorValue {
-                figure,
-                expr: ColliderProjectorExpr::ColliderSum(flat.into()),
-            })
-        }
     }
 }
 

@@ -37,8 +37,20 @@ fn normalize_spawn_input(
             meta_forms.push(item.clone());
             continue;
         }
-        match evaluate(item, env, ctx, world)? {
-            Val::ColliderProjector(specs) => colliders.push(specs.as_ref().clone()),
+        let value = evaluate(item, env, ctx, world)?;
+        match value {
+            Val::ColliderProjector(specs) => colliders.extend(specs.iter().cloned()),
+            v @ (Val::Arr(_) | Val::Nothing) => {
+                colliders.extend(
+                    flatten_collider_projectors(
+                        "collider",
+                        v,
+                        None,
+                    )?
+                    .iter()
+                    .cloned(),
+                );
+            }
             Val::RendererProjectorSpec(specs) => renderers.push(specs.as_ref().clone()),
             Val::Map(kvs) => computed_meta_pairs.extend(kvs.iter().cloned()),
             Val::DynLike(d) => computed_meta_pairs.extend(dynlike_meta_pairs(&d)?),

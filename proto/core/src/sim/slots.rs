@@ -185,21 +185,17 @@ pub fn materialize_collider_defs_into(
                     last = evaluate(form, &env, &mut run_ctx, &mut run_world)?;
                 }
                 *symbols = run_world.symbols;
-                match last {
-                    Val::ColliderProjector(spec) => {
-                        materialize_collider_defs_into(
-                            &ColliderProjector { projectors: vec![spec.as_ref().clone()].into() },
-                            tau,
-                            state,
-                            sig,
-                            Some(&e_bound),
-                            Some(&ctx_bound),
-                            symbols,
-                            out,
-                        )?;
-                    }
-                    other => return Err(format!("defcollider: expected collider projector, got {:?}", other)),
-                }
+                let specs = flatten_collider_projectors("collider", last, Some(list.figure))?;
+                materialize_collider_defs_into(
+                    &ColliderProjector { projectors: specs },
+                    tau,
+                    state,
+                    sig,
+                    Some(&e_bound),
+                    Some(&ctx_bound),
+                    symbols,
+                    out,
+                )?;
             }
             ColliderProjectorExpr::Cond { clauses, env, scope } => {
                 let e_bound = e_view
@@ -222,7 +218,7 @@ pub fn materialize_collider_defs_into(
                     if enabled {
                         *symbols = run_world.symbols;
                         materialize_collider_defs_into(
-                            &ColliderProjector { projectors: vec![child.clone()].into() },
+                            &ColliderProjector { projectors: child.clone() },
                             tau,
                             state,
                             sig,
@@ -235,18 +231,6 @@ pub fn materialize_collider_defs_into(
                     }
                 }
                 *symbols = run_world.symbols;
-            }
-            ColliderProjectorExpr::ColliderSum(specs) => {
-                materialize_collider_defs_into(
-                    &ColliderProjector { projectors: specs.clone() },
-                    tau,
-                    state,
-                    sig,
-                    e_view,
-                    ctx_view,
-                    symbols,
-                    out,
-                )?;
             }
         }
     }

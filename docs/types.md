@@ -276,20 +276,25 @@ Projectors compose at the authoring level. For example:
 (defcollider bullet-collider [e ctx]
   (let [r e.hitbox
         graze (* 2 r)]
-    (colliders
+    [
       (circle-collider {:radius r :layer :enemy-hit})
-      (circle-collider {:radius graze :layer :enemy-graze}))))
+      (circle-collider {:radius graze :layer :enemy-graze})]))
 
 (defcollider laser-collider [e ctx]
   (capsule-chain-collider {:width e.width :layer e.layer}))
 ```
 
-`colliders` means concatenation/parallel projection of collider projector
-specs. This recovers the expressiveness of directly composing collider
-behavior while keeping all changing non-geometry inputs in meta.
+Lists mean concatenation/parallel projection of collider projector specs at
+collider body and spawn-slot boundaries. Flattening is one level only:
+`[a b]` concatenates projector values, `[]` and `nothing` mean no colliders,
+and nested lists are errors. This recovers the expressiveness of directly
+composing collider behavior while keeping all changing non-geometry inputs in
+meta.
 
-`defcollider` is top-level only. Its body is pure code in a scope containing an
-explicit entity view parameter such as `e` and an explicit non-entity context
+`(collider :pose|:parametric [e ctx] body...)` constructs a parameterized
+collider projector value, and `defcollider` is top-level sugar for defining
+one by name. Its body is pure code in a scope containing an explicit entity
+view parameter such as `e` and an explicit non-entity context
 parameter such as `ctx`. Because it cannot close over card-local mutable state,
 ordinary `let` is enough for sharing computed values; no special binding syntax
 is required. Semantically this is `defn` with an expected return type of

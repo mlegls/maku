@@ -110,10 +110,6 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 Some(Form::Sym(s)) if &**s == "defcollider" => {
                     // (defcollider name [e ctx] body...)
                     // (defcollider :pose name [e ctx] body...)
-                    //
-                    // Register a collider projector value. Evaluation first
-                    // tries to elaborate the body into the projector algebra;
-                    // unsupported forms fall back to the callable bridge.
                     let (figure, name_idx) = match items.get(1) {
                         Some(Form::Kw(k)) => {
                             let figure = FigureProjectorKind::from_defcollider_keyword(k)?;
@@ -145,13 +141,12 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                         return Err("defcollider: expected body".into());
                     }
                     let mut projector = vec![
-                        Form::sym("__collider-projector"),
+                        Form::sym("collider"),
                         Form::Kw(figure.name().into()),
                         Form::Vector(params.into()),
                     ];
                     projector.extend(items[body_idx..].iter().cloned());
-                    let form = Form::list(vec![Form::sym("__defcollider"), Form::list(projector)]);
-                    defs.insert(name, form);
+                    defs.insert(name, Form::list(projector));
                 }
                 Some(Form::Sym(s)) if &**s == "defrenderer" => {
                     // (defrenderer name [e ctx] body...)

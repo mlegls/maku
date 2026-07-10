@@ -331,7 +331,7 @@
     }
 
     #[test]
-    fn colliders_composes_projectors() {
+    fn spawn_collider_slot_list_yields_both_rows() {
         const CARD: &str = r#"
 (deftick
   (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
@@ -344,9 +344,9 @@
 (defpattern t []
   (seq
     (spawn (pose c[0 0])
-      (colliders
+      [
         (circle-collider {:layer :zap :r 0.05})
-        (circle-collider {:layer :graze :r 0.3})))
+        (circle-collider {:layer :graze :r 0.3})])
     (spawn (pose c[0.2 0]) (circle-collider {:layer :zappable :r 0.05}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
@@ -361,9 +361,9 @@
     fn defcollider_registers_named_projector() {
         const CARD: &str = r#"
 (defcollider bullet-collider [e ctx]
-  (colliders
+  [
     (circle-collider {:layer :zap :r 0.05})
-    (circle-collider {:layer :graze :r 0.3})))
+    (circle-collider {:layer :graze :r 0.3})])
 (deftick
   (map (fn [[a b]] (seq (event :zapped (:pos b)) (cull a)))
        (collisions :zap :zappable)))
@@ -383,6 +383,76 @@
         }
         assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "zapped").count(), 0);
         assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "grazed").count(), 1);
+    }
+
+    #[test]
+    fn defcollider_body_empty_list_yields_no_colliders() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [[a b]] (event :hit (:pos b)))
+       (collisions :zap :zappable)))
+(defcollider empty-collider [e ctx] [])
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) empty-collider)
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 0);
+    }
+
+    #[test]
+    fn defcollider_body_nothing_yields_no_colliders() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [[a b]] (event :hit (:pos b)))
+       (collisions :zap :zappable)))
+(defcollider empty-collider [e ctx]
+  (if (< 1 0) (circle-collider {:layer :zap :r 0.2})))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) empty-collider)
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 0);
+    }
+
+    #[test]
+    fn collider_body_nested_list_errors() {
+        const CARD: &str = r#"
+(defcollider bad-collider [e ctx]
+  [[(circle-collider {:layer :zap :r 0.2})]
+   (circle-collider {:layer :graze :r 0.2})])
+(defpattern t []
+  (spawn (pose c[0 0]) bad-collider))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(
+            err.contains("collider: expected collider projector or list of them"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn inline_anonymous_collider_in_spawn_argument_works() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [[a b]] (event :hit (:pos b)))
+       (collisions :zap :zappable)))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0])
+      (collider :pose [e ctx]
+        (circle-collider {:layer :zap :r 0.2})))
+    (spawn (pose c[0 0]) (circle-collider {:layer :zappable :r 0.2}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.events_vec().iter().filter(|e| &*e.name == "hit").count(), 1);
     }
 
     #[test]

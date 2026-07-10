@@ -111,7 +111,7 @@ pub enum Val {
     Kw(Rc<str>),
     Pose(Pose),
     Figure(Figure),
-    ColliderProjector(Rc<ColliderProjectorValue>),
+    ColliderProjector(Rc<[ColliderProjectorValue]>),
     RendererProjectorSpec(Rc<RendererProjectorSpec>),
     EntitySet(Rc<[usize]>),
     CollisionSet(Rc<[(usize, usize)]>),
@@ -167,6 +167,60 @@ impl Val {
             v => Err(format!("expected number, got {:?}", v)),
         }
     }
+}
+
+pub(crate) fn collider_projector_value(projector: ColliderProjectorValue) -> Val {
+    Val::ColliderProjector(vec![projector].into())
+}
+
+pub(crate) fn flatten_collider_projectors(
+    surface: &str,
+    value: Val,
+    expected_figure: Option<FigureProjectorKind>,
+) -> Result<Rc<[ColliderProjectorValue]>, String> {
+    let mut out = Vec::new();
+    match value {
+        Val::Nothing => {}
+        Val::ColliderProjector(projectors) => {
+            out.extend(projectors.iter().cloned());
+        }
+        Val::Arr(items) => {
+            for item in items.iter() {
+                match item {
+                    Val::ColliderProjector(projectors) => {
+                        out.extend(projectors.iter().cloned());
+                    }
+                    other => {
+                        return Err(format!(
+                            "{}: expected collider projector or list of them, got {:?}",
+                            surface,
+                            other
+                        ));
+                    }
+                }
+            }
+        }
+        other => {
+            return Err(format!(
+                "{}: expected collider projector or list of them, got {:?}",
+                surface,
+                other
+            ));
+        }
+    }
+    let figure = expected_figure.or_else(|| out.first().map(|p| p.figure));
+    if let Some(figure) = figure {
+        for projector in &out {
+            if projector.figure != figure {
+                return Err(format!(
+                    "collider projector kind mismatch: :{} vs :{}",
+                    figure.name(),
+                    projector.figure.name()
+                ));
+            }
+        }
+    }
+    Ok(out.into())
 }
 
 /// One spawn element: a plain dyn or an extended entity, plus its §5 shape
@@ -706,27 +760,45 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 }
                 let mut projector_clauses = Vec::new();
                 let mut all_projectors = true;
+                let mut saw_projector = false;
                 for pair in items[1..].chunks(2) {
                     let pred = match &pair[0] {
                         Form::Kw(k) if &**k == "else" => None,
                         pred => Some(pred.clone()),
                     };
                     match evaluate(&pair[1], env, ctx, world) {
-                        Ok(Val::ColliderProjector(projector)) => {
-                            projector_clauses.push((pred, projector.as_ref().clone()));
+                        Ok(value) => {
+                            saw_projector |= match &value {
+                                Val::ColliderProjector(_) => true,
+                                Val::Arr(items) => items.iter().any(|v| matches!(v, Val::ColliderProjector(_))),
+                                _ => false,
+                            };
+                            match flatten_collider_projectors("cond", value, None) {
+                                Ok(projectors) => projector_clauses.push((pred, projectors)),
+                                Err(_) => {
+                                    all_projectors = false;
+                                    break;
+                                }
+                            }
                         }
-                        Ok(_) | Err(_) => {
+                        Err(_) => {
                             all_projectors = false;
                             break;
                         }
                     }
                 }
-                if all_projectors {
+                if all_projectors && (saw_projector || ctx.projector_scope.is_some()) {
                     let figure = projector_clauses
-                        .first()
-                        .map(|(_, p)| p.figure)
+                        .iter()
+                        .flat_map(|(_, ps)| ps.iter())
+                        .next()
+                        .map(|p| p.figure)
                         .unwrap_or(FigureProjectorKind::Pose);
-                    if projector_clauses.iter().any(|(_, p)| p.figure != figure) {
+                    if projector_clauses
+                        .iter()
+                        .flat_map(|(_, ps)| ps.iter())
+                        .any(|p| p.figure != figure)
+                    {
                         return Err("cond: collider projector branches must use the same figure type".into());
                     }
                     if ctx.projector_scope.is_none()
@@ -736,14 +808,14 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     {
                         return Err("cond: entity/context predicates require a projector scope".into());
                     }
-                    return Ok(Val::ColliderProjector(Rc::new(
+                    return Ok(collider_projector_value(
                         ColliderProjectorValue::cond(
                             figure,
                             projector_clauses,
                             env.clone(),
                             ctx.projector_scope.clone(),
                         ),
-                    )));
+                    ));
                 }
                 for pair in items[1..].chunks(2) {
                     let enabled = match &pair[0] {
@@ -790,38 +862,27 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 return Ok(Val::Action(Rc::new(ActionV::Event { name, pos })));
             }
             "deftick" => return sf_deftick(items, env, ctx, world),
-            "__defcollider" => {
-                let Some(projector_form) = items.get(1) else {
-                    return Err("defcollider: expected projector form".into());
-                };
-                let fallback = evaluate(projector_form, env, ctx, world)?;
-                let Form::List(projector_items) = projector_form else {
-                    return Ok(fallback);
-                };
-                let Some(Form::Sym(head)) = projector_items.first() else {
-                    return Ok(fallback);
-                };
-                if &**head != "__collider-projector" {
-                    return Ok(fallback);
-                }
-                let (figure, params_idx, body_idx) = match projector_items.get(1) {
-                    Some(Form::Kw(k)) => {
-                        let Ok(figure) = FigureProjectorKind::from_defcollider_keyword(k) else {
-                            return Ok(fallback);
-                        };
-                        (figure, 2, 3)
-                    }
+            "collider" => {
+                let (figure, params_idx, body_idx) = match items.get(1) {
+                    Some(Form::Kw(k)) => (
+                        FigureProjectorKind::from_projector_keyword("collider", k)?,
+                        2,
+                        3,
+                    ),
                     _ => (FigureProjectorKind::Pose, 1, 2),
                 };
-                let Some(Form::Vector(ps)) = projector_items.get(params_idx) else {
-                    return Ok(fallback);
+                let Some(Form::Vector(ps)) = items.get(params_idx) else {
+                    return Err("collider: expected parameter vector".into());
                 };
                 if ps.len() != 2 {
-                    return Ok(fallback);
+                    return Err("collider: expected two parameters".into());
                 }
                 let (Some(Form::Sym(e_name)), Some(Form::Sym(ctx_name))) = (ps.get(0), ps.get(1)) else {
-                    return Ok(fallback);
+                    return Err("collider: params must be symbols".into());
                 };
+                if items.len() <= body_idx {
+                    return Err("collider: expected body".into());
+                }
                 let previous_scope = ctx.projector_scope.clone();
                 ctx.projector_scope = Some(ProjectorScope {
                     entity: e_name.clone(),
@@ -829,46 +890,34 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                     figure,
                 });
                 let mut last = Val::Nothing;
-                for form in projector_items[body_idx..].iter() {
+                for form in items[body_idx..].iter() {
                     match evaluate(form, env, ctx, world) {
                         Ok(v) => last = v,
                         Err(_) => {
                             ctx.projector_scope = previous_scope;
-                            return Ok(fallback);
+                            let params = vec![e_name.clone(), ctx_name.clone()];
+                            return Ok(collider_projector_value(ColliderProjectorValue::callable(
+                                figure,
+                                params,
+                                items[body_idx..].to_vec().into(),
+                                env.clone(),
+                            )));
                         }
                     }
                 }
                 ctx.projector_scope = previous_scope;
-                return match last {
-                    Val::ColliderProjector(ref projector) if projector.figure == figure => Ok(last),
-                    _ => Ok(fallback),
+                return match flatten_collider_projectors("collider", last, Some(figure)) {
+                    Ok(projectors) => Ok(Val::ColliderProjector(projectors)),
+                    Err(_) => {
+                        let params = vec![e_name.clone(), ctx_name.clone()];
+                        Ok(collider_projector_value(ColliderProjectorValue::callable(
+                            figure,
+                            params,
+                            items[body_idx..].to_vec().into(),
+                            env.clone(),
+                        )))
+                    }
                 };
-            }
-            "__collider-projector" => {
-                let (figure, params_idx, body_idx) = match items.get(1) {
-                    Some(Form::Kw(k)) => (
-                        FigureProjectorKind::from_defcollider_keyword(k)?,
-                        2,
-                        3,
-                    ),
-                    _ => (FigureProjectorKind::Pose, 1, 2),
-                };
-                let Some(Form::Vector(ps)) = items.get(params_idx) else {
-                    return Err("defcollider: expected parameter vector".into());
-                };
-                let params = ps
-                    .iter()
-                    .map(|p| match p {
-                        Form::Sym(n) => Ok(n.clone()),
-                        _ => Err("defcollider: bad parameter".to_string()),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                if items.len() <= body_idx {
-                    return Err("defcollider: expected body".into());
-                }
-                return Ok(Val::ColliderProjector(Rc::new(
-                    ColliderProjectorValue::callable(figure, params, items[body_idx..].to_vec().into(), env.clone()),
-                )));
             }
             "__renderer-projector" => {
                 let (figure, params_idx, body_idx) = match items.get(1) {
@@ -900,7 +949,6 @@ fn evaluate_list(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) ->
                 )));
             }
             "spawn" => return sf_spawn(items, env, ctx, world),
-            "colliders" => return sf_colliders(items, env, ctx, world),
             "circle-collider" => return sf_circle_collider(items, env, ctx, world),
             "capsule-chain-collider" => return sf_capsule_chain_collider(items, env, ctx, world),
             "renderers" => return sf_renderers(items, env, ctx, world),
@@ -3002,10 +3050,26 @@ mod tests {
         let Val::ColliderProjector(projector) = val else {
             panic!("defcollider did not evaluate to a collider projector");
         };
+        assert_eq!(projector.len(), 1);
         assert!(
-            matches!(projector.expr, ColliderProjectorExpr::Circle { .. }),
+            matches!(projector[0].expr, ColliderProjectorExpr::Circle { .. }),
             "simple defcollider should elaborate to the primitive projector algebra"
         );
+    }
+
+    #[test]
+    fn collider_body_vector_elaborates_to_plural_projector_algebra() {
+        let val = ev(
+            "(collider :pose [entity context]\n  \
+               [(circle-collider {:layer :damage :r entity.hitbox})\n   \
+                (circle-collider {:layer :graze :r 0.35})])"
+        );
+        let Val::ColliderProjector(projectors) = val else {
+            panic!("collider did not evaluate to collider projectors");
+        };
+        assert_eq!(projectors.len(), 2);
+        assert!(matches!(projectors[0].expr, ColliderProjectorExpr::Circle { .. }));
+        assert!(matches!(projectors[1].expr, ColliderProjectorExpr::Stable(_)));
     }
 
     #[test]
