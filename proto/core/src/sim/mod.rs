@@ -293,6 +293,17 @@ impl Sim {
     }
 
     fn motion_readers_inner(&self, row: usize) -> MotionReaders {
+        match self.world.entities.motion_schema(row) {
+            None => return MotionReaders::stateless(Rc::default()),
+            Some(schema)
+                if schema.n2_keys.is_empty()
+                    && schema.dyn_keys.is_empty()
+                    && schema.val_keys.is_empty() =>
+            {
+                return MotionReaders::stateless(schema.shared_node_ids());
+            }
+            _ => {}
+        }
         let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
         let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
         let dense_val = Rc::new(self.world.entities.state_val_snapshot(row));

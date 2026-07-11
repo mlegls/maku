@@ -17,6 +17,21 @@ fn materialize_colliders_into(
     out: &mut Vec<ColliderData>,
     tick_rate: f64,
 ) -> Result<(), String> {
+    // All-Stable projectors (the plain-bullet case) evaluate their slots
+    // by reference — no per-tick clone round-trip through the defs vec.
+    if projector
+        .projectors
+        .iter()
+        .all(|value| matches!(value.expr, ColliderProjectorExpr::Stable(_)))
+    {
+        for value in projector.projectors.iter() {
+            let ColliderProjectorExpr::Stable(slots) = &value.expr else { unreachable!() };
+            out.extend(slots.iter().map(|slot| {
+                eval_collider_slot(dyn_figure, slot, tau, sig, scale, pose, trace, traced, tick_rate)
+            }));
+        }
+        return Ok(());
+    }
     let state = MotionState::new();
     defs.clear();
     materialize_collider_defs_into(projector, tau, &state, sig, e_view, ctx_view, symbols, defs, tick_rate)
@@ -40,6 +55,8 @@ impl Sim {
         let n = self.world.entities.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
         self.collider_scratch.clear_for_entities(n);
+        // interned once: the per-entity read below must not re-hash the name
+        let scale_sym = self.world.symbols.lookup("scale");
         // :scale multiplies collider radii (a scaled sprite scales its
         // hitbox); sampled once per bullet per tick, 1.0 when absent
         for i in 0..self.world.entities.len() {
@@ -69,7 +86,9 @@ impl Sim {
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
-            let scale = self.world.col_get_at(i, "scale").unwrap_or(1.0);
+            let scale = scale_sym
+                .and_then(|sym| self.world.col_get_sym_at(i, sym))
+                .unwrap_or(1.0);
             let dyn_figure = self
                 .world
                 .entities

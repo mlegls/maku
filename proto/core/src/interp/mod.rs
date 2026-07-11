@@ -1670,6 +1670,17 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
 }
 
 fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
+    match world.entities.motion_schema(i) {
+        None => return MotionReaders::stateless(Rc::default()),
+        Some(schema)
+            if schema.n2_keys.is_empty()
+                && schema.dyn_keys.is_empty()
+                && schema.val_keys.is_empty() =>
+        {
+            return MotionReaders::stateless(schema.shared_node_ids());
+        }
+        _ => {}
+    }
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
     let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
     let dense_val = Rc::new(world.entities.state_val_snapshot(i));

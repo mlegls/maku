@@ -161,6 +161,25 @@ impl MotionReaders {
         }
     }
 
+    /// Readers for a row whose schema holds no state cells — the common
+    /// stateless-bullet case. Shared no-op closures make construction
+    /// four Rc bumps instead of three snapshot maps + closure allocs.
+    pub fn stateless(node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>) -> MotionReaders {
+        thread_local! {
+            static EMPTY: (N2Reader, DynReader, ValReader) = (
+                Rc::new(|_| None),
+                Rc::new(|_| None),
+                Rc::new(|_| None),
+            );
+        }
+        EMPTY.with(|(n2, dyns, vals)| MotionReaders {
+            n2: n2.clone(),
+            dyns: dyns.clone(),
+            vals: vals.clone(),
+            node_ids,
+        })
+    }
+
     pub fn for_node(d: &DynNode) -> MotionReaders {
         let readers = MotionReaders::legacy();
         seed_reader_dyn_node_ids(d, &readers);

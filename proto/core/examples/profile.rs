@@ -48,7 +48,11 @@ fn main() {
                 continue;
             }
         };
-        profile::set_enabled(true);
+        // MAKU_WALL_ONLY=1: skip instrumentation for honest wall times
+        // (the per-frame bookkeeping itself costs ~100ns × millions of
+        // frames on dense cards).
+        let wall_only = std::env::var("MAKU_WALL_ONLY").is_ok();
+        profile::set_enabled(!wall_only);
         let wall = std::time::Instant::now();
         let mut failed = None;
         for _ in 0..*ticks {
