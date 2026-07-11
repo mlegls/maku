@@ -136,6 +136,7 @@ pub struct ScanIo {
     pub readers: Option<MotionReaders>,
     pub mirror_legacy: bool,
     pub n2_writes: Vec<(MotionStateKey, [f64; 2])>,
+    pub val_writes: Vec<(MotionStateKey, EvolveCell)>,
 }
 pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
 pub type N2Reader = Rc<dyn Fn(MotionStateKey) -> Option<[f64; 2]>>;
@@ -343,7 +344,7 @@ pub(crate) fn evolve_tick(tau: f64, tick_rate: f64) -> u64 {
     (tau * tick_rate + 1e-9).floor().max(0.0) as u64
 }
 
-fn evolve_step_ctx(k: u64, dt: f64) -> Val {
+pub(crate) fn evolve_step_ctx(k: u64, dt: f64) -> Val {
     Val::Map(Rc::new(vec![
         (Val::Kw("t".into()), Val::Num(k as f64 * dt)),
         (Val::Kw("dt".into()), Val::Num(dt)),
@@ -601,6 +602,11 @@ pub fn collect_scan_sites(
                         }
                     }
                     index += 1;
+                } else if &**s == "evolve" {
+                    // a sited evolve: expression-embedded stateful signal,
+                    // Val state at the site (evolve-reexpression-design.md)
+                    schema.intern_val(MotionStateKey::ScanSite { base, index });
+                    index += 1;
                 }
             }
             for item in items.iter() {
@@ -616,6 +622,25 @@ pub fn collect_scan_sites(
             collect_scan_sites(v, base, index, schema)
         }),
         _ => start_index,
+    }
+}
+
+/// Number of stateful sites a form occupies in scan-site index order.
+/// MUST mirror collect_scan_sites' walk exactly: sited-evolve evaluation
+/// uses it to fast-forward the counter over skipped init/step regions so
+/// every evaluation consumes the same index range the static walk saw.
+pub(crate) fn form_site_count(form: &Form) -> u32 {
+    match form {
+        Form::List(items) => {
+            let own = match items.first() {
+                Some(Form::Sym(s)) if scan_builtin_spec(s).is_some() || &**s == "evolve" => 1,
+                _ => 0,
+            };
+            own + items.iter().map(form_site_count).sum::<u32>()
+        }
+        Form::Vector(items) => items.iter().map(form_site_count).sum(),
+        Form::Map(kvs) => kvs.iter().map(|(k, v)| form_site_count(k) + form_site_count(v)).sum(),
+        _ => 0,
     }
 }
 
@@ -844,6 +869,7 @@ pub(crate) fn read_scan_in(
         readers: Some(readers),
         mirror_legacy: false,
         n2_writes: Vec::new(),
+        val_writes: Vec::new(),
     }))
 }
 
@@ -858,6 +884,7 @@ pub(crate) fn read_scan(state: &MotionState, base: MotionNodeId) -> ScanShared {
         readers: None,
         mirror_legacy: false,
         n2_writes: Vec::new(),
+        val_writes: Vec::new(),
     }))
 }
 
@@ -1343,6 +1370,7 @@ pub fn step_motion_in(
             let tick_rate = ctx.tick_rate;
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
+            let write_val = &mut *ctx.write_val;
             let [x, y] = (readers.n2)(dense_key)
                 .or_else(|| match state.get(&dense_key) {
                     Some(Cell::N(v)) => Some(*v),
@@ -1368,8 +1396,11 @@ pub fn step_motion_in(
                 let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
                     eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
                 })?;
-                for (key, value) in writes {
+                for (key, value) in writes.n2 {
                     write_n2(key, value);
+                }
+                for (key, value) in writes.val {
+                    write_val(key, value);
                 }
                 (vx, vy)
             };
@@ -1392,12 +1423,16 @@ pub fn step_motion_in(
             let tick_rate = ctx.tick_rate;
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
+            let write_val = &mut *ctx.write_val;
             let key = d as *const DynNode as usize;
             let (_, writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
                 eval_sig_at_rate(form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)), tick_rate)?.num()
             })?;
-            for (key, value) in writes {
+            for (key, value) in writes.n2 {
                 write_n2(key, value);
+            }
+            for (key, value) in writes.val {
+                write_val(key, value);
             }
             Ok(())
         }
@@ -1409,12 +1444,16 @@ pub fn step_motion_in(
                 let tick_rate = ctx.tick_rate;
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
+                let write_val = &mut *ctx.write_val;
                 let key = d as *const DynNode as usize;
                 let (_, writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
                     eval_sig_at_rate(progress, env, sig, tau, 0.0, Some(scan), None, tick_rate)?.num()
                 })?;
-                for (key, value) in writes {
+                for (key, value) in writes.n2 {
                     write_n2(key, value);
+                }
+                for (key, value) in writes.val {
+                    write_val(key, value);
                 }
             }
             step_motion_in(curve, tau, dt, ctx)
@@ -1625,6 +1664,12 @@ pub(crate) fn clamp_integrator(
     }
 }
 
+/// Site writes produced by an advancing scan evaluation.
+pub(crate) struct ScanWrites {
+    pub n2: Vec<(MotionStateKey, [f64; 2])>,
+    pub val: Vec<(MotionStateKey, EvolveCell)>,
+}
+
 /// Run an evaluation with an advancing scan context over the bullet's state,
 /// then merge the (possibly grown) state back.
 pub(crate) fn advance_sites_with_writes<T>(
@@ -1634,7 +1679,7 @@ pub(crate) fn advance_sites_with_writes<T>(
     readers: MotionReaders,
     mirror_legacy: bool,
     f: impl FnOnce(ScanShared) -> Result<T, String>,
-) -> Result<(T, Vec<(MotionStateKey, [f64; 2])>), String> {
+) -> Result<(T, ScanWrites), String> {
     let MotionStateKey::Node(dense_base) = state_key_for_node(base, &readers) else {
         unreachable!("node keys are always stable")
     };
@@ -1648,13 +1693,14 @@ pub(crate) fn advance_sites_with_writes<T>(
         readers: Some(readers),
         mirror_legacy,
         n2_writes: Vec::new(),
+        val_writes: Vec::new(),
     }));
     let r = f(io.clone());
     let io = Rc::try_unwrap(io)
         .map_err(|_| "scan context escaped".to_string())?
         .into_inner();
     *state = io.state;
-    r.map(|value| (value, io.n2_writes))
+    r.map(|value| (value, ScanWrites { n2: io.n2_writes, val: io.val_writes }))
 }
 
 pub fn is_scanned(d: &DynNode) -> bool {

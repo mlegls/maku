@@ -3789,6 +3789,93 @@ fn entity_rows_do_not_shift_after_cull() {
 }
 
 #[test]
+fn sited_evolve_advances_once_per_tick_and_persists() {
+    // An evolve inside a per-tick re-evaluated vel component: state lives
+    // at the ScanSite, advances once per boundary, and within-tick reads
+    // see the settled value (evolve-reexpression-design.md milestone 1).
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel c[(evolve 0 (fn [s c] (+ s (* 60 (:dt c))))) 0])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let site = schema
+        .val_keys
+        .iter()
+        .copied()
+        .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
+        .expect("sited evolve interns a val ScanSite slot");
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    let cell = sim.world.entities.state_val(0, site).unwrap();
+    assert_eq!(cell.tick, 3, "one advance per tick");
+    let Val::Num(vx) = cell.state else { panic!("numeric evolve state, got {:?}", cell.state) };
+    let expected = 3.0 * 60.0 / DEFAULT_TICK_RATE;
+    assert!((vx - expected).abs() < 1e-9, "ramped velocity state: {vx} (expected {expected})");
+}
+
+#[test]
+fn sited_evolve_reproduces_slew() {
+    // The slew semantics written as a sited evolve must match the slew
+    // builtin tick for tick (the step-3 re-expression contract).
+    const CARD: &str = r#"
+(defpattern p []
+  (par
+    (spawn (vel p[3 (slew 720 0 90)]))
+    (spawn (vel p[3 (evolve 0 (fn [s c]
+                                (+ s (max (- 0 (* 720 (:dt c)))
+                                          (min (* 720 (:dt c)) (- 90 s))))))]))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..12 {
+        sim.step().unwrap();
+        let a = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+        let b = sim.world.entities.sampled_pose(1, sim.world.tick - 1).unwrap();
+        assert!(
+            (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9,
+            "slew builtin vs sited evolve diverged at tick {}: ({}, {}) vs ({}, {})",
+            sim.world.tick,
+            a.x,
+            a.y,
+            b.x,
+            b.y
+        );
+    }
+}
+
+#[test]
+fn sited_evolve_counter_skips_hold_step_regions() {
+    // Two sites in one component pair, the first an evolve whose init and
+    // step regions are skipped once settled: the second site's index must
+    // stay aligned with the static walk (the counter discipline).
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel p[(evolve 1 (fn [s c] s)) (slew 720 0 90)])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let slew_site = {
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        assert_eq!(schema.val_keys.len(), 1, "evolve val site");
+        assert_eq!(schema.n2_keys.len(), 2, "vel state plus slew site");
+        schema
+            .n2_keys
+            .iter()
+            .copied()
+            .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
+            .unwrap()
+    };
+    for _ in 0..3 {
+        sim.step().unwrap();
+    }
+    let [angle, _] = sim.world.entities.state_n2(0, slew_site).unwrap();
+    let expected = 4.0 * 720.0 / DEFAULT_TICK_RATE;
+    assert!((angle - expected).abs() < 1e-9, "slew site aligned after evolve skip: {angle} (expected {expected})");
+}
+
+#[test]
 fn spawned_entity_rows_carry_motion_schema() {
     const CARD: &str = r#"
 (defpattern p []

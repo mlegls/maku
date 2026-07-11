@@ -1356,12 +1356,17 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
             "evolve" => {
                 // (evolve init step): the stateful signal constructor
-                // (docs/notes/evolve-design.md). init is evaluated HERE —
-                // construction is epoch start (per-slot epoch resets arrive
-                // with remat). The result is a dyn value: apply it to a time
-                // to sample, or put it in a pose/figure slot.
+                // (docs/notes/evolve-design.md). The result is a dyn value:
+                // apply it to a time to sample, or put it in a pose/figure
+                // slot. Under an active scan context the SITE, not the
+                // construction, is the evolve's identity, and the form
+                // evaluates to the settled state value
+                // (docs/notes/evolve-reexpression-design.md).
                 if items.len() != 3 {
                     return Err("evolve: expected (evolve init step)".into());
+                }
+                if ctx.scan.is_some() {
+                    return sf_sited_evolve(items, env, ctx, world);
                 }
                 let step = evaluate(&items[2], env, ctx, world)?;
                 if !matches!(step, Val::Fn { .. } | Val::Builtin(_)) {
@@ -3017,6 +3022,63 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
 
 /// Stateful scan expression sites. State keyed by (base, site index); the
 /// site counter is stable for a fixed expression tree.
+/// A sited evolve: (evolve init step) inside a per-tick re-evaluated dyn
+/// expression. State lives at the ScanSite key; the form evaluates to the
+/// settled state value — the ambient clock is the enclosing slot's clock,
+/// so "the dyn sampled at the ambient tick" IS the settled value.
+///
+/// Counter discipline: every evaluation consumes exactly
+/// 1 + sites(init) + sites(step) indices to match collect_scan_sites'
+/// static walk, fast-forwarding over skipped regions. Sites reachable
+/// only through non-literal step fns (a def'd closure) are invisible to
+/// the static walk — same limitation as the other scan builtins.
+fn sf_sited_evolve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
+    let scan = ctx.scan.clone().expect("sited evolve requires a scan context");
+    let (site, advance, dt) = {
+        let mut io = scan.borrow_mut();
+        let base = io
+            .dense_base
+            .ok_or("evolve: scan context missing stable lowered base id")?;
+        let site = MotionStateKey::ScanSite { base, index: io.counter as u32 };
+        io.counter += 1;
+        (site, io.advance, io.dt)
+    };
+    let stored = {
+        let io = scan.borrow();
+        io.readers
+            .as_ref()
+            .and_then(|readers| (readers.vals)(site))
+            .or_else(|| match io.state.get(&site) {
+                Some(Cell::V(cell)) => Some(cell.clone()),
+                _ => None,
+            })
+    };
+    let cell = match stored {
+        Some(cell) => {
+            scan.borrow_mut().counter += form_site_count(&items[1]) as usize;
+            cell
+        }
+        None => EvolveCell { state: evaluate(&items[1], env, ctx, world)?, tick: 0 },
+    };
+    if !advance {
+        scan.borrow_mut().counter += form_site_count(&items[2]) as usize;
+        return Ok(cell.state);
+    }
+    let step = evaluate(&items[2], env, ctx, world)?;
+    if !matches!(step, Val::Fn { .. } | Val::Builtin(_)) {
+        return Err(format!("evolve: step must be callable, got {:?}", step));
+    }
+    let step_ctx = evolve_step_ctx(cell.tick, dt);
+    let state = apply_fn(step, &[cell.state, step_ctx], ctx, world, false)?;
+    let cell = EvolveCell { state, tick: cell.tick + 1 };
+    let mut io = scan.borrow_mut();
+    if io.mirror_legacy {
+        io.state.insert(site, Cell::V(cell.clone()));
+    }
+    io.val_writes.push((site, cell.clone()));
+    Ok(cell.state)
+}
+
 fn sf_stateful(
     which: &str,
     items: &[Form],
