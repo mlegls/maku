@@ -325,7 +325,13 @@ pub(super) fn materialize_direct_colliders(
     let num = |n: &ProjectorNum| -> Result<f64, String> {
         match n {
             ProjectorNum::Const(n) => Ok(*n),
-            ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig),
+            // EntityCol is never a special view field (scope filter), so the
+            // read skips entity_field_at's special-name match and goes
+            // straight through resolved store slots — same Val, same errors.
+            ProjectorNum::EntityCol(col) => {
+                let row = row.ok_or("collider: entity field read outside an entity context")?;
+                entity_field_at_slots(row, world.field_slots(col), world).num()
+            }
             ProjectorNum::Expr(_) => Err("collider: expression slot on the direct path".into()),
         }
     };
