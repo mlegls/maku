@@ -29,7 +29,7 @@
 
 ;; 4. thirty bullets: rotation frames are just arithmetic on an index array
 (defpattern ex4-ring-by-hand []
-  (bullet ((rot m"10 * iota(30)") ((pose c[1 0]) (linear p[2 0]))) {:style {:family :arrow :color :red :variant :w}}))
+  (bullet ((rot m"12 * iota(30)") ((pose c[1 0]) (linear p[2 0]))) {:style {:family :arrow :color :red :variant :w}}))
 
 ;; 5. the same idea, evenly around the full circle: the stock formation
 (defpattern ex5-circle []
@@ -42,14 +42,14 @@
 ;; 7. nesting: 10 groups of 3 — multiplicity is the product of array
 ;; sizes along the path, readable straight off the tree
 (defpattern ex7-nested []
-  (bullet ((rot m"30 * iota(10)")
+  (bullet ((rot m"36 * iota(10)")
            ((rot m"4 * iota(3)")
              ((pose c[1 0]) (linear p[2 0])))) {:style {:family :arrow :color :red :variant :w}}))
 
 ;; 8. one color per group: meta arrays bind to the LEADING axis (the
 ;; outer 10) and shorter arrays cycle — red, blue, green, red, …
 (defpattern ex8-colors []
-  (bullet ((rot m"30 * iota(10)")
+  (bullet ((rot m"36 * iota(10)")
            ((rot m"4 * iota(3)")
              ((pose c[1 0]) (linear p[2 0])))) {:style {:family :arrow
                   :color [:red :blue :green]
@@ -58,7 +58,7 @@
 ;; 9. both axes at once: color cycles over the groups (leading axis);
 ;; variant targets the inner axis of 3 by writing its length explicitly
 (defpattern ex9-both-axes []
-  (bullet ((rot m"30 * iota(10)")
+  (bullet ((rot m"36 * iota(10)")
            ((rot m"4 * iota(3)")
              ((pose c[1 0]) (linear p[2 0])))) {:style {:family :arrow
                   :color [:red :blue :green]
@@ -68,7 +68,7 @@
 ;; value = axis in the spawn. Group 0 cycles red/blue inside, group 1 is
 ;; all green, group 2 all purple, group 3 wraps around.
 (defpattern ex10-nested-meta []
-  (bullet ((rot m"30 * iota(10)")
+  (bullet ((rot m"36 * iota(10)")
            ((rot m"4 * iota(3)")
              ((pose c[1 0]) (linear p[2 0])))) {:style {:family :arrow
                   :color [[:red :blue] :green :purple]

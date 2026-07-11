@@ -67,12 +67,12 @@ A ring is not a loop — it's arithmetic. `(iota 30)` is the index array
 applied to an array of angles gives an array of frames:
 
 ```clojure
-(bullet ((rot m"10 * iota(30)") ((pose c[1 0]) (linear p[2 0]))) {:style {:family :arrow :color :red :variant :w}})
+(bullet ((rot m"12 * iota(30)") ((pose c[1 0]) (linear p[2 0]))) {:style {:family :arrow :color :red :variant :w}})
 ```
 
 Thirty rotation frames × one child = thirty bullets (`ex4`). The `m"…"`
 form is infix math shorthand; it parses to the same tree as
-`(* 10 (iota 30))` — use whichever reads better.
+`(* 12 (iota 30))` — use whichever reads better.
 
 Two stock formations cover the common cases (`ex5`, `ex6`):
 
@@ -87,7 +87,7 @@ worn as frames.
 Repeat-within-repeat is frame-within-frame. Ten groups of three (`ex7`):
 
 ```clojure
-(bullet ((rot m"30 * iota(10)")        ; 10 group headings, 30° apart
+(bullet ((rot m"36 * iota(10)")        ; 10 group headings, 36° apart
          ((rot m"4 * iota(3)")        ; 3 bullets per group, 4° apart
            ((pose c[1 0]) (linear p[2 0])))) {:style {:family :arrow :color :red :variant :w}})
 ```
