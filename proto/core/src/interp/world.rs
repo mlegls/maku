@@ -471,17 +471,25 @@ impl EntityStore {
         {
             return MotionReaders::stateless(schema.shared_node_ids());
         }
+        // keys are visited in slot order, so each cell reads its column by
+        // index directly — no per-cell hash through the schema's slot maps
+        // (slot id == key index by intern order)
+        let n2_at = |slot: usize| self.state_n2.get(slot).and_then(|col| col.get(row)).copied();
         if schema.dyn_keys.is_empty() && schema.val_keys.is_empty() && schema.n2_keys.len() <= 2 {
             let mut n2 = [None, None];
-            for (slot, key) in schema.n2_keys.iter().enumerate() {
-                n2[slot] = self.state_n2(row, *key);
+            for slot in 0..schema.n2_keys.len() {
+                n2[slot] = n2_at(slot);
             }
             return MotionReaders::for_row_n2(schema.clone(), n2);
         }
         let schema = schema.clone();
-        let n2 = schema.n2_keys.iter().map(|k| self.state_n2(row, *k)).collect();
-        let dyns = schema.dyn_keys.iter().map(|k| self.state_dyn(row, *k)).collect();
-        let vals = schema.val_keys.iter().map(|k| self.state_val(row, *k)).collect();
+        let n2 = (0..schema.n2_keys.len()).map(n2_at).collect();
+        let dyns = (0..schema.dyn_keys.len())
+            .map(|slot| self.state_dyn.get(slot).and_then(|col| col.get(row))?.clone())
+            .collect();
+        let vals = (0..schema.val_keys.len())
+            .map(|slot| self.state_val.get(slot).and_then(|col| col.get(row))?.clone())
+            .collect();
         MotionReaders::for_row_snapshot(RowStateSnapshot { schema, n2, dyns, vals })
     }
 
