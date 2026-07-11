@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t03.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml --features player --bin maku -- cards/tutorials/t03.maku
+cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t03.maku
 ```
 
 This tutorial builds two recognizable spell cards from the tools of the
