@@ -2832,11 +2832,17 @@ fn val_to_form(v: &Val) -> Result<Form, String> {
     })
 }
 
+/// Falsy is 0 and nothing; EVERYTHING else is truthy (decided 2026-07).
+/// 0-falsy keeps numeric-mask logic working; everything-else-truthy is
+/// presence, which is what value-selecting and/or mean. Numeric defaults
+/// still belong to `default` (nothing-coalescing) because 0 is a value.
+/// Under static typing, bool positions type as Num except and/or's test
+/// position, which stays Any with exactly these semantics.
 pub(crate) fn truthy(v: &Val) -> bool {
     match v {
         Val::Num(n) => *n != 0.0,
         Val::Nothing => false,
-        _ => false,
+        _ => true,
     }
 }
 

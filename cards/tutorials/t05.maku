@@ -37,7 +37,7 @@
                            {:hp 20
                             :style {:family :lstar :color :green}
                             :scale 1.5})]
-    (bind-channel! $dummy-hp (value-or (:hp (nth dummy 0)) 0))
+    (bind-channel! $dummy-hp (default (:hp (nth dummy 0)) 0))
     (seq
       (wait-for (> $dummy-hp 0))          ; registered
       (wait-for (<= $dummy-hp 0))         ; destroyed

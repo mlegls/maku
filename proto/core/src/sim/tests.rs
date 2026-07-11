@@ -4076,6 +4076,12 @@ fn prelude_and_or_short_circuit() {
 ;; short-circuit: the guarded arm never evaluates (it would error)
 (defchannel $guard (and 0 (undefined-function 1)))
 (defchannel $default (or (get {:a 1} :missing) 7))
+;; presence semantics: keywords are truthy, so or defaults sym reads
+(defchannel $kw (if (or (get {:a 1} :missing) 0) 1 0))
+(defchannel $kwor (if (or :red 0) 1 0))
+;; default (nee value-or) is nothing-coalescing: 0 passes through
+(defchannel $zero (default 0 9))
+(defchannel $missing (default (get {:a 1} :missing) 9))
 (defpattern p [] (spawn (pose c[0 0]) {:tag :x}))
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
@@ -4090,6 +4096,10 @@ fn prelude_and_or_short_circuit() {
     assert_eq!(num("guard"), 0.0);
     // nothing is falsy: (or maybe-missing d) is a field-read default
     assert_eq!(num("default"), 7.0);
+    // truthiness is presence: keywords are truthy, 0 and nothing falsy
+    assert_eq!((num("kw"), num("kwor")), (0.0, 1.0));
+    // default coalesces only on nothing — 0 is a value
+    assert_eq!((num("zero"), num("missing")), (0.0, 9.0));
 }
 
 #[test]
