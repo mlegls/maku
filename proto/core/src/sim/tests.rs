@@ -4066,6 +4066,24 @@ fn predicate_queries_drive_manip() {
 }
 
 #[test]
+fn prelude_and_or_are_min_max() {
+    const CARD: &str = r#"
+(defchannel $and3 (and 1 1 1))
+(defchannel $and0 (and 1 0 1))
+(defchannel $or1 (or 0 0 1))
+(defchannel $masks (and 3 2))
+(defpattern p [] (spawn (pose c[0 0]) {:tag :x}))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let num = |n: &str| match sim.channel_val(n) {
+        Some(Val::Num(v)) => v,
+        other => panic!("${n}: {other:?}"),
+    };
+    assert_eq!((num("and3"), num("and0"), num("or1"), num("masks")), (1.0, 0.0, 1.0, 2.0));
+}
+
+#[test]
 fn fn_valued_map_query_errors() {
     // the removed {:where f} shape must fail loudly, not match nothing
     const CARD: &str = r#"

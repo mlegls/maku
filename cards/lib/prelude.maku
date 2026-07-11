@@ -29,6 +29,19 @@
 (defn inc [x] (+ x 1))
 (defn dec [x] (- x 1))
 
+;; Numeric-mask logic: bool IS num, so `and` is min and `or` is max —
+;; masks stay normalized (unlike `*`, which scales, and `+`, which
+;; counts). STRICT like all mask arithmetic: every argument evaluates,
+;; there is no short-circuit — guard reads of maybe-missing fields with
+;; value-or, not with `and`.
+(defn fold-op* [op forms]
+  (loop [xs (rest forms) acc (first forms)]
+    (if (= (count xs) 0)
+      acc
+      (recur (rest xs) `(~op ~acc ~(first xs))))))
+(defmacro and [x & xs] (fold-op* `min (concat [x] xs)))
+(defmacro or [x & xs] (fold-op* `max (concat [x] xs)))
+
 (defn value-or [x d] (if (nothing? x) d x))
 (defn set-col [e col v] (change-col e col (fn [_] v)))
 
