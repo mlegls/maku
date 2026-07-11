@@ -1722,6 +1722,77 @@ fn is_query_value(v: &Val) -> bool {
     matches!(v, Val::Map(_) | Val::Fn { .. } | Val::Builtin(_) | Val::EntitySet(_))
 }
 
+#[derive(Debug)]
+struct RowPredicate {
+    tests: Vec<RowPredicateTest>,
+}
+
+#[derive(Debug)]
+struct RowPredicateTest {
+    field: Rc<str>,
+    value: Rc<str>,
+}
+
+fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
+    let Val::Fn { params, body, env } = q else { return None };
+    let [Form::Sym(param)] = &params[..] else { return None };
+    if &**param == "&"
+        || env.lookup("*").is_some()
+        || env.lookup("=").is_some()
+        || ctx.sig.defs.contains_key("*")
+        || ctx.sig.defs.contains_key("=")
+        || &**param == "*"
+        || &**param == "="
+    {
+        return None;
+    }
+    let [body] = &body[..] else { return None };
+    let forms = match body {
+        Form::List(items) if matches!(items.first(), Some(Form::Sym(head)) if &**head == "*") => {
+            if items.len() < 2 {
+                return None;
+            }
+            &items[1..]
+        }
+        form => std::slice::from_ref(form),
+    };
+    let mut tests = Vec::with_capacity(forms.len());
+    for form in forms {
+        let Form::List(eq) = form else { return None };
+        let [Form::Sym(head), left, right] = &eq[..] else { return None };
+        if &**head != "=" {
+            return None;
+        }
+        let (access, value) = match (left, right) {
+            (access, Form::Kw(value)) | (Form::Kw(value), access) => (access, value),
+            _ => return None,
+        };
+        let Form::List(access) = access else { return None };
+        let [Form::Kw(field), Form::Sym(subject)] = &access[..] else { return None };
+        if subject != param || matches!(&**field, "pos" | "vel" | "t" | "tick" | "handle") {
+            return None;
+        }
+        tests.push(RowPredicateTest { field: field.clone(), value: value.clone() });
+    }
+    Some(RowPredicate { tests })
+}
+
+impl RowPredicate {
+    fn matches(&self, row: usize, world: &World) -> bool {
+        self.tests.iter().all(|test| match &*test.field {
+            "kind" => world.entities.dyn_figure(row).is_some_and(|figure| {
+                let kind = match figure.repr() {
+                    FigureDynRepr::Pose(_) if world.entities.is_traced(row) => "pather",
+                    FigureDynRepr::Pose(_) => "point",
+                    FigureDynRepr::Curve { .. } => "curve",
+                };
+                kind == &*test.value
+            }),
+            field => world.sym_field_matches_at(row, field, &test.value),
+        })
+    }
+}
+
 fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
     if items.len() < 3 || items.len() % 2 == 0 {
         return Err("matches: expected field/value pairs".into());
@@ -1769,8 +1840,27 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
         .enumerate()
         .filter_map(|(i, _)| world.entities.is_alive(i).then_some(i))
         .collect::<Vec<_>>();
+    let Some(predicate) = row_predicate(q, ctx) else {
+        return resolve_predicate_query_fallback(q, ctx, world, &candidates);
+    };
+    // Mixed predicates deliberately fall back as a whole; partial prefiltering
+    // would change the error and effect ordering of the residual expression.
+    let out = candidates.iter().copied().filter(|i| predicate.matches(*i, world)).collect::<Vec<_>>();
+    if lower::oracle_enabled() {
+        let expected = resolve_predicate_query_fallback(q, ctx, world, &candidates)?;
+        assert_eq!(out, expected, "row predicate mismatch for {:?}", q);
+    }
+    Ok(out)
+}
+
+fn resolve_predicate_query_fallback(
+    q: &Val,
+    ctx: &mut Ctx,
+    world: &mut World,
+    candidates: &[usize],
+) -> Result<Vec<usize>, String> {
     let mut out = Vec::new();
-    for i in candidates {
+    for &i in candidates {
         let view = Val::EntityView(world.entity_ref(i));
         if truthy(&apply_fn(q.clone(), &[view], ctx, world, false)?) {
             out.push(i);
@@ -1887,6 +1977,7 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
             .dyn_figure(i)
             .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?
             .repr() {
+            FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "curve",
         }
@@ -3076,6 +3167,68 @@ mod tests {
     fn ev_err(src: &str) -> String {
         let f = read_one(src).unwrap();
         evaluate(&f, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap_err()
+    }
+
+    fn predicate(src: &str) -> Val {
+        let form = read_one(src).unwrap();
+        evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap()
+    }
+
+    #[test]
+    fn row_predicate_recognizes_keyword_field_conjunctions() {
+        let ctx = Ctx::default();
+        for src in [
+            "(fn [e] (* (= e.render :beam) (= e.kind :curve)))",
+            "(fn [e] (* (= :touhou-sprite e.render) (= :point e.kind)))",
+            "(fn [e] (= e.team :enemy))",
+        ] {
+            assert!(row_predicate(&predicate(src), &ctx).is_some(), "{src}");
+        }
+    }
+
+    #[test]
+    fn row_predicate_rejects_unsafe_shapes_and_shadowing() {
+        let ctx = Ctx::default();
+        for src in [
+            "(fn [e & more] (= e.team :enemy))",
+            "(fn [e] (= e.team 1))",
+            "(fn [e] (= e.pos :origin))",
+            "(fn [e] (* (= e.team :enemy) (< e.hp 1)))",
+        ] {
+            assert!(row_predicate(&predicate(src), &ctx).is_none(), "{src}");
+        }
+
+        let shadowed = Val::Fn {
+            params: vec![Form::sym("e")].into(),
+            body: vec![read_one("(= e.team :enemy)").unwrap()].into(),
+            env: Env::empty().bind("=".into(), Val::Num(1.0)),
+        };
+        assert!(row_predicate(&shadowed, &ctx).is_none());
+
+        let mut defs_ctx = Ctx::default();
+        Rc::make_mut(&mut defs_ctx.sig.defs).insert("=".into(), Form::Num(1.0));
+        assert!(row_predicate(&predicate("(fn [e] (= e.team :enemy))"), &defs_ctx).is_none());
+    }
+
+    #[test]
+    fn row_predicate_matches_spawned_world_fallback() {
+        const CARD: &str = r#"
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy :render :sprite})
+    (spawn (pose c[1 0]) {:team :friend :render :sprite})
+    (spawn ((pose c[0 0]) (curve {:u-max 1})) {:team :enemy :render :beam})))
+"#;
+        let mut sim = crate::sim::Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let mut ctx = Ctx::default();
+        let q = predicate("(fn [e] (* (= e.team :enemy) (= e.kind :point)))");
+        let candidates = sim.world.entities.iter().enumerate()
+            .filter_map(|(i, _)| sim.world.entities.is_alive(i).then_some(i))
+            .collect::<Vec<_>>();
+        let expected = resolve_predicate_query_fallback(&q, &mut ctx, &mut sim.world, &candidates).unwrap();
+        let actual = resolve_predicate_query(&q, &mut ctx, &mut sim.world).unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
