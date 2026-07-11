@@ -10,13 +10,16 @@ fn materialize_colliders_into(
     ctx_view: Option<&Val>,
     scale: f64,
     pose: Pose,
-    trace: &[Pose],
-    traced: bool,
-    symbols: &mut SymbolTable,
+    world: &mut World,
+    row: Option<usize>,
     defs: &mut Vec<DynCollider>,
     out: &mut Vec<ColliderData>,
     tick_rate: f64,
 ) -> Result<(), String> {
+    let (trace, traced): (&[Pose], bool) = match row {
+        Some(row) => (world.entities.trace_samples(row), world.entities.is_traced(row)),
+        None => (&[], false),
+    };
     // All-Stable projectors (the plain-bullet case) evaluate their slots
     // by reference — no per-tick clone round-trip through the defs vec.
     if projector
@@ -34,8 +37,13 @@ fn materialize_colliders_into(
     }
     let state = MotionState::new();
     defs.clear();
-    materialize_collider_defs_into(projector, tau, &state, sig, e_view, ctx_view, symbols, defs, tick_rate)
+    materialize_collider_defs_into(projector, tau, &state, sig, e_view, ctx_view, world, row, defs, tick_rate)
         .map_err(|e| format!("colliders: {}", e))?;
+    // re-borrow: the defs pass may have grown the symbol table
+    let (trace, traced): (&[Pose], bool) = match row {
+        Some(row) => (world.entities.trace_samples(row), world.entities.is_traced(row)),
+        None => (&[], false),
+    };
     out.extend(
         defs.drain(..)
             .map(|slot| eval_collider_slot(dyn_figure, &slot, tau, sig, scale, pose, trace, traced, tick_rate)),
@@ -95,8 +103,6 @@ impl Sim {
                 .dyn_figure(i)
                 .ok_or_else(|| format!("colliders: missing dyn figure for row {i}"))?
                 .clone();
-            let trace = self.world.entities.trace_samples(i);
-            let traced = self.world.entities.is_traced(i);
             let tick_rate = self.world.tick_rate();
             let collider_projector = self
                 .world
@@ -123,9 +129,8 @@ impl Sim {
                 ctx_view.as_ref(),
                 scale,
                 p,
-                trace,
-                traced,
-                &mut self.world.symbols,
+                &mut self.world,
+                Some(i),
                 &mut self.collider_scratch.defs,
                 &mut self.collider_scratch.rows,
                 tick_rate,

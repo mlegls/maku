@@ -75,7 +75,20 @@ impl FigureProjectorKind {
 #[derive(Clone, Debug)]
 pub enum ProjectorNum {
     Const(f64),
+    /// `(:field e)` on the projector's entity scope for a non-special
+    /// field name: materialization reads the entity field directly — the
+    /// same value the bound view would hold — without building the view
+    /// or entering the evaluator. Recognized at spec build.
+    EntityCol(Rc<str>),
     Expr(Form),
+}
+
+impl ProjectorNum {
+    /// Only a general Expr needs the bound `e`/`ctx` views; Const needs
+    /// nothing and EntityCol reads the entity row directly.
+    pub(crate) fn needs_views(&self) -> bool {
+        matches!(self, ProjectorNum::Expr(_))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -116,8 +129,13 @@ impl ColliderProjectorExpr {
     pub(crate) fn needs_views(&self) -> bool {
         match self {
             ColliderProjectorExpr::Stable(_) => false,
-            ColliderProjectorExpr::Circle(spec) => spec.scope.is_some(),
-            ColliderProjectorExpr::CapsuleChain(spec) => spec.scope.is_some(),
+            ColliderProjectorExpr::Circle(spec) => spec.radius.needs_views(),
+            ColliderProjectorExpr::CapsuleChain(spec) => {
+                spec.radius.needs_views()
+                    || spec.width.needs_views()
+                    || spec.u_max.as_ref().is_some_and(ProjectorNum::needs_views)
+                    || matches!(&spec.sample_set, ProjectorSampleSet::Step(n) if n.needs_views())
+            }
             ColliderProjectorExpr::Callable { .. } => true,
             ColliderProjectorExpr::Cond { clauses, scope, .. } => {
                 scope.is_some()
@@ -221,17 +239,38 @@ mod collider_projector_tests {
         let stable = ColliderProjectorValue::stable(Vec::new());
         assert!(!stable.expr.needs_views());
 
-        let scoped_circle = ColliderProjectorValue::circle(CircleProjectorSpec {
-            layer: Symbol(0),
-            radius: ProjectorNum::Const(1.0),
-            env: Env::empty(),
-            scope: Some(ProjectorScope {
+        let scope = || {
+            Some(ProjectorScope {
                 entity: "e".into(),
                 context: "ctx".into(),
                 figure: FigureProjectorKind::Pose,
-            }),
+            })
+        };
+        // scope alone doesn't force views: Const and EntityCol radii never
+        // read the bound view, only a general Expr does
+        let scoped_const = ColliderProjectorValue::circle(CircleProjectorSpec {
+            layer: Symbol(0),
+            radius: ProjectorNum::Const(1.0),
+            env: Env::empty(),
+            scope: scope(),
         });
-        assert!(scoped_circle.expr.needs_views());
+        assert!(!scoped_const.expr.needs_views());
+
+        let scoped_col = ColliderProjectorValue::circle(CircleProjectorSpec {
+            layer: Symbol(0),
+            radius: ProjectorNum::EntityCol("hitbox".into()),
+            env: Env::empty(),
+            scope: scope(),
+        });
+        assert!(!scoped_col.expr.needs_views());
+
+        let scoped_expr = ColliderProjectorValue::circle(CircleProjectorSpec {
+            layer: Symbol(0),
+            radius: ProjectorNum::Expr(Form::Num(1.0)),
+            env: Env::empty(),
+            scope: scope(),
+        });
+        assert!(scoped_expr.expr.needs_views());
 
         let callable = ColliderProjectorValue::callable(
             FigureProjectorKind::Pose,

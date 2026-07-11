@@ -582,6 +582,37 @@
     }
 
     #[test]
+    fn entity_col_collider_radius_reads_per_entity_field() {
+        const CARD: &str = r#"
+(defcollider :pose hb [e ctx]
+  (circle-collider {:layer :a :r e.hitbox}))
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) hb {:hitbox 2})
+    (spawn (pose c[3 0]) hb {:hitbox 2})
+    (spawn (pose c[9 0]) hb {:hitbox 1})))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        let a = sim.world.symbols.intern("a");
+        // radii 2+2 span the 3-unit gap; radius 1 at x=9 reaches nothing
+        assert_eq!(&*sim.world.collision_index.query(a, a), &[(0, 1), (1, 0)]);
+    }
+
+    #[test]
+    fn entity_col_collider_radius_keyword_field_errors() {
+        const CARD: &str = r#"
+(defcollider :pose hb [e ctx]
+  (circle-collider {:layer :a :r e.hitbox}))
+(defpattern t []
+  (spawn (pose c[0 0]) hb {:hitbox :big}))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number"), "got: {err}");
+    }
+
+    #[test]
     fn defcollider_body_empty_list_yields_no_colliders() {
         const CARD: &str = r#"
 (deftick
@@ -3710,17 +3741,18 @@ fn variadic_macro_unquotes_inside_maps() {
         .find(|(i, _)| sim.world.entities.is_alive(*i))
         .map(|(i, _)| i)
         .unwrap();
-    let projector = sim.world.entities.collider_projector(row).unwrap();
+    let projector = sim.world.entities.collider_projector(row).unwrap().clone();
     let tick_rate = sim.world.tick_rate();
     let mut slots = Vec::new();
     crate::sim::slots::materialize_collider_defs_into(
-        projector,
+        &projector,
         0.0,
         &MotionState::new(),
         &SigEnv::default(),
         None,
         None,
-        &mut sim.world.symbols,
+        &mut sim.world,
+        Some(row),
         &mut slots,
         tick_rate,
     )

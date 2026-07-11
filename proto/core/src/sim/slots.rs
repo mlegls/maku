@@ -88,7 +88,8 @@ pub fn materialize_collider_defs_into(
     sig: &SigEnv,
     e_view: Option<&Val>,
     ctx_view: Option<&Val>,
-    symbols: &mut SymbolTable,
+    world: &mut World,
+    row: Option<usize>,
     out: &mut Vec<DynCollider>,
     tick_rate: f64,
 ) -> Result<(), String> {
@@ -99,11 +100,11 @@ pub fn materialize_collider_defs_into(
             }
             ColliderProjectorExpr::Circle(spec) => {
                 let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
-                out.push(materialize_circle_projector(spec, &env, sig)?);
+                out.push(materialize_circle_projector(spec, &env, sig, world, row)?);
             }
             ColliderProjectorExpr::CapsuleChain(spec) => {
                 let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
-                out.push(materialize_capsule_chain_projector(spec, &env, sig, symbols)?);
+                out.push(materialize_capsule_chain_projector(spec, &env, sig, world, row)?);
             }
             ColliderProjectorExpr::Callable { params, body, env } => {
                 let e_bound = e_view
@@ -130,12 +131,12 @@ pub fn materialize_collider_defs_into(
                     _ => None,
                 };
                 let mut run_world = World::for_eval(tick_rate);
-                run_world.symbols = symbols.clone();
+                run_world.symbols = world.symbols.clone();
                 let mut last = Val::Nothing;
                 for form in body.iter() {
                     last = evaluate(form, &env, &mut run_ctx, &mut run_world)?;
                 }
-                *symbols = run_world.symbols;
+                world.symbols = run_world.symbols;
                 let specs = flatten_collider_projectors("collider", last, Some(list.figure))?;
                 materialize_collider_defs_into(
                     &ColliderProjector { projectors: specs },
@@ -144,7 +145,8 @@ pub fn materialize_collider_defs_into(
                     sig,
                     Some(&e_bound),
                     Some(&ctx_bound),
-                    symbols,
+                    world,
+                    row,
                     out,
                     tick_rate,
                 )?;
@@ -161,14 +163,14 @@ pub fn materialize_collider_defs_into(
                 run_ctx.sig = sig.clone();
                 run_ctx.projector_scope = scope.clone();
                 let mut run_world = World::for_eval(tick_rate);
-                run_world.symbols = symbols.clone();
+                run_world.symbols = world.symbols.clone();
                 for (pred, child) in clauses.iter() {
                     let enabled = match pred {
                         Some(pred) => truthy_pub(&evaluate(pred, &env, &mut run_ctx, &mut run_world)?),
                         None => true,
                     };
                     if enabled {
-                        *symbols = run_world.symbols;
+                        world.symbols = run_world.symbols;
                         materialize_collider_defs_into(
                             &ColliderProjector { projectors: child.clone() },
                             tau,
@@ -176,14 +178,15 @@ pub fn materialize_collider_defs_into(
                             sig,
                             Some(&e_bound),
                             Some(&ctx_bound),
-                            symbols,
+                            world,
+                            row,
                             out,
                             tick_rate,
                         )?;
                         return Ok(());
                     }
                 }
-                *symbols = run_world.symbols;
+                world.symbols = run_world.symbols;
             }
         }
     }

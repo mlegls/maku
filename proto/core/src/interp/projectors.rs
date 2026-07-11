@@ -120,6 +120,21 @@ fn form_map_value<'a>(opts: &'a Option<Form>, keys: &[&str]) -> Option<&'a Form>
     None
 }
 
+/// Fields the entity view computes specially (interp::entity_view); a
+/// scope read of any other name is a plain field read the materializer
+/// can serve straight from the entity row.
+const VIEW_SPECIAL_FIELDS: [&str; 6] = ["pos", "vel", "t", "tick", "handle", "kind"];
+
+/// Recognize `(:field e)` on the projector's entity scope for a
+/// non-special field — the shape reader sugar like `e.hitbox` takes.
+fn scope_entity_col(form: &Form, scope: Option<&ProjectorScope>) -> Option<Rc<str>> {
+    let scope = scope?;
+    let Form::List(items) = form else { return None };
+    let [Form::Kw(col), Form::Sym(subject)] = &items[..] else { return None };
+    (*subject == scope.entity && !VIEW_SPECIAL_FIELDS.contains(&col.as_ref()))
+        .then(|| col.clone())
+}
+
 fn circle_projector_spec_from_form(
     opts: Option<Form>,
     env: &Env,
@@ -133,7 +148,10 @@ fn circle_projector_spec_from_form(
         .map(|k| world.symbols.intern(k.as_ref()))?;
     let radius = match form_map_value(&opts, &["radius", "r"]) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
-            ProjectorNum::Expr(form.clone())
+            match scope_entity_col(form, ctx.projector_scope.as_ref()) {
+                Some(col) => ProjectorNum::EntityCol(col),
+                None => ProjectorNum::Expr(form.clone()),
+            }
         }
         Some(form) => {
             let radius = evaluate(form, env, ctx, world)?.num()?;
@@ -160,7 +178,10 @@ fn projector_num_from_form(
 ) -> Result<ProjectorNum, String> {
     match form_map_value(opts, keys) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
-            Ok(ProjectorNum::Expr(form.clone()))
+            Ok(match scope_entity_col(form, ctx.projector_scope.as_ref()) {
+                Some(col) => ProjectorNum::EntityCol(col),
+                None => ProjectorNum::Expr(form.clone()),
+            })
         }
         Some(form) => {
             evaluate(form, env, ctx, world)
@@ -182,7 +203,10 @@ fn optional_projector_num_from_form(
 ) -> Result<Option<ProjectorNum>, String> {
     match form_map_value(opts, keys) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
-            Ok(Some(ProjectorNum::Expr(form.clone())))
+            Ok(Some(match scope_entity_col(form, ctx.projector_scope.as_ref()) {
+                Some(col) => ProjectorNum::EntityCol(col),
+                None => ProjectorNum::Expr(form.clone()),
+            }))
         }
         Some(form) => {
             evaluate(form, env, ctx, world)
@@ -266,33 +290,64 @@ pub(crate) fn materialize_circle_projector(
     spec: &CircleProjectorSpec,
     env: &Env,
     sig: &SigEnv,
+    world: &World,
+    row: Option<usize>,
 ) -> Result<DynCollider, String> {
-    let mut run_ctx = Ctx::default();
-    run_ctx.sig = sig.clone();
-    let mut run_world = World::with_entity_capacity(0);
+    // Const/EntityCol radii need no evaluator; this runs per entity per
+    // tick, so the Ctx/World scaffolding is built only for the Expr case.
     let radius = match &spec.radius {
         ProjectorNum::Const(n) => *n,
+        ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig)?,
         ProjectorNum::Expr(form) => {
+            let mut run_ctx = Ctx::default();
+            run_ctx.sig = sig.clone();
+            let mut run_world = World::with_entity_capacity(0);
             evaluate(form, env, &mut run_ctx, &mut run_world)?.num()?
         }
     };
     Ok(DynCollider::collider_circle_const(spec.layer, radius))
 }
 
+/// An EntityCol read at materialize time: `entity_field_at` yields the
+/// same Val the scope view holds for a non-special field, so the `.num()`
+/// coercion (and its error) matches the evaluated form exactly.
+fn entity_col_projector_num(
+    col: &str,
+    world: &World,
+    row: Option<usize>,
+    sig: &SigEnv,
+) -> Result<f64, String> {
+    let row = row.ok_or("collider: entity field read outside an entity context")?;
+    entity_field_at(row, col, world, sig)?.num()
+}
+
 pub(crate) fn materialize_capsule_chain_projector(
     spec: &CapsuleChainProjectorSpec,
     env: &Env,
     sig: &SigEnv,
-    symbols: &mut SymbolTable,
+    world: &mut World,
+    row: Option<usize>,
 ) -> Result<DynCollider, String> {
-    let mut run_ctx = Ctx::default();
-    run_ctx.sig = sig.clone();
-    let mut run_world = World::with_entity_capacity(0);
-    run_world.symbols = symbols.clone();
+    // Same per-tick constraint as the circle projector: only build (and
+    // clone the symbol table into) the evaluator when some field is an Expr.
+    let mut scaffold: Option<(Ctx, World)> = None;
     let mut eval_num = |n: &ProjectorNum| -> Result<f64, String> {
         match n {
             ProjectorNum::Const(n) => Ok(*n),
-            ProjectorNum::Expr(form) => evaluate(form, env, &mut run_ctx, &mut run_world)?.num(),
+            ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig),
+            ProjectorNum::Expr(form) => {
+                let (run_ctx, run_world) = match &mut scaffold {
+                    Some(pair) => pair,
+                    None => {
+                        let mut run_ctx = Ctx::default();
+                        run_ctx.sig = sig.clone();
+                        let mut run_world = World::with_entity_capacity(0);
+                        run_world.symbols = world.symbols.clone();
+                        scaffold.insert((run_ctx, run_world))
+                    }
+                };
+                evaluate(form, env, run_ctx, run_world)?.num()
+            }
         }
     };
     let sample_set = match &spec.sample_set {
@@ -307,7 +362,9 @@ pub(crate) fn materialize_capsule_chain_projector(
         width: eval_num(&spec.width)?,
     };
     let slot = DynCollider::collider_capsule_chain(spec.layer, DynNum::num(eval_num(&spec.radius)?), slot);
-    *symbols = run_world.symbols;
+    if let Some((_, run_world)) = scaffold {
+        world.symbols = run_world.symbols;
+    }
     Ok(slot)
 }
 
