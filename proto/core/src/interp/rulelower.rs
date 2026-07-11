@@ -1,11 +1,12 @@
-use super::{evaluate, row_predicate, Ctx, Env, RowPredicate, World};
+use super::engine::RenderKey;
+use super::{evaluate, row_predicate, Ctx, Env, RowPredicate, Symbol, World};
 use crate::edn::Form;
 use std::rc::Rc;
 
 pub(crate) struct CompiledTickForm {
     pub predicate: RowPredicate,
     pub needs_pose: bool,
-    pub fields: Vec<(Rc<str>, RowVal)>,
+    pub fields: Vec<(Rc<str>, RenderKey, RowVal)>,
 }
 
 pub(crate) enum RowVal {
@@ -16,6 +17,37 @@ pub(crate) enum RowVal {
     PoseTheta,
     Field(Rc<str>),
     FieldOr(Rc<str>, Box<RowVal>),
+}
+
+/// A RowVal with its field names resolved against the world's symbol table,
+/// once per rule pass instead of once per row. `None` is a name that was
+/// never interned anywhere — it can name neither a sym field nor a numeric
+/// column, so the read is `Nothing` (mirroring `entity_field_at`).
+pub(crate) enum ResolvedRowVal {
+    Num(f64),
+    Kw(Rc<str>),
+    PoseX,
+    PoseY,
+    PoseTheta,
+    Field(Option<Symbol>),
+    FieldOr(Option<Symbol>, Box<ResolvedRowVal>),
+}
+
+impl RowVal {
+    pub(crate) fn resolve(&self, world: &World) -> ResolvedRowVal {
+        match self {
+            RowVal::Num(n) => ResolvedRowVal::Num(*n),
+            RowVal::Kw(k) => ResolvedRowVal::Kw(k.clone()),
+            RowVal::PoseX => ResolvedRowVal::PoseX,
+            RowVal::PoseY => ResolvedRowVal::PoseY,
+            RowVal::PoseTheta => ResolvedRowVal::PoseTheta,
+            RowVal::Field(name) => ResolvedRowVal::Field(world.symbols.lookup(name)),
+            RowVal::FieldOr(name, default) => ResolvedRowVal::FieldOr(
+                world.symbols.lookup(name),
+                Box::new(default.resolve(world)),
+            ),
+        }
+    }
 }
 
 const HEADS: [&str; 6] = ["map", "entities-where", "emit", "let", "%value-or", "fn"];
@@ -115,9 +147,9 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
             }
             has_shape = true;
         }
-        fields.push((key.clone(), row_val(value, entity, pose, env, ctx)?));
+        fields.push((key.clone(), RenderKey::from_name(key), row_val(value, entity, pose, env, ctx)?));
     }
     if !has_shape { return None; }
-    let needs_pose = fields.iter().any(|(_, value)| is_pose(value));
+    let needs_pose = fields.iter().any(|(_, _, value)| is_pose(value));
     Some(CompiledTickForm { predicate, needs_pose, fields })
 }

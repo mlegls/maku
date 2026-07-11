@@ -563,37 +563,45 @@ impl Sim {
                 rows.push(row);
             }
         }
+        // field names resolve once per pass; entity fields cannot change
+        // mid-pass (writes are pending until the next tick boundary)
+        let fields: Vec<(&Rc<str>, RenderKey, ResolvedRowVal)> = form
+            .fields
+            .iter()
+            .map(|(key, slot, value)| (key, *slot, value.resolve(&self.world)))
+            .collect();
+        let mut checked: Vec<(Rc<str>, RenderFieldKind)> = Vec::new();
         for row in rows {
             let pose = form.needs_pose
                 .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
                 .transpose()?;
-            let mut fields = RenderRowFields::default();
-            for (key, value) in &form.fields {
-                fields.push_kw(key.clone(), self.eval_compiled_row_val(value, row, pose.as_ref())?);
+            let mut row_fields = RenderRowFields::default();
+            for (key, slot, value) in &fields {
+                row_fields.push_slot(*slot, key, self.eval_compiled_row_val(value, row, pose.as_ref()));
             }
-            let rendered = fields.finish(&mut self.world, &self.ctx.sig)?;
+            let rendered = row_fields.finish_checked(&mut self.world, &self.ctx.sig, Some(&mut checked))?;
             self.world.render_rows.push(Rc::new(rendered));
         }
         Ok(Some(()))
     }
 
-    fn eval_compiled_row_val(&self, value: &RowVal, row: usize, pose: Option<&Pose>) -> Result<Val, String> {
-        Ok(match value {
-            RowVal::Num(n) => Val::Num(*n),
-            RowVal::Kw(k) => Val::Kw(k.clone()),
-            RowVal::PoseX => Val::Num(pose.expect("lowered pose read").x),
-            RowVal::PoseY => Val::Num(pose.expect("lowered pose read").y),
-            RowVal::PoseTheta => Val::Num(pose.expect("lowered pose read").angle_or(0.0)),
-            RowVal::Field(field) => entity_field_at(row, field, &self.world, &self.ctx.sig)?,
-            RowVal::FieldOr(field, default) => {
-                let present = entity_field_at(row, field, &self.world, &self.ctx.sig)?;
+    fn eval_compiled_row_val(&self, value: &ResolvedRowVal, row: usize, pose: Option<&Pose>) -> Val {
+        match value {
+            ResolvedRowVal::Num(n) => Val::Num(*n),
+            ResolvedRowVal::Kw(k) => Val::Kw(k.clone()),
+            ResolvedRowVal::PoseX => Val::Num(pose.expect("lowered pose read").x),
+            ResolvedRowVal::PoseY => Val::Num(pose.expect("lowered pose read").y),
+            ResolvedRowVal::PoseTheta => Val::Num(pose.expect("lowered pose read").angle_or(0.0)),
+            ResolvedRowVal::Field(sym) => entity_field_sym_at(row, *sym, &self.world),
+            ResolvedRowVal::FieldOr(sym, default) => {
+                let present = entity_field_sym_at(row, *sym, &self.world);
                 if matches!(present, Val::Nothing) {
-                    self.eval_compiled_row_val(default, row, pose)?
+                    self.eval_compiled_row_val(default, row, pose)
                 } else {
                     present
                 }
             }
-        })
+        }
     }
 
     pub fn step(&mut self) -> Result<(), String> {

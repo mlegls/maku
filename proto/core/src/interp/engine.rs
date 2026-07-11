@@ -393,26 +393,83 @@ pub(crate) struct RenderRowFields {
     extras: Vec<(Rc<str>, Val)>,
 }
 
+/// A render map key's slot, resolved from its name. Compiled tick rules
+/// resolve keys once at lowering so the per-row push skips the name match.
+#[derive(Clone, Copy)]
+pub(crate) enum RenderKey {
+    Shape,
+    X,
+    Y,
+    Theta,
+    Facing,
+    Scale,
+    Alpha,
+    Opacity,
+    Hue,
+    Points,
+    Pts,
+    Active,
+    Extra,
+}
+
+impl RenderKey {
+    pub(crate) fn from_name(name: &str) -> RenderKey {
+        match name {
+            "shape" => RenderKey::Shape,
+            "x" => RenderKey::X,
+            "y" => RenderKey::Y,
+            "theta" => RenderKey::Theta,
+            "facing" => RenderKey::Facing,
+            "scale" => RenderKey::Scale,
+            "alpha" => RenderKey::Alpha,
+            "opacity" => RenderKey::Opacity,
+            "hue" => RenderKey::Hue,
+            "points" => RenderKey::Points,
+            "pts" => RenderKey::Pts,
+            "active" => RenderKey::Active,
+            _ => RenderKey::Extra,
+        }
+    }
+}
+
 impl RenderRowFields {
     pub(crate) fn push_kw(&mut self, key: Rc<str>, value: Val) {
-        match key.as_ref() {
-            "shape" => set_first(&mut self.shape, value),
-            "x" => set_first(&mut self.x, value),
-            "y" => set_first(&mut self.y, value),
-            "theta" => set_first(&mut self.theta, value),
-            "facing" => set_first(&mut self.facing, value),
-            "scale" => set_first(&mut self.scale, value),
-            "alpha" => set_first(&mut self.alpha, value),
-            "opacity" => set_first(&mut self.opacity, value),
-            "hue" => set_first(&mut self.hue, value),
-            "points" => set_first(&mut self.points, value),
-            "pts" => set_first(&mut self.pts, value),
-            "active" => set_first(&mut self.active, value),
-            _ => self.extras.push((key, value)),
+        self.push_slot(RenderKey::from_name(&key), &key, value);
+    }
+
+    /// `key` is only cloned for extras; named slots drop it.
+    pub(crate) fn push_slot(&mut self, slot: RenderKey, key: &Rc<str>, value: Val) {
+        match slot {
+            RenderKey::Shape => set_first(&mut self.shape, value),
+            RenderKey::X => set_first(&mut self.x, value),
+            RenderKey::Y => set_first(&mut self.y, value),
+            RenderKey::Theta => set_first(&mut self.theta, value),
+            RenderKey::Facing => set_first(&mut self.facing, value),
+            RenderKey::Scale => set_first(&mut self.scale, value),
+            RenderKey::Alpha => set_first(&mut self.alpha, value),
+            RenderKey::Opacity => set_first(&mut self.opacity, value),
+            RenderKey::Hue => set_first(&mut self.hue, value),
+            RenderKey::Points => set_first(&mut self.points, value),
+            RenderKey::Pts => set_first(&mut self.pts, value),
+            RenderKey::Active => set_first(&mut self.active, value),
+            RenderKey::Extra => self.extras.push((key.clone(), value)),
         }
     }
 
     pub(crate) fn finish(self, world: &mut World, sig: &SigEnv) -> Result<RenderRow, String> {
+        self.finish_checked(world, sig, None)
+    }
+
+    /// `checked` memoizes (key, kind) pairs already accepted by
+    /// `render_field_check` within one compiled-rule pass: the schema only
+    /// accretes and no other rule runs between the pass's rows, so a pair
+    /// that passed once cannot conflict later in the same pass.
+    pub(crate) fn finish_checked(
+        self,
+        world: &mut World,
+        sig: &SigEnv,
+        checked: Option<&mut Vec<(Rc<str>, RenderFieldKind)>>,
+    ) -> Result<RenderRow, String> {
         let shape_value = self.shape.ok_or("render: missing :shape")?;
         let shape = match &shape_value {
             Val::Kw(k) => k.clone(),
@@ -451,14 +508,26 @@ impl RenderRowFields {
             other => return Err(format!("render: unsupported shape :{}", other)),
         };
         let mut row = RenderRow::plain(data);
+        let mut checked = checked;
+        let mut check = |world: &mut World, key: &Rc<str>, kind: RenderFieldKind| {
+            if let Some(memo) = checked.as_deref_mut() {
+                if memo.iter().any(|(k, seen)| *seen == kind && k == key) {
+                    return Ok(());
+                }
+                world.render_field_check(key, kind)?;
+                memo.push((key.clone(), kind));
+                return Ok(());
+            }
+            world.render_field_check(key, kind)
+        };
         for (key, v) in self.extras {
             match v {
                 Val::Num(n) => {
-                    world.render_field_check(&key, RenderFieldKind::Num)?;
+                    check(world, &key, RenderFieldKind::Num)?;
                     row.nums.push((key, n));
                 }
                 Val::Kw(sym) => {
-                    world.render_field_check(&key, RenderFieldKind::Sym)?;
+                    check(world, &key, RenderFieldKind::Sym)?;
                     row.syms.push((key, sym));
                 }
                 Val::Nothing => {}

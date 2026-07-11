@@ -45,7 +45,7 @@ pub(crate) use builtins::*;
 pub use card::*;
 pub use colliders::*;
 pub use coerce::*;
-pub(crate) use engine::RenderRowFields;
+pub(crate) use engine::{RenderKey, RenderRowFields};
 pub(crate) use lower::*;
 pub use r#dyn::*;
 pub use crate::model::{
@@ -2154,17 +2154,23 @@ pub(crate) fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv
         field => {
             // One symbol lookup covers both stores: a name never interned
             // anywhere can name neither a sym field nor a numeric column.
-            let Some(sym) = world.symbols.lookup(field) else {
-                return Ok(Val::Nothing);
-            };
-            if let Some(value) = world.sym_field_value_at(i, sym) {
-                if let Some(resolved) = world.symbols.resolve(value) {
-                    return Ok(Val::Kw(resolved.into()));
-                }
-            }
-            Ok(world.col_get_sym_at(i, sym).map(Val::Num).unwrap_or(Val::Nothing))
+            Ok(entity_field_sym_at(i, world.symbols.lookup(field), world))
         }
     }
+}
+
+/// The non-special-field read of `entity_field_at`, keyed by an
+/// already-resolved symbol. `None` (never interned) reads as Nothing.
+pub(crate) fn entity_field_sym_at(i: usize, sym: Option<Symbol>, world: &World) -> Val {
+    let Some(sym) = sym else {
+        return Val::Nothing;
+    };
+    if let Some(value) = world.sym_field_value_at(i, sym) {
+        if let Some(resolved) = world.symbols.resolve(value) {
+            return Val::Kw(resolved.into());
+        }
+    }
+    world.col_get_sym_at(i, sym).map(Val::Num).unwrap_or(Val::Nothing)
 }
 
 fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
