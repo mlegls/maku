@@ -1840,10 +1840,32 @@ pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
 /// match any row (mirrors sym_field_matches_at); a field with no sym
 /// column matches no row either.
 pub(crate) enum ResolvedRowTest {
-    Kind(Rc<str>),
+    Kind(RowKind),
     SymEq { slot: usize, value: Symbol },
     Never,
     NumCmp { op: CmpOp, lhs: ResolvedRowNum, rhs: ResolvedRowNum },
+}
+
+/// The `:kind` selector parsed once per query — rows compare a
+/// discriminant instead of the kind's name. `Other` is any keyword that
+/// names no kind: it matches no row (same as the old string compare).
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum RowKind {
+    Pather,
+    Point,
+    Curve,
+    Other,
+}
+
+impl RowKind {
+    fn parse(name: &str) -> RowKind {
+        match name {
+            "pather" => RowKind::Pather,
+            "point" => RowKind::Point,
+            "curve" => RowKind::Curve,
+            _ => RowKind::Other,
+        }
+    }
 }
 
 pub(crate) enum ResolvedRowNum {
@@ -1871,7 +1893,7 @@ impl RowPredicate {
             .iter()
             .map(|test| match test {
                 RowTest::KwEq { field, value } => {
-                    if &**field == "kind" { return ResolvedRowTest::Kind(value.clone()); }
+                    if &**field == "kind" { return ResolvedRowTest::Kind(RowKind::parse(value)); }
                     match (world.field_slots(field).sym, world.symbols.lookup(value)) {
                         (Some(slot), Some(value)) => ResolvedRowTest::SymEq { slot, value },
                         _ => ResolvedRowTest::Never,
@@ -1916,11 +1938,11 @@ pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, wo
         let passes = match test {
         ResolvedRowTest::Kind(value) => world.entities.dyn_figure(row).is_some_and(|figure| {
             let kind = match figure.repr() {
-                FigureDynRepr::Pose(_) if world.entities.is_traced(row) => "pather",
-                FigureDynRepr::Pose(_) => "point",
-                FigureDynRepr::Curve { .. } => "curve",
+                FigureDynRepr::Pose(_) if world.entities.is_traced(row) => RowKind::Pather,
+                FigureDynRepr::Pose(_) => RowKind::Point,
+                FigureDynRepr::Curve { .. } => RowKind::Curve,
             };
-            kind == &**value
+            kind == *value
         }),
         ResolvedRowTest::SymEq { slot, value } => {
             world.sym_field_at_slot(row, Some(*slot)) == Some(*value)
