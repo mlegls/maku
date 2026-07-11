@@ -118,7 +118,10 @@ headers, not here.
   program interning as the compile-cache key. Hard requirement carried
   into codegen: bit-exact f64 semantics vs the IR interpreter (same op
   order, same libm, no fast-math) — the lowering oracle and replay/scrub
-  determinism both depend on it.
+  determinism both depend on it. The full JIT-readiness gap list and
+  sequencing (IR unification, input slots/interning, no-Interp-op
+  totality contract, batch seams, cranelift/platform notes) is in
+  compiled-dyn-design.md "JIT readiness".
   The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays
   interpreted and user-facing permanently — it is cold and tooling wants

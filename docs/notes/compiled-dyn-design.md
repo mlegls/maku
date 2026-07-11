@@ -17,6 +17,56 @@ the stance into a plan. Profile motivation (aggregate,
 dyn:closed-pt 846ms self are the top two rows; dyn:frame 410ms is mostly
 dispatch around them.
 
+## JIT readiness — what must land before a codegen backend starts
+
+JIT surface (decided): motion/dyn signals, collider materialization, and
+deftick row math (predicates, render row values, field writes/bind) —
+exactly the hot-loop set; everything else is control plane and stays
+interpreted. Gaps, in dependency order:
+
+1. **One IR instead of four.** Only motion signals run on NumProgram
+   today; colliders evaluate `ProjectorNum`, queries/rule predicates run
+   `ResolvedRowTest`/`ResolvedRowNum`, render row values have their own
+   resolved-value evaluator, dyn cols have `DynNum`. Extend NumProgram
+   with the input ops those need (slot-resolved entity column loads,
+   sym-field equality, pose/channel/scan-cell reads) and re-express the
+   three recognizers as lowerings onto it. Biggest chunk; without it a
+   JIT covers only motion integrands (~1% post-round-19).
+2. **Input slots + capture vectors** (open half of milestone B): one
+   program per spawn SITE, per-entity data in capture vectors, plus
+   structural interning — the compile units and the compile-cache key.
+   Compiling per-entity/per-ring programs is a non-starter.
+3. **Totality contract (decided): no Interp fallback op in JIT v1.**
+   All-or-nothing classification means every compiled program is total
+   and infallible — no interpreter re-entry from native code, no error
+   paths or lane masks in kernels. Runtime None-aborts (numeric read
+   hitting a keyword-valued sym field) stay at the DRIVER level: abort
+   the batch, rerun interpreted.
+4. **Batch call convention at all three surfaces.** The kernel ABI is
+   "N input lanes + scratch → N output lanes"; motion has the seam
+   (`run_lanes`), collider materialization and render row eval still
+   walk per row — their batching rounds build the seam the JIT drops
+   into.
+5. **Determinism across tiers**: kernels call shared extern math shims
+   (sin/cos/pow/rem_euclid — no inlined vector-math lib, no fast-math);
+   oracle extends to a three-way interpreter ↔ IR-loop ↔ JIT check.
+6. **Tech/platform**: cranelift is the presumptive backend (pure Rust,
+   fast compile, fits lazy compile-at-first-eval with the IR loop as
+   warmup); macOS hardened runtime needs MAP_JIT handling. Decided: the
+   IR interpreter tier stays a permanently supported backend, not a
+   transitional one — a wasm/web host cannot JIT.
+
+Non-blockers: evolve/live/stages coverage (classification excludes them;
+per-row interpretation is fine indefinitely), ReadScan/Channel op
+coverage for homing-slew (IR extension, slots in whenever), and the
+model/ split (orthogonal; if it lands first, `Dyn<E>` with E = kernel
+handle is its natural instantiation).
+
+Sequencing: the planned perf rounds (collider batching, render-row
+batching) build item 4; then IR unification + input slots/interning as
+their own rounds; then a cranelift spike behind the `run_lanes`
+signature with the oracle as the acceptance gate.
+
 ## Cost anatomy (what the interpreter pays per entity per tick)
 
 A `DynNode::ClosedPt`/`Vel` evaluation (`motion.rs::dyn_node_pose_u_in`)
