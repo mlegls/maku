@@ -1284,12 +1284,19 @@
                           :color (:color e)
                           :tag (:tag e)})))
        (entities-where (fn [e] (= e.render :sprite)))))
-(defpattern p []
-  (par
-    (spawn (pose c[1 2]) {:render :sprite :color :red :size 2 :tag 7})
-    (spawn (pose c[3 4]) {:render :sprite :color :blue})))
 "#;
-        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        // 16 rows per group: the batch path only engages above its
+        // small-pass threshold
+        let mut card = String::from(CARD);
+        card.push_str("(defpattern p [] (par ");
+        for _ in 0..16 {
+            card.push_str("(spawn (pose c[1 2]) {:render :sprite :color :red :size 2 :tag 7}) ");
+        }
+        for _ in 0..16 {
+            card.push_str("(spawn (pose c[3 4]) {:render :sprite :color :blue}) ");
+        }
+        card.push_str("))");
+        let mut sim = Sim::load(&card, Some("p")).unwrap();
         assert!(sim.world.standing_rules[0].compiled[0].is_some());
         sim.step().unwrap();
         let batch = sim
@@ -1301,17 +1308,17 @@
                 _ => None,
             })
             .expect("compiled point rule should emit a column batch");
-        assert_eq!(batch.len, 2);
+        assert_eq!(batch.len, 32);
         let schema = batch.schema.clone();
         // expansion carries per-row syms, presence-masked nums, and
         // FieldOr defaults exactly as the row path would
         let rows = sim.render();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 32);
         assert_eq!(rows[0].sym("color"), Some("red"));
         assert_eq!(rows[0].num("tag"), Some(7.0));
-        assert_eq!(rows[1].sym("color"), Some("blue"));
-        assert_eq!(rows[1].num("tag"), None);
-        let RenderData::Point { x, y, scale, .. } = rows[1].data else { panic!() };
+        assert_eq!(rows[16].sym("color"), Some("blue"));
+        assert_eq!(rows[16].num("tag"), None);
+        let RenderData::Point { x, y, scale, .. } = rows[16].data else { panic!() };
         assert_eq!((x, y, scale), (3.0, 4.0, 1.0));
         let RenderData::Point { scale, .. } = rows[0].data else { panic!() };
         assert_eq!(scale, 2.0);
@@ -1345,10 +1352,16 @@
                     :color e.color
                     :variant e.variant})))
        (entities-where (fn [e] (* (= e.render :touhou-sprite) (= e.kind :point))))))
-(defpattern p []
-  (spawn (pose c[1 2]) {:render :touhou-sprite :family :gem :color :red :variant :w :hitbox 0.1}))
 "#;
-        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let mut card = String::from(CARD);
+        card.push_str("(defpattern p [] (par ");
+        for _ in 0..16 {
+            card.push_str(
+                "(spawn (pose c[1 2]) {:render :touhou-sprite :family :gem :color :red :variant :w :hitbox 0.1}) ",
+            );
+        }
+        card.push_str("))");
+        let mut sim = Sim::load(&card, Some("p")).unwrap();
         assert!(sim.world.standing_rules[0].compiled[0].is_some(), "rule should compile");
         sim.step().unwrap();
         let has_batch = sim.world.render_rows.iter().any(|item| matches!(item, crate::model::RenderItem::Batch(_)));

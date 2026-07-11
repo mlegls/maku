@@ -814,9 +814,15 @@ impl Sim {
                 if rows.is_empty() {
                     return Ok(Some(()));
                 }
-                if let Some(batch) = self.try_render_batch(form, &plan, &rows) {
-                    self.world.render_rows.push(RenderItem::Batch(batch));
-                    return Ok(Some(()));
+                // small passes stay rows: below this, per-batch column
+                // allocs cost more than a few pooled row boxes (either
+                // path is exact — the frame is a mixed stream by design)
+                const RENDER_BATCH_MIN: usize = 16;
+                if rows.len() >= RENDER_BATCH_MIN {
+                    if let Some(batch) = self.try_render_batch(form, &plan, &rows) {
+                        self.world.render_rows.push(RenderItem::Batch(batch));
+                        return Ok(Some(()));
+                    }
                 }
                 // batch abort (an error or a per-row kind surprise): the
                 // per-row loop below reproduces interpreted error semantics
