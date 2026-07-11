@@ -73,7 +73,9 @@ impl Sim {
                 continue;
             }
             let tau = self.world.entity_motion_tau(i, tick);
-            let p = {
+            let p = if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
+                p
+            } else {
                 let dyn_figure = self
                     .world
                     .entities

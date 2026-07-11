@@ -172,6 +172,27 @@ impl ColliderScratch {
 
 }
 
+/// The Vel integrator's n2 slot in a wrapper-chain-over-Vel row's schema.
+/// Such a tree has exactly one stateful node, so the common case is the
+/// whole schema being that single n2 cell at slot 0 — resolved without
+/// hashing. Anything else takes the keyed lookup.
+fn vel_chain_n2_slot(schema: &MotionStateSchema, vel_ptr: usize) -> Option<usize> {
+    if schema.n2_keys.len() == 1 && schema.dyn_keys.is_empty() && schema.val_keys.is_empty() {
+        debug_assert_eq!(
+            schema
+                .node_ids
+                .get(&vel_ptr)
+                .and_then(|id| schema.n2_slots.get(&MotionStateKey::Node(*id)))
+                .map(|s| s.0 as usize),
+            Some(0),
+            "single-cell schema's n2 slot is not the Vel integrator"
+        );
+        return Some(0);
+    }
+    let id = schema.node_ids.get(&vel_ptr).copied()?;
+    Some(schema.n2_slots.get(&MotionStateKey::Node(id))?.0 as usize)
+}
+
 fn install_tick_rules(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
     for form in &card.tick_rules {
         evaluate(form, &Env::empty(), ctx, world)?;
@@ -400,6 +421,33 @@ impl Sim {
         self.world.entities.row_motion_readers(row)
     }
 
+    /// pos_only pose fast path: a wrapper-chain-over-Vel row's position is
+    /// its integrator state pushed through the constant wrappers — read
+    /// directly from the n2 column, no readers or dispatch. Bit-identical
+    /// to `dyn_figure_pose_in` with pos_only (same ops, same order); the
+    /// oracle asserts exactly that.
+    pub(crate) fn fast_pos_pose(&self, row: usize, tau: f64, sig: &SigEnv) -> Option<Pose> {
+        let fig = self.world.entities.dyn_figure(row)?;
+        let ptr = vel_chain_ptr(fig)?;
+        let schema = self.world.entities.motion_schema(row)?;
+        let slot = vel_chain_n2_slot(schema, ptr)?;
+        let state = self.world.entities.state_n2_at_slot(slot, row);
+        let p = wrapper_chain_pos_pose(fig.pose_dyn(), state);
+        if oracle_enabled() {
+            let readers = self.motion_readers(row);
+            let mstate = MotionState::default();
+            let want = dyn_figure_pose_in(
+                fig,
+                tau,
+                MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, self.world.tick_rate())
+                    .pos_only(),
+            )
+            .ok()?;
+            assert_eq!(p, want, "fast pos_only pose diverged from interpreter for row {row}");
+        }
+        Some(p)
+    }
+
     /// Classify a row for the batched Vel step: the plan plus the Vel
     /// node's n2 slot resolved through the row's schema. None falls back
     /// to the general per-row walk.
@@ -411,11 +459,7 @@ impl Sim {
     ) -> Option<(VelStepPlan, usize)> {
         let plan = vel_step_plan(dyn_figure, sig)?;
         let schema = self.world.entities.motion_schema(row)?;
-        let id = schema
-            .node_ids
-            .get(&(Rc::as_ptr(&plan.vel) as usize))
-            .copied()?;
-        let slot = schema.n2_slots.get(&MotionStateKey::Node(id))?.0 as usize;
+        let slot = vel_chain_n2_slot(schema, Rc::as_ptr(&plan.vel) as usize)?;
         Some((plan, slot))
     }
 
@@ -974,27 +1018,31 @@ impl Sim {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = self.world.entity_motion_tau(i, tick);
-            let readers = self.motion_readers(i);
-            let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
-                continue;
-            };
-            let keep = match dyn_figure.repr() {
-                FigureDynRepr::Pose(_) => {
-                    let state = MotionState::default();
-                    match dyn_figure_pose_in(
-                        dyn_figure,
-                        tau,
-                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
-                            .pos_only(),
-                    ) {
-                    Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
-                    Err(e) => {
-                        err = Some(e);
-                        false
+            let keep = if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
+                p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
+            } else {
+                let readers = self.motion_readers(i);
+                let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                    continue;
+                };
+                match dyn_figure.repr() {
+                    FigureDynRepr::Pose(_) => {
+                        let state = MotionState::default();
+                        match dyn_figure_pose_in(
+                            dyn_figure,
+                            tau,
+                            MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
+                                .pos_only(),
+                        ) {
+                        Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
+                        Err(e) => {
+                            err = Some(e);
+                            false
+                        }
+                        }
                     }
-                    }
+                    FigureDynRepr::Curve { .. } => true,
                 }
-                FigureDynRepr::Curve { .. } => true,
             };
             if !keep {
                 self.world.cull_at(i);

@@ -980,6 +980,40 @@ pub fn vel_step_plan(fig: &DynFigure, sig: &SigEnv) -> Option<VelStepPlan> {
     }
 }
 
+/// The fast pos_only pose shape: constant wrappers over a Vel node
+/// (compiled or not — the pos_only Vel arm never evaluates its integrand,
+/// so the pose is pure integrator state pushed through the wrappers).
+/// Returns the Vel node's address for state-slot resolution.
+pub fn vel_chain_ptr(fig: &DynFigure) -> Option<usize> {
+    if fig.curve().is_some() {
+        return None;
+    }
+    let mut node = fig.pose_dyn();
+    loop {
+        match &**node {
+            DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
+            DynNode::Vel { .. } => return Some(Rc::as_ptr(node) as usize),
+            _ => return None,
+        }
+    }
+}
+
+/// pos_only pose of a wrapper-chain-over-Vel figure given the Vel's
+/// integrator state: the same arms `dyn_node_pose_u_in` takes with
+/// need_theta=false, minus the readers/dispatch scaffolding.
+pub fn wrapper_chain_pos_pose(node: &Rc<DynNode>, state: [f64; 2]) -> Pose {
+    match &**node {
+        DynNode::ConstFrame { pose, rot, child } => {
+            pose.compose_with_rot(*rot, &wrapper_chain_pos_pose(child, state))
+        }
+        DynNode::Translate { dx, dy, child } => {
+            let p = wrapper_chain_pos_pose(child, state);
+            Pose { x: p.x + dx, y: p.y + dy, theta: p.theta }
+        }
+        _ => Pose::point(state[0], state[1]),
+    }
+}
+
 /// Batch-path oracle: re-run one lane's integrand through the interpreter,
 /// the same check `step_motion_in`'s compiled Vel arm makes per row.
 pub fn oracle_check_vel_step(
