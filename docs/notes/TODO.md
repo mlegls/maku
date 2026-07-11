@@ -188,9 +188,23 @@ work.
   MAKU_LOWER_ORACLE. Also aligned entity_field_at's `:kind` for traced
   pathers (`:pather`, not `:point`) with entity_view. Aggregate: `=`
   452→193ms, `*` 455→312ms, entities-where inclusive 1569→1125ms.
-  Remaining on this track: numeric col comparisons (`(<= (:hp e) 0)`
-  shapes) and partial prefiltering — the row-filter half of compiled-dyn
-  milestone C (rule/projector lowering).
+  Remaining on this track: partial prefiltering (mixed predicates beyond
+  the recognized set still fall back whole). Numeric comparisons are DONE
+  (round 9): conjuncts shaped `(op lhs rhs)` over `<`/`<=`/`>`/`>=`/`=`
+  compile when both sides classify as total numeric reads — literals,
+  `inf`, `(:t e)`/`(:tick e)`, `(%value-or (:col e) default)`, and 2-arg
+  `+`/`-`/`*` over those; a BARE `(:col e)` numeric read bails (a missing
+  col is Nothing and the interpreted comparison errors). Exact-parity
+  guard: a numeric read that hits a KEYWORD-valued field aborts the whole
+  compiled query and reruns the interpreted fallback (predicates are pure,
+  so the rerun reproduces the interpreted error byte-for-byte); compiled
+  render rules truncate partial rows and re-interpret the form on that
+  same signal, with the predicate scan completing before any row body so
+  phase order matches entities-where-then-map. Numeric `=` mirrors
+  val_eq's 1e-9 epsilon. This covered the three hot lib rules (hp-cull,
+  game-over, beam end-of-life). Map queries (`sum-entities` channels)
+  also resolve selector symbols once per query now instead of four
+  string hashes per row.
   Stance (decided): this is a load-time lowering (AOT at card load), not a
   JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays

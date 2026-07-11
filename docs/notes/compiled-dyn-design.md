@@ -239,8 +239,20 @@ planned order because `emit`/`%value-or` were the top two profile rows):
 - Not covered (interpreter fallback, by design): polyline/curve-samples
   rows (the beam rule — conditionals + deferred geometry), non-literal row
   maps, extra let bindings, and cull/field-write rules. Those are the
-  remaining rule-lowering surface, alongside numeric row predicates
-  (`(<= (:hp e) 0)`) and projector bodies.
+  remaining rule-lowering surface, alongside projector bodies.
+
+Numeric row predicates are DONE (round 9): RowPredicate conjuncts extended
+with `NumCmp` tests over a total numeric expression grammar (literals,
+`inf`, `(:t e)`/`(:tick e)`, `(%value-or (:col e) default)`, 2-arg
+arithmetic). Semantics parity is guaranteed by construction (only total
+reads compile; bare col reads bail at recognition) plus a runtime bail: a
+numeric read hitting a keyword-valued sym field aborts the compiled query
+and reruns the interpreted fallback, reproducing the interpreted error
+exactly — recognized predicates are pure, so the rerun is safe. Compiled
+render rules complete their predicate scan before any row body (matching
+entities-where-then-map phase order) and fall back whole on the same
+signal. The existing resolve_predicate_query oracle covers the extension
+with no new wiring.
 
 Data-parallelism (rayon over batches) is deliberately NOT part of A/B; the
 compiled form makes it nearly free later (pure lanes, fixed scratch,
