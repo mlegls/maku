@@ -319,6 +319,27 @@ work.
   (RenderRowFields push/finish + per-row Rc, phase:rules self ~554ms
   on fruit), `Val` drop traffic (drop_in_place<Val> ~124 samples);
   re-sample before choosing — the alloc profile has shifted.
+  Round-14: a fresh sample put the render-row cluster at ~26% of
+  fruit (field reads re-hashing names through the symbol table per
+  row, push_kw string-matching per field, render_field_check per
+  extra per row) plus ~10% collider defs glue and ~7% residual
+  reader-snapshot allocs. Compiled tick rules now resolve field
+  names to symbols once per rule pass (`ResolvedRowVal`; sound
+  because field writes are pending until the tick boundary), carry
+  key slots from lowering (`RenderKey`), and memoize accepted
+  (key, kind) schema checks within a pass; the collider defs pass
+  binds the projector scope only when some slot is a general Expr
+  (Const/EntityCol never read the views); n2-only schemas with ≤2
+  cells snapshot readers into an inline array (no allocation), with
+  construction centralized in EntityStore::row_motion_readers. Bare
+  walls: fruit 1195→740ms (−38%), stars −28%, cradle −22%, spell-2
+  −20%, bowap −14%, reimu −8%. Note: entity_pose_at already serves
+  the tick's sampled-pose cache, so compiled-rule pose reads were
+  already cheap. Remaining from the round-14 sample: step_motion's
+  lowered-program runs + a per-stepped-row HashMap insert (~8%),
+  collide-mat pose/eval work (~14% incl.), Rc<RenderRow> per-row
+  churn, Val drops. Also still open: compiled-dyn milestone B,
+  channel unification, trace-phase reader construction.
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
