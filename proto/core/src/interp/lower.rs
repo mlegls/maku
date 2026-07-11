@@ -66,6 +66,18 @@ struct Builder<'a> {
     defs: &'a HashMap<String, Form>,
     inline_depth: usize,
     n_inputs: usize,
+    /// Slot mode (input-slot lowering): numeric env captures become Input
+    /// slots at `base + index` instead of folding to Const, so nodes that
+    /// differ only in captured values lower to ONE interned program and
+    /// batch as lanes. None = classic Const folding (render/dyn-col paths).
+    env_slots: Option<EnvSlots<'a>>,
+}
+
+struct EnvSlots<'a> {
+    /// Capture-slot names in slot order, shared across a node's programs.
+    names: &'a mut Vec<std::rc::Rc<str>>,
+    /// First env slot id (rand marker sites occupy 0..base).
+    base: usize,
 }
 
 const MAX_INLINE_DEPTH: usize = 32;
@@ -132,10 +144,25 @@ impl Builder<'_> {
                 }
                 name if name.starts_with('$') => None,
                 name => match env.lookup(name) {
-                    Some(Val::Num(v)) => {
-                        let dst = self.reg()?;
-                        self.push(NumOp::Const { dst, v })
-                    }
+                    Some(Val::Num(v)) => match &mut self.env_slots {
+                        Some(slots) => {
+                            let idx = match slots.names.iter().position(|n| &**n == name) {
+                                Some(i) => i,
+                                None => {
+                                    slots.names.push(name.into());
+                                    slots.names.len() - 1
+                                }
+                            };
+                            let slot = (slots.base + idx) as u16;
+                            self.n_inputs = self.n_inputs.max(slot as usize + 1);
+                            let dst = self.reg()?;
+                            self.push(NumOp::Input { dst, slot })
+                        }
+                        None => {
+                            let dst = self.reg()?;
+                            self.push(NumOp::Const { dst, v })
+                        }
+                    },
                     None => self.lower_bare_def(name, env),
                     _ => None,
                 },
@@ -552,13 +579,119 @@ pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> O
     // Def inlining needs no cell-scope guard: signal evaluation skips bare
     // cell reads (Ctx.signal_scope — signals read cells via (live name)
     // only), so a def name can never be shadowed by a cell at runtime.
-    let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0, n_inputs: 0 };
+    let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0, n_inputs: 0, env_slots: None };
+    b.lower(form, env, LowerScope::Current)?;
+    Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs })
+}
+
+/// Slot-mode lowering: numeric env captures become Input slots (numbered
+/// `base + index` into `names`, deduped by name and SHARED across a node's
+/// programs — pass the same `names` vec for a and b). Rand markers keep
+/// their extraction slot ids below `base`.
+pub fn lower_num_form_slotted(
+    form: &Form,
+    env: &Env,
+    defs: &HashMap<String, Form>,
+    names: &mut Vec<std::rc::Rc<str>>,
+    base: usize,
+) -> Option<NumProgram> {
+    let mut b = Builder {
+        ops: Vec::new(),
+        next: 0,
+        defs,
+        inline_depth: 0,
+        n_inputs: 0,
+        env_slots: Some(EnvSlots { names, base }),
+    };
     b.lower(form, env, LowerScope::Current)?;
     Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs })
 }
 
 pub fn program_uses_pos(prog: &NumProgram) -> bool {
     prog.ops.iter().any(|op| matches!(op, NumOp::PosX { .. } | NumOp::PosY { .. }))
+}
+
+/// Structural interning: programs with identical op streams share one Rc,
+/// so spawn sites (and repeated constructions at one site) that lower to
+/// the same shape fuse into one vel-batch group — per-entity/per-site data
+/// arrives through Input slots, never through the program body. The cache
+/// key is an exact encoding of (ops, n_regs, n_inputs); f64s compare by
+/// bits (a NaN-const program simply never unifies).
+pub fn intern_program(prog: NumProgram) -> Rc<NumProgram> {
+    thread_local! {
+        static CACHE: RefCell<HashMap<Vec<u64>, Rc<NumProgram>>> = RefCell::new(HashMap::new());
+    }
+    let key = program_key(&prog);
+    CACHE.with(|c| c.borrow_mut().entry(key).or_insert_with(|| Rc::new(prog)).clone())
+}
+
+fn program_key(prog: &NumProgram) -> Vec<u64> {
+    let mut k = Vec::with_capacity(prog.ops.len() * 2 + 2);
+    k.push(prog.n_regs as u64);
+    k.push(prog.n_inputs as u64);
+    let reg2 = |a: u16, b: u16| ((a as u64) << 16) | b as u64;
+    let reg3 = |a: u16, b: u16, c: u16| ((a as u64) << 32) | ((b as u64) << 16) | c as u64;
+    for op in &prog.ops {
+        // one discriminant word, then operand words; dst is derivable from
+        // op order for most ops but encoded anyway — exactness over bytes
+        match *op {
+            NumOp::Const { dst, v } => {
+                k.push(1 << 32 | dst as u64);
+                k.push(v.to_bits());
+            }
+            NumOp::Input { dst, slot } => k.push(2 << 32 | reg2(dst, slot)),
+            NumOp::T { dst } => k.push(3 << 32 | dst as u64),
+            NumOp::U { dst } => k.push(4 << 32 | dst as u64),
+            NumOp::PosX { dst } => k.push(5 << 32 | dst as u64),
+            NumOp::PosY { dst } => k.push(6 << 32 | dst as u64),
+            NumOp::Add { dst, a, b } => k.push(7 << 32 | reg3(dst, a, b)),
+            NumOp::Sub { dst, a, b } => k.push(8 << 32 | reg3(dst, a, b)),
+            NumOp::Mul { dst, a, b } => k.push(9 << 32 | reg3(dst, a, b)),
+            NumOp::Div { dst, a, b } => k.push(10 << 32 | reg3(dst, a, b)),
+            NumOp::Eq { dst, a, b } => k.push(11 << 32 | reg3(dst, a, b)),
+            NumOp::Lt { dst, a, b } => k.push(12 << 32 | reg3(dst, a, b)),
+            NumOp::Gt { dst, a, b } => k.push(13 << 32 | reg3(dst, a, b)),
+            NumOp::Lte { dst, a, b } => k.push(14 << 32 | reg3(dst, a, b)),
+            NumOp::Gte { dst, a, b } => k.push(15 << 32 | reg3(dst, a, b)),
+            NumOp::Neg { dst, x } => k.push(16 << 32 | reg2(dst, x)),
+            NumOp::Not { dst, x } => k.push(17 << 32 | reg2(dst, x)),
+            NumOp::Abs { dst, x } => k.push(18 << 32 | reg2(dst, x)),
+            NumOp::Floor { dst, x } => k.push(19 << 32 | reg2(dst, x)),
+            NumOp::Ceil { dst, x } => k.push(20 << 32 | reg2(dst, x)),
+            NumOp::Round { dst, x } => k.push(21 << 32 | reg2(dst, x)),
+            NumOp::Sin { dst, x } => k.push(22 << 32 | reg2(dst, x)),
+            NumOp::Cos { dst, x } => k.push(23 << 32 | reg2(dst, x)),
+            NumOp::Sqrt { dst, x } => k.push(24 << 32 | reg2(dst, x)),
+            NumOp::Pow { dst, a, b } => k.push(25 << 32 | reg3(dst, a, b)),
+            NumOp::Min { dst, a, b } => k.push(26 << 32 | reg3(dst, a, b)),
+            NumOp::Max { dst, a, b } => k.push(27 << 32 | reg3(dst, a, b)),
+            NumOp::Mod { dst, a, b } => k.push(28 << 32 | reg3(dst, a, b)),
+            NumOp::Quot { dst, a, b } => k.push(29 << 32 | reg3(dst, a, b)),
+            NumOp::Sine { dst, period, amp, x } => {
+                k.push(30 << 32 | reg2(dst, period));
+                k.push(reg2(amp, x));
+            }
+            NumOp::Lerp { dst, a, b, ctrl, v1, v2 } => {
+                k.push(31 << 32 | reg3(dst, a, b));
+                k.push(reg3(ctrl, v1, v2));
+            }
+            NumOp::Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
+                k.push(32 << 32 | reg3(dst, a1, b1));
+                k.push(reg3(a2, b2, ctrl));
+                k.push(reg3(v1, v2, v3));
+            }
+            NumOp::Ease { dst, kind, x } => k.push((33 + kind as u64) << 32 | reg2(dst, x)),
+            NumOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
+                k.push((36 + kind as u64) << 32 | reg3(dst, a, b));
+                k.push(reg3(ctrl, v1, v2));
+            }
+            NumOp::Lssht { dst, c, pv, f1, f2 } => {
+                k.push(39 << 32 | reg3(dst, c, pv));
+                k.push(reg2(f1, f2));
+            }
+        }
+    }
+    k
 }
 
 thread_local! {

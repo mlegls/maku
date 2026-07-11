@@ -445,9 +445,10 @@ pub(crate) fn extract_rand(f: &Form, sites: &mut Vec<RandSite>) -> Form {
     }
 }
 
-/// Per-entity capture draws, in site (= walk) order.
-pub(crate) fn draw_rand_sites(sites: &[RandSite], world: &mut World) -> Rc<[f64]> {
-    sites
+/// One entity's full capture vector: rand draws (slots 0..sites) in site
+/// (= walk) order, then the node's fixed env-capture values.
+pub(crate) fn draw_caps(ex: &ExtractedSig, world: &mut World) -> Rc<[f64]> {
+    ex.sites
         .iter()
         .map(|s| match s {
             RandSite::Range { a, b, floor } => {
@@ -458,6 +459,7 @@ pub(crate) fn draw_rand_sites(sites: &[RandSite], world: &mut World) -> Rc<[f64]
                 if world.next_rand() < 0.5 { -1.0 } else { 1.0 }
             }
         })
+        .chain(ex.env_caps.iter().copied())
         .collect()
 }
 
@@ -525,7 +527,7 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
                         ex.programs[0].clone(),
                         ex.programs[1].clone(),
                     ))),
-                    rand: Some(Rc::new(RandCell::Caps(draw_rand_sites(&ex.sites, world)))),
+                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
                 }),
                 // Bail (markers didn't lower) or a construction path that
                 // skipped extraction: per-entity substitution, as ever.
@@ -553,7 +555,7 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
                         ex.programs[0].clone(),
                         ex.programs[1].clone(),
                     ))),
-                    rand: Some(Rc::new(RandCell::Caps(draw_rand_sites(&ex.sites, world)))),
+                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
                 }),
                 Some(_) | None if form_has_rand(a) || form_has_rand(b) => {
                     Rc::new(DynNode::Vel {
@@ -574,7 +576,7 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
                     form: ex.forms[0].clone(),
                     env: env.clone(),
                     program: std::cell::OnceCell::from(Some(ex.programs[0].clone())),
-                    rand: Some(Rc::new(RandCell::Caps(draw_rand_sites(&ex.sites, world)))),
+                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
                 }),
                 Some(_) | None if form_has_rand(form) => Rc::new(DynNode::RotExpr {
                     form: subst_rand(form, world),

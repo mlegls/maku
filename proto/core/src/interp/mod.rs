@@ -1164,13 +1164,17 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 let a = expand_macros(&items[1], env, ctx, world)?;
                 let b = expand_macros(&items[2], env, ctx, world)?;
                 // pose eval lowers with allow_pos=false (dyn_node_pose_u_in)
-                let rand = motion::rand_cell_for(&[&a, &b], env, &ctx.sig, false);
+                let (rand, progs) = motion::compile_sig(&[&a, &b], env, &ctx.sig, false);
+                let programs = std::cell::OnceCell::new();
+                if let Some(p) = progs {
+                    let _ = programs.set(Some((p[0].clone(), p[1].clone())));
+                }
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::ClosedPt {
                     a,
                     b,
                     polar: &**s == "polar",
                     env: env.clone(),
-                    programs: std::cell::OnceCell::new(),
+                    programs,
                     rand,
                 }))));
             }
@@ -1317,11 +1321,15 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_unbound_axis(&items[1], env) => {
                 let form = expand_macros(&items[1], env, ctx, world)?;
-                let rand = motion::rand_cell_for(&[&form], env, &ctx.sig, true);
+                let (rand, progs) = motion::compile_sig(&[&form], env, &ctx.sig, true);
+                let program = std::cell::OnceCell::new();
+                if let Some(p) = progs {
+                    let _ = program.set(Some(p[0].clone()));
+                }
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::RotExpr {
                     form,
                     env: env.clone(),
-                    program: std::cell::OnceCell::new(),
+                    program,
                     rand,
                 }))));
             }
@@ -3225,13 +3233,17 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     }
     let a = expand_macros(&comps[0], env, ctx, world)?;
     let b = expand_macros(&comps[1], env, ctx, world)?;
-    let rand = motion::rand_cell_for(&[&a, &b], env, &ctx.sig, true);
+    let (rand, progs) = motion::compile_sig(&[&a, &b], env, &ctx.sig, true);
+    let programs = std::cell::OnceCell::new();
+    if let Some(p) = progs {
+        let _ = programs.set(Some((p[0].clone(), p[1].clone())));
+    }
     let node = Rc::new(DynNode::Vel {
         a,
         b,
         polar,
         env: env.clone(),
-        programs: std::cell::OnceCell::new(),
+        programs,
         rand,
     });
     match items.get(2) {

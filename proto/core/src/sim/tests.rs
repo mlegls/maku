@@ -3062,6 +3062,69 @@
         assert!(distinct, "capture draws must differ across the group");
     }
 
+    /// Structural interning + env-capture slots: spawn sites that differ
+    /// only in captured numeric values lower to ONE interned program pair
+    /// (they fuse into one vel-batch group), while polar and cart sites
+    /// sharing that pair still step with their own component math (polar is
+    /// part of the batch group key). Oracle-checked per lane.
+    #[test]
+    fn env_capture_slots_intern_across_sites() {
+        struct OracleGuard;
+        impl Drop for OracleGuard {
+            fn drop(&mut self) {
+                crate::interp::set_oracle_for_tests(false);
+            }
+        }
+
+        crate::interp::set_oracle_for_tests(true);
+        let _guard = OracleGuard;
+        const CARD: &str = r#"
+(defpattern p []
+  (let [s1 2 s2 3]
+    (par
+      (spawn (circle 4 (vel (polar s1 (* 10 t)))))
+      (spawn (circle 4 (vel (polar s2 (* 10 t)))))
+      (spawn (circle 4 (vel (cart s1 (* 10 t))))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..6 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 12);
+        let vel_parts = |row: usize| {
+            let mut node = dyn_figure(&sim, row).pose_dyn();
+            loop {
+                match &**node {
+                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
+                        node = child
+                    }
+                    DynNode::Vel { programs, rand, polar, .. } => {
+                        let (ap, bp) = programs.get().unwrap().as_ref().expect("vel compiled");
+                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(rand).to_vec(), *polar);
+                    }
+                    other => panic!("unexpected node {other:?}"),
+                }
+            }
+        };
+        let (ap0, bp0, caps0, polar0) = vel_parts(0); // polar s1
+        let (ap1, bp1, caps1, polar1) = vel_parts(4); // polar s2
+        let (ap2, bp2, caps2, polar2) = vel_parts(8); // cart s1
+        assert_eq!(caps0, vec![2.0]);
+        assert_eq!(caps1, vec![3.0]);
+        assert_eq!(caps2, vec![2.0]);
+        assert_eq!((ap0, bp0), (ap1, bp1), "same shape, different captures: one program");
+        assert_eq!((ap0, bp0), (ap2, bp2), "cart site interns to the same programs");
+        assert!(polar0 && polar1 && !polar2);
+        // polar and cart lanes must not have mixed: same speed scalar, but
+        // polar spreads by angle while cart shares components
+        let p0 = sim.world.entities.latest_sampled_pose(0, sim.world.tick).unwrap();
+        let p8 = sim.world.entities.latest_sampled_pose(8, sim.world.tick).unwrap();
+        assert!(
+            (p0.x - p8.x).abs() > 1e-6 || (p0.y - p8.y).abs() > 1e-6,
+            "polar and cart rows stepped identically — group key lost polar"
+        );
+    }
+
     /// Same seed, same card: capture-slot draws consume the RNG in the
     /// substitution order, so runs are reproducible; and a group whose rand
     /// sits in an unlowerable form falls back to per-entity substitution.

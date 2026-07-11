@@ -76,12 +76,15 @@ pub struct Sim {
 #[derive(Default)]
 struct VelBatchScratch {
     groups: Vec<VelBatchGroup>,
-    /// (a-program ptr, b-program ptr) → index into `groups`, valid for one
-    /// tick (the plans' Rcs keep the keyed programs alive for the tick).
-    index: crate::fxhash::FxHashMap<(usize, usize), usize>,
+    /// (a-program ptr, b-program ptr, polar) → index into `groups`, valid
+    /// for one tick (the plans' Rcs keep the keyed programs alive for the
+    /// tick). Polar is part of the key: programs are structurally INTERNED,
+    /// so a `(vel (polar s d))` and a `(vel (cart s d))` site can share the
+    /// same program pair while needing different component math.
+    index: crate::fxhash::FxHashMap<(usize, usize, bool), usize>,
     /// Last (key, group) pushed: spawn groups occupy contiguous rows, so
     /// consecutive lanes almost always hit the same group without hashing.
-    last: Option<((usize, usize), usize)>,
+    last: Option<((usize, usize, bool), usize)>,
     pool: Vec<VelBatchGroup>,
     regs: Vec<f64>,
 }
@@ -128,7 +131,7 @@ impl VelBatchScratch {
         tau: f64,
         pos: [f64; 2],
     ) {
-        let key = (Rc::as_ptr(plan.ap) as usize, Rc::as_ptr(plan.bp) as usize);
+        let key = (Rc::as_ptr(plan.ap) as usize, Rc::as_ptr(plan.bp) as usize, plan.polar);
         let idx = match self.last {
             Some((k, idx)) if k == key => idx,
             _ => {

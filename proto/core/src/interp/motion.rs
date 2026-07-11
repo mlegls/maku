@@ -394,36 +394,77 @@ pub struct ExtractedSig {
     /// Marker forms in node order — (a, b) for pair nodes, one for RotExpr.
     pub forms: Vec<Form>,
     pub sites: Vec<super::spawn::RandSite>,
-    /// One program per form; every program's `n_inputs` is bumped to
-    /// `sites.len()` so all of a node's programs read one capture vector.
+    /// Construction-time values of the env-capture slots (slot ids
+    /// `sites.len()..`); the env is fixed per node, so these are too.
+    pub env_caps: Vec<f64>,
+    /// One program per form, structurally INTERNED; every program's
+    /// `n_inputs` is bumped to the node's full capture width so all of a
+    /// node's programs read one capture vector (rand draws ++ env values).
     pub programs: Vec<Rc<NumProgram>>,
 }
 
-/// Build a node's rand cell at construction: None for rand-free forms (the
-/// common case — no size or alloc cost), else extraction + marker lowering.
-pub(crate) fn rand_cell_for(
+/// Construction-time compile of a node's signal forms: rand-site extraction
+/// (when rand is present), slot-mode lowering (numeric env captures become
+/// Input slots), and structural interning — nodes that differ only in
+/// captured or drawn values share ONE program and batch as lanes.
+///
+/// Returns the node's slot cell and its programs cell:
+/// - rand-free, lowered: programs prefilled; cell = Caps(env values) when
+///   the programs take slots, else None. The node is shared by its group.
+/// - rand-bearing, lowered: cell = Compiled(markers + sites + programs);
+///   the SPEC node's programs cell stays LAZY over the original forms
+///   (direct evaluation outside spawn keeps per-eval rand semantics), and
+///   spawn instantiation prefills each clone from the cell.
+/// - not lowered: cell = Bail if rand is present (spawn substitutes per
+///   entity, the pre-slot path), else None; programs stay lazy.
+pub(crate) fn compile_sig(
     forms: &[&Form],
     env: &Env,
     sig: &SigEnv,
     allow_pos: bool,
-) -> Option<Rc<RandCell>> {
-    if !forms.iter().any(|f| super::spawn::form_has_rand(f)) {
-        return None;
-    }
+) -> (Option<Rc<RandCell>>, Option<Vec<Rc<NumProgram>>>) {
+    let has_rand = forms.iter().any(|f| super::spawn::form_has_rand(f));
     let mut sites = Vec::new();
-    let marked: Vec<Form> = forms.iter().map(|f| super::spawn::extract_rand(f, &mut sites)).collect();
+    let marked: Vec<Form> = if has_rand {
+        forms.iter().map(|f| super::spawn::extract_rand(f, &mut sites)).collect()
+    } else {
+        forms.iter().map(|f| (*f).clone()).collect()
+    };
+    let mut names: Vec<Rc<str>> = Vec::new();
     let mut programs = Vec::with_capacity(marked.len());
     for m in &marked {
-        let Some(mut p) = lower_num_form(m, env, &sig.defs) else {
-            return Some(Rc::new(RandCell::Bail));
+        let lowered = lower_num_form_slotted(m, env, &sig.defs, &mut names, sites.len())
+            .filter(|p| allow_pos || !program_uses_pos(p));
+        let Some(mut p) = lowered else {
+            return (has_rand.then(|| Rc::new(RandCell::Bail)), None);
         };
-        if !allow_pos && program_uses_pos(&p) {
-            return Some(Rc::new(RandCell::Bail));
-        }
-        p.n_inputs = sites.len();
-        programs.push(Rc::new(p));
+        p.n_inputs = sites.len() + names.len();
+        programs.push(p);
     }
-    Some(Rc::new(RandCell::Compiled(ExtractedSig { forms: marked, sites, programs })))
+    // late bump: an env slot discovered while lowering `b` widens `a` too
+    let width = sites.len() + names.len();
+    let programs: Vec<Rc<NumProgram>> = programs
+        .into_iter()
+        .map(|mut p| {
+            p.n_inputs = width;
+            intern_program(p)
+        })
+        .collect();
+    // env lookups can't fail: slot mode only records names it resolved
+    let env_caps: Vec<f64> = names
+        .iter()
+        .map(|n| match env.lookup(n) {
+            Some(Val::Num(v)) => v,
+            _ => unreachable!("env slot {n} vanished between lowering and capture"),
+        })
+        .collect();
+    if has_rand {
+        let cell = RandCell::Compiled(ExtractedSig { forms: marked, sites, env_caps, programs });
+        (Some(Rc::new(cell)), None)
+    } else {
+        let cell = (width > 0).then(|| Rc::new(RandCell::Caps(env_caps.into())));
+        (cell, Some(programs))
+    }
 }
 
 /// The entity's capture vector, if this node carries one.
@@ -1000,7 +1041,7 @@ fn lower_program_pair(
     if !allow_pos && (program_uses_pos(&ap) || program_uses_pos(&bp)) {
         return None;
     }
-    Some((Rc::new(ap), Rc::new(bp)))
+    Some((intern_program(ap), intern_program(bp)))
 }
 
 fn lower_single_program(form: &Form, env: &Env, sig: &SigEnv, allow_pos: bool) -> Option<Rc<NumProgram>> {
@@ -1008,7 +1049,7 @@ fn lower_single_program(form: &Form, env: &Env, sig: &SigEnv, allow_pos: bool) -
     if !allow_pos && program_uses_pos(&prog) {
         return None;
     }
-    Some(Rc::new(prog))
+    Some(intern_program(prog))
 }
 
 /// One row's batchable motion step (milestone B): a point figure whose pose
