@@ -166,7 +166,7 @@ impl ColliderProjectorExpr {
 #[derive(Clone, Debug)]
 pub struct ColliderProjectorValue {
     pub(crate) figure: FigureProjectorKind,
-    pub(crate) expr: ColliderProjectorExpr,
+    pub expr: ColliderProjectorExpr,
 }
 
 impl ColliderProjectorValue {

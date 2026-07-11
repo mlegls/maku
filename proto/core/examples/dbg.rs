@@ -67,6 +67,44 @@ fn census(sim: &Sim, label: &str) {
             }
         }
     }
+    let mut proj_ptrs: HashMap<usize, usize> = HashMap::new();
+    for i in 0..sim.world.entities.len() {
+        if !sim.world.entities.is_alive(i) {
+            continue;
+        }
+        if let Some(p) = sim.world.entities.collider_projector(i) {
+            *proj_ptrs.entry(Rc::as_ptr(&p.projectors) as *const u8 as usize).or_default() += 1;
+        }
+    }
+    println!("  distinct projector Rcs: {} over {} alive", proj_ptrs.len(), alive);
+    let mut expr_kinds: HashMap<&'static str, usize> = HashMap::new();
+    for i in 0..sim.world.entities.len() {
+        if !sim.world.entities.is_alive(i) {
+            continue;
+        }
+        if let Some(p) = sim.world.entities.collider_projector(i) {
+            for v in p.projectors.iter() {
+                use maku::interp::ColliderProjectorExpr as E;
+                let (kind, radius) = match &v.expr {
+                    E::Stable(s) if s.is_empty() => ("stable-empty", ""),
+                    E::Stable(_) => ("stable", ""),
+                    E::Circle(spec) => (
+                        "circle",
+                        match &spec.radius {
+                            maku::interp::ProjectorNum::Const(_) => ":const",
+                            maku::interp::ProjectorNum::EntityCol(_) => ":col",
+                            maku::interp::ProjectorNum::Expr(_) => ":expr",
+                        },
+                    ),
+                    E::CapsuleChain(_) => ("capsule", ""),
+                    E::Callable { .. } => ("callable", ""),
+                    E::Cond { .. } => ("cond", ""),
+                };
+                *expr_kinds.entry(Box::leak(format!("{kind}{radius}").into_boxed_str())).or_default() += 1;
+            }
+        }
+    }
+    println!("  projector expr kinds: {:?}", expr_kinds);
     let mut sizes: Vec<usize> = groups.values().copied().collect();
     sizes.sort_unstable_by(|a, b| b.cmp(a));
     println!(

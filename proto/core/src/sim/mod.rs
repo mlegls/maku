@@ -156,6 +156,11 @@ struct ColliderScratch {
     /// pass start and after any non-direct materialization, which holds
     /// `&mut World` and could intern new columns.
     field_slots: Vec<(*const u8, FieldSlots)>,
+    /// Per-pass memo of projector Rc address → all-Circle fast plan (None =
+    /// unclassifiable, take the general path). Same lifetime and staleness
+    /// rules as `field_slots` — the plans hold resolved store slots. Keyed
+    /// map, not a scan: distinct projectors scale with live spawn groups.
+    plans: crate::fxhash::FxHashMap<usize, Option<std::rc::Rc<collision::FastColliderPlan>>>,
 }
 
 impl ColliderScratch {
@@ -164,6 +169,7 @@ impl ColliderScratch {
         self.ranges.clear();
         self.defs.clear();
         self.field_slots.clear();
+        self.plans.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }

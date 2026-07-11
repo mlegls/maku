@@ -216,8 +216,21 @@ fn build_entity_specs(
         .zip(cols)
         .enumerate()
         .map(|(flat, ((e, style_fields), cols))| {
-            let mut collider_projectors = shared_collider_projectors.iter().cloned().collect::<Vec<_>>();
-            collider_projectors.push(e.collider_projector_spec);
+            // most elements carry no per-element collider spec (plain
+            // bullets): share the spawn's projector Rc across the group —
+            // an empty Stable spec materializes nothing, so dropping it is
+            // behavior-neutral, and shared spec identity is what the sim's
+            // per-pass collider plan memo keys on
+            let empty_spec = matches!(&e.collider_projector_spec.expr,
+                ColliderProjectorExpr::Stable(s) if s.is_empty());
+            let collider_projector = if empty_spec {
+                ColliderProjector { projectors: shared_collider_projectors.clone() }
+            } else {
+                let mut collider_projectors =
+                    shared_collider_projectors.iter().cloned().collect::<Vec<_>>();
+                collider_projectors.push(e.collider_projector_spec);
+                ColliderProjector { projectors: collider_projectors.into() }
+            };
             let mut sym_fields = sym_fields.clone();
             for (field, value) in style_fields {
                 if !sym_fields.iter().any(|(name, _)| *name == field) {
@@ -262,7 +275,7 @@ fn build_entity_specs(
                 sym_fields,
                 cols,
                 dyn_cols: dyn_cols.into(),
-                collider_projector: ColliderProjector { projectors: collider_projectors.into() },
+                collider_projector,
             }
         })
         .collect();

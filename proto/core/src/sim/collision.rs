@@ -1,6 +1,57 @@
 use super::*;
 use super::slots::{eval_collider_slot, materialize_collider_defs_into, materialize_direct_colliders};
 
+/// Per-pass classification of an all-Circle direct projector — the plain
+/// bullet: per slot a layer plus a radius source with EntityCol reads
+/// already resolved to store slots. Materializing a row against a plan is
+/// exactly the direct path's arithmetic (radius eval in slot order, then
+/// `radius * scale` around the sampled center) minus the projector walk,
+/// closure, and per-read slot-cache scan.
+#[derive(Clone)]
+pub(super) struct FastColliderPlan {
+    pub(super) slots: Vec<(Symbol, FastRadius)>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum FastRadius {
+    Const(f64),
+    Field(FieldSlots),
+}
+
+/// All projector values are circles with statically-readable radii: Circle
+/// specs with Const/EntityCol numbers, or Stable circle slots with Const
+/// dyn radii (the graze-ring case). Anything else — capsule chains,
+/// Expr/AxisSel radii, Callable/Cond — takes the general path.
+fn classify_fast_circles(projector: &ColliderProjector, world: &World) -> Option<FastColliderPlan> {
+    let mut slots = Vec::with_capacity(projector.projectors.len());
+    for value in projector.projectors.iter() {
+        match &value.expr {
+            ColliderProjectorExpr::Circle(spec) => {
+                let radius = match &spec.radius {
+                    ProjectorNum::Const(n) => FastRadius::Const(*n),
+                    ProjectorNum::EntityCol(col) => FastRadius::Field(world.field_slots(col)),
+                    ProjectorNum::Expr(_) => return None,
+                };
+                slots.push((spec.layer, radius));
+            }
+            ColliderProjectorExpr::Stable(stable) => {
+                for dc in stable.iter() {
+                    let slot = dc.slot();
+                    match &slot.shape {
+                        ColliderSlotShape::Circle { radius } => match radius.repr() {
+                            NumDynRepr::Const(n) => slots.push((slot.layer, FastRadius::Const(*n))),
+                            _ => return None,
+                        },
+                        _ => return None,
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(FastColliderPlan { slots })
+}
+
 fn materialize_colliders_into(
     dyn_figure: &DynFigure,
     projector: &ColliderProjector,
@@ -15,6 +66,7 @@ fn materialize_colliders_into(
     defs: &mut Vec<DynCollider>,
     out: &mut Vec<ColliderData>,
     slot_cache: &mut Vec<(*const u8, FieldSlots)>,
+    plans: &mut crate::fxhash::FxHashMap<usize, Option<Rc<FastColliderPlan>>>,
     tick_rate: f64,
 ) -> Result<(), String> {
     let (trace, traced): (&[Pose], bool) = match row {
@@ -37,6 +89,7 @@ fn materialize_colliders_into(
         .map_err(|e| format!("colliders: {}", e))?;
     // the defs pass held &mut World: cached slot resolutions may be stale
     slot_cache.clear();
+    plans.clear();
     // re-borrow: the defs pass may have grown the symbol table
     let (trace, traced): (&[Pose], bool) = match row {
         Some(row) => (world.entities.trace_samples(row), world.entities.is_traced(row)),
@@ -97,6 +150,47 @@ impl Sim {
             let scale = scale_sym
                 .and_then(|sym| self.world.col_get_sym_at(i, sym))
                 .unwrap_or(1.0);
+            // fast path: all-Circle direct projector on an untraced point
+            // figure — plan memoized per projector address for the pass
+            {
+                let projector = self
+                    .world
+                    .entities
+                    .collider_projector(i)
+                    .ok_or_else(|| format!("colliders: missing projector for row {i}"))?;
+                let key = Rc::as_ptr(&projector.projectors) as *const u8 as usize;
+                let world = &self.world;
+                let plan = self
+                    .collider_scratch
+                    .plans
+                    .entry(key)
+                    .or_insert_with(|| classify_fast_circles(projector, world).map(Rc::new))
+                    .clone();
+                let untraced_point = !self.world.entities.is_traced(i)
+                    && self
+                        .world
+                        .entities
+                        .dyn_figure(i)
+                        .is_some_and(|fig| matches!(fig.repr(), FigureDynRepr::Pose(_)));
+                if let (Some(plan), true) = (plan, untraced_point) {
+                    let start = self.collider_scratch.begin_row();
+                    for (layer, radius) in plan.slots.iter() {
+                        let r = match radius {
+                            FastRadius::Const(n) => *n,
+                            FastRadius::Field(slots) => entity_field_at_slots(i, *slots, &self.world)
+                                .num()
+                                .map_err(|e| format!("colliders: {}", e))?,
+                        };
+                        self.collider_scratch.rows.push(ColliderData::Circle {
+                            layer: *layer,
+                            center: (p.x, p.y),
+                            radius: r * scale,
+                        });
+                    }
+                    self.collider_scratch.finish_row(start);
+                    continue;
+                }
+            }
             let dyn_figure = self
                 .world
                 .entities
@@ -134,6 +228,7 @@ impl Sim {
                 &mut self.collider_scratch.defs,
                 &mut self.collider_scratch.rows,
                 &mut self.collider_scratch.field_slots,
+                &mut self.collider_scratch.plans,
                 tick_rate,
             )?;
             self.collider_scratch.finish_row(start);
