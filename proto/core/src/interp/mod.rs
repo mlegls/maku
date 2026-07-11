@@ -1140,8 +1140,8 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     return Err(format!("{}: expected two components", s));
                 }
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::ClosedPt {
-                    a: items[1].clone(),
-                    b: items[2].clone(),
+                    a: expand_macros(&items[1], env, ctx, world)?,
+                    b: expand_macros(&items[2], env, ctx, world)?,
                     polar: &**s == "polar",
                     env: env.clone(),
                     programs: std::cell::OnceCell::new(),
@@ -1300,7 +1300,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_unbound_axis(&items[1], env) => {
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::RotExpr {
-                    form: items[1].clone(),
+                    form: expand_macros(&items[1], env, ctx, world)?,
                     env: env.clone(),
                     program: std::cell::OnceCell::new(),
                 }))));
@@ -1343,7 +1343,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 let curve = as_dyn_pose(evaluate(&items[1], env, ctx, world)?)?;
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Path {
                     curve: curve.into_node(),
-                    progress: items[2].clone(),
+                    progress: expand_macros(&items[2], env, ctx, world)?,
                     env: env.clone(),
                 }))));
             }
@@ -1368,12 +1368,17 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 if ctx.scan.is_some() {
                     return sf_sited_evolve(items, env, ctx, world);
                 }
-                let step = evaluate(&items[2], env, ctx, world)?;
+                // expand at capture: the step's body re-evaluates per tick
+                // in a macro-less Ctx, and the liveness walk should see
+                // expansion shapes, not macro names
+                let init_form = expand_macros(&items[1], env, ctx, world)?;
+                let step_form = expand_macros(&items[2], env, ctx, world)?;
+                let step = evaluate(&step_form, env, ctx, world)?;
                 if !matches!(step, Val::Fn { .. } | Val::Builtin(_)) {
                     return Err(format!("evolve: step must be callable, got {:?}", step));
                 }
-                let live = evolve_is_live(&items[1], &items[2]);
-                let init = EvolveInit::Thunk { form: items[1].clone(), env: env.clone() };
+                let live = evolve_is_live(&init_form, &step_form);
+                let init = EvolveInit::Thunk { form: init_form, env: env.clone() };
                 return Ok(Val::Evolve(Rc::new(EvolveDyn { init, step, live })));
             }
             _ => {}
@@ -1586,10 +1591,10 @@ fn apply_dyn_frame(frame: Rc<DynNode>, child: Val) -> Result<Val, String> {
             apply_dyn_frame(frame, e.figure.clone())?,
             e.fields.iter().cloned().collect(),
         )),
-        other => Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
+        other => Ok(Val::DynPose(DynPose::pose_node(frame_node(
             frame,
             as_dyn_pose(other)?.into_node(),
-        ))))),
+        )))),
     }
 }
 
@@ -2597,10 +2602,10 @@ fn apply_frame_val(frame: Pose, child: Val) -> Result<Val, String> {
         )),
         other => {
             let d = as_dyn_pose(other)?;
-            Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::Frame(
+            Ok(Val::DynPose(DynPose::pose_node(frame_node(
                 Rc::new(DynNode::Const(frame)),
                 d.into_node(),
-            )))))
+            ))))
         }
     }
 }
@@ -2888,8 +2893,8 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
         return Err("vel: expected two components".into());
     }
     let node = Rc::new(DynNode::Vel {
-        a: comps[0].clone(),
-        b: comps[1].clone(),
+        a: expand_macros(&comps[0], env, ctx, world)?,
+        b: expand_macros(&comps[1], env, ctx, world)?,
         polar,
         env: env.clone(),
         programs: std::cell::OnceCell::new(),
@@ -3022,6 +3027,172 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
 
 /// Stateful scan expression sites. State keyed by (base, site index); the
 /// site counter is stable for a fixed expression tree.
+/// Recursively expand card-macro calls in a form before it is captured
+/// into a dyn expression. Captured forms are re-evaluated per tick, so
+/// expanding at capture keeps macro expansion out of the hot loop and —
+/// the real point — makes expansion shapes (sited evolves) visible to
+/// the spawn-time scan-site walk and the lowerer
+/// (evolve-reexpression-design.md).
+///
+/// Head resolution mirrors evaluate_list_inner's macro dispatch: a head
+/// is a macro call only when unbound in the env / defs, not a '$'
+/// channel, and not shadowed by an enclosing let/loop/fn binder in the
+/// form itself. quote/quasiquote bodies are left alone (they are data);
+/// an expansion is re-expanded until no macro heads remain.
+pub(crate) fn expand_macros(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Form, String> {
+    if ctx.macros.is_empty() {
+        return Ok(form.clone());
+    }
+    let mut bound = std::collections::HashSet::new();
+    expand_macros_in(form, env, ctx, world, &mut bound)
+}
+
+fn expand_macros_in(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+    bound: &mut std::collections::HashSet<Rc<str>>,
+) -> Result<Form, String> {
+    match form {
+        Form::List(items) => expand_macros_list(items, env, ctx, world, bound),
+        Form::Vector(items) => Ok(Form::Vector(
+            items
+                .iter()
+                .map(|f| expand_macros_in(f, env, ctx, world, bound))
+                .collect::<Result<Vec<_>, _>>()?
+                .into(),
+        )),
+        Form::Map(kvs) => Ok(Form::Map(
+            kvs.iter()
+                .map(|(k, v)| {
+                    Ok((
+                        expand_macros_in(k, env, ctx, world, bound)?,
+                        expand_macros_in(v, env, ctx, world, bound)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+                .into(),
+        )),
+        atom => Ok(atom.clone()),
+    }
+}
+
+fn expand_macros_list(
+    items: &Rc<[Form]>,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+    bound: &mut std::collections::HashSet<Rc<str>>,
+) -> Result<Form, String> {
+    let recurse_all = |ctx: &mut Ctx,
+                       world: &mut World,
+                       bound: &mut std::collections::HashSet<Rc<str>>|
+     -> Result<Form, String> {
+        Ok(Form::List(
+            items
+                .iter()
+                .map(|f| expand_macros_in(f, env, ctx, world, bound))
+                .collect::<Result<Vec<_>, _>>()?
+                .into(),
+        ))
+    };
+    let Some(Form::Sym(head)) = items.first() else {
+        return recurse_all(ctx, world, bound);
+    };
+    match head.as_ref() {
+        // data, not code: never expand inside
+        "quote" | "quasiquote" => Ok(Form::List(items.to_vec().into())),
+        "fn" => {
+            let mut out = Vec::with_capacity(items.len());
+            out.push(items[0].clone());
+            if let Some(params) = items.get(1) {
+                out.push(params.clone());
+                let names = macro_binding_names(params);
+                let inserted: Vec<_> =
+                    names.into_iter().filter(|n| bound.insert(n.clone())).collect();
+                let body = items[2..]
+                    .iter()
+                    .map(|f| expand_macros_in(f, env, ctx, world, bound))
+                    .collect::<Result<Vec<_>, _>>();
+                for name in inserted {
+                    bound.remove(&name);
+                }
+                out.extend(body?);
+            }
+            Ok(Form::List(out.into()))
+        }
+        "let" | "loop" if matches!(items.get(1), Some(Form::Vector(_))) => {
+            let Some(Form::Vector(binds)) = items.get(1) else { unreachable!() };
+            // let binds sequentially; loop's names scope over its own
+            // init exprs conservatively too (a shadowing macro name in a
+            // loop init is vanishingly unlikely, and conservative here
+            // only means a call is left unexpanded for the evaluator)
+            let mut local = bound.clone();
+            let mut new_binds = Vec::with_capacity(binds.len());
+            for pair in binds.chunks(2) {
+                if pair.len() == 2 {
+                    new_binds.push(pair[0].clone());
+                    new_binds.push(expand_macros_in(&pair[1], env, ctx, world, &mut local)?);
+                    for name in macro_binding_names(&pair[0]) {
+                        local.insert(name);
+                    }
+                } else {
+                    new_binds.push(pair[0].clone());
+                }
+            }
+            let mut out = vec![items[0].clone(), Form::Vector(new_binds.into())];
+            for f in &items[2..] {
+                out.push(expand_macros_in(f, env, ctx, world, &mut local)?);
+            }
+            Ok(Form::List(out.into()))
+        }
+        name => {
+            if !bound.contains(name)
+                && env.lookup(name).is_none()
+                && !ctx.sig.defs.contains_key(name)
+                && !name.starts_with('$')
+            {
+                if let Some(mac) = ctx.macros.clone().get(name) {
+                    let menv = bind_params(Env::empty(), &mac.params, &items[1..], |f| {
+                        Val::FormV(Rc::new(f.clone()))
+                    })?;
+                    let mut expansion = Val::Nothing;
+                    for f in mac.body.iter() {
+                        expansion = evaluate(f, &menv, ctx, world)?;
+                    }
+                    let form = val_to_form(&expansion)?;
+                    return expand_macros_in(&form, env, ctx, world, bound);
+                }
+            }
+            recurse_all(ctx, world, bound)
+        }
+    }
+}
+
+fn macro_binding_names(form: &Form) -> Vec<Rc<str>> {
+    match form {
+        Form::Sym(s) if &**s != "&" => vec![s.clone()],
+        Form::Vector(items) => items.iter().flat_map(macro_binding_names).collect(),
+        Form::Map(kvs) => kvs
+            .iter()
+            .flat_map(|(k, v)| {
+                if matches!(k, Form::Kw(kw) if &**kw == "keys") {
+                    macro_binding_names(v)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// A sited evolve: (evolve init step) inside a per-tick re-evaluated dyn
 /// expression. State lives at the ScanSite key; the form evaluates to the
 /// settled state value — the ambient clock is the enclosing slot's clock,
@@ -3180,7 +3351,10 @@ fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 let dur = evaluate(&parts[1], env, ctx, world)?.num()?;
                 (StageTerm::Dur(dur), &parts[2])
             }
-            "until" => (StageTerm::Until(parts[1].clone(), env.clone()), &parts[2]),
+            "until" => (
+                StageTerm::Until(expand_macros(&parts[1], env, ctx, world)?, env.clone()),
+                &parts[2],
+            ),
             "forever" => (StageTerm::Forever, &parts[1]),
             h => return Err(format!("stages: unknown clause '{}'", h)),
         };

@@ -3876,6 +3876,78 @@ fn sited_evolve_counter_skips_hold_step_regions() {
 }
 
 #[test]
+fn captured_dyn_exprs_expand_macros_at_capture() {
+    // A macro expanding to a sited evolve inside a vel component: the
+    // spawn-time site walk must see the expansion (the val site is
+    // collected) and the state must persist — impossible if the macro
+    // re-expanded per tick to a fresh construction
+    // (evolve-reexpression-design.md milestone 2).
+    const CARD: &str = r#"
+(defmacro ramp [rate] `(evolve 0 (fn [s c] (+ s (* ~rate (:dt c))))))
+(defpattern p []
+  (spawn (vel c[(ramp 60) 0])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let site = {
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        schema
+            .val_keys
+            .iter()
+            .copied()
+            .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
+            .expect("macro-expanded evolve interns a val ScanSite slot")
+    };
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    let cell = sim.world.entities.state_val(0, site).unwrap();
+    assert_eq!(cell.tick, 3);
+    let Val::Num(vx) = cell.state else { panic!("numeric state, got {:?}", cell.state) };
+    let expected = 3.0 * 60.0 / DEFAULT_TICK_RATE;
+    assert!((vx - expected).abs() < 1e-9, "ramped state through macro: {vx}");
+}
+
+#[test]
+fn capture_time_expansion_respects_local_shadowing() {
+    // A let-bound name matching a macro must be left alone by the
+    // capture-time expansion (the rewrite.rs lexical discipline). The
+    // macro's expansion would error if it fired.
+    const CARD: &str = r#"
+(defmacro speed [] `(this-name-does-not-exist))
+(defpattern p []
+  (spawn (vel c[(let [speed (fn [] 6)] (speed)) 0])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..2 {
+        sim.step().unwrap();
+    }
+    let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+    let expected = 2.0 * 6.0 / DEFAULT_TICK_RATE;
+    assert!((p.x - expected).abs() < 1e-9, "shadowed head evaluated as local fn: {}", p.x);
+}
+
+#[test]
+fn standalone_evolve_step_bodies_expand_macros_at_capture() {
+    // apply_evolve_step runs steps in a macro-less Ctx; a macro call in
+    // the step BODY only works because the body was expanded when the
+    // evolve special captured it.
+    const CARD: &str = r#"
+(defmacro bump [s] `(+ ~s 2))
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (bump (:x s)) 0)))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    for _ in 0..3 {
+        sim.step().unwrap();
+    }
+    // sampled at tick-1: the pose cached by the previous boundary's pass,
+    // i.e. two advances after three steps
+    let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
+    assert!((p.x - 4.0).abs() < 1e-9, "macro in step body advanced: {}", p.x);
+}
+
+#[test]
 fn spawned_entity_rows_carry_motion_schema() {
     const CARD: &str = r#"
 (defpattern p []
