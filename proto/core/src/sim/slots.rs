@@ -99,12 +99,22 @@ pub fn materialize_collider_defs_into(
                 out.extend(slots.iter().cloned());
             }
             ColliderProjectorExpr::Circle(spec) => {
-                let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
-                out.push(materialize_circle_projector(spec, &env, sig, world, row)?);
+                // the env only feeds Expr slots; Const/EntityCol never read
+                // it, so skip the scope binding (env clone + two view maps)
+                if list.expr.needs_views() {
+                    let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
+                    out.push(materialize_circle_projector(spec, &env, sig, world, row)?);
+                } else {
+                    out.push(materialize_circle_projector(spec, &spec.env, sig, world, row)?);
+                }
             }
             ColliderProjectorExpr::CapsuleChain(spec) => {
-                let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
-                out.push(materialize_capsule_chain_projector(spec, &env, sig, world, row)?);
+                if list.expr.needs_views() {
+                    let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
+                    out.push(materialize_capsule_chain_projector(spec, &env, sig, world, row)?);
+                } else {
+                    out.push(materialize_capsule_chain_projector(spec, &spec.env, sig, world, row)?);
+                }
             }
             ColliderProjectorExpr::Callable { params, body, env } => {
                 let e_bound = e_view
