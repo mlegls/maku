@@ -30,6 +30,7 @@ fn main() {
             ("cards/translations/200_cradle.maku", "cradle", 300),
             ("cards/translations/player_homing.maku", "fantasy-seal", 700),
             ("cards/translations/ph_boss2_spell2.maku", "spell-2", 900),
+            ("cards/tutorials/t03.maku", "ex3-fruit-colors", 900),
             ("cards/reimu_vs_mima.maku", "reimu-vs-mima", 1800),
         ]
         .iter()
