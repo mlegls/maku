@@ -88,8 +88,8 @@ fn materialize_colliders_into(
     projector: &ColliderProjector,
     tau: f64,
     sig: &SigEnv,
-    e_view: &Val,
-    ctx_view: &Val,
+    e_view: Option<&Val>,
+    ctx_view: Option<&Val>,
     scale: f64,
     pose: Pose,
     trace: &[Pose],
@@ -101,7 +101,7 @@ fn materialize_colliders_into(
 ) -> Result<(), String> {
     let state = MotionState::new();
     defs.clear();
-    materialize_collider_defs_into(projector, tau, &state, sig, Some(e_view), Some(ctx_view), symbols, defs, tick_rate)
+    materialize_collider_defs_into(projector, tau, &state, sig, e_view, ctx_view, symbols, defs, tick_rate)
         .map_err(|e| format!("colliders: {}", e))?;
     out.extend(
         defs.drain(..)
@@ -168,19 +168,22 @@ impl Sim {
                 .ok_or_else(|| format!("colliders: missing projector for row {i}"))?
                 .clone();
             let start = self.collider_scratch.begin_row();
-            let e_view = entity_view(i, &self.world, &sig)?;
-            let ctx_view = Val::Map(std::rc::Rc::new(vec![
-                (Val::Kw("age".into()), Val::Num(tau)),
-                (Val::Kw("t".into()), Val::Num(tau)),
-                (Val::Kw("tick".into()), Val::Num(tick as f64)),
-            ]));
+            let (e_view, ctx_view) = if collider_projector.needs_views() {
+                (Some(entity_view(i, &self.world, &sig)?), Some(Val::Map(std::rc::Rc::new(vec![
+                    (Val::Kw("age".into()), Val::Num(tau)),
+                    (Val::Kw("t".into()), Val::Num(tau)),
+                    (Val::Kw("tick".into()), Val::Num(tick as f64)),
+                ]))))
+            } else {
+                (None, None)
+            };
             materialize_colliders_into(
                 &dyn_figure,
                 &collider_projector,
                 tau,
                 &sig,
-                &e_view,
-                &ctx_view,
+                e_view.as_ref(),
+                ctx_view.as_ref(),
                 scale,
                 p,
                 trace,
@@ -197,29 +200,101 @@ impl Sim {
             crate::interp::profile::close("phase:collide-mat", f);
         }
         let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
-        self.world.collision_facts.clear();
-        for (i, _a) in self.world.entities.iter().enumerate() {
+        self.collider_scratch.broadphase.clear();
+        for i in 0..n {
             if !self.world.entities.is_alive(i) || pos[i].is_none() {
                 continue;
             }
-            for (j, _b) in self.world.entities.iter().enumerate() {
-                if i == j || !self.world.entities.is_alive(j) || pos[j].is_none() {
+            let mut bounds = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+            for collider in self.collider_scratch.row(i) {
+                if collider.layer().is_none() {
                     continue;
                 }
-                for ac in self.collider_scratch.row(i) {
-                    let Some(a) = ac.layer() else { continue };
-                    for bc in self.collider_scratch.row(j) {
-                        let Some(b) = bc.layer() else { continue };
+                match collider {
+                    ColliderData::Circle { center, radius, .. } => {
+                        bounds.0 = bounds.0.min(center.0 - radius);
+                        bounds.1 = bounds.1.max(center.0 + radius);
+                        bounds.2 = bounds.2.min(center.1 - radius);
+                        bounds.3 = bounds.3.max(center.1 + radius);
+                    }
+                    ColliderData::CapsuleChain { points, radius, .. } => {
+                        for point in points {
+                            bounds.0 = bounds.0.min(point.0 - radius);
+                            bounds.1 = bounds.1.max(point.0 + radius);
+                            bounds.2 = bounds.2.min(point.1 - radius);
+                            bounds.3 = bounds.3.max(point.1 + radius);
+                        }
+                    }
+                    ColliderData::None => {}
+                }
+            }
+            if !bounds.0.is_nan() && !bounds.1.is_nan() && !bounds.2.is_nan() && !bounds.3.is_nan() {
+                self.collider_scratch.broadphase.push((bounds.0, bounds.1, bounds.2, bounds.3, i));
+            }
+        }
+        self.collider_scratch.broadphase.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.4.cmp(&b.4)));
+        let mut facts = Vec::new();
+        for k in 0..self.collider_scratch.broadphase.len() {
+            let a = self.collider_scratch.broadphase[k];
+            for m in k + 1..self.collider_scratch.broadphase.len() {
+                let b = self.collider_scratch.broadphase[m];
+                // Conservative AABBs may only prune strictly disjoint projections.
+                if b.0 > a.1 {
+                    break;
+                }
+                if a.3 < b.2 || b.3 < a.2 {
+                    continue;
+                }
+                let (i, j) = if a.4 < b.4 { (a.4, b.4) } else { (b.4, a.4) };
+                let mut mirrored = Vec::new();
+                // Overlap is symmetric, so each unordered collider pair is evaluated once.
+                for (ra, ac) in self.collider_scratch.row(i).iter().enumerate() {
+                    let Some(layer_a) = ac.layer() else { continue };
+                    for (rb, bc) in self.collider_scratch.row(j).iter().enumerate() {
+                        let Some(layer_b) = bc.layer() else { continue };
                         if collider_overlap(ac, bc) {
-                            self.world.collision_facts.push(CollisionFact { a, b, i, j });
+                            facts.push(CollisionFact { a: layer_a, b: layer_b, i, j });
+                            mirrored.push((rb, ra, CollisionFact { a: layer_b, b: layer_a, i: j, j: i }));
                         }
                     }
                 }
+                mirrored.sort_by_key(|(rb, ra, _)| (*rb, *ra));
+                facts.extend(mirrored.into_iter().map(|(_, _, fact)| fact));
             }
+        }
+        facts.sort_by_key(|fact| (fact.i, fact.j));
+        self.world.collision_facts = facts;
+        if oracle_enabled() {
+            let expected = brute_force_collision_facts(&self.world, &pos, &self.collider_scratch);
+            assert_eq!(self.world.collision_facts, expected);
         }
         if let Some(f) = probe {
             crate::interp::profile::close("phase:collide-pairs", f);
         }
         Ok(())
     }
+}
+
+pub(super) fn brute_force_collision_facts(
+    world: &World,
+    pos: &[Option<(f64, f64)>],
+    scratch: &ColliderScratch,
+) -> Vec<CollisionFact> {
+    let mut facts = Vec::new();
+    for (i, _) in world.entities.iter().enumerate() {
+        if !world.entities.is_alive(i) || pos[i].is_none() { continue; }
+        for (j, _) in world.entities.iter().enumerate() {
+            if i == j || !world.entities.is_alive(j) || pos[j].is_none() { continue; }
+            for ac in scratch.row(i) {
+                let Some(a) = ac.layer() else { continue };
+                for bc in scratch.row(j) {
+                    let Some(b) = bc.layer() else { continue };
+                    if collider_overlap(ac, bc) {
+                        facts.push(CollisionFact { a, b, i, j });
+                    }
+                }
+            }
+        }
+    }
+    facts
 }

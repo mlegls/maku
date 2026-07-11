@@ -454,6 +454,73 @@
     }
 
     #[test]
+    fn collision_broadphase_preserves_old_fact_order() {
+        const CARD: &str = r#"
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) (circle-collider {:layer :a :r 1}))
+    (spawn (pose c[0 0]) (circle-collider {:layer :b :r 1}))
+    (spawn (pose c[0 0]) (circle-collider {:layer :a :r 1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        let facts: Vec<_> = sim.world.collision_facts.iter().map(|fact| {
+            (
+                fact.i,
+                fact.j,
+                sim.world.symbols.resolve(fact.a).unwrap().to_string(),
+                sim.world.symbols.resolve(fact.b).unwrap().to_string(),
+            )
+        }).collect();
+        assert_eq!(facts, vec![
+            (0, 1, "a".into(), "b".into()),
+            (0, 2, "a".into(), "a".into()),
+            (1, 0, "b".into(), "a".into()),
+            (1, 2, "b".into(), "a".into()),
+            (2, 0, "a".into(), "a".into()),
+            (2, 1, "a".into(), "b".into()),
+        ]);
+    }
+
+    #[test]
+    fn collision_broadphase_rejects_distant_entities() {
+        const CARD: &str = r#"
+(defpattern t []
+  (seq
+    (spawn (pose c[-100 0]) (circle-collider {:layer :a :r 0.1}))
+    (spawn (pose c[100 0]) (circle-collider {:layer :b :r 0.1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        assert!(sim.world.collision_facts.is_empty());
+    }
+
+    #[test]
+    fn collision_broadphase_handles_mixed_shapes() {
+        const CARD: &str = r#"
+(defpattern t []
+  (par
+    (spawn (pose c[0 0]) (circle-collider {:layer :body :r 0.1}))
+    (spawn ((pose c[-1 0]) (curve {:u-max 2}))
+           (capsule-chain-collider {:layer :beam :r 0.1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+            assert!(!sim.world.collision_facts.is_empty());
+            let pos: Vec<_> = sim.world.entities.iter().enumerate().map(|(i, _)| {
+                sim.world.entities.sampled_pose(i, sim.world.tick - 1).map(|p| (p.x, p.y))
+            }).collect();
+            let brute = super::collision::brute_force_collision_facts(
+                &sim.world,
+                &pos,
+                &sim.collider_scratch,
+            );
+            assert_eq!(sim.world.collision_facts, brute);
+        }
+    }
+
+    #[test]
     fn spawn_collider_slot_list_yields_both_rows() {
         const CARD: &str = r#"
 (deftick
