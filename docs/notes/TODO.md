@@ -340,6 +340,22 @@ work.
   collide-mat pose/eval work (~14% incl.), Rc<RenderRow> per-row
   churn, Val drops. Also still open: compiled-dyn milestone B,
   channel unification, trace-phase reader construction.
+  Round-15: three trims from a fresh sample. Keyword field reads
+  built a fresh Rc<str> per read of a name the symbol table already
+  holds (resolve_rc → refcount bump; ~6% of fruit). The Vel step's
+  state-map insert was write-only on the sim path (snapshot readers
+  + buffered write_n2) — now legacy-only, EXCEPT under Clamp, whose
+  clamp_integrator reads the child's just-stepped value
+  (clamp_slides_not_banks caught the naive gating), and Stages,
+  whose transition exit cells are read within the same step call.
+  Render-row field vectors reserve exactly. Bare walls: fruit
+  740→574ms (−22%), bowap −37%, polar −41%, reimu −10%, cradle −8%.
+  Sample-identified levers still open: collide-mat (~15% incl. —
+  per-bullet pose eval + eval_collider_slot + defs vec),
+  interpreted entities-where queries from control tasks
+  (resolve_query ~6%), lowered-program integrand runs (genuine
+  compute; compiled-dyn milestone B), Rc<RenderRow> per-row churn,
+  compiled-rule predicate scans (~4%).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
