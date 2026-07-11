@@ -33,9 +33,10 @@
 
 use maku::host::Instance;
 use maku::interp::Val;
-use maku::model::{RenderData, RenderRow};
 use maku::sim::Inputs;
+use maku_mesh_touhou::{MeshFrame, StyleTable, TouhouMesh};
 use macroquad::prelude::*;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::sync::mpsc::{channel, Receiver};
@@ -72,10 +73,41 @@ fn serve(port: u16) -> Receiver<String> {
     rx
 }
 
-/// Row color with hue shift, as a macroquad Color (core::host palette).
-fn styled(row: &RenderRow, hue: f64) -> Color {
-    let (r, g, b) = maku::host::style_rgb_hued(row.sym("color").unwrap_or(""), hue);
-    Color::new(r, g, b, 1.0)
+/// Remap host-neutral u32 indices into macroquad's ordered u16 chunks,
+/// applying the existing world-to-screen transform at the host boundary.
+fn draw_frame(frame: &MeshFrame, atlas: &Texture2D, cx: f32, cy: f32) {
+    for span in &frame.spans {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut remap = HashMap::<u32, u16>::new();
+        let source = &frame.indices[span.start as usize..(span.start + span.count) as usize];
+        for tri in source.chunks_exact(3) {
+            let fresh = tri.iter().filter(|i| !remap.contains_key(i)).count();
+            if !indices.is_empty() && vertices.len() + fresh > u16::MAX as usize {
+                draw_mesh(&Mesh { vertices, indices, texture: Some(atlas.clone()) });
+                vertices = Vec::new();
+                indices = Vec::new();
+                remap.clear();
+            }
+            for source_index in tri {
+                let local = *remap.entry(*source_index).or_insert_with(|| {
+                    let v = frame.vertices[*source_index as usize];
+                    let local = vertices.len() as u16;
+                    vertices.push(macroquad::models::Vertex {
+                        position: vec3(cx + v.pos[0] * PIXELS_PER_UNIT,
+                            cy - v.pos[1] * PIXELS_PER_UNIT, 0.0),
+                        uv: vec2(v.uv[0], v.uv[1]), color: v.color,
+                        normal: vec4(0.0, 0.0, 0.0, 0.0),
+                    });
+                    local
+                });
+                indices.push(local);
+            }
+        }
+        if !indices.is_empty() {
+            draw_mesh(&Mesh { vertices, indices, texture: Some(atlas.clone()) });
+        }
+    }
 }
 
 /// Bottom strip: play/pause button + timeline slider over the recorded tape.
@@ -210,6 +242,13 @@ async fn main() {
         app.inst.boot(card_path, pattern);
     }
     let commands = serve(PORT);
+    let mut touhou = TouhouMesh::new(StyleTable {
+        px_per_unit: PIXELS_PER_UNIT,
+        ..StyleTable::default()
+    });
+    let (rgba, side) = touhou.atlas();
+    let atlas = Texture2D::from_rgba8(side as u16, side as u16, rgba);
+    atlas.set_filter(FilterMode::Linear);
 
     loop {
         // server commands
@@ -328,6 +367,10 @@ async fn main() {
         }
 
         clear_background(Color::from_rgba(0x12, 0x12, 0x1a, 0xff));
+        if app.inst.running() {
+            let frame = app.inst.render_frame();
+            draw_frame(touhou.build(&frame), &atlas, cx, cy);
+        }
         // player marker at the $player channel (derived from a piloted rig,
         // or the mouse): true hitbox dot + graze ring
         let (pmx, pmy) = match app.inst.channel("player") {
@@ -342,37 +385,6 @@ async fn main() {
         if app.inst.running() {
             let to_screen =
                 |x: f64, y: f64| (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT);
-            for row in app.inst.render() {
-                match &row.data {
-                    RenderData::None => {}
-                    RenderData::Point { x, y, scale, alpha, hue, .. } => {
-                        let (sx, sy) = to_screen(*x, *y);
-                        let r = maku::host::dot_radius(row.sym("family").unwrap_or(""))
-                            * PIXELS_PER_UNIT
-                            * *scale as f32;
-                        let a = alpha.clamp(0.0, 1.0) as f32;
-                        let mut col = styled(&row, *hue);
-                        col.a *= a;
-                        draw_circle(sx, sy, r, col);
-                        draw_circle_lines(sx, sy, r, 1.5, Color::new(1.0, 1.0, 1.0, 0.35 * a));
-                    }
-                    RenderData::Polyline { points, active } => {
-                        let a = row.num("alpha").unwrap_or(1.0).clamp(0.0, 1.0) as f32;
-                        let mut col = styled(&row, row.num("hue").unwrap_or(0.0));
-                        col.a *= a;
-                        let (w, col) = if *active {
-                            (6.0, col)
-                        } else {
-                            (1.5, Color::new(col.r, col.g, col.b, 0.45 * a))
-                        };
-                        for seg in points.windows(2) {
-                            let (ax, ay) = to_screen(seg[0].0, seg[0].1);
-                            let (bx, by) = to_screen(seg[1].0, seg[1].1);
-                            draw_line(ax, ay, bx, by, w, col);
-                        }
-                    }
-                }
-            }
             // event flashes: expanding rings read straight from the event
             // log (stateless — rewind and they replay with the timeline)
             let now = app.inst.tick().unwrap_or(0);
