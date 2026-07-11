@@ -340,16 +340,24 @@ pub fn frame_node(parent: Rc<DynNode>, child: Rc<DynNode>) -> Rc<DynNode> {
             DynNode::Const(q) => return Rc::new(DynNode::Const(p.compose(q))),
             DynNode::Frame(inner, gc) => {
                 if let DynNode::Const(q) = &**inner {
-                    return Rc::new(DynNode::Frame(
-                        Rc::new(DynNode::Const(p.compose(q))),
-                        gc.clone(),
-                    ));
+                    return const_frame_node(p.compose(q), gc.clone());
                 }
+            }
+            DynNode::ConstFrame { pose, child: gc, .. } => {
+                return const_frame_node(p.compose(pose), gc.clone());
             }
             _ => {}
         }
+        return const_frame_node(*p, child);
     }
     Rc::new(DynNode::Frame(parent, child))
+}
+
+/// Constant-parent frame constructor: pre-bakes the parent rotation so
+/// per-eval composition skips the sincos (`Pose::compose_with_rot`).
+fn const_frame_node(pose: Pose, child: Rc<DynNode>) -> Rc<DynNode> {
+    let rot = pose.heading_rot();
+    Rc::new(DynNode::ConstFrame { pose, rot, child })
 }
 
 pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
@@ -386,6 +394,10 @@ pub enum DynNode {
     /// analogue of curve materialization, without expressing a curve entity.
     Path { curve: Rc<DynNode>, progress: Form, env: Env },
     Frame(Rc<DynNode>, Rc<DynNode>),
+    /// Frame with a constant parent, its rotation pre-baked at
+    /// construction — the plain-bullet shape after Const folding (spawn
+    /// frame ∘ moving child). Carries no state of its own, like Frame.
+    ConstFrame { pose: Pose, rot: (f64, f64), child: Rc<DynNode> },
     /// A live injected channel as a pose (class (b): pointwise, no state).
     Live { channel: Rc<str> },
     /// Position clamp (playfield walls). Output-clamps the child pose; for
@@ -609,6 +621,9 @@ fn seed_dyn_node_ids_with_ptr(
             seed_reader_node_ids(a, node_ids, next);
             seed_reader_node_ids(b, node_ids, next);
         }
+        DynNode::ConstFrame { child, .. } => {
+            seed_reader_node_ids(child, node_ids, next);
+        }
         DynNode::Const(_)
         | DynNode::Linear { .. }
         | DynNode::Live { .. }
@@ -661,6 +676,9 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
         DynNode::Frame(a, b) => {
             collect_node_state(a, schema);
             collect_node_state(b, schema);
+        }
+        DynNode::ConstFrame { child, .. } => {
+            collect_node_state(child, schema);
         }
         DynNode::Evolve(_) => {
             schema.intern_val(MotionStateKey::Node(node_id));
@@ -1099,7 +1117,7 @@ fn dyn_node_name(d: &DynNode) -> &'static str {
         },
         DynNode::Translate { .. } => "dyn:translate",
         DynNode::Path { .. } => "dyn:path",
-        DynNode::Frame(..) => "dyn:frame",
+        DynNode::Frame(..) | DynNode::ConstFrame { .. } => "dyn:frame",
         DynNode::Live { .. } => "dyn:live",
         DynNode::Clamp { .. } => "dyn:clamp",
         DynNode::RotExpr { .. } => "dyn:rot-expr",
@@ -1400,6 +1418,10 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let cp = dyn_node_pose_u_in(child, tau, u, ctx)?;
             Ok(pp.compose(&cp))
         }
+        DynNode::ConstFrame { pose, rot, child } => {
+            let cp = dyn_node_pose_u_in(child, tau, u, ctx)?;
+            Ok(pose.compose_with_rot(*rot, &cp))
+        }
     }
 }
 
@@ -1629,6 +1651,7 @@ pub fn step_motion_in(
             step_motion_in(a, tau, dt, ctx)?;
             step_motion_in(b, tau, dt, ctx)
         }
+        DynNode::ConstFrame { child, .. } => step_motion_in(child, tau, dt, ctx),
         DynNode::Clamp { lo, hi, child } => {
             // the clamp correction reads the child's just-stepped integrator
             // state, so mirror this subtree into the state map even on the
@@ -1761,6 +1784,19 @@ pub(crate) fn clamp_integrator(
                 }
             }
         }
+        DynNode::ConstFrame { pose, child, .. } => {
+            if pose.angle_or(0.0).abs() < 1e-12 {
+                clamp_integrator(
+                    child,
+                    (lo.0 - pose.x, lo.1 - pose.y),
+                    (hi.0 - pose.x, hi.1 - pose.y),
+                    state,
+                    readers,
+                    mirror_legacy,
+                    write_n2,
+                );
+            }
+        }
         DynNode::Translate { dx, dy, child } => {
             clamp_integrator(child, (lo.0 - dx, lo.1 - dy), (hi.0 - dx, hi.1 - dy), state, readers, mirror_legacy, write_n2);
         }
@@ -1816,6 +1852,7 @@ pub fn is_scanned(d: &DynNode) -> bool {
         | DynNode::Evolve(_) => true,
         DynNode::Translate { child, .. } => is_scanned(child),
         DynNode::Frame(a, b) => is_scanned(a) || is_scanned(b),
+        DynNode::ConstFrame { child, .. } => is_scanned(child),
         DynNode::Clamp { child, .. } => is_scanned(child),
         _ => false,
     }

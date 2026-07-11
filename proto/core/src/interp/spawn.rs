@@ -367,6 +367,7 @@ pub(crate) fn dyn_has_rand(d: &DynNode) -> bool {
         DynNode::RotExpr { form, .. } => form_has_rand(form),
         DynNode::Translate { child, .. } => dyn_has_rand(child),
         DynNode::Frame(a, b) => dyn_has_rand(a) || dyn_has_rand(b),
+        DynNode::ConstFrame { child, .. } => dyn_has_rand(child),
         _ => false,
     }
 }
@@ -441,6 +442,11 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
             instantiate_rand(a, world),
             instantiate_rand(b, world),
         )),
+        DynNode::ConstFrame { pose, rot, child } => Rc::new(DynNode::ConstFrame {
+            pose: *pose,
+            rot: *rot,
+            child: instantiate_rand(child, world),
+        }),
         _ => d.clone(),
     }
 }

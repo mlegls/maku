@@ -26,10 +26,21 @@ impl Pose {
         self.theta.unwrap_or(default)
     }
 
+    /// The (sin, cos) of this pose's heading — compose's rotation,
+    /// cacheable when the pose is constant.
+    pub fn heading_rot(&self) -> (f64, f64) {
+        self.angle_or(0.0).to_radians().sin_cos()
+    }
+
     /// SE(2) composition: self ∘ child (child expressed in self's frame).
     pub fn compose(&self, child: &Pose) -> Pose {
-        let parent_th = self.angle_or(0.0);
-        let (s, c) = parent_th.to_radians().sin_cos();
+        self.compose_with_rot(self.heading_rot(), child)
+    }
+
+    /// `compose` with the rotation supplied by the caller — MUST be this
+    /// pose's `heading_rot()`, precomputed. Split out so constant frames
+    /// can skip the per-eval sincos without diverging from `compose`.
+    pub fn compose_with_rot(&self, (s, c): (f64, f64), child: &Pose) -> Pose {
         Pose {
             x: self.x + c * child.x - s * child.y,
             y: self.y + s * child.x + c * child.y,

@@ -1951,6 +1951,7 @@
                     find_evolve(b)
                 }
             }
+            DynNode::ConstFrame { child, .. } => find_evolve(child),
             other => panic!("expected evolve node, got {other:?}"),
         }
     }
