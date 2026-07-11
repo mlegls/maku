@@ -66,7 +66,7 @@ fn main() {
             continue;
         }
         println!("{:<28} {:>10} {:>10} {:>10}", "head", "count", "self ms", "incl ms");
-        for (name, count, self_ns, total_ns) in rows.iter().take(20) {
+        for (name, count, self_ns, total_ns) in rows.iter().take(28) {
             println!(
                 "{:<28} {:>10} {:>10.1} {:>10.1}",
                 name,

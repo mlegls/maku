@@ -118,6 +118,7 @@ impl Sim {
         let tick = self.world.tick;
 
         // phase 0: materialized collider data + contact velocities
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         let n = self.world.entities.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
         self.collider_scratch.clear_for_entities(n);
@@ -192,6 +193,10 @@ impl Sim {
             self.collider_scratch.finish_row(start);
         }
 
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:collide-mat", f);
+        }
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         self.world.collision_facts.clear();
         for (i, _a) in self.world.entities.iter().enumerate() {
             if !self.world.entities.is_alive(i) || pos[i].is_none() {
@@ -211,6 +216,9 @@ impl Sim {
                     }
                 }
             }
+        }
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:collide-pairs", f);
         }
         Ok(())
     }

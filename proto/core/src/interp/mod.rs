@@ -1661,6 +1661,15 @@ fn builtin_with_eval_ctx(name: &str, args: &[Val], ctx: &Ctx, world: &World) -> 
 /// Entity view passed to predicate queries and manip callbacks.
 /// The entity view contains current kinematic fields, sym fields, and columns.
 pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
+    let probe = profile::enabled().then(profile::open);
+    let r = entity_motion_readers_inner(i, world);
+    if let Some(f) = probe {
+        profile::close("sim:motion-readers", f);
+    }
+    r
+}
+
+fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
     let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
     let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
     let dense_val = Rc::new(world.entities.state_val_snapshot(i));

@@ -749,6 +749,7 @@ pub fn eval_sig_at_rate(
     pos: Option<(f64, f64)>,
     tick_rate: f64,
 ) -> Result<Val, String> {
+    let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
     let mut e = env.bind("t".into(), Val::Num(tau)).bind("u".into(), Val::Num(u));
     if let Some((px, py)) = pos {
         e = e.bind("pos".into(), Val::Pose(Pose::point(px, py)));
@@ -764,6 +765,9 @@ pub fn eval_sig_at_rate(
         signal_scope: true,
     };
     let mut w = World::for_eval(tick_rate); // signals never touch the world (§2)
+    if let Some(f) = probe {
+        crate::interp::profile::close("sig:setup", f);
+    }
     evaluate(form, &e, &mut ctx, &mut w)
 }
 

@@ -292,6 +292,15 @@ impl Sim {
     }
 
     pub(crate) fn motion_readers(&self, row: usize) -> MotionReaders {
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
+        let r = self.motion_readers_inner(row);
+        if let Some(f) = probe {
+            crate::interp::profile::close("sim:motion-readers", f);
+        }
+        r
+    }
+
+    fn motion_readers_inner(&self, row: usize) -> MotionReaders {
         let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
         let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
         let dense_val = Rc::new(self.world.entities.state_val_snapshot(row));
@@ -602,6 +611,7 @@ impl Sim {
         self.refresh_channels(inputs)?;
         self.world.render_rows.clear();
         // control layer
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         let mut i = 0;
         while i < self.tasks.len() {
             let mut task = std::mem::replace(&mut self.tasks[i], new_task(vec![]));
@@ -615,6 +625,10 @@ impl Sim {
             }
             self.tasks.extend(new_tasks);
         }
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:control", f);
+        }
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         // integrate Scanned motion
         let dt = self.world.tick_dt();
         let tick = self.world.tick;
@@ -653,9 +667,17 @@ impl Sim {
                 }
             }
         }
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:scan-step", f);
+        }
         // Evaluate dyn-owned entity fields after control/motion updates and
         // before any collision/render/rule projector reads entity views.
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         self.refresh_dyn_cols()?;
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:dyn-cols", f);
+        }
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         // record traced curves: a dynamic integer sample domain over the
         // retained history window
         {
@@ -683,8 +705,16 @@ impl Sim {
                 }
             }
         }
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:trace", f);
+        }
+        // collide instruments its own phases (phase:collide-mat/-pairs)
         self.collide(inputs)?;
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         self.run_standing_rules()?;
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:rules", f);
+        }
         // bound the retained event window. The log is SHARED across
         // snapshots (they store only a cursor), so this is display
         // history, not snapshot data: restores truncate the tail and
@@ -695,7 +725,12 @@ impl Sim {
             self.world.log.borrow_mut().prune(cutoff);
         }
         self.world.tick += 1;
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         self.refresh_dyn_cols()?;
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:dyn-cols", f);
+        }
+        let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         // cull: off-playfield poses/traces; curve lifetime is card/library policy
         let tick = self.world.tick;
         let mut err = None;
@@ -732,6 +767,9 @@ impl Sim {
             if !keep {
                 self.world.cull_at(i);
             }
+        }
+        if let Some(f) = probe {
+            crate::interp::profile::close("phase:cull", f);
         }
         match err {
             Some(e) => Err(e),
