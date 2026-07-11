@@ -1,5 +1,5 @@
 use super::*;
-use super::slots::{eval_collider_slot, materialize_collider_defs_into};
+use super::slots::{eval_collider_slot, materialize_collider_defs_into, materialize_direct_colliders};
 
 fn materialize_colliders_into(
     dyn_figure: &DynFigure,
@@ -20,20 +20,14 @@ fn materialize_colliders_into(
         Some(row) => (world.entities.trace_samples(row), world.entities.is_traced(row)),
         None => (&[], false),
     };
-    // All-Stable projectors (the plain-bullet case) evaluate their slots
-    // by reference — no per-tick clone round-trip through the defs vec.
-    if projector
-        .projectors
-        .iter()
-        .all(|value| matches!(value.expr, ColliderProjectorExpr::Stable(_)))
-    {
-        for value in projector.projectors.iter() {
-            let ColliderProjectorExpr::Stable(slots) = &value.expr else { unreachable!() };
-            out.extend(slots.iter().map(|slot| {
-                eval_collider_slot(dyn_figure, slot, tau, sig, scale, pose, trace, traced, tick_rate)
-            }));
-        }
-        return Ok(());
+    // Direct projectors (the plain-bullet case: Stable slots plus circles/
+    // capsule chains with Const/EntityCol numbers) evaluate by reference —
+    // no per-tick DynCollider round-trip through the defs vec.
+    if projector.is_direct() {
+        return materialize_direct_colliders(
+            dyn_figure, projector, tau, sig, scale, pose, world, row, trace, traced, out, tick_rate,
+        )
+        .map_err(|e| format!("colliders: {}", e));
     }
     let state = MotionState::default();
     defs.clear();

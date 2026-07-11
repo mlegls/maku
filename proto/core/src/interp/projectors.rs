@@ -311,7 +311,7 @@ pub(crate) fn materialize_circle_projector(
 /// An EntityCol read at materialize time: `entity_field_at` yields the
 /// same Val the scope view holds for a non-special field, so the `.num()`
 /// coercion (and its error) matches the evaluated form exactly.
-fn entity_col_projector_num(
+pub(crate) fn entity_col_projector_num(
     col: &str,
     world: &World,
     row: Option<usize>,

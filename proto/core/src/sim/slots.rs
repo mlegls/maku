@@ -219,62 +219,153 @@ pub fn eval_collider_slot(
             ColliderSlotShape::Circle { radius } => {
                 let state = MotionState::default();
                 let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
-                match dyn_figure.repr() {
-                    FigureDynRepr::Pose(_) if traced => {
-                        let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
-                        if points.len() < 2 {
-                            ColliderData::None
-                        } else {
-                            ColliderData::CapsuleChain {
-                                layer: projection.layer.clone(),
-                                points,
-                                radius: CURVE_R + radius * scale,
-                            }
-                        }
-                    }
-                    FigureDynRepr::Pose(_) => ColliderData::Circle {
-                        layer: projection.layer.clone(),
-                        center: (pose.x, pose.y),
-                        radius: radius * scale,
-                    },
-                    FigureDynRepr::Curve { .. } => ColliderData::None,
-                }
+                circle_collider_data(dyn_figure, projection.layer, radius, scale, pose, trace, traced)
             }
             ColliderSlotShape::CapsuleChain { radius, slot: curve_slot } => {
                 let state = MotionState::default();
                 let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
-                match dyn_figure.repr() {
-                    FigureDynRepr::Pose(_) if traced => {
-                        let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
-                        if points.len() < 2 {
-                            ColliderData::None
-                        } else {
-                            ColliderData::CapsuleChain {
-                                layer: projection.layer.clone(),
-                                points,
-                                radius: CURVE_R * curve_slot.width + radius * scale,
-                            }
-                        }
-                    }
-                    FigureDynRepr::Curve { .. } => {
-                        let Some(points) = sample_curve_collider_frac(
-                            dyn_figure,
-                            tau,
-                            sig,
-                            curve_slot,
-                            tick_rate,
-                        ) else {
-                            return ColliderData::None;
-                        };
-                        ColliderData::CapsuleChain {
-                            layer: projection.layer.clone(),
-                            points,
-                            radius: CURVE_R * curve_slot.width + radius * scale,
-                        }
-                    }
-                    FigureDynRepr::Pose(_) => ColliderData::None,
-                }
+                capsule_chain_collider_data(
+                    dyn_figure, projection.layer, radius, curve_slot, tau, sig, scale, trace, traced,
+                    tick_rate,
+                )
             }
         },
     }
+}
+
+fn circle_collider_data(
+    dyn_figure: &DynFigure,
+    layer: Symbol,
+    radius: f64,
+    scale: f64,
+    pose: Pose,
+    trace: &[Pose],
+    traced: bool,
+) -> ColliderData {
+    match dyn_figure.repr() {
+        FigureDynRepr::Pose(_) if traced => {
+            let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
+            if points.len() < 2 {
+                ColliderData::None
+            } else {
+                ColliderData::CapsuleChain {
+                    layer,
+                    points,
+                    radius: CURVE_R + radius * scale,
+                }
+            }
+        }
+        FigureDynRepr::Pose(_) => ColliderData::Circle {
+            layer,
+            center: (pose.x, pose.y),
+            radius: radius * scale,
+        },
+        FigureDynRepr::Curve { .. } => ColliderData::None,
+    }
+}
+
+fn capsule_chain_collider_data(
+    dyn_figure: &DynFigure,
+    layer: Symbol,
+    radius: f64,
+    curve_slot: &CapsuleChainSlot,
+    tau: f64,
+    sig: &SigEnv,
+    scale: f64,
+    trace: &[Pose],
+    traced: bool,
+    tick_rate: f64,
+) -> ColliderData {
+    match dyn_figure.repr() {
+        FigureDynRepr::Pose(_) if traced => {
+            let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
+            if points.len() < 2 {
+                ColliderData::None
+            } else {
+                ColliderData::CapsuleChain {
+                    layer,
+                    points,
+                    radius: CURVE_R * curve_slot.width + radius * scale,
+                }
+            }
+        }
+        FigureDynRepr::Curve { .. } => {
+            let Some(points) = sample_curve_collider_frac(dyn_figure, tau, sig, curve_slot, tick_rate)
+            else {
+                return ColliderData::None;
+            };
+            ColliderData::CapsuleChain {
+                layer,
+                points,
+                radius: CURVE_R * curve_slot.width + radius * scale,
+            }
+        }
+        FigureDynRepr::Pose(_) => ColliderData::None,
+    }
+}
+
+/// Materialize a direct projector (`ColliderProjector::is_direct`) without
+/// the defs round-trip: slots are Const/EntityCol, so each shape's numbers
+/// come straight from the spec (or an entity-row read) and the collider
+/// data is built in place — no evaluator, no `DynCollider`, no `&mut World`.
+pub(super) fn materialize_direct_colliders(
+    dyn_figure: &DynFigure,
+    projector: &ColliderProjector,
+    tau: f64,
+    sig: &SigEnv,
+    scale: f64,
+    pose: Pose,
+    world: &World,
+    row: Option<usize>,
+    trace: &[Pose],
+    traced: bool,
+    out: &mut Vec<ColliderData>,
+    tick_rate: f64,
+) -> Result<(), String> {
+    let num = |n: &ProjectorNum| -> Result<f64, String> {
+        match n {
+            ProjectorNum::Const(n) => Ok(*n),
+            ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig),
+            ProjectorNum::Expr(_) => Err("collider: expression slot on the direct path".into()),
+        }
+    };
+    for value in projector.projectors.iter() {
+        match &value.expr {
+            ColliderProjectorExpr::Stable(slots) => {
+                out.extend(slots.iter().map(|slot| {
+                    eval_collider_slot(dyn_figure, slot, tau, sig, scale, pose, trace, traced, tick_rate)
+                }));
+            }
+            ColliderProjectorExpr::Circle(spec) => {
+                let radius = num(&spec.radius)?;
+                out.push(circle_collider_data(
+                    dyn_figure, spec.layer, radius, scale, pose, trace, traced,
+                ));
+            }
+            ColliderProjectorExpr::CapsuleChain(spec) => {
+                // slot numbers evaluate in the same order as
+                // materialize_capsule_chain_projector: sample set, u-max,
+                // width, radius — first error wins identically
+                let sample_set = match &spec.sample_set {
+                    ProjectorSampleSet::Values(samples) => SampleSet::Values(samples.clone()),
+                    ProjectorSampleSet::Step(resolution) => SampleSet::Step {
+                        resolution: num(resolution)?,
+                    },
+                };
+                let slot = CapsuleChainSlot {
+                    sample_set,
+                    u_max: spec.u_max.as_ref().map(&num).transpose()?.unwrap_or(10.0),
+                    width: num(&spec.width)?,
+                };
+                let radius = num(&spec.radius)?;
+                out.push(capsule_chain_collider_data(
+                    dyn_figure, spec.layer, radius, &slot, tau, sig, scale, trace, traced, tick_rate,
+                ));
+            }
+            ColliderProjectorExpr::Callable { .. } | ColliderProjectorExpr::Cond { .. } => {
+                return Err("collider: non-direct projector on the direct path".into());
+            }
+        }
+    }
+    Ok(())
 }

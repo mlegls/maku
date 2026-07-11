@@ -145,6 +145,20 @@ impl ColliderProjectorExpr {
             }
         }
     }
+
+    /// A projector the sim can materialize against `&World`: every slot is
+    /// Const/EntityCol, so no evaluator, no bound views, and no symbol-table
+    /// growth. Callable and Cond need the evaluator even when their children
+    /// don't (a Cond re-runs its predicates every tick).
+    pub(crate) fn is_direct(&self) -> bool {
+        match self {
+            ColliderProjectorExpr::Stable(_) => true,
+            ColliderProjectorExpr::Circle(_) | ColliderProjectorExpr::CapsuleChain(_) => {
+                !self.needs_views()
+            }
+            ColliderProjectorExpr::Callable { .. } | ColliderProjectorExpr::Cond { .. } => false,
+        }
+    }
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -228,6 +242,10 @@ impl ColliderProjector {
     pub(crate) fn needs_views(&self) -> bool {
         self.projectors.iter().any(|value| value.expr.needs_views())
     }
+
+    pub(crate) fn is_direct(&self) -> bool {
+        self.projectors.iter().all(|value| value.expr.is_direct())
+    }
 }
 
 #[cfg(test)]
@@ -287,6 +305,67 @@ mod collider_projector_tests {
             None,
         );
         assert!(!cond.expr.needs_views());
+    }
+
+    #[test]
+    fn is_direct_classifies_projector_algebra() {
+        let scope = || {
+            Some(ProjectorScope {
+                entity: "e".into(),
+                context: "ctx".into(),
+                figure: FigureProjectorKind::Pose,
+            })
+        };
+        let circle = |radius: ProjectorNum| {
+            ColliderProjectorValue::circle(CircleProjectorSpec {
+                layer: Symbol(0),
+                radius,
+                env: Env::empty(),
+                scope: scope(),
+            })
+        };
+
+        let stable = ColliderProjectorValue::stable(Vec::new());
+        assert!(stable.expr.is_direct());
+        assert!(circle(ProjectorNum::Const(1.0)).expr.is_direct());
+        assert!(circle(ProjectorNum::EntityCol("hitbox".into())).expr.is_direct());
+        assert!(!circle(ProjectorNum::Expr(Form::Num(1.0))).expr.is_direct());
+
+        let callable = ColliderProjectorValue::callable(
+            FigureProjectorKind::Pose,
+            vec!["e".into(), "ctx".into()],
+            Vec::<Form>::new().into(),
+            Env::empty(),
+        );
+        assert!(!callable.expr.is_direct());
+
+        // a Cond is never direct even with direct children: its predicates
+        // re-run in the evaluator every tick
+        let cond = ColliderProjectorValue::cond(
+            FigureProjectorKind::Pose,
+            vec![(None, vec![ColliderProjectorValue::stable(Vec::new())].into())],
+            Env::empty(),
+            None,
+        );
+        assert!(!cond.expr.is_direct());
+
+        let direct = ColliderProjector {
+            projectors: vec![
+                ColliderProjectorValue::stable(Vec::new()),
+                circle(ProjectorNum::EntityCol("hitbox".into())),
+            ]
+            .into(),
+        };
+        assert!(direct.is_direct());
+
+        let mixed = ColliderProjector {
+            projectors: vec![
+                ColliderProjectorValue::stable(Vec::new()),
+                circle(ProjectorNum::Expr(Form::Num(1.0))),
+            ]
+            .into(),
+        };
+        assert!(!mixed.is_direct());
     }
 }
 
