@@ -458,28 +458,39 @@
         const CARD: &str = r#"
 (defpattern t []
   (seq
-    (spawn (pose c[0 0]) (circle-collider {:layer :a :r 1}))
-    (spawn (pose c[0 0]) (circle-collider {:layer :b :r 1}))
+    (spawn (pose c[0 0]) [(circle-collider {:layer :a :r 1}) (circle-collider {:layer :a :r 1})])
+    (spawn (pose c[0 0]) [(circle-collider {:layer :b :r 1}) (circle-collider {:layer :b :r 1})])
     (spawn (pose c[0 0]) (circle-collider {:layer :a :r 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         sim.step().unwrap();
-        let facts: Vec<_> = sim.world.collision_facts.iter().map(|fact| {
-            (
-                fact.i,
-                fact.j,
-                sim.world.symbols.resolve(fact.a).unwrap().to_string(),
-                sim.world.symbols.resolve(fact.b).unwrap().to_string(),
-            )
-        }).collect();
-        assert_eq!(facts, vec![
-            (0, 1, "a".into(), "b".into()),
-            (0, 2, "a".into(), "a".into()),
-            (1, 0, "b".into(), "a".into()),
-            (1, 2, "b".into(), "a".into()),
-            (2, 0, "a".into(), "a".into()),
-            (2, 1, "a".into(), "b".into()),
-        ]);
+        let a = sim.world.symbols.intern("a");
+        let b = sim.world.symbols.intern("b");
+        assert_eq!(&*sim.world.collision_index.query(a, b), &[(0, 1), (0, 1), (0, 1), (0, 1), (2, 1), (2, 1)]);
+        assert_eq!(&*sim.world.collision_index.query(b, a), &[(1, 0), (1, 0), (1, 0), (1, 0), (1, 2), (1, 2)]);
+        assert_eq!(&*sim.world.collision_index.query(a, a), &[(0, 2), (0, 2), (2, 0), (2, 0)]);
+    }
+
+    #[test]
+    fn collision_index_uses_snapshot_until_recapture() {
+        const CARD: &str = r#"
+(defpattern t []
+  (seq
+    (spawn (pose c[0 0]) [(circle-collider {:layer :a :r 1}) (circle-collider {:layer :c :r 1})])
+    (spawn (pose c[0 0]) (circle-collider {:layer :b :r 1}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        sim.step().unwrap();
+        let a = sim.world.symbols.intern("a");
+        let b = sim.world.symbols.intern("b");
+        let c = sim.world.symbols.intern("c");
+        assert_eq!(&*sim.world.collision_index.query(a, b), &[(0, 1)]);
+        sim.world.cull_at(0);
+        assert_eq!(&*sim.world.collision_index.query(a, b), &[(0, 1)]);
+        assert_eq!(&*sim.world.collision_index.query(c, b), &[(0, 1)]);
+        sim.step().unwrap();
+        assert!(sim.world.collision_index.query(a, b).is_empty());
+        assert!(sim.world.collision_index.query(c, b).is_empty());
     }
 
     #[test]
@@ -492,7 +503,9 @@
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         sim.step().unwrap();
-        assert!(sim.world.collision_facts.is_empty());
+        let a = sim.world.symbols.intern("a");
+        let b = sim.world.symbols.intern("b");
+        assert!(sim.world.collision_index.query(a, b).is_empty());
     }
 
     #[test]
@@ -507,16 +520,9 @@
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         for _ in 0..3 {
             sim.step().unwrap();
-            assert!(!sim.world.collision_facts.is_empty());
-            let pos: Vec<_> = sim.world.entities.iter().enumerate().map(|(i, _)| {
-                sim.world.entities.sampled_pose(i, sim.world.tick - 1).map(|p| (p.x, p.y))
-            }).collect();
-            let brute = super::collision::brute_force_collision_facts(
-                &sim.world,
-                &pos,
-                &sim.collider_scratch,
-            );
-            assert_eq!(sim.world.collision_facts, brute);
+            let body = sim.world.symbols.intern("body");
+            let beam = sim.world.symbols.intern("beam");
+            assert!(!sim.world.collision_index.query(body, beam).is_empty());
         }
     }
 

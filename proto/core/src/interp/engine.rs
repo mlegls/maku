@@ -157,12 +157,8 @@ pub(crate) fn special(
             };
             let a = world.symbols.intern(a.as_ref());
             let b = world.symbols.intern(b.as_ref());
-            let pairs = world
-                .collision_facts
-                .iter()
-                .filter_map(|fact| (fact.a == a && fact.b == b).then_some((fact.i, fact.j)))
-                .collect::<Vec<_>>();
-            Val::CollisionSet(pairs.into())
+            let pairs = world.collision_index.query(a, b);
+            Val::CollisionSet(pairs)
         }
         "curve-samples" => {
             let entity = curve_samples_entity(evaluate(&items[1], env, ctx, world)?)?;
