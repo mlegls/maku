@@ -4,6 +4,33 @@ use super::*;
 pub(super) struct RenderScratch {
     rows: Vec<RenderData>,
     ranges: Vec<std::ops::Range<usize>>,
+    /// Retired render rows whose Rc is uniquely owned: their boxes and
+    /// nums/syms buffers are reused next tick instead of reallocated.
+    /// Rows a host still holds are simply dropped, not pooled.
+    pub(super) row_pool: Vec<Rc<RenderRow>>,
+    /// Matched-row scratch for the compiled deftick scan.
+    pub(super) match_rows: Vec<usize>,
+}
+
+impl RenderScratch {
+    /// Retire this tick's render rows, keeping uniquely-owned boxes.
+    pub(super) fn recycle_rows(&mut self, rows: &mut Vec<Rc<RenderRow>>) {
+        for mut row in rows.drain(..) {
+            if let Some(r) = Rc::get_mut(&mut row) {
+                r.data = RenderData::None;
+                r.nums.clear();
+                r.syms.clear();
+                self.row_pool.push(row);
+            }
+        }
+    }
+
+    /// A pooled (empty) render row, or a fresh one.
+    pub(super) fn take_row(&mut self) -> Rc<RenderRow> {
+        self.row_pool
+            .pop()
+            .unwrap_or_else(|| Rc::new(RenderRow::plain(RenderData::None)))
+    }
 }
 
 impl RenderScratch {

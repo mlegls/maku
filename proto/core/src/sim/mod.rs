@@ -570,13 +570,15 @@ impl Sim {
         // The whole predicate scan runs before any row body, mirroring the
         // interpreted phase order (entities-where completes before map), so
         // a body error cannot preempt a later row's predicate bail.
-        let mut rows = Vec::new();
+        let mut rows = std::mem::take(&mut self.render_scratch.match_rows);
+        rows.clear();
         if !resolved_tests_match_nothing(&tests, bail_at) {
             for row in 0..self.world.entities.len() {
                 if !self.world.entities.is_alive(row) {
                     continue;
                 }
                 let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
+                    self.render_scratch.match_rows = rows;
                     return Ok(None);
                 };
                 if matches {
@@ -592,53 +594,59 @@ impl Sim {
             .map(|(key, slot, value)| (key, *slot, value.resolve(&self.world)))
             .collect();
         let mut checked: Vec<(Rc<str>, RenderFieldKind)> = Vec::new();
-        if let Some(plan) = CompiledRowPlan::from_fields(&fields) {
-            for row in rows {
+        let result = (|| {
+            if let Some(plan) = CompiledRowPlan::from_fields(&fields) {
+                for &row in &rows {
+                    let pose = form.needs_pose
+                        .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
+                        .transpose()?;
+                    let pose = pose.as_ref();
+                    // coercion order matches finish_checked: x, y, theta, scale,
+                    // alpha, hue — the first bad slot surfaces the same error
+                    let data = RenderData::Point {
+                        x: self.compiled_num_slot(plan.x, row, pose, 0.0)?,
+                        y: self.compiled_num_slot(plan.y, row, pose, 0.0)?,
+                        theta: self.compiled_num_slot(plan.theta, row, pose, 0.0)?,
+                        scale: self.compiled_num_slot(plan.scale, row, pose, 1.0)?,
+                        alpha: self.compiled_num_slot(plan.alpha, row, pose, 1.0)?,
+                        hue: self.compiled_num_slot(plan.hue, row, pose, 0.0)?,
+                    };
+                    let mut rc = self.render_scratch.take_row();
+                    let rendered = Rc::get_mut(&mut rc).expect("pooled render row is uniquely owned");
+                    rendered.data = data;
+                    for (key, value) in &plan.extras {
+                        match self.eval_compiled_row_val(value, row, pose) {
+                            Val::Num(n) => {
+                                render_field_checked(&mut self.world, key, RenderFieldKind::Num, &mut checked)?;
+                                rendered.nums.push(((*key).clone(), n));
+                            }
+                            Val::Kw(sym) => {
+                                render_field_checked(&mut self.world, key, RenderFieldKind::Sym, &mut checked)?;
+                                rendered.syms.push(((*key).clone(), sym));
+                            }
+                            Val::Nothing => {}
+                            _ => return Err(format!("render: field :{key} must be a number or keyword")),
+                        }
+                    }
+                    self.world.render_rows.push(rc);
+                }
+                return Ok(Some(()));
+            }
+            for &row in &rows {
                 let pose = form.needs_pose
                     .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
                     .transpose()?;
-                let pose = pose.as_ref();
-                // coercion order matches finish_checked: x, y, theta, scale,
-                // alpha, hue — the first bad slot surfaces the same error
-                let data = RenderData::Point {
-                    x: self.compiled_num_slot(plan.x, row, pose, 0.0)?,
-                    y: self.compiled_num_slot(plan.y, row, pose, 0.0)?,
-                    theta: self.compiled_num_slot(plan.theta, row, pose, 0.0)?,
-                    scale: self.compiled_num_slot(plan.scale, row, pose, 1.0)?,
-                    alpha: self.compiled_num_slot(plan.alpha, row, pose, 1.0)?,
-                    hue: self.compiled_num_slot(plan.hue, row, pose, 0.0)?,
-                };
-                let mut rendered = RenderRow::plain(data);
-                for (key, value) in &plan.extras {
-                    match self.eval_compiled_row_val(value, row, pose) {
-                        Val::Num(n) => {
-                            render_field_checked(&mut self.world, key, RenderFieldKind::Num, &mut checked)?;
-                            rendered.nums.push(((*key).clone(), n));
-                        }
-                        Val::Kw(sym) => {
-                            render_field_checked(&mut self.world, key, RenderFieldKind::Sym, &mut checked)?;
-                            rendered.syms.push(((*key).clone(), sym));
-                        }
-                        Val::Nothing => {}
-                        _ => return Err(format!("render: field :{key} must be a number or keyword")),
-                    }
+                let mut row_fields = RenderRowFields::default();
+                for (key, slot, value) in &fields {
+                    row_fields.push_slot(*slot, key, self.eval_compiled_row_val(value, row, pose.as_ref()));
                 }
+                let rendered = row_fields.finish_checked(&mut self.world, &self.ctx.sig, Some(&mut checked))?;
                 self.world.render_rows.push(Rc::new(rendered));
             }
-            return Ok(Some(()));
-        }
-        for row in rows {
-            let pose = form.needs_pose
-                .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
-                .transpose()?;
-            let mut row_fields = RenderRowFields::default();
-            for (key, slot, value) in &fields {
-                row_fields.push_slot(*slot, key, self.eval_compiled_row_val(value, row, pose.as_ref()));
-            }
-            let rendered = row_fields.finish_checked(&mut self.world, &self.ctx.sig, Some(&mut checked))?;
-            self.world.render_rows.push(Rc::new(rendered));
-        }
-        Ok(Some(()))
+            Ok(Some(()))
+        })();
+        self.render_scratch.match_rows = rows;
+        result
     }
 
     fn compiled_num_slot(
@@ -680,7 +688,7 @@ impl Sim {
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
         self.drain_pending_writes()?;
         self.refresh_channels(inputs)?;
-        self.world.render_rows.clear();
+        self.render_scratch.recycle_rows(&mut self.world.render_rows);
         // control layer
         let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         let mut i = 0;
@@ -968,7 +976,8 @@ fn render_field_checked(
     kind: RenderFieldKind,
     checked: &mut Vec<(Rc<str>, RenderFieldKind)>,
 ) -> Result<(), String> {
-    if checked.iter().any(|(k, seen)| *seen == kind && k == key) {
+    // plan keys are the same Rc every row, so the pointer check hits
+    if checked.iter().any(|(k, seen)| *seen == kind && (Rc::ptr_eq(k, key) || k == key)) {
         return Ok(());
     }
     world.render_field_check(key, kind)?;
