@@ -109,6 +109,17 @@
                                :resolution (value-or e.resolution 0.1)
                                :width 0}))))
 
+;; the pather look: the trailing trace window drawn as a ribbon — the
+;; same samples the colliders sweep (the trail you see is the trail
+;; that hits).
+(deftick
+  (map (fn [e]
+         (render {:shape (curve-samples e)
+                  :width (value-or e.width 1) :active 1
+                  :hue (value-or e.hue 0)
+                  :family e.family :color e.color :variant e.variant}))
+       (entities-where (fn [e] (* (= e.render :touhou-sprite) (= e.kind :pather))))))
+
 ;; the beam look: a dim telegraph along the full path, a bright polyline
 ;; along the hot extent.
 (deftick

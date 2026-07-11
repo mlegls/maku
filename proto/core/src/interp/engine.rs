@@ -619,6 +619,18 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
         .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("render: curve-samples missing dyn figure for row {i}"))?;
+    // A traced pose entity (pather) IS its trace: the ribbon geometry is
+    // the recorded trajectory window — the same samples its colliders
+    // sweep. u-max/resolution are parametric-curve knobs and don't apply.
+    if matches!(dyn_figure.repr(), FigureDynRepr::Pose(_)) && world.entities.is_traced(i) {
+        let trace = world.entities.trace_samples(i);
+        if trace.len() >= 2 {
+            return Ok(trace.iter().map(|p| (p.x, p.y)).collect());
+        }
+        // spawn-tick ribbon: degenerate but harmless until samples accrue
+        let p = trace.first().copied().or_else(|| world.entities.sampled_pose(i, world.tick));
+        return Ok(p.map(|p| vec![(p.x, p.y), (p.x, p.y)]).unwrap_or_default());
+    }
     let tau = world.entity_motion_tau(i, world.tick);
     let state = MotionState::default();
     let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, world.tick_rate())
