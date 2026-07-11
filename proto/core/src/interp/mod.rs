@@ -1834,19 +1834,21 @@ pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     Some(RowPredicate { tests })
 }
 
-/// Per-query resolved form of a RowTest: symbol lookups happen once
-/// per query, not once per row. A field or value that was never interned
-/// anywhere cannot match any row (mirrors sym_field_matches_at).
+/// Per-query resolved form of a RowTest: symbol AND slot lookups happen
+/// once per query, not once per row — rows then read their store columns
+/// by index. A field or value that was never interned anywhere cannot
+/// match any row (mirrors sym_field_matches_at); a field with no sym
+/// column matches no row either.
 pub(crate) enum ResolvedRowTest {
     Kind(Rc<str>),
-    SymEq { field: FieldName, value: Symbol },
+    SymEq { slot: usize, value: Symbol },
     Never,
     NumCmp { op: CmpOp, lhs: ResolvedRowNum, rhs: ResolvedRowNum },
 }
 
 pub(crate) enum ResolvedRowNum {
     Lit(f64), Tau, Tick,
-    ColOr(Option<Symbol>, Box<ResolvedRowNum>),
+    ColOr(FieldSlots, Box<ResolvedRowNum>),
     Add(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
     Sub(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
     Mul(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
@@ -1856,7 +1858,7 @@ fn resolve_row_num(value: &RowNum, world: &World) -> ResolvedRowNum {
     match value {
         RowNum::Lit(n) => ResolvedRowNum::Lit(*n), RowNum::Tau => ResolvedRowNum::Tau,
         RowNum::Tick => ResolvedRowNum::Tick,
-        RowNum::ColOr(name, d) => ResolvedRowNum::ColOr(world.symbols.lookup(name), Box::new(resolve_row_num(d, world))),
+        RowNum::ColOr(name, d) => ResolvedRowNum::ColOr(world.field_slots(name), Box::new(resolve_row_num(d, world))),
         RowNum::Add(a, b) => ResolvedRowNum::Add(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
         RowNum::Sub(a, b) => ResolvedRowNum::Sub(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
         RowNum::Mul(a, b) => ResolvedRowNum::Mul(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
@@ -1870,8 +1872,8 @@ impl RowPredicate {
             .map(|test| match test {
                 RowTest::KwEq { field, value } => {
                     if &**field == "kind" { return ResolvedRowTest::Kind(value.clone()); }
-                    match (world.symbols.lookup(field), world.symbols.lookup(value)) {
-                        (Some(field), Some(value)) => ResolvedRowTest::SymEq { field, value },
+                    match (world.field_slots(field).sym, world.symbols.lookup(value)) {
+                        (Some(slot), Some(value)) => ResolvedRowTest::SymEq { slot, value },
                         _ => ResolvedRowTest::Never,
                     }
                 }
@@ -1888,9 +1890,9 @@ fn resolved_row_num(value: &ResolvedRowNum, row: usize, world: &World) -> Option
     Some(match value {
         ResolvedRowNum::Lit(n) => *n, ResolvedRowNum::Tau => world.entity_tau(row, world.tick),
         ResolvedRowNum::Tick => world.tick as f64,
-        ResolvedRowNum::ColOr(sym, default) => {
-            if sym.is_some_and(|sym| world.sym_field_value_at(row, sym).is_some()) { return None; }
-            match sym.and_then(|sym| world.col_get_sym_at(row, sym)) {
+        ResolvedRowNum::ColOr(slots, default) => {
+            if world.sym_field_at_slot(row, slots.sym).is_some() { return None; }
+            match world.col_at_slot(row, slots.num) {
                 Some(value) => value,
                 None => resolved_row_num(default, row, world)?,
             }
@@ -1920,8 +1922,8 @@ pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, wo
             };
             kind == &**value
         }),
-        ResolvedRowTest::SymEq { field, value } => {
-            world.sym_field_value_at(row, *field) == Some(*value)
+        ResolvedRowTest::SymEq { slot, value } => {
+            world.sym_field_at_slot(row, Some(*slot)) == Some(*value)
         }
             ResolvedRowTest::Never => false,
             ResolvedRowTest::NumCmp { op, lhs, rhs } => {
@@ -2156,6 +2158,18 @@ pub(crate) fn entity_field_sym_at(i: usize, sym: Option<Symbol>, world: &World) 
         }
     }
     world.col_get_sym_at(i, sym).map(Val::Num).unwrap_or(Val::Nothing)
+}
+
+/// `entity_field_sym_at` over pre-resolved store slots — the per-row read
+/// of a compiled rule pass. Same store order: sym field first, then the
+/// numeric column, else Nothing.
+pub(crate) fn entity_field_at_slots(i: usize, slots: FieldSlots, world: &World) -> Val {
+    if let Some(value) = world.sym_field_at_slot(i, slots.sym) {
+        if let Some(resolved) = world.symbols.resolve_rc(value) {
+            return Val::Kw(resolved.clone());
+        }
+    }
+    world.col_at_slot(i, slots.num).map(Val::Num).unwrap_or(Val::Nothing)
 }
 
 fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {

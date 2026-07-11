@@ -1,5 +1,6 @@
 use super::engine::RenderKey;
-use super::{evaluate, row_predicate, Ctx, Env, RowPredicate, Symbol, World};
+use super::world::FieldSlots;
+use super::{evaluate, row_predicate, Ctx, Env, RowPredicate, World};
 use crate::edn::Form;
 use std::rc::Rc;
 
@@ -19,9 +20,10 @@ pub(crate) enum RowVal {
     FieldOr(Rc<str>, Box<RowVal>),
 }
 
-/// A RowVal with its field names resolved against the world's symbol table,
-/// once per rule pass instead of once per row. `None` is a name that was
-/// never interned anywhere — it can name neither a sym field nor a numeric
+/// A RowVal with its field names resolved against the world's symbol table
+/// AND store slots, once per rule pass instead of once per row — rows read
+/// their columns by index. All-`None` slots are a name that was never
+/// interned anywhere — it can name neither a sym field nor a numeric
 /// column, so the read is `Nothing` (mirroring `entity_field_at`).
 pub(crate) enum ResolvedRowVal {
     Num(f64),
@@ -29,8 +31,8 @@ pub(crate) enum ResolvedRowVal {
     PoseX,
     PoseY,
     PoseTheta,
-    Field(Option<Symbol>),
-    FieldOr(Option<Symbol>, Box<ResolvedRowVal>),
+    Field(FieldSlots),
+    FieldOr(FieldSlots, Box<ResolvedRowVal>),
 }
 
 impl RowVal {
@@ -41,9 +43,9 @@ impl RowVal {
             RowVal::PoseX => ResolvedRowVal::PoseX,
             RowVal::PoseY => ResolvedRowVal::PoseY,
             RowVal::PoseTheta => ResolvedRowVal::PoseTheta,
-            RowVal::Field(name) => ResolvedRowVal::Field(world.symbols.lookup(name)),
+            RowVal::Field(name) => ResolvedRowVal::Field(world.field_slots(name)),
             RowVal::FieldOr(name, default) => ResolvedRowVal::FieldOr(
-                world.symbols.lookup(name),
+                world.field_slots(name),
                 Box::new(default.resolve(world)),
             ),
         }

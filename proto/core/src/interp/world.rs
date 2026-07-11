@@ -63,6 +63,16 @@ pub struct SymFieldId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HandleFieldId(pub u32);
 
+/// A field name resolved past the symbol table to its per-store column
+/// slots. Slots are stable while no interning happens, so this is the
+/// once-per-pass form of an entity field read; a `None` slot means that
+/// store can hold no value under the name.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldSlots {
+    pub sym: Option<usize>,
+    pub num: Option<usize>,
+}
+
 /// Bridge layout for typed entity field matrices. Values still live on
 /// world-owned SoA matrices.
 #[derive(Clone, Debug, Default)]
@@ -1335,6 +1345,29 @@ impl World {
         let slot = self.sym_field_slot(field)?;
         self.entities.get(i)?;
         self.fields.sym_values.get(slot)?.get(i).copied().flatten()
+    }
+
+    /// A field name resolved past the symbol table to its per-store column
+    /// slots — the once-per-pass form of an entity field read. A `None` slot
+    /// means that store can hold no value under this name.
+    pub fn field_slots(&self, name: &str) -> FieldSlots {
+        match self.symbols.lookup(name) {
+            Some(sym) => FieldSlots {
+                sym: self.sym_field_slot(sym),
+                num: self.col_slot(sym),
+            },
+            None => FieldSlots { sym: None, num: None },
+        }
+    }
+
+    pub fn sym_field_at_slot(&self, i: usize, slot: Option<usize>) -> Option<Symbol> {
+        self.entities.get(i)?;
+        self.fields.sym_values.get(slot?)?.get(i).copied().flatten()
+    }
+
+    pub fn col_at_slot(&self, i: usize, slot: Option<usize>) -> Option<f64> {
+        self.entities.get(i)?;
+        self.fields.num_values.get(slot?)?.get(i).copied().flatten()
     }
 
     pub fn sym_field_set_at(&mut self, i: usize, field: FieldName, value: Symbol) {

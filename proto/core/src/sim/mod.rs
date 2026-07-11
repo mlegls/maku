@@ -624,9 +624,9 @@ impl Sim {
             ResolvedRowVal::PoseX => Val::Num(pose.expect("lowered pose read").x),
             ResolvedRowVal::PoseY => Val::Num(pose.expect("lowered pose read").y),
             ResolvedRowVal::PoseTheta => Val::Num(pose.expect("lowered pose read").angle_or(0.0)),
-            ResolvedRowVal::Field(sym) => entity_field_sym_at(row, *sym, &self.world),
-            ResolvedRowVal::FieldOr(sym, default) => {
-                let present = entity_field_sym_at(row, *sym, &self.world);
+            ResolvedRowVal::Field(slots) => entity_field_at_slots(row, *slots, &self.world),
+            ResolvedRowVal::FieldOr(slots, default) => {
+                let present = entity_field_at_slots(row, *slots, &self.world);
                 if matches!(present, Val::Nothing) {
                     self.eval_compiled_row_val(default, row, pose)
                 } else {
