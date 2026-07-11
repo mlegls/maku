@@ -1,11 +1,16 @@
 # live evolves + engine-clock advance — implementation design
 
-Status: semantics SETTLED (docs/notes/evolve-design.md — the closed/live
-sampling rule, step timing, per-slot epochs); this doc plans the
-implementation follow-up that evolve-design step 2 deferred: engine-clock
-advance through per-entity state, live evolves, and memoized monotone
-sampling for closed evolves. remat-design.md milestone 3 names the epoch
-side of the same work.
+Status: IMPLEMENTED (milestones 1-2 in cd1ab4d, milestone 3 in bec0735).
+Semantics per docs/notes/evolve-design.md. Two implementation notes on
+top of the design below: the liveness classifier roots keyword access —
+access rooted at the step fn's own params ((:x s), (:dt c)) is the
+fold's own state and stays CLOSED; only capture-rooted access ((:hp e))
+marks live. And live evolves accept a one-behind cell in the
+post-boundary sampling window (after the world tick increments, before
+the new boundary's pass) where replay is impossible; closed evolves
+keep exact-match-else-replay so memoization stays invisible.
+This unblocks evolve-design step 3 (re-express vel/slew/smooth/stages
+in lib over evolve).
 
 ## Current state
 

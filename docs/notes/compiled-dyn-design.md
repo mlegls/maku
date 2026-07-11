@@ -155,6 +155,19 @@ Landed. Deviations/notes vs the plan below:
   time; `(:vel exit)` map reads likewise when the capture is a literal
   map of nums/poses). These, not defs or the Interp fallback op, are
   the next coverage levers in expected-value order.
+- Follow-up (landed, 300b6cb): (b) and (c) — a LerpSmooth op keyed on a
+  statically resolved easing kind (env → defs → builtin resolution
+  mirrored per scope; env-captured Val::Builtin under another name also
+  resolves), and Form::Kw-head lowering. Discovery: the original
+  `:x`/`:y` arm was DEAD — it matched a 3-item Sym-head shape the
+  reader never emits (accessor sugar reads to 2-item Kw-head lists), so
+  `(:x pos)` had never lowered and PosX/PosY ops never fired. Now:
+  `(:x pos)`/`(:y pos)` emit pos ops when `pos` is unshadowed (a
+  captured `pos` bails — it wins at non-pos eval sites), and keyword
+  chains rooted at env-captured Maps/Poses fold to Const (sound because
+  each DynNode's program cache sits beside its own captured env; def
+  scope bails on all keyword access — F12 fresh-env rule). Remaining
+  lever: (a) slew — milestone B/C machinery.
 
 Original plan:
 

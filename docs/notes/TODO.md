@@ -67,9 +67,17 @@ work.
   once per tick boundary against the closed SigEnv, on-clock pose reads
   hit the settled cell and off-clock sampling replays unchanged — closed
   evolves stopped being O(n²); a motion remat's schema swap restarts the
-  epoch. Milestone 3 (deferred init thunks + syntactic liveness
-  classification + real-env live steps + off-clock error) remains, and
-  unblocks evolve-design step 3 (vel/slew/smooth/stages/pather in lib).
+  epoch. Milestone 3 is DONE (bec0735): init is a deferred thunk
+  evaluated at epoch start (closed env for closed, real env for live —
+  `(evolve (:pos e) ...)` remat continuity works), a syntactic liveness
+  classifier roots keyword access at the step fn's params (param-rooted
+  access is the fold's own state → closed; capture-rooted, channels,
+  rand, world-reading heads → live), live evolves advance in the
+  scanned pass against the real SigEnv/world, and off-clock live
+  sampling errors. Live evolves accept a one-behind cell in the
+  post-boundary sampling window; closed keep exact-match-else-replay.
+  This unblocks evolve-design step 3 (vel/slew/smooth/stages/pather in
+  lib over evolve) — now the next step on this track.
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
@@ -144,35 +152,36 @@ work.
   lower time; required pinning live-only cell reads in signal slots —
   Ctx.signal_scope — since a captured cell scope otherwise disabled it
   for 100% of corpus lowerings) but bought no corpus coverage: the bail
-  census shows the remaining interpreted volume is (a) homing-slew nodes
-  (scan + channel inputs → milestones B/C), (b) `lerpsmooth` with a
-  static easing-kind sym (an op away, 389k calls/83ms), (c) keyword
-  reads on captured poses/maps (foldable to Const at lower time). Those
-  are the next coverage levers, in that expected-value order — see the
-  design doc's milestone A follow-up notes. Then milestone B (input
-  slots + group evaluation). The interpreter path may remain as a
-  compatibility implementation, but hot steady-state execution should
-  not allocate or hash by node pointer.
+  census showed the remaining interpreted volume was (a) homing-slew
+  nodes (scan + channel inputs → milestones B/C), (b) `lerpsmooth` with
+  a static easing-kind sym, (c) keyword reads on captured poses/maps.
+  (b) and (c) are DONE (300b6cb): a LerpSmooth op with statically
+  resolved easing kind, real Form::Kw-head lowering — the old `:x`/`:y`
+  arm was dead code matching a form shape the reader never emits, so
+  `(:x pos)`/`(:y pos)` PosX/PosY ops fire for the first time — and
+  Const folding of keyword-access chains rooted at env-captured
+  Maps/Poses (sound: the program cache lives on the node beside its
+  captured env). Remaining lever: (a) slew's scan + channel inputs,
+  which is milestone B (input slots + group evaluation) territory. The
+  interpreter path may remain as a compatibility implementation, but hot
+  steady-state execution should not allocate or hash by node pointer.
 - Move the dyn kernel (and entity spec / state-schema semantic halves) to
   model/ as a backend-parametric `Dyn<E>`, AFTER the evolve re-expression
   shrinks the kernel (moving now would enshrine Vel/Stages, which become
   lib shapes). Direction + sequencing: `docs/notes/model-split.md`.
-- Compile entities-where predicates to row filters. Profiled (2026-07,
-  post-need_theta): `=` 3.6M calls / 442ms self and much of `*` 2.7M /
-  447ms are lib projector predicates like
-  `(fn [e] (* (= e.render :beam) (= e.kind :curve)))` run per entity per
-  tick via `resolve_predicate_query` (full apply_fn interpretation per
-  row: env alloc, builtin string dispatch, keyword field access).
-  reimu_vs_mima alone: `=` 2.58M/322ms. The predicate BODY SHAPE is a
-  conjunction (`*`/`and`) of `(= (:field e) :kw)` and numeric col
-  comparisons — recognize the expansion shape (never names) and lower to
-  a RowPredicate over interned sym columns / cols (the machinery
-  `sym_field_matches_at` and resolve_map_query already use), falling back
-  to apply_fn for anything unclassified. Cache the lowering per predicate
-  body Rc ptr (Fn vals are rebuilt per tick; their body Rc is site-stable
-  — verify). Kills the top two remaining profile rows in one pass and is
-  the row-filter half of compiled-dyn milestone C (rule/projector
-  lowering).
+- DONE (cfd2218): entities-where predicates shaped as conjunctions of
+  `(= (:field e) :kw)` tests compile to a RowPredicate over interned sym
+  columns (with `:kind` computed as entity_view does); recognition is
+  structural per query call (no cache — the sf_matches Fn is rebuilt per
+  call, and recognition is trivially cheap next to per-row apply_fn),
+  bails whole on anything else (mixed numeric tests fall back entirely
+  to preserve error/effect order), and dual-runs under
+  MAKU_LOWER_ORACLE. Also aligned entity_field_at's `:kind` for traced
+  pathers (`:pather`, not `:point`) with entity_view. Aggregate: `=`
+  452→193ms, `*` 455→312ms, entities-where inclusive 1569→1125ms.
+  Remaining on this track: numeric col comparisons (`(<= (:hp e) 0)`
+  shapes) and partial prefiltering — the row-filter half of compiled-dyn
+  milestone C (rule/projector lowering).
   Stance (decided): this is a load-time lowering (AOT at card load), not a
   JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays
