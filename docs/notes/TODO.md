@@ -356,6 +356,26 @@ work.
   (resolve_query ~6%), lowered-program integrand runs (genuine
   compute; compiled-dyn milestone B), Rc<RenderRow> per-row churn,
   compiled-rule predicate scans (~4%).
+  Round-16: three trims. Direct collider projectors (every slot
+  Const/EntityCol — the plain-bullet case after defcollider
+  flattening) materialize ColliderData by reference against &World:
+  no per-bullet DynCollider defs round-trip, no dyn eval of a
+  constant radius (subsumes the all-Stable fast path). Compiled
+  point render rows build from a per-pass slot plan (field→slot
+  assignment incl. theta/facing, alpha/opacity fallbacks is static
+  and first-write-wins), skipping RenderRowFields staging; non-
+  static shapes keep the generic path. Motion-state snapshots read
+  cells by slot index (slot id == key index by intern order) instead
+  of hashing through the schema's slot maps. Bare walls: fruit
+  574→429ms (−25%), bowap −16%, polar −17%, stars −12%, cradle −9%,
+  reimu −3%; scaled fruit rig (12k ticks, bullet count compounds)
+  16.9s→9.1s (−46%). Remaining from the round-16 sample:
+  step_motion_in + dyn pose/integrand eval ~30% (genuine compute —
+  compiled-dyn milestone B is now the top lever), collide-mat
+  residue ~9% (per-bullet pose eval + EntityCol field reads),
+  CollisionIndex::capture ~4%, motion-reader construction ~6%,
+  render extras vec growth + render_field_checked memo scans ~5%,
+  interpreted entities-where from control tasks (resolve_query).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
