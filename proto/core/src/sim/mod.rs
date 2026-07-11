@@ -514,13 +514,70 @@ impl Sim {
     fn run_standing_rules(&mut self) -> Result<(), String> {
         let rules = self.world.standing_rules.clone();
         for rule in rules {
-            for form in rule.body.iter() {
-                let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)
-                    .map_err(|e| format!("deftick: {}", e))?;
-                self.exec_tick_value(value)?;
+            for (form, compiled) in rule.body.iter().zip(rule.compiled.iter()) {
+                let result = (|| -> Result<(), String> {
+                    if let Some(compiled) = compiled {
+                        if oracle_enabled() {
+                            let before = self.world.render_rows.len();
+                            self.run_compiled_tick_form(compiled)?;
+                            let actual = self.world.render_rows.split_off(before);
+                            let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)?;
+                            self.exec_tick_value(value)?;
+                            assert_eq!(actual.as_slice(), &self.world.render_rows[before..],
+                                "compiled deftick render rows mismatch for {:?}", form);
+                            Ok(())
+                        } else {
+                            self.run_compiled_tick_form(compiled)
+                        }
+                    } else {
+                        let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)?;
+                        self.exec_tick_value(value)
+                    }
+                })();
+                result.map_err(|e| format!("deftick: {}", e))?;
             }
         }
         Ok(())
+    }
+
+    fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<(), String> {
+        let tests = form.predicate.resolve(&self.world);
+        for row in 0..self.world.entities.len() {
+            if !self.world.entities.is_alive(row)
+                || !resolved_row_tests_match(&tests, row, &self.world)
+            {
+                continue;
+            }
+            let pose = form.needs_pose
+                .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
+                .transpose()?;
+            let mut fields = RenderRowFields::default();
+            for (key, value) in &form.fields {
+                fields.push_kw(key.clone(), self.eval_compiled_row_val(value, row, pose.as_ref())?);
+            }
+            let rendered = fields.finish(&mut self.world, &self.ctx.sig)?;
+            self.world.render_rows.push(Rc::new(rendered));
+        }
+        Ok(())
+    }
+
+    fn eval_compiled_row_val(&self, value: &RowVal, row: usize, pose: Option<&Pose>) -> Result<Val, String> {
+        Ok(match value {
+            RowVal::Num(n) => Val::Num(*n),
+            RowVal::Kw(k) => Val::Kw(k.clone()),
+            RowVal::PoseX => Val::Num(pose.expect("lowered pose read").x),
+            RowVal::PoseY => Val::Num(pose.expect("lowered pose read").y),
+            RowVal::PoseTheta => Val::Num(pose.expect("lowered pose read").angle_or(0.0)),
+            RowVal::Field(field) => entity_field_at(row, field, &self.world, &self.ctx.sig)?,
+            RowVal::FieldOr(field, default) => {
+                let present = entity_field_at(row, field, &self.world, &self.ctx.sig)?;
+                if matches!(present, Val::Nothing) {
+                    self.eval_compiled_row_val(default, row, pose)?
+                } else {
+                    present
+                }
+            }
+        })
     }
 
     pub fn step(&mut self) -> Result<(), String> {

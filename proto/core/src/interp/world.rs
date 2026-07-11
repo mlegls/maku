@@ -764,6 +764,7 @@ impl Clone for EntityStore {
 pub struct StandingRule {
     pub key: Rc<str>,
     pub body: Rc<[Form]>,
+    pub(crate) compiled: Rc<[Option<Rc<super::rulelower::CompiledTickForm>>]>,
     pub env: Env,
 }
 

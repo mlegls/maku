@@ -34,6 +34,7 @@ mod motion;
 pub mod profile;
 mod projectors;
 mod rewrite;
+mod rulelower;
 mod sem;
 mod specs;
 mod spawn;
@@ -44,6 +45,7 @@ pub(crate) use builtins::*;
 pub use card::*;
 pub use colliders::*;
 pub use coerce::*;
+pub(crate) use engine::RenderRowFields;
 pub(crate) use lower::*;
 pub use r#dyn::*;
 pub use crate::model::{
@@ -53,6 +55,7 @@ pub use crate::model::{
 pub use motion::*;
 pub(crate) use projectors::*;
 pub(crate) use rewrite::*;
+pub(crate) use rulelower::*;
 pub use sem::*;
 pub(crate) use specs::*;
 pub(crate) use spawn::*;
@@ -1714,7 +1717,7 @@ fn is_query_value(v: &Val) -> bool {
 }
 
 #[derive(Debug)]
-struct RowPredicate {
+pub(crate) struct RowPredicate {
     tests: Vec<RowPredicateTest>,
 }
 
@@ -1724,7 +1727,7 @@ struct RowPredicateTest {
     value: Rc<str>,
 }
 
-fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
+pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     let Val::Fn { params, body, env } = q else { return None };
     let [Form::Sym(param)] = &params[..] else { return None };
     if &**param == "&"
@@ -1771,14 +1774,14 @@ fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
 /// Per-query resolved form of a RowPredicateTest: symbol lookups happen once
 /// per query, not once per row. A field or value that was never interned
 /// anywhere cannot match any row (mirrors sym_field_matches_at).
-enum ResolvedRowTest {
+pub(crate) enum ResolvedRowTest {
     Kind(Rc<str>),
     SymEq { field: FieldName, value: Symbol },
     Never,
 }
 
 impl RowPredicate {
-    fn resolve(&self, world: &World) -> Vec<ResolvedRowTest> {
+    pub(crate) fn resolve(&self, world: &World) -> Vec<ResolvedRowTest> {
         self.tests
             .iter()
             .map(|test| {
@@ -1794,7 +1797,7 @@ impl RowPredicate {
     }
 }
 
-fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, world: &World) -> bool {
+pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, world: &World) -> bool {
     tests.iter().all(|test| match test {
         ResolvedRowTest::Kind(value) => world.entities.dyn_figure(row).is_some_and(|figure| {
             let kind = match figure.repr() {
@@ -1969,26 +1972,28 @@ fn singleton_or_array(mut vals: Vec<Val>) -> Val {
     }
 }
 
-fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
+pub(crate) fn entity_pose_at(i: usize, world: &World, sig: &SigEnv) -> Result<Pose, String> {
+    if let Some((x, y)) = world.entities.sampled_pos(i, world.tick) {
+        return Ok(Pose::point(x, y));
+    }
+    let dyn_figure = world
+        .entities
+        .dyn_figure(i)
+        .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
+    let tau = world.entity_motion_tau(i, world.tick);
+    let readers = entity_motion_readers(i, world);
+    let state = MotionState::new();
+    let p = dyn_figure_pose_in(
+        dyn_figure,
+        tau,
+        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()).pos_only(),
+    )?;
+    Ok(Pose::point(p.x, p.y))
+}
+
+pub(crate) fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
     match field {
-        "pos" => {
-            if let Some((x, y)) = world.entities.sampled_pos(i, world.tick) {
-                return Ok(Val::Pose(Pose::point(x, y)));
-            }
-            let dyn_figure = world
-                .entities
-                .dyn_figure(i)
-                .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
-            let tau = world.entity_motion_tau(i, world.tick);
-            let readers = entity_motion_readers(i, world);
-            let state = MotionState::new();
-            let p = dyn_figure_pose_in(
-                dyn_figure,
-                tau,
-                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()).pos_only(),
-            )?;
-            Ok(Val::Pose(Pose::point(p.x, p.y)))
-        }
+        "pos" => Ok(Val::Pose(entity_pose_at(i, world, sig)?)),
         "vel" => {
             let vel = world.entity_velocity_from_samples(i, world.tick);
             Ok(Val::Pose(Pose::point(vel.0, vel.1)))
@@ -2055,16 +2060,25 @@ fn entity_field_value(v: Val, field: &str, world: &World, sig: &SigEnv) -> Resul
 fn sf_deftick(
     items: &[Form],
     env: &Env,
-    _ctx: &mut Ctx,
+    ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Val, String> {
     if items.len() < 2 {
         return Err("deftick: expected body".into());
     }
     let key: Rc<str> = format!("{:?}", items).into();
+    let body = items[1..]
+        .iter()
+        .map(|form| expand_macros(form, env, ctx, world))
+        .collect::<Result<Vec<_>, _>>()?;
+    let compiled = body
+        .iter()
+        .map(|form| rulelower::lower_tick_form(form, env, ctx, world).map(Rc::new))
+        .collect::<Vec<_>>();
     let rule = StandingRule {
         key: key.clone(),
-        body: items[1..].to_vec().into(),
+        body: body.into(),
+        compiled: compiled.into(),
         env: env.clone(),
     };
     match world.standing_rules.iter_mut().find(|r| r.key == key) {

@@ -1096,6 +1096,78 @@
     }
 
     #[test]
+    fn compiled_render_rule_matches_interpreted_rows() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (render {:shape :point
+                    :x (:x p) :y (:y p)
+                    :theta (value-or e.facing (:th p))
+                    :scale (value-or e.scale 1)
+                    :alpha (value-or e.opacity 1)
+                    :hue (value-or e.hue 0)
+                    :family e.family :color e.color :variant e.variant})))
+       (entities-where (fn [e] (* (= e.render :sprite) (= e.kind :point))))))
+(defpattern p []
+  (par
+    (spawn (pose c[1 2]) {:render :sprite :facing 30 :scale 2 :opacity 0.75 :hue 120
+                           :family :orb :color :red :variant :large})
+    (spawn (pose c[3 4]) {:render :sprite :family :orb :color :blue :variant :small})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        sim.step().unwrap();
+        let rows = sim.render();
+        assert_eq!(rows.len(), 2);
+        let RenderData::Point { x, y, theta, scale, alpha, hue } = rows[0].data else { panic!() };
+        assert_eq!((x, y, theta, scale, alpha, hue), (1.0, 2.0, 30.0, 2.0, 0.75, 120.0));
+        assert_eq!((rows[0].sym("family"), rows[0].sym("color"), rows[0].sym("variant")),
+            (Some("orb"), Some("red"), Some("large")));
+        let RenderData::Point { x, y, theta, scale, alpha, hue } = rows[1].data else { panic!() };
+        assert_eq!((x, y, theta, scale, alpha, hue), (3.0, 4.0, 0.0, 1.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn compiled_render_rule_bails_and_macroexpands_at_registration() {
+        const CARD: &str = r#"
+(defmacro point-row [x y] `(emit :render {:shape :point :x ~x :y ~y}))
+(deftick
+  (map (fn [e]
+         (let [p (:pos e) spare 1]
+           (point-row (:x p) (:y p))))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)] (point-row (:x p) (:y p))))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(defpattern p [] (spawn (pose c[5 6]) {:render :sprite}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_none());
+        assert!(sim.world.standing_rules[1].compiled[0].is_some());
+        sim.step().unwrap();
+        assert_eq!(sim.render().len(), 2);
+        assert!(sim.render().iter().all(|row| matches!(row.data,
+            RenderData::Point { x: 5.0, y: 6.0, .. })));
+    }
+
+    #[test]
+    fn compiled_value_or_preserves_keyword_field() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (emit :render {:shape :point :tag (value-or (:tag e) 5)}))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(defpattern p [] (spawn (pose c[0 0]) {:render :sprite :tag :kept}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        sim.step().unwrap();
+        assert_eq!(sim.render()[0].sym("tag"), Some("kept"));
+    }
+
+    #[test]
     fn literal_and_computed_render_maps_match() {
         const LITERAL: &str = r#"
 (deftick

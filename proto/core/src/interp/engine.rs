@@ -381,7 +381,7 @@ fn curve_samples_options(v: Val) -> Result<(f64, f64), String> {
 }
 
 #[derive(Default)]
-struct RenderRowFields {
+pub(crate) struct RenderRowFields {
     shape: Option<Val>,
     x: Option<Val>,
     y: Option<Val>,
@@ -398,7 +398,7 @@ struct RenderRowFields {
 }
 
 impl RenderRowFields {
-    fn push_kw(&mut self, key: Rc<str>, value: Val) {
+    pub(crate) fn push_kw(&mut self, key: Rc<str>, value: Val) {
         match key.as_ref() {
             "shape" => set_first(&mut self.shape, value),
             "x" => set_first(&mut self.x, value),
@@ -416,7 +416,7 @@ impl RenderRowFields {
         }
     }
 
-    fn finish(self, world: &mut World, sig: &SigEnv) -> Result<RenderRow, String> {
+    pub(crate) fn finish(self, world: &mut World, sig: &SigEnv) -> Result<RenderRow, String> {
         let shape_value = self.shape.ok_or("render: missing :shape")?;
         let shape = match &shape_value {
             Val::Kw(k) => k.clone(),
