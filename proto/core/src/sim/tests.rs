@@ -4066,12 +4066,16 @@ fn predicate_queries_drive_manip() {
 }
 
 #[test]
-fn prelude_and_or_are_min_max() {
+fn prelude_and_or_short_circuit() {
     const CARD: &str = r#"
 (defchannel $and3 (and 1 1 1))
 (defchannel $and0 (and 1 0 1))
 (defchannel $or1 (or 0 0 1))
-(defchannel $masks (and 3 2))
+(defchannel $last (and 2 3))
+(defchannel $first (or 3 5))
+;; short-circuit: the guarded arm never evaluates (it would error)
+(defchannel $guard (and 0 (undefined-function 1)))
+(defchannel $default (or (get {:a 1} :missing) 7))
 (defpattern p [] (spawn (pose c[0 0]) {:tag :x}))
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
@@ -4080,7 +4084,12 @@ fn prelude_and_or_are_min_max() {
         Some(Val::Num(v)) => v,
         other => panic!("${n}: {other:?}"),
     };
-    assert_eq!((num("and3"), num("and0"), num("or1"), num("masks")), (1.0, 0.0, 1.0, 2.0));
+    assert_eq!((num("and3"), num("and0"), num("or1")), (1.0, 0.0, 1.0));
+    // deciding-value semantics, not min/max
+    assert_eq!((num("last"), num("first")), (3.0, 3.0));
+    assert_eq!(num("guard"), 0.0);
+    // nothing is falsy: (or maybe-missing d) is a field-read default
+    assert_eq!(num("default"), 7.0);
 }
 
 #[test]

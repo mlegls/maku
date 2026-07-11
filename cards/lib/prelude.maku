@@ -29,18 +29,26 @@
 (defn inc [x] (+ x 1))
 (defn dec [x] (- x 1))
 
-;; Numeric-mask logic: bool IS num, so `and` is min and `or` is max —
-;; masks stay normalized (unlike `*`, which scales, and `+`, which
-;; counts). STRICT like all mask arithmetic: every argument evaluates,
-;; there is no short-circuit — guard reads of maybe-missing fields with
-;; value-or, not with `and`.
-(defn fold-op* [op forms]
+;; SHORT-CIRCUITING and/or over the decided truthiness: only non-0 nums
+;; are truthy; nothing and every non-num are falsy. Each returns the
+;; DECIDING VALUE — `and` the first falsy argument (or the last one),
+;; `or` the first truthy argument (or the last one) — so
+;; `(or (:k e) 1)` defaults a maybe-missing read and
+;; `(and (:k e) (< (:k e) 1))` guards one; later arguments never
+;; evaluate once the answer is known. Under static typing the and/or
+;; test position stays exempt from the nums-only bool rule (that
+;; exemption is what makes the guards useful). For strict mask
+;; arithmetic use min/max (normalized), * (scales), or + (counts).
+(defn chain-test* [keep-truthy forms]
   (loop [xs (rest forms) acc (first forms)]
     (if (= (count xs) 0)
       acc
-      (recur (rest xs) `(~op ~acc ~(first xs))))))
-(defmacro and [x & xs] (fold-op* `min (concat [x] xs)))
-(defmacro or [x & xs] (fold-op* `max (concat [x] xs)))
+      (recur (rest xs)
+             (if (< keep-truthy 0.5)
+               `(let [__sc-x ~acc] (if __sc-x ~(first xs) __sc-x))
+               `(let [__sc-x ~acc] (if __sc-x __sc-x ~(first xs))))))))
+(defmacro and [x & xs] (chain-test* 0 (concat [x] xs)))
+(defmacro or [x & xs] (chain-test* 1 (concat [x] xs)))
 
 (defn value-or [x d] (if (nothing? x) d x))
 (defn set-col [e col v] (change-col e col (fn [_] v)))

@@ -179,6 +179,31 @@ The frame is parallel-ready under these rules: each batch's columns can be
 filled by independent workers; item order is fixed by rule registration
 before any fill starts.
 
+## Mesh renderers are hosts (decided 2026-07)
+
+A render-to-mesh package (frame → instance buffers / tessellated
+strips) is architecturally A HOST: a separate, optional consumer of the
+public frame API with no privileged relationship to the engine — it
+just implements the drawing more efficiently than a naive per-row host
+loop would. This follows from schemas being user-defined: a mesh
+renderer must be schema-AWARE (its texturing/styling rules come from
+its own external API, or it defines them for the schemas it knows), so
+baking one into the engine would privilege one schema. Different render
+schemas get separately packaged mesh renderers (a touhou pack, a
+vampire-survivors pack, …), all consuming the same `render_frame()`.
+Consequences:
+- the engine's obligation ends at the frame: typed columns, stable
+  schema identity, row fallback — nothing texture- or genre-shaped;
+- style vocabulary stays host/library policy (types.md) — a mesh pack
+  ships its own style table or takes one as configuration;
+- packing to f32 GPU buffers happens inside the pack, which is the
+  natural narrowing point for render columns under the scale target.
+
+Motivation snapshot: at ~2k bullets the naive per-row host draw
+(~1µs/call immediate mode) already costs 5-10x the engine tick
+(~200µs); at the 10k-normal scale target per-row drawing is
+disqualifying while the tick is still ~1ms.
+
 ## Sequencing
 
 1. Transport types + `render_rows: Vec<RenderItem>` migration (rows only —
