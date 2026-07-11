@@ -103,8 +103,23 @@ headers, not here.
   per-row snapshots (readers are constructed per entity per phase).
   Also open: partial prefiltering for mixed entities-where predicates
   (recognized-plus-residual conjunctions still fall back whole).
-  Stance (decided): this is a load-time lowering (AOT at card load), not a
-  JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
+  Stance (revised 2026-07): the lowering tiers. The current tier is
+  AOT-to-IR at card load (NumProgram, executed by the `run`/`run_lanes`
+  interpreter loops); the planned destination is a JIT/native-codegen
+  tier that compiles the SAME NumProgram per distinct program and slots
+  in behind the same (program, input lanes, scratch) boundary — the
+  match-loop executors demote to the fallback tier for cold/uncompiled
+  programs. Interim work must prepare for that, not fight it: keep the
+  executor boundary narrow (batch call sites hand over lanes + scratch,
+  never reach into op internals), keep ops total and callback-free (the
+  planned Interp fallback op is the one interpreter re-entry point, and
+  it defines the JIT→interpreter ABI), make captures/rand INPUT SLOTS so
+  programs are per-site-shared and compile once, and treat structural
+  program interning as the compile-cache key. Hard requirement carried
+  into codegen: bit-exact f64 semantics vs the IR interpreter (same op
+  order, same libm, no fast-math) — the lowering oracle and replay/scrub
+  determinism both depend on it.
+  The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays
   interpreted and user-facing permanently — it is cold and tooling wants
   it; the PER-ENTITY HOT LOOPS (dyn columns, projector bodies, tick rules

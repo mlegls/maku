@@ -1,10 +1,18 @@
 # compiled dyn — implementation design
 
-Status: stance SETTLED (docs/notes/TODO.md "Compile dyn evaluation to a flat
-program"): load-time lowering (AOT at card load / figure construction), not a
-JIT; the control plane stays interpreted permanently; per-entity hot loops
-(dyn columns, projector bodies, tick rules) are the replacement target, dyn
-first. This doc turns the stance into a plan. Profile motivation (aggregate,
+Status: stance REVISED 2026-07 (docs/notes/TODO.md "Compile dyn evaluation
+to a flat program"): load-time lowering to the NumProgram IR now, with a
+JIT/native-codegen tier as the planned destination — codegen compiles the
+same IR per distinct program behind the same (program, input lanes,
+scratch) executor boundary, and the IR interpreter loops become the cold
+fallback. The control plane stays interpreted permanently; per-entity hot
+loops (dyn columns, projector bodies, tick rules) are the replacement
+target, dyn first. Interim rules for JIT-readiness: narrow executor
+boundary, total callback-free ops (Interp fallback op = the one
+interpreter re-entry), captures/rand as input slots (per-site program
+sharing), structural interning as the compile cache key, and bit-exact
+f64 semantics across tiers (oracle + replay determinism). This doc turns
+the stance into a plan. Profile motivation (aggregate,
 8 representative cards, post entities-where/value-or work): dyn:vel 879ms and
 dyn:closed-pt 846ms self are the top two rows; dyn:frame 410ms is mostly
 dispatch around them.
