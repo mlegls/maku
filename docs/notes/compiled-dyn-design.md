@@ -309,8 +309,11 @@ ops for the homing-slew integrands.
 
 The host-boundary half — SoA render output (typed columns per compiled
 rule, schema objects hosts negotiate against, `render_frame()` API) — is
-designed in render-output-design.md (round 21); it settles the render
-semantics/API the JIT's render kernels compile against.
+DONE (round 21, render-output-design.md): compiled point rules fill
+column batches (direct numeric gather, staged schema checks,
+abort-and-rerun error parity), hosts read the frame in place. This
+settles the render semantics/API the JIT's render kernels compile
+against — the batch fill is the render surface's kernel seam (gap 4).
 
 - Scan ADVANCE (step_motion) ops join the program (fused eval+step).
 - dyn cols (`refresh_dyn_cols`) run their `DynNum` programs on the same

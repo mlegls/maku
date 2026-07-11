@@ -140,26 +140,29 @@ headers, not here.
   investments that do survive: SoA layout, spec-store dedup, group
   evaluation of shared programs, fixed scratch, and hoisting
   per-spawn-site invariants to load time.
-- Perf campaign (ongoing; rounds 7-20 landed — narrative in git history).
+- Perf campaign (ongoing; rounds 7-21 landed — narrative in git history).
   Rig: `MAKU_WALL_ONLY=1 cargo run --release --example profile` for bare
   walls (the flat profiler's own bookkeeping is ~18% on dense cards);
   macOS `sample` on the release binary is ground truth; scaled case
   `profile cards/tutorials/t03.maku ex3-fruit-colors 12000`. Bare walls
-  as of round 20: fruit 151.5ms/900t (5050ms at round 7 — 33x), scaled
-  12k rig 3.10s (3.71s at round-20 start, −16% same-session; 16.9s at
-  round 15), reimu 131.6ms, spell-2 21.0ms. The round-20 sample is FLAT —
-  no lever ≥6% remains; what's left, in payoff order:
-  - compiled render row eval (`eval_compiled_row_val`) ~6% + row pool
-    recycle ~2%: near its floor as row-at-a-time Val round-trips; the
-    designed fix is milestone-C SoA render output (typed columns per
-    compiled rule, host schema negotiation) — a design item, not a trim;
-  - `fast_pos_pose` ~4%: called 2x/row/tick (collide fill + cull); a
+  as of round 21: fruit 119.3ms/900t (5050ms at round 7 — 42x), scaled
+  12k rig 2.49s (3.11s at round-21 start, −20% same-session; 16.9s at
+  round 15), reimu ~137ms, spell-2 20.7ms, cradle 48.7ms. Round 21 =
+  milestone-C SoA render output (render-output-design.md): compiled
+  point rules emit column batches with direct numeric gather; the
+  `eval_compiled_row_val` + recycle rows collapsed. Remaining levers on
+  the round-21 sample, in payoff order:
+  - compiled tick passes ~28% of step (predicate scan + batch field
+    reads/sym columns) but mostly irreducible per-row reads now; sym
+    columns still clone `Rc<str>` per row (a per-batch symbol-id table
+    is the next representation step if it ever shows);
+  - collision index capture ~14% of step (AABB build, memory-bound);
+  - `fast_pos_pose` ~11%: called 2x/row/tick (collide fill + cull); a
     cull-time reuse of the collide pose is exact for Vel chains ONLY if
     nothing between the phases mutates n2 state or figures — needs a
     rule-effect audit before it's sound;
-  - collision index capture ~3%: AABB build, memory-bound;
-  - remaining interpreted rule scans ~4% combined (beam/cull/hp rules —
-    milestone-C rule-lowering surface);
+  - remaining interpreted rule scans (`evaluate_list_inner` ~8% — beam/
+    cull/hp rules) — the rule-lowering surface;
   - milestone-B widening (input slots, interning, ClosedPt group pose)
     is now JIT prep more than wall win on this rig.
 - Follow-ups on the load-time AST rewrite pass (`interp/rewrite.rs`):

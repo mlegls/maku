@@ -1,9 +1,29 @@
 # SoA render output — milestone C design (host boundary)
 
-Status: DESIGN 2026-07, round 21. Companion to compiled-dyn-design.md
-(milestone C) and types.md "Schema Checking" (render kinds/schemas). Goal:
-settle the render-output semantics and host API before JIT work — the JIT
-optimizes over these settled semantics, it does not get to change them.
+Status: DESIGNED AND LANDED 2026-07, round 21 (e1459aa transport,
+d43a480 batch fill + hosts, 66df739 small-pass threshold). Companion to
+compiled-dyn-design.md (milestone C) and types.md "Schema Checking"
+(render kinds/schemas). Goal: settle the render-output semantics and host
+API before JIT work — the JIT optimizes over these settled semantics, it
+does not get to change them.
+
+Implementation deltas vs the design below:
+- **Direct numeric gather**: a `Field`/`FieldOr` column whose name has no
+  sym-field slot provably cannot yield a keyword (`entity_field_at_slots`
+  checks sym first), so it fills by direct num-column reads —
+  `col_at_slot` per row plus a Num/pose-read default — skipping the
+  per-row Val round-trip. Pose-component columns read the pose pass
+  directly. This, not the batch transport itself, was most of the wall
+  win (scaled fruit rig 3111 → ~2490 ms, −20%; fruit 900t 151.5 → 119.3).
+- **Small-pass threshold**: passes under 16 matched rows keep the pooled
+  row path — per-batch column allocs cost more than a few row boxes
+  there (measured on lasers/reimu). Both paths are exact; the frame is a
+  mixed stream by design.
+- The pos_only fast pose applies whenever no lowered value reads `:th`
+  (the stock touhou rule reads `:th` via the `:theta` default, so it
+  takes the full pose path).
+- Batch bodies are dropped, not pooled — a few column Vecs per rule per
+  tick is nothing next to the per-row box churn they replace.
 
 ## What this replaces
 
