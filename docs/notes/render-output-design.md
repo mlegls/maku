@@ -24,6 +24,10 @@ Implementation deltas vs the design below:
   takes the full pose path).
 - Batch bodies are dropped, not pooled — a few column Vecs per rule per
   tick is nothing next to the per-row box churn they replace.
+- Columns are f64 today; under the 2026-07 scale target (TODO.md: 10k
+  normal, 100k–1M ceiling) render columns are in the f32 hot-column
+  class — the natural moment to narrow is when they become GPU instance
+  buffers, since hosts consume f32 anyway (web already casts per value).
 
 ## What this replaces
 

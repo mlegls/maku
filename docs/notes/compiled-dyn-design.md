@@ -11,7 +11,9 @@ target, dyn first. Interim rules for JIT-readiness: narrow executor
 boundary, total callback-free ops (Interp fallback op = the one
 interpreter re-entry), captures/rand as input slots (per-site program
 sharing), structural interning as the compile cache key, and bit-exact
-f64 semantics across tiers (oracle + replay determinism). This doc turns
+semantics across tiers (oracle + replay determinism; per the 2026-07
+scale target the width contract is per storage class — f64 control
+plane, f32 hot columns — see readiness item 5). This doc turns
 the stance into a plan. Profile motivation (aggregate,
 8 representative cards, post entities-where/value-or work): dyn:vel 879ms and
 dyn:closed-pt 846ms self are the top two rows; dyn:frame 410ms is mostly
@@ -48,13 +50,23 @@ interpreted. Gaps, in dependency order:
    walk per row — their batching rounds build the seam the JIT drops
    into.
 5. **Determinism across tiers**: kernels call shared extern math shims
-   (sin/cos/pow/rem_euclid — no inlined vector-math lib, no fast-math);
-   oracle extends to a three-way interpreter ↔ IR-loop ↔ JIT check.
-6. **Tech/platform**: cranelift is the presumptive backend (pure Rust,
-   fast compile, fits lazy compile-at-first-eval with the IR loop as
-   warmup); macOS hardened runtime needs MAP_JIT handling. Decided: the
-   IR interpreter tier stays a permanently supported backend, not a
-   transitional one — a wasm/web host cannot JIT.
+   (sin/cos/pow/rem_euclid — no platform libm, no fast-math, GPU tiers
+   included); oracle extends to a three-way interpreter ↔ IR-loop ↔ JIT
+   check. REVISED 2026-07 (scale target, TODO.md): the contract is same
+   ops/order/WIDTH per storage class, not blanket f64 — control plane
+   stays f64, hot columns (positions, integrator state, radii, render)
+   go f32. The IR gets a width per program; the oracle doubles as the
+   f32-drift meter over the card corpus.
+6. **Tech/platform**: cranelift is the presumptive native backend (pure
+   Rust, fast compile, fits lazy compile-at-first-eval with the IR loop
+   as warmup); macOS hardened runtime needs MAP_JIT handling. REVISED
+   2026-07: a wasm host cannot do native codegen, but it CAN instantiate
+   a generated wasm module at card load importing the same linear
+   memory — kernels read/write the SoA columns in place. Same
+   NumProgram lowering, second emission target; and since cards are
+   known in advance, that emission can run offline at publish time
+   (precompiled kernel module shipped with the card). The IR interpreter
+   tier stays permanently supported as the universal fallback.
 
 Parallelism (decided, round 21): data-parallel execution of the
 per-entity loops is a backend/driver property, NOT an IR marking — every
@@ -303,7 +315,14 @@ spawn SITE; unlocks cross-spawn sharing for rand-bearing groups and is
 what the capture-vector plumbing below describes), ClosedPt group pose
 evaluation (the pose fill for closed shapes still runs per row), AxisSel
 lane scatter, and — per the milestone-A bail census — ReadScan + Channel
-ops for the homing-slew integrands.
+ops for the homing-slew integrands. The 2026-07 scale target (TODO.md:
+10k normal, 100k–1M ceiling) promotes input slots + interning from JIT
+prep to load-bearing: entity = (spec id, capture vector, state cells) is
+the only representation that fits 1M rows, and structural interning is
+both the compile-cache key and the offline-AOT key. Related group-level
+lever recorded there: integrator-state dedup per (program, captures,
+birth) — ring lanes carry bit-identical folds, the per-bullet angle
+lives in the wrapper frame.
 
 ### C — beyond figure signals
 

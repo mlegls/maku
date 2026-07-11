@@ -140,6 +140,46 @@ headers, not here.
   investments that do survive: SoA layout, spec-store dedup, group
   evaluation of shared programs, fixed scratch, and hoisting
   per-spawn-site invariants to load time.
+- Scale + representation target (DECIDED 2026-07): ~10k live bullets is
+  the NORMAL state, 100k–1M is the design ceiling (DMK parity), on the
+  web host included. Current cost ~100ns/bullet-tick single-threaded
+  (≈150k bullet-ticks per 60Hz frame) — 10k is already fine; 100k needs
+  f32 columns + kernel codegen + per-layer streaming collision; 1M adds
+  threads (fork/join amortizes at ms-scale ticks, unlike today) or GPU.
+  Consequences, in dependency order:
+  - **Mixed numeric width is the contract, not blanket f64.** f64 was
+    Val/EDN inheritance, never load-bearing: determinism means same
+    ops/order/width per tier, and replay compatibility — both restate
+    over f32. Control plane (interpreter, Val, spawn-time math) stays
+    f64; HOT columns (positions, integrator state, collider radii,
+    render batches) go f32 — halves bandwidth (the profile's top fixed
+    cost), doubles SIMD lanes, and legalizes GPU tiers (WGSL has no
+    f64). Care points: large-angle trig argument reduction inside the
+    shared math shims (possibly f64 internally), long-lived integrators.
+    tau is already integer-tick-anchored, so no time accumulation
+    hazard. Gate: run the card corpus with f32 columns against the f64
+    interpreter via MAKU_LOWER_ORACLE and read the measured drift —
+    the oracle is the precision meter, not a guess.
+  - **Entity = (spec id, capture vector, state cells).** Per-row
+    Rc-laden entities don't fly at 1M rows; input slots + structural
+    interning (compiled-dyn milestone B open half / JIT gap 2) is
+    load-bearing on three paths now: kernels, memory layout, offline
+    card AOT. It is the next round's work.
+  - **Group integrator dedup**: ring lanes often carry bit-identical
+    integrator state (the per-bullet angle lives in the ConstFrame
+    wrapper) — one integrator per (program, captures, birth) group,
+    per-lane frame transforms. Thousands of bullets, dozens of folds.
+  - **Collision restructure**: general AABB capture → per-layer
+    streaming passes (player-hit/graze are N-vs-few point tests; ~1–2ms
+    for 1M in f32 SIMD, no index). Keeps gameplay collision on the
+    deterministic CPU tier even if positions/render move to GPU (only
+    contact EVENTS read back).
+  - **Channel-free bullets recompute, never table**: closed dyns ARE
+    the precomputed form (program + captures in registers beat streamed
+    position tables at scale); bombs/cancels are cull masks, so
+    channel-freeness survives interaction. Cards known in advance ⇒
+    kernel codegen can happen offline at publish (wasm module per card,
+    same NumProgram lowering as the native JIT), runtime binds channels.
 - Perf campaign (ongoing; rounds 7-21 landed — narrative in git history).
   Rig: `MAKU_WALL_ONLY=1 cargo run --release --example profile` for bare
   walls (the flat profiler's own bookkeeping is ~18% on dense cards);
