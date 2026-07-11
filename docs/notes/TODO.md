@@ -270,11 +270,25 @@ work.
   classification skipping view construction for Stable/unscoped
   projectors. Pairs 992→510ms (rest is genuine near-neighbor density in
   homing streams / dense rings); walls: reimu 939→629ms, spell-2
-  385→215ms. Remaining fixed-overhead levers, in payoff order:
-  `phase:collide-mat` 266ms self (first pose eval + per-entity readers +
-  projector materialization), `phase:rules` 118ms self, snapshot-free
-  `motion_readers` (77ms self at ~1M calls — the design-doc cheap win #1,
-  still open), `sig:setup` 17ms (Ctx/World per interpreted signal eval).
+  385→215ms.
+  Round-11: collision facts are now LAZY per queried layer pair — the
+  pass only captures a snapshot (collider rows, union AABBs, per-layer
+  entity lists, eligibility) into `World::CollisionIndex`; the
+  `(collisions :a :b)` query computes layer-a × layer-b with AABB
+  rejection, memoized per tick as the Rc CollisionSet payload. Query
+  results derive from the captured snapshot, never live state (control
+  tasks keep seeing the previous tick's facts), and same-layer bullet
+  clouds nobody queries are never narrow-phased; the round-10 sweep is
+  superseded and removed. Under MAKU_LOWER_ORACLE=1 every fresh query
+  asserts against a raw all-pairs scan of the snapshot. Eager pair work
+  (510ms, and 1603ms on the newly added miracle-fruit profile case) →
+  63ms capture + 2.7ms queries; walls: spell-2 215→66ms, reimu
+  629→365ms, fruit 5050→3555ms. Remaining fixed-overhead levers, in
+  payoff order: `phase:collide-mat` 1677ms self, 1412 of it fruit
+  (per-entity pose eval + snapshot readers + projector clone/eval — the
+  design-doc cheap win #1 `motion_readers` at 544ms/6.6M calls feeds
+  it), `phase:rules` 679ms self, `phase:scan-step` 323, `phase:cull`
+  205, `sig:setup` 17 (Ctx/World per interpreted signal eval).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
