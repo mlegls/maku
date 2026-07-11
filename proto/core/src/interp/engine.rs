@@ -508,6 +508,10 @@ impl RenderRowFields {
             other => return Err(format!("render: unsupported shape :{}", other)),
         };
         let mut row = RenderRow::plain(data);
+        let num_count = self.extras.iter().filter(|(_, v)| matches!(v, Val::Num(_))).count();
+        let sym_count = self.extras.iter().filter(|(_, v)| matches!(v, Val::Kw(_))).count();
+        row.nums.reserve_exact(num_count);
+        row.syms.reserve_exact(sym_count);
         let mut checked = checked;
         let mut check = |world: &mut World, key: &Rc<str>, kind: RenderFieldKind| {
             if let Some(memo) = checked.as_deref_mut() {
