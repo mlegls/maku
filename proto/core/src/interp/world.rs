@@ -768,7 +768,7 @@ pub struct StandingRule {
     pub env: Env,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CollisionFact {
     pub a: Symbol,
     pub b: Symbol,

@@ -72,6 +72,7 @@ struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynCollider>,
+    broadphase: Vec<(f64, f64, f64, f64, usize)>,
 }
 
 impl ColliderScratch {
@@ -79,6 +80,7 @@ impl ColliderScratch {
         self.rows.clear();
         self.ranges.clear();
         self.defs.clear();
+        self.broadphase.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }

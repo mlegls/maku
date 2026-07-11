@@ -112,6 +112,23 @@ pub enum ColliderProjectorExpr {
     Cond { clauses: Rc<[(Option<Form>, Rc<[ColliderProjectorValue]>)]>, env: Env, scope: Option<ProjectorScope> },
 }
 
+impl ColliderProjectorExpr {
+    pub(crate) fn needs_views(&self) -> bool {
+        match self {
+            ColliderProjectorExpr::Stable(_) => false,
+            ColliderProjectorExpr::Circle(spec) => spec.scope.is_some(),
+            ColliderProjectorExpr::CapsuleChain(spec) => spec.scope.is_some(),
+            ColliderProjectorExpr::Callable { .. } => true,
+            ColliderProjectorExpr::Cond { clauses, scope, .. } => {
+                scope.is_some()
+                    || clauses.iter().any(|(_, children)| {
+                        children.iter().any(|child| child.expr.needs_views())
+                    })
+            }
+        }
+    }
+}
+
 /// A source-level collider projector expression after dyn-lifting and schema
 /// checking for a collider slot.
 #[derive(Clone, Debug)]
@@ -187,6 +204,51 @@ impl ColliderProjectorValue {
 #[derive(Clone, Debug)]
 pub struct ColliderProjector {
     pub projectors: Rc<[ColliderProjectorValue]>,
+}
+
+impl ColliderProjector {
+    pub(crate) fn needs_views(&self) -> bool {
+        self.projectors.iter().any(|value| value.expr.needs_views())
+    }
+}
+
+#[cfg(test)]
+mod collider_projector_tests {
+    use super::*;
+
+    #[test]
+    fn needs_views_classifies_projector_algebra() {
+        let stable = ColliderProjectorValue::stable(Vec::new());
+        assert!(!stable.expr.needs_views());
+
+        let scoped_circle = ColliderProjectorValue::circle(CircleProjectorSpec {
+            layer: Symbol(0),
+            radius: ProjectorNum::Const(1.0),
+            env: Env::empty(),
+            scope: Some(ProjectorScope {
+                entity: "e".into(),
+                context: "ctx".into(),
+                figure: FigureProjectorKind::Pose,
+            }),
+        });
+        assert!(scoped_circle.expr.needs_views());
+
+        let callable = ColliderProjectorValue::callable(
+            FigureProjectorKind::Pose,
+            vec!["e".into(), "ctx".into()],
+            Vec::<Form>::new().into(),
+            Env::empty(),
+        );
+        assert!(callable.expr.needs_views());
+
+        let cond = ColliderProjectorValue::cond(
+            FigureProjectorKind::Pose,
+            vec![(None, vec![stable].into())],
+            Env::empty(),
+            None,
+        );
+        assert!(!cond.expr.needs_views());
+    }
 }
 
 /// Literal meta forms are lifted through DynLike before merging so static keys
