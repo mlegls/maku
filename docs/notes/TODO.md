@@ -376,6 +376,28 @@ work.
   CollisionIndex::capture ~4%, motion-reader construction ~6%,
   render extras vec growth + render_field_checked memo scans ~5%,
   interpreted entities-where from control tasks (resolve_query).
+  Round-17: five trims. Compiled query tests and render row values
+  resolve past the symbol table to store SLOTS per pass (FieldSlots:
+  per-row reads are two Vec indexes, no slot-map hash); constant
+  frame parents (ConstFrame after Const folding) pre-bake their
+  heading sin/cos at construction, removing a sincos per pose eval
+  (Pose::compose_with_rot keeps the math identical); the collision
+  index recycles the collider scratch buffers through capture()
+  (they regrew from zero capacity every tick) and hoists the
+  per-entity layers vec; direct collider EntityCol reads go through
+  FieldSlots (scope filter guarantees non-special names); query
+  :kind tests compare a parsed discriminant, not a string. Walls
+  (same-session deltas): fruit 429→383ms bare, scaled 12k rig
+  9.65s→8.63s (−11%); pose-eval samples halved (compose sincos
+  gone), capture halved; others noise-flat. The profile is now
+  mostly genuine compute: lowered integrand runs under
+  step_motion_in (~10% — compiled-dyn milestone B, still the top
+  lever), collide-mat body (~9% self, memory-bound per-bullet
+  work — batching territory), query row scans (~11%: per-row
+  entity_tau + NumCmp arithmetic over thousands of rows × 4
+  queries/tick — needs query result caching or kind/team indexes,
+  not micro-trims), render-row extras allocs + Rc churn (~8%),
+  motion-reader construction (~5%, compiled-dyn cheap-win #1).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
