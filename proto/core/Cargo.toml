@@ -8,14 +8,7 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = []
-player = ["dep:macroquad"]
 web = ["dep:wasm-bindgen"]
 
-[[bin]]
-name = "maku"
-path = "../player/src/main.rs"
-required-features = ["player"]
-
 [dependencies]
-macroquad = { version = "0.4", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
