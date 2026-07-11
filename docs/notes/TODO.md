@@ -304,6 +304,21 @@ work.
   FxHash for the hot HashMaps (MotionStateKey maps, symbol lookups,
   render schema — SipHash is ~10% of fruit), render-row building
   (RenderRowFields push/finish + per-row Rc), `Val` drop traffic.
+  Round-13: both remaining alloc/hash levers. (a) Per-row reader
+  construction (3 HashMaps + 3 boxed closures per entity per phase)
+  replaced by a slot-indexed `RowStateSnapshot` behind method-based
+  `MotionReaders` — values in schema slot order, key lookup a linear
+  scan of the schema's tiny key vectors; snapshot-at-construction
+  semantics unchanged (reads see pre-step values while the step pass
+  writes through). (b) In-repo FxHash (`src/fxhash.rs`, the rustc-hash
+  fold, 64-bit internally so wasm32 matches) on MotionState, schema
+  slot/node-id maps, symbol table, world field slots, collision index,
+  render schema. Bare walls: fruit 1783→1195ms (readers alone →1386),
+  bowap −35%, reimu −20%, stars −20%, cradle −19%. Next levers from
+  the round-12 sample, still open: render-row building
+  (RenderRowFields push/finish + per-row Rc, phase:rules self ~554ms
+  on fruit), `Val` drop traffic (drop_in_place<Val> ~124 samples);
+  re-sample before choosing — the alloc profile has shifted.
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
