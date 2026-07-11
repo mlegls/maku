@@ -138,7 +138,7 @@ pub(crate) fn dynlike_to_val(v: &DynLike) -> Result<Val, String> {
     if v.is_dynamic() {
         Ok(Val::DynLike(Rc::new(v.clone())))
     } else {
-        v.eval(0.0, &MotionState::new(), &SigEnv::default())
+        v.eval(0.0, &MotionState::default(), &SigEnv::default())
     }
 }
 

@@ -35,7 +35,7 @@ fn materialize_colliders_into(
         }
         return Ok(());
     }
-    let state = MotionState::new();
+    let state = MotionState::default();
     defs.clear();
     materialize_collider_defs_into(projector, tau, &state, sig, e_view, ctx_view, world, row, defs, tick_rate)
         .map_err(|e| format!("colliders: {}", e))?;
@@ -82,7 +82,7 @@ impl Sim {
                     .dyn_figure(i)
                     .ok_or_else(|| format!("colliders: missing dyn figure for row {i}"))?;
                 let readers = self.motion_readers(i);
-                let state = MotionState::new();
+                let state = MotionState::default();
                 // pos_only: the sampled-pose cache and colliders read x/y
                 // (velocity-from-samples, exit snapshots re-derive heading)
                 dyn_figure_pose_in(

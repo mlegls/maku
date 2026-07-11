@@ -1,7 +1,7 @@
 //! World data: entities, colliders, rules, events, contact rules.
 
 use super::*;
-use std::collections::HashMap;
+use crate::fxhash::FxHashMap;
 use std::rc::Rc;
 
 // World: entities + events. The control layer's mutable half.
@@ -67,10 +67,10 @@ pub struct HandleFieldId(pub u32);
 /// world-owned SoA matrices.
 #[derive(Clone, Debug, Default)]
 pub struct WorldFields {
-    pub num_slots: HashMap<FieldName, usize>,
+    pub num_slots: FxHashMap<FieldName, usize>,
     pub num_names: Vec<FieldName>,
     pub num_values: Vec<Vec<Option<f64>>>,
-    pub sym_slots: HashMap<FieldName, usize>,
+    pub sym_slots: FxHashMap<FieldName, usize>,
     pub sym_names: Vec<FieldName>,
     pub sym_values: Vec<Vec<Option<Symbol>>>,
     pub handle_names: Vec<FieldName>,
@@ -78,7 +78,7 @@ pub struct WorldFields {
 
 #[derive(Clone, Debug, Default)]
 pub struct SymbolTable {
-    by_name: HashMap<Rc<str>, Symbol>,
+    by_name: FxHashMap<Rc<str>, Symbol>,
     names: Vec<Rc<str>>,
 }
 
@@ -750,10 +750,10 @@ pub struct CollisionIndex {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     aabbs: Vec<Option<(f64, f64, f64, f64)>>,
-    layer_entities: HashMap<Symbol, Vec<usize>>,
+    layer_entities: FxHashMap<Symbol, Vec<usize>>,
     /// Alive-with-pos at capture time; kept for the oracle reference path.
     eligible: Vec<bool>,
-    memo: HashMap<(Symbol, Symbol), Rc<[(usize, usize)]>>,
+    memo: FxHashMap<(Symbol, Symbol), Rc<[(usize, usize)]>>,
 }
 
 impl CollisionIndex {
@@ -870,7 +870,7 @@ pub struct World {
     /// Ephemeral host-facing render rows emitted by tick/render rules for the current tick.
     pub render_rows: Vec<Rc<RenderRow>>,
     /// Accreted schema for open host-facing render row fields.
-    pub render_schema: HashMap<FieldName, RenderFieldKind>,
+    pub render_schema: FxHashMap<FieldName, RenderFieldKind>,
     /// Card-defined standing rules over row domains, run once per tick.
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
@@ -1005,7 +1005,7 @@ impl World {
             fields: WorldFields::default(),
             symbols: SymbolTable::default(),
             render_rows: Vec::new(),
-            render_schema: HashMap::new(),
+            render_schema: FxHashMap::default(),
             standing_rules: Vec::new(),
             collision_index: CollisionIndex::default(),
             pending_writes: Vec::new(),

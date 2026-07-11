@@ -76,7 +76,7 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
             .is_some_and(|schema| schema.node_ids.contains_key(&key));
         if world.entities.is_alive(i) && carries_node {
             let tau = world.entity_motion_tau(i, world.tick);
-            let state = MotionState::new();
+            let state = MotionState::default();
             let readers = crate::interp::entity_motion_readers(i, world);
             if let Ok(p) = dyn_node_pose_u_in(
                 node,
@@ -89,7 +89,7 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
         }
     }
     // no carrier yet (or stateless node): evaluate with empty state at t=0
-    dyn_node_pose(node, 0.0, &MotionState::new(), sig).unwrap_or(Pose::IDENTITY)
+    dyn_node_pose(node, 0.0, &MotionState::default(), sig).unwrap_or(Pose::IDENTITY)
 }
 
 /// Bump a `states` machine's generation cell (state exit: everything

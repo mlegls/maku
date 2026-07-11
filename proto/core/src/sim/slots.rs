@@ -21,7 +21,7 @@ fn sample_curve_projection(
     u_max: f64,
     tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    let state = MotionState::new();
+    let state = MotionState::default();
     let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, tick_rate).ok()? else {
         return None;
     };
@@ -207,7 +207,7 @@ pub fn eval_collider_slot(
     match slot.repr() {
         ColliderDynRepr::Slot(projection) => match &projection.shape {
             ColliderSlotShape::Circle { radius } => {
-                let state = MotionState::new();
+                let state = MotionState::default();
                 let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
                 match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if traced => {
@@ -231,7 +231,7 @@ pub fn eval_collider_slot(
                 }
             }
             ColliderSlotShape::CapsuleChain { radius, slot: curve_slot } => {
-                let state = MotionState::new();
+                let state = MotionState::default();
                 let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
                 match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) if traced => {

@@ -324,7 +324,7 @@ impl Sim {
     fn refresh_dyn_cols(&mut self) -> Result<(), String> {
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
-        let state = MotionState::new();
+        let state = MotionState::default();
         for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
                 continue;
@@ -473,7 +473,7 @@ impl Sim {
                 .ok_or_else(|| format!("remat: missing dyn figure for row {row}"))?;
             let tau = self.world.entity_motion_tau(row, self.world.tick);
             let readers = entity_motion_readers(row, &self.world);
-            let state = MotionState::new();
+            let state = MotionState::default();
             let p = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
@@ -634,7 +634,7 @@ impl Sim {
                     continue;
                 };
                 let readers = self.motion_readers(i);
-                let mut state = MotionState::new();
+                let mut state = MotionState::default();
                 let mut n2_writes = Vec::new();
                 let mut val_writes = Vec::new();
                 let mut write_n2 = |key, value| n2_writes.push((key, value));
@@ -687,7 +687,7 @@ impl Sim {
                     let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
                         continue;
                     };
-                    let state = MotionState::new();
+                    let state = MotionState::default();
                     if let Ok(p) = dyn_figure_pose_in(
                         dyn_figure,
                         tau,
@@ -742,7 +742,7 @@ impl Sim {
             };
             let keep = match dyn_figure.repr() {
                 FigureDynRepr::Pose(_) => {
-                    let state = MotionState::new();
+                    let state = MotionState::default();
                     match dyn_figure_pose_in(
                         dyn_figure,
                         tau,

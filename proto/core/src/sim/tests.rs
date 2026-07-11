@@ -224,7 +224,7 @@
         assert_eq!(sim.world.entities.birth(0), Some(0));
         assert_eq!(style(&sim, 0).family, "gem");
         assert_eq!(style(&sim, 0).color, "yellow");
-        let state = MotionState::new();
+        let state = MotionState::default();
         let p = dyn_figure_pose(dyn_figure(&sim, 0), 1.0, &state, &sig).unwrap();
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
@@ -263,7 +263,7 @@
         let sig = SigEnv::default();
         for (i, _) in sa.world.entities.iter().zip(sb.world.entities.iter()).enumerate() {
             assert_eq!(sa.world.entities.birth(i), sb.world.entities.birth(i));
-            let state = MotionState::new();
+            let state = MotionState::default();
             let pa = dyn_figure_pose(dyn_figure(&sa, i), 0.7, &state, &sig).unwrap();
             let pb = dyn_figure_pose(dyn_figure(&sb, i), 0.7, &state, &sig).unwrap();
             assert!(
@@ -310,7 +310,7 @@
             .filter(|(i, _)| style(&sim, *i).family == "star")
             .map(|(i, _)| i)
             .collect();
-        let state = MotionState::new();
+        let state = MotionState::default();
         let p = dyn_figure_pose(dyn_figure(&sim, ring[0]), 0.0, &state, &sig).unwrap();
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
     }
@@ -335,7 +335,7 @@
             assert_eq!(a.world.entities.generation(i), b.world.entities.generation(i));
             assert_eq!(a.world.entities.is_alive(i), b.world.entities.is_alive(i));
             let tau = a.world.entity_tau(i, a.world.tick);
-            let state = MotionState::new();
+            let state = MotionState::default();
             let ax = a.motion_readers(i);
             let by = b.motion_readers(i);
             let px = dyn_figure_pose_in(dyn_figure(&a, i), tau, MotionEvalCtx::new(&state, &a.ctx.sig, &ax)).unwrap();
@@ -1864,7 +1864,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let state = MotionState::new();
+        let state = MotionState::default();
         let sig = SigEnv::default();
         let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
         let want = 20.0 * (1.5f64).to_radians().cos();
@@ -1898,7 +1898,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let state = MotionState::new();
+        let state = MotionState::default();
         // top-level defs resolve via SigEnv::defs, so use the sim's sig
         let sig = sim.ctx.sig.clone();
         let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
@@ -1916,7 +1916,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let state = MotionState::new();
+        let state = MotionState::default();
         let sig = SigEnv::default();
         let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
         assert!((p.x - 60.0).abs() < 1e-6 && p.y.abs() < 1e-6, "evolved pose: {:?}", p);
@@ -1933,7 +1933,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let state = MotionState::new();
+        let state = MotionState::default();
         let sig = sim.ctx.sig.clone();
         let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
         // ticks 0..59 summed = 1770.
@@ -1986,7 +1986,7 @@
             sim.step().unwrap();
         }
         let readers = sim.motion_readers(0);
-        let state = MotionState::new();
+        let state = MotionState::default();
         let sig = sim.ctx.sig.clone();
         let ev = find_evolve(dyn_figure(&sim, 0).pose_dyn());
         let settled_tau = (sim.world.tick - 1) as f64 / DEFAULT_TICK_RATE;
@@ -2041,7 +2041,7 @@
         let err = dyn_figure_pose_in(
             dyn_figure(&sim, 0),
             20.0 / DEFAULT_TICK_RATE,
-            MotionEvalCtx::new(&MotionState::new(), &sim.ctx.sig, &sim.motion_readers(0)),
+            MotionEvalCtx::new(&MotionState::default(), &sim.ctx.sig, &sim.motion_readers(0)),
         ).unwrap_err();
         assert_eq!(err, "live evolve sampled off its clock");
     }
@@ -2209,7 +2209,7 @@
             sim.step().unwrap();
         }
         let tau = sim.world.entity_tau(0, sim.world.tick);
-        let state = MotionState::new();
+        let state = MotionState::default();
         let readers = sim.motion_readers(0);
         let p = dyn_figure_pose_in(dyn_figure(&sim, 0), tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
         let mid = 2.0 * (0.5f64 * std::f64::consts::FRAC_PI_2).sin();
@@ -2219,7 +2219,7 @@
             sim.step().unwrap();
         }
         let tau = sim.world.entity_tau(0, sim.world.tick);
-        let state = MotionState::new();
+        let state = MotionState::default();
         let readers = sim.motion_readers(0);
         let p = dyn_figure_pose_in(dyn_figure(&sim, 0), tau, MotionEvalCtx::new(&state, &sim.ctx.sig, &readers)).unwrap();
         assert!((p.x - 2.0).abs() < 1e-9 && p.y.abs() < 1e-9, "final pose: {:?}", p);
@@ -2242,7 +2242,7 @@
                 sim.step_with(&inputs).unwrap();
             }
             let sig = SigEnv::default();
-            let state = MotionState::new();
+            let state = MotionState::default();
             let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
             assert!(
                 p.x.abs() < 1e-9 && (p.y - 2.0).abs() < 1e-9,
@@ -2269,7 +2269,7 @@
             b.step().unwrap();
         }
         let sig = SigEnv::default();
-        let state = MotionState::new();
+        let state = MotionState::default();
         let pa = dyn_figure_pose(dyn_figure(&a, 0), 0.5, &state, &sig).unwrap();
         let pb = dyn_figure_pose(dyn_figure(&b, 0), 0.5, &state, &sig).unwrap();
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
@@ -2769,7 +2769,7 @@
         let sig = sim.ctx.sig.clone();
         let tau = sim.world.entity_tau(i, sim.world.tick);
         let readers = sim.motion_readers(i);
-        let state = MotionState::new();
+        let state = MotionState::default();
         let p = dyn_figure_pose_in(dyn_figure(&sim, i), tau, MotionEvalCtx::new(&state, &sig, &readers)).unwrap();
         assert!(p.x > 0.3, "homed toward derived enemy: {:?}", p);
     }
@@ -3035,7 +3035,7 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
         assert!(sim.world.sym_field_matches_at(0, "tag", "abc"));
-        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.0, &MotionState::new(), &SigEnv::default()).unwrap();
+        let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.0, &MotionState::default(), &SigEnv::default()).unwrap();
         assert!(p.x.abs() < 1e-9 && (p.y - 1.0).abs() < 1e-9, "rotated pose: {:?}", p);
     }
 
@@ -3747,7 +3747,7 @@ fn variadic_macro_unquotes_inside_maps() {
     crate::sim::slots::materialize_collider_defs_into(
         &projector,
         0.0,
-        &MotionState::new(),
+        &MotionState::default(),
         &SigEnv::default(),
         None,
         None,
@@ -3761,7 +3761,7 @@ fn variadic_macro_unquotes_inside_maps() {
         ColliderSlotShape::Circle { ref radius } => Some((slot, radius)),
         _ => None,
     }).unwrap();
-    let r = eval_dyn(radius, 0.0, &MotionState::new(), &SigEnv::default()).unwrap();
+    let r = eval_dyn(radius, 0.0, &MotionState::default(), &SigEnv::default()).unwrap();
     assert!((r - 0.4).abs() < 1e-6, "rest arg helper unquoted into map");
 }
 

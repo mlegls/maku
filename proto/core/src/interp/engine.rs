@@ -114,7 +114,7 @@ pub(crate) fn special(
             };
             let tau = world.entity_motion_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
-            let state = MotionState::new();
+            let state = MotionState::default();
             let mctx = MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate());
             let anchor = dyn_figure_pose_in(dyn_figure, tau, mctx)?;
             let at = |uu: f64| -> Result<Pose, String> {
@@ -214,7 +214,7 @@ pub(crate) fn special(
                 let Some(dyn_figure) = world.entities.dyn_figure(i) else { continue };
                 let tau = world.entity_motion_tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
-                let state = MotionState::new();
+                let state = MotionState::default();
                 let Ok(p) = dyn_figure_pose_in(
                     dyn_figure,
                     tau,
@@ -547,7 +547,7 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
         .dyn_figure(i)
         .ok_or_else(|| format!("render: curve-samples missing dyn figure for row {i}"))?;
     let tau = world.entity_motion_tau(i, world.tick);
-    let state = MotionState::new();
+    let state = MotionState::default();
     let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, world.tick_rate())
         .map_err(|err| format!("render: curve-samples could not sample curve: {err}"))?
     else {

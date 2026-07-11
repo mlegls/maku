@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::edn::Form;
+use crate::fxhash::FxHashMap;
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -13,7 +14,7 @@ pub enum Cell {
     D(DynPose),
     V(EvolveCell),
 }
-pub type MotionState = HashMap<MotionStateKey, Cell>;
+pub type MotionState = FxHashMap<MotionStateKey, Cell>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MotionNodeId(pub u32);
@@ -63,22 +64,22 @@ pub struct StateValSlotId(pub u32);
 
 #[derive(Clone, Debug, Default)]
 pub struct MotionStateSchema {
-    pub n2_slots: HashMap<MotionStateKey, StateN2SlotId>,
+    pub n2_slots: FxHashMap<MotionStateKey, StateN2SlotId>,
     pub n2_keys: Vec<MotionStateKey>,
-    pub dyn_slots: HashMap<MotionStateKey, StateDynSlotId>,
+    pub dyn_slots: FxHashMap<MotionStateKey, StateDynSlotId>,
     pub dyn_keys: Vec<MotionStateKey>,
-    pub val_slots: HashMap<MotionStateKey, StateValSlotId>,
+    pub val_slots: FxHashMap<MotionStateKey, StateValSlotId>,
     pub val_keys: Vec<MotionStateKey>,
-    pub node_ids: HashMap<usize, MotionNodeId>,
+    pub node_ids: FxHashMap<usize, MotionNodeId>,
     /// node_ids in the shape MotionReaders wants, built once per schema.
     /// Entity schemas are complete at load, so per-row readers can share
     /// this instead of cloning the map per entity per phase; only ad-hoc
     /// direct evaluation seeds ids lazily, through its own fresh maps.
-    shared_node_ids: std::cell::OnceCell<Rc<RefCell<HashMap<usize, MotionNodeId>>>>,
+    shared_node_ids: std::cell::OnceCell<Rc<RefCell<FxHashMap<usize, MotionNodeId>>>>,
 }
 
 impl MotionStateSchema {
-    pub fn shared_node_ids(&self) -> Rc<RefCell<HashMap<usize, MotionNodeId>>> {
+    pub fn shared_node_ids(&self) -> Rc<RefCell<FxHashMap<usize, MotionNodeId>>> {
         self.shared_node_ids
             .get_or_init(|| Rc::new(RefCell::new(self.node_ids.clone())))
             .clone()
@@ -163,7 +164,7 @@ enum ReaderBacking {
 #[derive(Clone)]
 pub struct MotionReaders {
     backing: ReaderBacking,
-    pub node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>,
+    pub node_ids: Rc<RefCell<FxHashMap<usize, MotionNodeId>>>,
 }
 
 impl MotionReaders {
@@ -206,13 +207,13 @@ impl MotionReaders {
     pub fn legacy() -> MotionReaders {
         MotionReaders {
             backing: ReaderBacking::Empty,
-            node_ids: Rc::new(RefCell::new(HashMap::new())),
+            node_ids: Rc::new(RefCell::new(FxHashMap::default())),
         }
     }
 
     /// Readers for a row whose schema holds no state cells — the common
     /// stateless-bullet case: no snapshot, just the shared node-id map.
-    pub fn stateless(node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>) -> MotionReaders {
+    pub fn stateless(node_ids: Rc<RefCell<FxHashMap<usize, MotionNodeId>>>) -> MotionReaders {
         MotionReaders { backing: ReaderBacking::Empty, node_ids }
     }
 
@@ -534,7 +535,7 @@ fn seed_reader_dyn_node_ids(d: &DynNode, readers: &MotionReaders) {
 
 fn seed_reader_node_ids(
     node: &Rc<DynNode>,
-    node_ids: &mut HashMap<usize, MotionNodeId>,
+    node_ids: &mut FxHashMap<usize, MotionNodeId>,
     next: &mut u32,
 ) {
     let ptr = Rc::as_ptr(node) as usize;
@@ -543,7 +544,7 @@ fn seed_reader_node_ids(
 
 fn seed_dyn_node_ids(
     node: &DynNode,
-    node_ids: &mut HashMap<usize, MotionNodeId>,
+    node_ids: &mut FxHashMap<usize, MotionNodeId>,
     next: &mut u32,
 ) {
     let ptr = node as *const DynNode as usize;
@@ -553,7 +554,7 @@ fn seed_dyn_node_ids(
 fn seed_dyn_node_ids_with_ptr(
     node: &DynNode,
     ptr: usize,
-    node_ids: &mut HashMap<usize, MotionNodeId>,
+    node_ids: &mut FxHashMap<usize, MotionNodeId>,
     next: &mut u32,
 ) {
     if let std::collections::hash_map::Entry::Vacant(entry) = node_ids.entry(ptr) {

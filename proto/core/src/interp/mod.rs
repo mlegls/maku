@@ -540,7 +540,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             } else {
                 lifted
                     .iter()
-                    .map(|v| v.eval_with_tick_rate(0.0, &MotionState::new(), &ctx.sig, world.tick_rate()))
+                    .map(|v| v.eval_with_tick_rate(0.0, &MotionState::default(), &ctx.sig, world.tick_rate()))
                     .collect::<Result<Vec<_>, _>>()
                     .map(Val::arr)
             }
@@ -575,7 +575,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
             } else {
                 pairs
                     .iter()
-                    .map(|(k, v)| Ok((k.to_val(), v.eval_with_tick_rate(0.0, &MotionState::new(), &ctx.sig, world.tick_rate())?)))
+                    .map(|(k, v)| Ok((k.to_val(), v.eval_with_tick_rate(0.0, &MotionState::default(), &ctx.sig, world.tick_rate())?)))
                     .collect::<Result<Vec<_>, String>>()
                     .map(|pairs| Val::Map(Rc::new(pairs)))
             }
@@ -1088,7 +1088,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                         // :world resets the ambient (escape the caller anchor)
                         Val::Kw(k) if &**k == "world" => ctx.ambient = Pose::IDENTITY,
                         Val::DynPose(d) => {
-                            let p = dyn_pose(d, 0.0, &MotionState::new(), &ctx.sig)
+                            let p = dyn_pose(d, 0.0, &MotionState::default(), &ctx.sig)
                                 .unwrap_or(Pose::IDENTITY);
                             ctx.ambient = ctx.ambient.compose(&p);
                         }
@@ -1442,7 +1442,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 return Err("dyn application takes a sample time (and optional u) or one frame child".into());
             }
             let saved = ctx.ambient;
-            let p0 = dyn_pose(&fd, 0.0, &MotionState::new(), &ctx.sig)
+            let p0 = dyn_pose(&fd, 0.0, &MotionState::default(), &ctx.sig)
                 .unwrap_or(Pose::IDENTITY);
             ctx.ambient = ctx.ambient.compose(&p0);
             let child = evaluate(&items[1], env, ctx, world);
@@ -1540,7 +1540,7 @@ fn apply_dyn_pose_at(d: &DynPose, t: f64, u: Option<f64>, sig: &SigEnv) -> Resul
     // Application sampling currently uses a fresh state, which is only
     // semantically correct for closed/stateless dyns. Stateful dyn replay gets
     // defined when `scan` lands.
-    let st = MotionState::new();
+    let st = MotionState::default();
     match u {
         Some(u) => {
             let p0 = dyn_pose_u(d, t, u, &st, sig)?;
@@ -1695,7 +1695,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         .ok_or_else(|| format!("entity view: missing dyn figure for row {i}"))?;
     let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
-    let state = MotionState::new();
+    let state = MotionState::default();
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
@@ -2120,7 +2120,7 @@ pub(crate) fn entity_pose_at(i: usize, world: &World, sig: &SigEnv) -> Result<Po
         .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
     let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
-    let state = MotionState::new();
+    let state = MotionState::default();
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
@@ -3799,7 +3799,7 @@ mod tests {
         let Val::DynPose(d) = ev("((rot 90) (linear c[4 0]))") else {
             panic!("expected dyn")
         };
-        let st = MotionState::new();
+        let st = MotionState::default();
         let p = dyn_pose(&d, 1.0, &st, &SigEnv::default()).unwrap();
         assert!(p.x.abs() < 1e-9 && (p.y - 4.0).abs() < 1e-9, "rotated 90°: {:?}", p);
     }
@@ -3807,7 +3807,7 @@ mod tests {
     #[test]
     fn closed_polar_dyn() {
         let Val::DynPose(d) = ev("(polar m\"2*t\" m\"20*t\")") else { panic!() };
-        let st = MotionState::new();
+        let st = MotionState::default();
         let p = dyn_pose(&d, 1.0, &st, &SigEnv::default()).unwrap();
         let (ex, ey) = (2.0 * (20f64).to_radians().cos(), 2.0 * (20f64).to_radians().sin());
         assert!((p.x - ex).abs() < 1e-9 && (p.y - ey).abs() < 1e-9, "{:?}", p);
@@ -3817,7 +3817,7 @@ mod tests {
     #[test]
     fn vel_integrates() {
         let Val::DynPose(d) = ev("(vel c[4 0])") else { panic!() };
-        let mut st = MotionState::new();
+        let mut st = MotionState::default();
         let dt = 1.0 / DEFAULT_TICK_RATE;
         let sig = SigEnv::default();
         for k in 0..120 {
@@ -3891,7 +3891,7 @@ mod tests {
         };
         assert!(matches!(&curve.domain, CurveDomain::Range { min, max } if *min == 0.0 && *max == 3.5));
         // shape at t=1, u=1: r=2, θ=-14°
-        let p = eval_curve_pose(&curve.eval, 1.0, 1.0, &MotionState::new(), &SigEnv::default()).unwrap();
+        let p = eval_curve_pose(&curve.eval, 1.0, 1.0, &MotionState::default(), &SigEnv::default()).unwrap();
         let ex = 2.0 * (-14f64).to_radians().cos();
         assert!((p.x - ex).abs() < 1e-9);
     }
