@@ -152,6 +152,11 @@ pub struct EntityStore {
     scanned: Vec<bool>,
     specs: EntitySpecStore,
     sampled_pose: [Vec<Option<Pose>>; 2],
+    /// The tick each sampled_pose slot was last written for. The ring is
+    /// parity-indexed; without these tags a read at the wrong tick (the
+    /// control layer runs after tick advances) silently returns the
+    /// two-ticks-old sample and SIGN-FLIPS sample-derived velocity.
+    sampled_pose_tick: [u64; 2],
     trace_cache: TraceCache,
     state_n2: Vec<Vec<[f64; 2]>>,
     state_dyn: Vec<Vec<Option<DynPose>>>,
@@ -352,6 +357,7 @@ impl EntityStore {
             scanned: Vec::with_capacity(max),
             specs: EntitySpecStore::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
+            sampled_pose_tick: [u64::MAX, u64::MAX],
             trace_cache: TraceCache::with_capacity(max),
             state_n2: Vec::new(),
             state_dyn: Vec::new(),
@@ -626,20 +632,46 @@ impl EntityStore {
         (tick as usize) & 1
     }
 
+    fn sampled_at(&self, row: usize, tick: u64) -> Option<Pose> {
+        let slot = Self::pose_slot(tick);
+        if self.sampled_pose_tick[slot] != tick {
+            return None;
+        }
+        self.sampled_pose[slot].get(row).copied().flatten()
+    }
+
     pub fn sampled_pose(&self, row: usize, tick: u64) -> Option<Pose> {
-        self.sampled_pose[Self::pose_slot(tick)].get(row).copied().flatten()
+        self.sampled_at(row, tick)
     }
 
     pub fn previous_sampled_pose(&self, row: usize, tick: u64) -> Option<Pose> {
-        self.sampled_pose[1 - Self::pose_slot(tick)].get(row).copied().flatten()
+        self.sampled_at(row, tick.checked_sub(1)?)
     }
 
     pub fn sampled_pos(&self, row: usize, tick: u64) -> Option<(f64, f64)> {
         self.sampled_pose(row, tick).map(|p| (p.x, p.y))
     }
 
+    /// The most recently sampled pose at or before `tick` (the collision
+    /// pass writes one sample per tick; the control layer runs after the
+    /// tick counter advances, so "current" there means last completed).
+    pub fn latest_sampled_pose(&self, row: usize, tick: u64) -> Option<Pose> {
+        self.sampled_at(row, tick)
+            .or_else(|| self.sampled_at(row, tick.checked_sub(1)?))
+    }
+
+    /// Velocity from the newest CONSECUTIVE sample pair at or before
+    /// `tick` — tag-checked, so a wrong-parity read can no longer swap
+    /// the pair and flip the sign.
     pub fn velocity_from_samples(&self, row: usize, tick: u64, tick_rate: f64) -> (f64, f64) {
-        match (self.sampled_pose(row, tick), self.previous_sampled_pose(row, tick)) {
+        let at = if self.sampled_pose_tick[Self::pose_slot(tick)] == tick {
+            tick
+        } else if tick > 0 && self.sampled_pose_tick[Self::pose_slot(tick - 1)] == tick - 1 {
+            tick - 1
+        } else {
+            return (0.0, 0.0);
+        };
+        match (self.sampled_at(row, at), at.checked_sub(1).and_then(|p| self.sampled_at(row, p))) {
             (Some(p), Some(prev)) => ((p.x - prev.x) * tick_rate, (p.y - prev.y) * tick_rate),
             _ => (0.0, 0.0),
         }
@@ -647,6 +679,14 @@ impl EntityStore {
 
     pub fn set_sampled_pose(&mut self, row: usize, tick: u64, pose: Option<Pose>) {
         let slot = Self::pose_slot(tick);
+        if self.sampled_pose_tick[slot] != tick {
+            // slot rolls over to a new tick: retire the two-ticks-old
+            // samples so rows skipped this pass don't read as current
+            if self.sampled_pose_tick[slot] != u64::MAX {
+                self.sampled_pose[slot].iter_mut().for_each(|p| *p = None);
+            }
+            self.sampled_pose_tick[slot] = tick;
+        }
         if self.sampled_pose[slot].len() <= row {
             self.sampled_pose[slot].resize(row + 1, None);
         }
@@ -785,6 +825,7 @@ impl Clone for EntityStore {
             scanned: self.scanned.clone(),
             specs: self.specs.clone(),
             sampled_pose: self.sampled_pose.clone(),
+            sampled_pose_tick: self.sampled_pose_tick,
             trace_cache: self.trace_cache.clone(),
             state_n2: self.state_n2.clone(),
             state_dyn: self.state_dyn.clone(),
