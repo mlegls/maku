@@ -768,12 +768,109 @@ pub struct StandingRule {
     pub env: Env,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct CollisionFact {
-    pub a: Symbol,
-    pub b: Symbol,
-    pub i: usize,
-    pub j: usize,
+#[derive(Clone, Default)]
+pub struct CollisionIndex {
+    rows: Vec<ColliderData>,
+    ranges: Vec<std::ops::Range<usize>>,
+    aabbs: Vec<Option<(f64, f64, f64, f64)>>,
+    layer_entities: HashMap<Symbol, Vec<usize>>,
+    /// Alive-with-pos at capture time; kept for the oracle reference path.
+    eligible: Vec<bool>,
+    memo: HashMap<(Symbol, Symbol), Rc<[(usize, usize)]>>,
+}
+
+impl CollisionIndex {
+    pub(crate) fn capture(&mut self, rows: Vec<ColliderData>, ranges: Vec<std::ops::Range<usize>>, eligible: Vec<bool>) {
+        self.rows = rows;
+        self.ranges = ranges;
+        self.eligible = eligible;
+        self.aabbs.clear();
+        self.layer_entities.clear();
+        self.memo.clear();
+        for i in 0..self.ranges.len() {
+            let mut bounds = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+            let mut layers = Vec::new();
+            for collider in self.row(i) {
+                let Some(layer) = collider.layer() else { continue };
+                if !layers.contains(&layer) { layers.push(layer); }
+                match collider {
+                    ColliderData::Circle { center, radius, .. } => {
+                        bounds.0 = bounds.0.min(center.0 - radius);
+                        bounds.1 = bounds.1.max(center.0 + radius);
+                        bounds.2 = bounds.2.min(center.1 - radius);
+                        bounds.3 = bounds.3.max(center.1 + radius);
+                    }
+                    ColliderData::CapsuleChain { points, radius, .. } => for point in points {
+                        bounds.0 = bounds.0.min(point.0 - radius);
+                        bounds.1 = bounds.1.max(point.0 + radius);
+                        bounds.2 = bounds.2.min(point.1 - radius);
+                        bounds.3 = bounds.3.max(point.1 + radius);
+                    },
+                    ColliderData::None => {}
+                }
+            }
+            let aabb = (!bounds.0.is_nan() && !bounds.1.is_nan() && !bounds.2.is_nan() && !bounds.3.is_nan()).then_some(bounds);
+            self.aabbs.push(aabb);
+            if self.eligible.get(i) == Some(&true) && aabb.is_some() {
+                for layer in layers { self.layer_entities.entry(layer).or_default().push(i); }
+            }
+        }
+    }
+
+    pub(crate) fn row(&self, i: usize) -> &[ColliderData] {
+        &self.rows[self.ranges[i].clone()]
+    }
+
+    pub(crate) fn query(&mut self, a: Symbol, b: Symbol) -> Rc<[(usize, usize)]> {
+        if let Some(pairs) = self.memo.get(&(a, b)) { return pairs.clone(); }
+        let pairs = self.compute(a, b);
+        if super::lower::oracle_enabled() { assert_eq!(pairs, self.brute(a, b)); }
+        let pairs: Rc<[(usize, usize)]> = pairs.into();
+        self.memo.insert((a, b), pairs.clone());
+        pairs
+    }
+
+    /// Oracle-only reference: every captured entity pair through the raw
+    /// eligibility gate, bypassing layer_entities AND the AABB prune, so
+    /// the index structures themselves are what the assert exercises.
+    fn brute(&self, a: Symbol, b: Symbol) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for i in 0..self.ranges.len() {
+            if self.eligible.get(i) != Some(&true) { continue; }
+            for j in 0..self.ranges.len() {
+                if i == j || self.eligible.get(j) != Some(&true) { continue; }
+                for ac in self.row(i).iter().filter(|c| c.layer() == Some(a)) {
+                    for bc in self.row(j).iter().filter(|c| c.layer() == Some(b)) {
+                        if crate::model::collider_overlap(ac, bc) { out.push((i, j)); }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    // Querying two large layers pays for that requested pair; AABBs still reject disjoint entities.
+    fn compute(&self, a: Symbol, b: Symbol) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        let empty = Vec::new();
+        let ais = self.layer_entities.get(&a).unwrap_or(&empty);
+        let bjs = self.layer_entities.get(&b).unwrap_or(&empty);
+        for &i in ais {
+            for &j in bjs {
+                if i == j { continue; }
+                let ia = self.aabbs[i].unwrap();
+                let ja = self.aabbs[j].unwrap();
+                if ia.1 < ja.0 || ja.1 < ia.0 || ia.3 < ja.2 || ja.3 < ia.2 { continue; }
+                // Entity and collider row iteration matches the old eager fact/filter order.
+                for ac in self.row(i).iter().filter(|c| c.layer() == Some(a)) {
+                    for bc in self.row(j).iter().filter(|c| c.layer() == Some(b)) {
+                        if crate::model::collider_overlap(ac, bc) { out.push((i, j)); }
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 pub struct World {
@@ -800,7 +897,7 @@ pub struct World {
     /// Card-defined standing rules over row domains, run once per tick.
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
-    pub collision_facts: Vec<CollisionFact>,
+    pub collision_index: CollisionIndex,
     /// Writes queued during the current tick, drained at the next tick boundary.
     pub pending_writes: Vec<PendingWrite>,
 }
@@ -820,7 +917,7 @@ impl Clone for World {
             render_rows: self.render_rows.clone(),
             render_schema: self.render_schema.clone(),
             standing_rules: self.standing_rules.clone(),
-            collision_facts: self.collision_facts.clone(),
+            collision_index: self.collision_index.clone(),
             pending_writes: self.pending_writes.clone(),
         }
     }
@@ -933,7 +1030,7 @@ impl World {
             render_rows: Vec::new(),
             render_schema: HashMap::new(),
             standing_rules: Vec::new(),
-            collision_facts: Vec::new(),
+            collision_index: CollisionIndex::default(),
             pending_writes: Vec::new(),
         }
     }

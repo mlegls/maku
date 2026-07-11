@@ -72,7 +72,6 @@ struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynCollider>,
-    broadphase: Vec<(f64, f64, f64, f64, usize)>,
 }
 
 impl ColliderScratch {
@@ -80,7 +79,6 @@ impl ColliderScratch {
         self.rows.clear();
         self.ranges.clear();
         self.defs.clear();
-        self.broadphase.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }
@@ -99,14 +97,6 @@ impl ColliderScratch {
         self.ranges.push(start..self.rows.len());
     }
 
-    fn row(&self, entity_row: usize) -> &[ColliderData] {
-        let range = self
-            .ranges
-            .get(entity_row)
-            .cloned()
-            .unwrap_or_else(|| self.rows.len()..self.rows.len());
-        &self.rows[range]
-    }
 }
 
 fn install_tick_rules(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
