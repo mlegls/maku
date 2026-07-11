@@ -8,6 +8,10 @@ pub(crate) struct CompiledTickForm {
     pub predicate: RowPredicate,
     pub needs_pose: bool,
     pub fields: Vec<(Rc<str>, RenderKey, RowVal)>,
+    /// Memoized batch schema: rebuilt only when observed column kinds
+    /// change (stable once dynamic-kind fields settle), so hosts can key
+    /// layouts on `Rc::ptr_eq`.
+    pub schema: std::cell::RefCell<Option<Rc<crate::model::RenderSchema>>>,
 }
 
 pub(crate) enum RowVal {
@@ -153,5 +157,5 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     }
     if !has_shape { return None; }
     let needs_pose = fields.iter().any(|(_, _, value)| is_pose(value));
-    Some(CompiledTickForm { predicate, needs_pose, fields })
+    Some(CompiledTickForm { predicate, needs_pose, fields, schema: std::cell::RefCell::new(None) })
 }

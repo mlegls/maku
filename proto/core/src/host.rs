@@ -361,6 +361,11 @@ impl Instance {
         self.session.sim.as_mut().map(|s| s.render()).unwrap_or_default()
     }
 
+    /// The frame form of `render`: compiled passes stay column batches.
+    pub fn render_frame(&mut self) -> Vec<crate::model::RenderItem> {
+        self.session.sim.as_mut().map(|s| s.render_frame()).unwrap_or_default()
+    }
+
     pub fn channel(&self, name: &str) -> Option<Val> {
         self.session.sim.as_ref().and_then(|s| s.channel_val(name))
     }

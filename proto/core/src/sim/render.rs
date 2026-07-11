@@ -8,10 +8,10 @@ pub(super) struct RenderScratch {
     /// nums/syms buffers are reused next tick instead of reallocated.
     /// Rows a host still holds are simply dropped, not pooled.
     pub(super) row_pool: Vec<Rc<RenderRow>>,
-    /// Retired render batches, same uniquely-owned reuse rule as rows.
-    pub(super) batch_pool: Vec<Rc<crate::model::RenderBatch>>,
     /// Matched-row scratch for the compiled deftick scan.
     pub(super) match_rows: Vec<usize>,
+    /// Pose scratch for the compiled batch fill.
+    pub(super) pose_rows: Vec<Pose>,
 }
 
 impl RenderScratch {
@@ -27,11 +27,9 @@ impl RenderScratch {
                         self.row_pool.push(row);
                     }
                 }
-                RenderItem::Batch(batch) => {
-                    if Rc::strong_count(&batch) == 1 {
-                        self.batch_pool.push(batch);
-                    }
-                }
+                // batches are a few column Vecs per rule per tick — dropped,
+                // not pooled (nothing like the per-row box churn rows have)
+                RenderItem::Batch(_) => {}
             }
         }
     }
@@ -92,11 +90,15 @@ impl Sim {
         syms
     }
 
-    fn push_row(out: &mut Vec<RenderRow>, data: &RenderData, syms: &[(Rc<str>, Rc<str>)]) {
+    fn push_row(out: &mut Vec<RenderItem>, data: &RenderData, syms: &[(Rc<str>, Rc<str>)]) {
         if matches!(data, RenderData::None) {
             return;
         }
-        out.push(RenderRow { data: data.clone(), nums: Vec::new(), syms: syms.to_vec() });
+        out.push(RenderItem::Row(Rc::new(RenderRow {
+            data: data.clone(),
+            nums: Vec::new(),
+            syms: syms.to_vec(),
+        })));
     }
 
     fn push_stock_dot_rows(
@@ -137,12 +139,14 @@ impl Sim {
         }
     }
 
-    pub fn render(&mut self) -> Vec<RenderRow> {
+    /// The tick's render output in draw order: compiled point-rule passes
+    /// as column batches, everything else as rows (see
+    /// docs/notes/render-output-design.md). Batches are Rc-shared with the
+    /// sim; hosts read columns in place and may key precomputed layouts on
+    /// `Rc::ptr_eq` of `batch.schema`.
+    pub fn render_frame(&mut self) -> Vec<RenderItem> {
         let sig = &self.ctx.sig;
-        let mut out = Vec::new();
-        for item in &self.world.render_rows {
-            item.expand_into(&mut out);
-        }
+        let mut out: Vec<RenderItem> = self.world.render_rows.clone();
         let mut scratch = std::mem::take(&mut self.render_scratch);
         scratch.clear_for_entities(self.world.entities.len());
         for (i, _) in self.world.entities.iter().enumerate() {
@@ -191,6 +195,15 @@ impl Sim {
             }
         }
         self.render_scratch = scratch;
+        out
+    }
+
+    /// Compat: the frame expanded to rows — exactly the pre-batch output.
+    pub fn render(&mut self) -> Vec<RenderRow> {
+        let mut out = Vec::new();
+        for item in self.render_frame() {
+            item.expand_into(&mut out);
+        }
         out
     }
 }

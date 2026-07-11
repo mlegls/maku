@@ -1351,6 +1351,42 @@ impl World {
         }
     }
 
+    /// `render_field_check` without committing: verifies against the world
+    /// schema plus a pass-local pending set. A batch fill stages its
+    /// registrations here and commits only on success, so an aborted batch
+    /// leaves the schema untouched and the row-path rerun reproduces the
+    /// interpreted error exactly. (Symbol interning still happens — table
+    /// growth is not observable to cards.)
+    pub fn render_field_check_staged(
+        &mut self,
+        name: &str,
+        kind: RenderFieldKind,
+        pending: &mut Vec<(FieldName, RenderFieldKind)>,
+    ) -> Result<(), String> {
+        let field = self.field_sym(name);
+        let prior = self
+            .render_schema
+            .get(&field)
+            .copied()
+            .or_else(|| pending.iter().find(|(f, _)| *f == field).map(|(_, k)| *k));
+        match prior {
+            Some(prior) if prior != kind => {
+                Err(format!("render: field :{name} is {kind:?} here but {prior:?} elsewhere"))
+            }
+            Some(_) => Ok(()),
+            None => {
+                pending.push((field, kind));
+                Ok(())
+            }
+        }
+    }
+
+    pub fn render_field_commit(&mut self, pending: &[(FieldName, RenderFieldKind)]) {
+        for (field, kind) in pending {
+            self.render_schema.insert(*field, *kind);
+        }
+    }
+
     pub fn sym_field_slot(&self, field: FieldName) -> Option<usize> {
         self.fields.sym_slots.get(&field).copied()
     }

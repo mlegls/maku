@@ -811,6 +811,17 @@ impl Sim {
         let mut checked: Vec<(Rc<str>, RenderFieldKind)> = Vec::new();
         let result = (|| {
             if let Some(plan) = CompiledRowPlan::from_fields(&fields) {
+                if rows.is_empty() {
+                    return Ok(Some(()));
+                }
+                if let Some(batch) = self.try_render_batch(form, &plan, &rows) {
+                    self.world.render_rows.push(RenderItem::Batch(batch));
+                    return Ok(Some(()));
+                }
+                // batch abort (an error or a per-row kind surprise): the
+                // per-row loop below reproduces interpreted error semantics
+                // exactly — evaluation is pure and the batch's schema
+                // checks were staged, so the world is untouched
                 for &row in &rows {
                     let pose = form.needs_pose
                         .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
@@ -875,6 +886,249 @@ impl Sim {
             Some(value) => self.eval_compiled_row_val(value, row, pose).num(),
             None => Ok(default),
         }
+    }
+
+    /// One compiled point-rule pass as a column batch (SoA render output,
+    /// docs/notes/render-output-design.md). None aborts to the per-row
+    /// path on any error or per-row kind surprise; evaluation is pure and
+    /// schema checks are staged, so an abort leaves the world untouched
+    /// and the rerun reproduces interpreted behavior exactly.
+    fn try_render_batch(
+        &mut self,
+        form: &CompiledTickForm,
+        plan: &CompiledRowPlan,
+        rows: &[usize],
+    ) -> Option<Rc<crate::model::RenderBatch>> {
+        let mut poses = std::mem::take(&mut self.render_scratch.pose_rows);
+        poses.clear();
+        let ok = self.fill_pose_rows(form, plan, rows, &mut poses);
+        let batch = if ok { self.fill_render_batch(form, plan, rows, &poses) } else { None };
+        poses.clear();
+        self.render_scratch.pose_rows = poses;
+        batch
+    }
+
+    fn fill_pose_rows(
+        &self,
+        form: &CompiledTickForm,
+        plan: &CompiledRowPlan,
+        rows: &[usize],
+        poses: &mut Vec<Pose>,
+    ) -> bool {
+        if !form.needs_pose {
+            return true;
+        }
+        // when no lowered value reads :th the theta component is never
+        // consumed, so the pos_only fast pose (exact in x/y) is legal
+        let needs_theta = plan.reads_theta();
+        for &row in rows {
+            let fast = (!needs_theta)
+                .then(|| {
+                    let tau = self.world.entity_motion_tau(row, self.world.tick);
+                    self.fast_pos_pose(row, tau, &self.ctx.sig)
+                })
+                .flatten();
+            let pose = match fast {
+                Some(p) => p,
+                None => match entity_pose_at(row, &self.world, &self.ctx.sig) {
+                    Ok(p) => p,
+                    Err(_) => return false,
+                },
+            };
+            poses.push(pose);
+        }
+        true
+    }
+
+    fn batch_num_col(
+        &self,
+        slot: Option<&ResolvedRowVal>,
+        default: f64,
+        rows: &[usize],
+        poses: &[Pose],
+    ) -> Option<crate::model::NumColumn> {
+        use crate::model::NumColumn;
+        match slot {
+            None => Some(NumColumn::Const(default)),
+            Some(ResolvedRowVal::Num(v)) => Some(NumColumn::Const(*v)),
+            Some(value) => {
+                if let Some(col) = self.gather_num_rows(value, rows, poses) {
+                    return Some(NumColumn::Rows(col));
+                }
+                let mut col = Vec::with_capacity(rows.len());
+                for (k, &row) in rows.iter().enumerate() {
+                    col.push(self.eval_compiled_row_val(value, row, poses.get(k)).num().ok()?);
+                }
+                Some(NumColumn::Rows(col))
+            }
+        }
+    }
+
+    /// Direct numeric gather for reads that provably cannot yield a
+    /// keyword: a field name with no sym-field slot only ever reads its
+    /// num column (`entity_field_at_slots` checks sym first), and pose
+    /// components come from the pose pass. None = shape not covered; the
+    /// caller's generic Val loop keeps the error/abort semantics.
+    fn gather_num_rows(
+        &self,
+        value: &ResolvedRowVal,
+        rows: &[usize],
+        poses: &[Pose],
+    ) -> Option<Vec<f64>> {
+        match value {
+            ResolvedRowVal::PoseX => Some((0..rows.len()).map(|k| poses[k].x).collect()),
+            ResolvedRowVal::PoseY => Some((0..rows.len()).map(|k| poses[k].y).collect()),
+            ResolvedRowVal::PoseTheta => {
+                Some((0..rows.len()).map(|k| poses[k].angle_or(0.0)).collect())
+            }
+            ResolvedRowVal::Field(slots) if slots.sym.is_none() => {
+                // a missing value is Nothing → the interpreted read errors;
+                // bail so the generic loop surfaces it
+                let mut out = Vec::with_capacity(rows.len());
+                for &row in rows {
+                    out.push(self.world.col_at_slot(row, slots.num)?);
+                }
+                Some(out)
+            }
+            ResolvedRowVal::FieldOr(slots, default) if slots.sym.is_none() => {
+                let col = |k: usize| self.world.col_at_slot(rows[k], slots.num);
+                match &**default {
+                    ResolvedRowVal::Num(d) => {
+                        Some((0..rows.len()).map(|k| col(k).unwrap_or(*d)).collect())
+                    }
+                    ResolvedRowVal::PoseX => {
+                        Some((0..rows.len()).map(|k| col(k).unwrap_or_else(|| poses[k].x)).collect())
+                    }
+                    ResolvedRowVal::PoseY => {
+                        Some((0..rows.len()).map(|k| col(k).unwrap_or_else(|| poses[k].y)).collect())
+                    }
+                    ResolvedRowVal::PoseTheta => Some(
+                        (0..rows.len())
+                            .map(|k| col(k).unwrap_or_else(|| poses[k].angle_or(0.0)))
+                            .collect(),
+                    ),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn fill_render_batch(
+        &mut self,
+        form: &CompiledTickForm,
+        plan: &CompiledRowPlan,
+        rows: &[usize],
+        poses: &[Pose],
+    ) -> Option<Rc<crate::model::RenderBatch>> {
+        use crate::model::{Column, NumColumn, RenderBatch, RenderSchema};
+        let x = self.batch_num_col(plan.x, 0.0, rows, poses)?;
+        let y = self.batch_num_col(plan.y, 0.0, rows, poses)?;
+        let theta = self.batch_num_col(plan.theta, 0.0, rows, poses)?;
+        let scale = self.batch_num_col(plan.scale, 1.0, rows, poses)?;
+        let alpha = self.batch_num_col(plan.alpha, 1.0, rows, poses)?;
+        let hue = self.batch_num_col(plan.hue, 0.0, rows, poses)?;
+        let mut pending: Vec<(FieldName, RenderFieldKind)> = Vec::new();
+        let mut cols: Vec<(Rc<str>, RenderFieldKind, Column)> = Vec::with_capacity(plan.extras.len());
+        for (key, value) in &plan.extras {
+            match value {
+                ResolvedRowVal::Num(v) => {
+                    self.world.render_field_check_staged(key, RenderFieldKind::Num, &mut pending).ok()?;
+                    cols.push(((*key).clone(), RenderFieldKind::Num, Column::Num(NumColumn::Const(*v))));
+                }
+                ResolvedRowVal::Kw(k) => {
+                    self.world.render_field_check_staged(key, RenderFieldKind::Sym, &mut pending).ok()?;
+                    cols.push(((*key).clone(), RenderFieldKind::Sym, Column::SymConst(k.clone())));
+                }
+                value => {
+                    enum Fill {
+                        Empty,
+                        Nums(Vec<f64>, Vec<bool>, bool),
+                        Syms(Vec<Option<Rc<str>>>),
+                    }
+                    let mut fill = Fill::Empty;
+                    for (k, &row) in rows.iter().enumerate() {
+                        match self.eval_compiled_row_val(value, row, poses.get(k)) {
+                            Val::Nothing => match &mut fill {
+                                Fill::Empty => {}
+                                Fill::Nums(vals, mask, all) => {
+                                    vals.push(0.0);
+                                    mask.push(false);
+                                    *all = false;
+                                }
+                                Fill::Syms(vals) => vals.push(None),
+                            },
+                            Val::Num(v) => match &mut fill {
+                                Fill::Empty => {
+                                    let mut vals = vec![0.0; k];
+                                    let mut mask = vec![false; k];
+                                    vals.push(v);
+                                    mask.push(true);
+                                    fill = Fill::Nums(vals, mask, k == 0);
+                                }
+                                Fill::Nums(vals, mask, _) => {
+                                    vals.push(v);
+                                    mask.push(true);
+                                }
+                                Fill::Syms(_) => return None,
+                            },
+                            Val::Kw(s) => match &mut fill {
+                                Fill::Empty => {
+                                    let mut vals: Vec<Option<Rc<str>>> = vec![None; k];
+                                    vals.push(Some(s));
+                                    fill = Fill::Syms(vals);
+                                }
+                                Fill::Syms(vals) => vals.push(Some(s)),
+                                Fill::Nums(..) => return None,
+                            },
+                            _ => return None,
+                        }
+                    }
+                    match fill {
+                        // a field that is nothing on every row contributes
+                        // no column (no row would have carried it)
+                        Fill::Empty => {}
+                        Fill::Nums(vals, mask, all) => {
+                            self.world.render_field_check_staged(key, RenderFieldKind::Num, &mut pending).ok()?;
+                            let col = if all {
+                                Column::Num(NumColumn::Rows(vals))
+                            } else {
+                                Column::NumOpt(vals, mask)
+                            };
+                            cols.push(((*key).clone(), RenderFieldKind::Num, col));
+                        }
+                        Fill::Syms(vals) => {
+                            self.world.render_field_check_staged(key, RenderFieldKind::Sym, &mut pending).ok()?;
+                            cols.push(((*key).clone(), RenderFieldKind::Sym, Column::Syms(vals)));
+                        }
+                    }
+                }
+            }
+        }
+        let schema_cols: Vec<(Rc<str>, RenderFieldKind)> =
+            cols.iter().map(|(k, kind, _)| (k.clone(), *kind)).collect();
+        let mut memo = form.schema.borrow_mut();
+        let schema = match memo.as_ref() {
+            Some(s) if s.cols == schema_cols => s.clone(),
+            _ => {
+                let s = Rc::new(RenderSchema { cols: schema_cols });
+                *memo = Some(s.clone());
+                s
+            }
+        };
+        drop(memo);
+        self.world.render_field_commit(&pending);
+        Some(Rc::new(RenderBatch {
+            schema,
+            len: rows.len(),
+            x,
+            y,
+            theta,
+            scale,
+            alpha,
+            hue,
+            cols: cols.into_iter().map(|(_, _, c)| c).collect(),
+        }))
     }
 
     fn eval_compiled_row_val(&self, value: &ResolvedRowVal, row: usize, pose: Option<&Pose>) -> Val {
@@ -1147,7 +1401,25 @@ struct CompiledRowPlan<'a> {
     extras: Vec<(&'a Rc<str>, &'a ResolvedRowVal)>,
 }
 
+fn row_val_reads_theta(value: &ResolvedRowVal) -> bool {
+    match value {
+        ResolvedRowVal::PoseTheta => true,
+        ResolvedRowVal::FieldOr(_, default) => row_val_reads_theta(default),
+        _ => false,
+    }
+}
+
 impl<'a> CompiledRowPlan<'a> {
+    /// Whether any lowered value consumes the pose angle; when none does,
+    /// the pos_only fast pose is exact for this plan.
+    fn reads_theta(&self) -> bool {
+        [self.x, self.y, self.theta, self.scale, self.alpha, self.hue]
+            .iter()
+            .flatten()
+            .any(|v| row_val_reads_theta(v))
+            || self.extras.iter().any(|(_, v)| row_val_reads_theta(v))
+    }
+
     fn from_fields(fields: &'a [(&'a Rc<str>, RenderKey, ResolvedRowVal)]) -> Option<CompiledRowPlan<'a>> {
         let mut shape = None;
         let mut x = None;

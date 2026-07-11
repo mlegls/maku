@@ -180,19 +180,56 @@ impl Maku {
     /// pre-applied — every host renders identical colors; :scale is
     /// pre-applied to the radius, :opacity arrives as a).
     pub fn dots(&mut self) -> Vec<f32> {
+        use crate::model::{Column, RenderItem};
+        fn sym_col_at<'a>(col: Option<&'a Column>, i: usize) -> Option<&'a str> {
+            match col? {
+                Column::SymConst(s) => Some(s.as_ref()),
+                Column::Syms(v) => v[i].as_deref(),
+                _ => None,
+            }
+        }
         let mut out = Vec::new();
-        for row in self.inst.render() {
-            if let RenderData::Point { x, y, scale, alpha, hue, .. } = row.data {
-                let (r, g, b) = style_rgb_hued(row.sym("color").unwrap_or(""), hue);
-                out.extend_from_slice(&[
-                    x as f32,
-                    y as f32,
-                    dot_radius(row.sym("family").unwrap_or("")) * scale as f32,
-                    r,
-                    g,
-                    b,
-                    alpha.clamp(0.0, 1.0) as f32,
-                ]);
+        for item in self.inst.render_frame() {
+            match item {
+                RenderItem::Row(row) => {
+                    if let RenderData::Point { x, y, scale, alpha, hue, .. } = row.data {
+                        let (r, g, b) = style_rgb_hued(row.sym("color").unwrap_or(""), hue);
+                        out.extend_from_slice(&[
+                            x as f32,
+                            y as f32,
+                            dot_radius(row.sym("family").unwrap_or("")) * scale as f32,
+                            r,
+                            g,
+                            b,
+                            alpha.clamp(0.0, 1.0) as f32,
+                        ]);
+                    }
+                }
+                RenderItem::Batch(batch) => {
+                    let col = |key: &str| {
+                        batch
+                            .schema
+                            .cols
+                            .iter()
+                            .position(|(k, _)| &**k == key)
+                            .map(|i| &batch.cols[i])
+                    };
+                    let (color, family) = (col("color"), col("family"));
+                    out.reserve(batch.len * 7);
+                    for i in 0..batch.len {
+                        let (r, g, b) =
+                            style_rgb_hued(sym_col_at(color, i).unwrap_or(""), batch.hue.at(i));
+                        out.extend_from_slice(&[
+                            batch.x.at(i) as f32,
+                            batch.y.at(i) as f32,
+                            dot_radius(sym_col_at(family, i).unwrap_or("")) * batch.scale.at(i) as f32,
+                            r,
+                            g,
+                            b,
+                            batch.alpha.at(i).clamp(0.0, 1.0) as f32,
+                        ]);
+                    }
+                }
             }
         }
         out
@@ -201,13 +238,15 @@ impl Maku {
     /// Lasers/pathers: [active, r, g, b, a, n, x1, y1, … xn, yn]* repeated.
     pub fn beams(&mut self) -> Vec<f32> {
         let mut out = Vec::new();
-        for row in self.inst.render() {
-            if let RenderData::Polyline { points, active } = row.data {
+        // batches are point-geometry only; polylines always arrive as rows
+        for item in self.inst.render_frame() {
+            let crate::model::RenderItem::Row(row) = item else { continue };
+            if let RenderData::Polyline { points, active } = &row.data {
                 let hue = row.num("hue").unwrap_or(0.0);
                 let alpha = row.num("alpha").unwrap_or(1.0);
                 let (r, g, b) = style_rgb_hued(row.sym("color").unwrap_or(""), hue);
                 out.extend_from_slice(&[
-                    if active { 1.0 } else { 0.0 },
+                    if *active { 1.0 } else { 0.0 },
                     r,
                     g,
                     b,
@@ -215,7 +254,7 @@ impl Maku {
                     points.len() as f32,
                 ]);
                 for (x, y) in points {
-                    out.extend_from_slice(&[x as f32, y as f32]);
+                    out.extend_from_slice(&[*x as f32, *y as f32]);
                 }
             }
         }

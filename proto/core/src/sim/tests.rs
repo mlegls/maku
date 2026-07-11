@@ -1272,6 +1272,90 @@
     }
 
     #[test]
+    fn compiled_render_rule_emits_column_batch() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (emit :render {:shape :point
+                          :x (:x p)
+                          :y (:y p)
+                          :scale (value-or (:size e) 1)
+                          :color (:color e)
+                          :tag (:tag e)})))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(defpattern p []
+  (par
+    (spawn (pose c[1 2]) {:render :sprite :color :red :size 2 :tag 7})
+    (spawn (pose c[3 4]) {:render :sprite :color :blue})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        sim.step().unwrap();
+        let batch = sim
+            .world
+            .render_rows
+            .iter()
+            .find_map(|item| match item {
+                crate::model::RenderItem::Batch(b) => Some(b.clone()),
+                _ => None,
+            })
+            .expect("compiled point rule should emit a column batch");
+        assert_eq!(batch.len, 2);
+        let schema = batch.schema.clone();
+        // expansion carries per-row syms, presence-masked nums, and
+        // FieldOr defaults exactly as the row path would
+        let rows = sim.render();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].sym("color"), Some("red"));
+        assert_eq!(rows[0].num("tag"), Some(7.0));
+        assert_eq!(rows[1].sym("color"), Some("blue"));
+        assert_eq!(rows[1].num("tag"), None);
+        let RenderData::Point { x, y, scale, .. } = rows[1].data else { panic!() };
+        assert_eq!((x, y, scale), (3.0, 4.0, 1.0));
+        let RenderData::Point { scale, .. } = rows[0].data else { panic!() };
+        assert_eq!(scale, 2.0);
+        sim.step().unwrap();
+        let batch2 = sim
+            .world
+            .render_rows
+            .iter()
+            .find_map(|item| match item {
+                crate::model::RenderItem::Batch(b) => Some(b.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(Rc::ptr_eq(&schema, &batch2.schema), "schema memo should be pointer-stable");
+    }
+
+    #[test]
+    fn touhou_shaped_rule_emits_batch() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (emit :render {:shape :point
+                    :x (:x p)
+                    :y (:y p)
+                    :theta (value-or e.facing (:th p))
+                    :scale (value-or e.scale 1)
+                    :alpha (value-or e.opacity 1)
+                    :hue (value-or e.hue 0)
+                    :family e.family
+                    :color e.color
+                    :variant e.variant})))
+       (entities-where (fn [e] (* (= e.render :touhou-sprite) (= e.kind :point))))))
+(defpattern p []
+  (spawn (pose c[1 2]) {:render :touhou-sprite :family :gem :color :red :variant :w :hitbox 0.1}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some(), "rule should compile");
+        sim.step().unwrap();
+        let has_batch = sim.world.render_rows.iter().any(|item| matches!(item, crate::model::RenderItem::Batch(_)));
+        assert!(has_batch, "touhou-shaped rule should batch; items: {:?}", sim.world.render_rows);
+    }
+
+    #[test]
     fn numeric_predicate_falls_back_on_keyword_valued_field() {
         // A keyword-valued field under a numeric read makes the interpreted
         // predicate error; the compiled scan must bail to the interpreter and
