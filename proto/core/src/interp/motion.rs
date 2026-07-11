@@ -1494,7 +1494,12 @@ pub fn step_motion_in(
                 (vx, vy)
             };
             let next = [x + vx * dt, y + vy * dt];
-            state.insert(dense_key, Cell::N(next));
+            // the state map is only read back on the legacy path (Empty
+            // readers); the sim path reads through the snapshot and applies
+            // the buffered write_n2 to the world's columns
+            if mirror_legacy {
+                state.insert(dense_key, Cell::N(next));
+            }
             write_n2(dense_key, next);
             Ok(())
         }
@@ -1599,6 +1604,9 @@ pub fn step_motion_in(
                             Some(Val::Pose(p)) => [p.x, p.y],
                             _ => return Err("stages: internal exit vel missing".into()),
                         };
+                        // unconditional: the new segment's dyn may read these
+                        // exit cells within this same step call, before the
+                        // buffered writes reach the world's columns
                         state.insert(pos_key, Cell::N(pos));
                         state.insert(vel_key, Cell::N(vel));
                         write_n2(pos_key, pos);
@@ -1622,14 +1630,21 @@ pub fn step_motion_in(
             step_motion_in(b, tau, dt, ctx)
         }
         DynNode::Clamp { lo, hi, child } => {
-            step_motion_in(child, tau, dt, ctx)?;
+            // the clamp correction reads the child's just-stepped integrator
+            // state, so mirror this subtree into the state map even on the
+            // buffered path (Vel's insert is otherwise legacy-only)
+            let saved = ctx.mirror_legacy;
+            ctx.mirror_legacy = true;
+            let stepped = step_motion_in(child, tau, dt, ctx);
+            ctx.mirror_legacy = saved;
+            stepped?;
             clamp_integrator(
                 child,
                 *lo,
                 *hi,
                 ctx.state,
                 ctx.readers,
-                ctx.mirror_legacy,
+                saved,
                 ctx.write_n2,
             );
             Ok(())
