@@ -6,11 +6,18 @@ use std::collections::HashMap;
 pub struct NumProgram {
     pub ops: Vec<NumOp>,
     pub n_regs: usize,
+    /// Capture-slot count: `Input { slot }` ops read a per-entity capture
+    /// vector (rand draws today; spawn-env values later). Slot numbering is
+    /// shared across the programs of one dyn node (a and b index one
+    /// vector), so a program may not use every slot below `n_inputs`.
+    pub n_inputs: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum NumOp {
     Const { dst: u16, v: f64 },
+    /// Per-entity capture-vector read (`(%capture slot)` marker forms).
+    Input { dst: u16, slot: u16 },
     T { dst: u16 },
     U { dst: u16 },
     PosX { dst: u16 },
@@ -58,6 +65,7 @@ struct Builder<'a> {
     next: u16,
     defs: &'a HashMap<String, Form>,
     inline_depth: usize,
+    n_inputs: usize,
 }
 
 const MAX_INLINE_DEPTH: usize = 32;
@@ -174,6 +182,17 @@ impl Builder<'_> {
             return None;
         };
         let name = &**head;
+        // `(%capture i)`: a rand site rewritten to a capture slot at spawn
+        // extraction (spawn.rs). `%` heads are unbindable, so no shadow check.
+        if name == "%capture" {
+            let (2, Some(Form::Num(slot))) = (items.len(), items.get(1)) else {
+                return None;
+            };
+            let slot = *slot as u16;
+            self.n_inputs = self.n_inputs.max(slot as usize + 1);
+            let dst = self.reg()?;
+            return self.push(NumOp::Input { dst, slot });
+        }
         if special_or_channel_head(name) {
             return None;
         }
@@ -432,6 +451,7 @@ impl Builder<'_> {
 fn op_dst(op: NumOp) -> u16 {
     match op {
         NumOp::Const { dst, .. }
+        | NumOp::Input { dst, .. }
         | NumOp::T { dst }
         | NumOp::U { dst }
         | NumOp::PosX { dst }
@@ -532,9 +552,9 @@ pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> O
     // Def inlining needs no cell-scope guard: signal evaluation skips bare
     // cell reads (Ctx.signal_scope — signals read cells via (live name)
     // only), so a def name can never be shadowed by a cell at runtime.
-    let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0 };
+    let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0, n_inputs: 0 };
     b.lower(form, env, LowerScope::Current)?;
-    Some(NumProgram { ops: b.ops, n_regs: b.next as usize })
+    Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs })
 }
 
 pub fn program_uses_pos(prog: &NumProgram) -> bool {
@@ -545,19 +565,27 @@ thread_local! {
     static REGS: RefCell<Vec<f64>> = RefCell::new(Vec::new());
 }
 
+/// Cap-free convenience (tests, cap-free call sites).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn run_num_program(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>) -> f64 {
+    run_num_program_caps(prog, t, u, pos, &[])
+}
+
+pub fn run_num_program_caps(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, caps: &[f64]) -> f64 {
     REGS.with(|regs| {
         let mut regs = regs.borrow_mut();
-        run(prog, t, u, pos, &mut regs)
+        run(prog, t, u, pos, caps, &mut regs)
     })
 }
 
-pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, regs: &mut Vec<f64>) -> f64 {
+pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, caps: &[f64], regs: &mut Vec<f64>) -> f64 {
+    debug_assert!(caps.len() >= prog.n_inputs);
     regs.clear();
     regs.resize(prog.n_regs, 0.0);
     for op in &prog.ops {
         match *op {
             NumOp::Const { dst, v } => regs[dst as usize] = v,
+            NumOp::Input { dst, slot } => regs[dst as usize] = caps[slot as usize],
             NumOp::T { dst } => regs[dst as usize] = t,
             NumOp::U { dst } => regs[dst as usize] = u,
             NumOp::PosX { dst } => regs[dst as usize] = pos.map(|p| p.0).unwrap_or(0.0),
@@ -628,17 +656,22 @@ pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, regs: &mu
 /// `split_at_mut` separates the write lanes from the read lanes.
 ///
 /// Registers live at `regs[r * n + lane]`. Appends the n results to `out`
-/// (0.0 per lane for an empty program, matching `run`).
+/// (0.0 per lane for an empty program, matching `run`). `caps` holds each
+/// lane's capture vector at stride `prog.n_inputs` (empty when the program
+/// takes no inputs).
 pub fn run_lanes(
     prog: &NumProgram,
     u: f64,
     tau: &[f64],
     pos: &[[f64; 2]],
+    caps: &[f64],
     regs: &mut Vec<f64>,
     out: &mut Vec<f64>,
 ) {
     let n = tau.len();
     debug_assert_eq!(pos.len(), n);
+    let stride = prog.n_inputs;
+    debug_assert!(stride == 0 || caps.len() >= stride * n);
     regs.clear();
     regs.resize(prog.n_regs * n, 0.0);
     for op in &prog.ops {
@@ -648,6 +681,11 @@ pub fn run_lanes(
         let at = |r: u16, l: usize| src[r as usize * n + l];
         match *op {
             NumOp::Const { v, .. } => d.fill(v),
+            NumOp::Input { slot, .. } => {
+                for l in 0..n {
+                    d[l] = caps[l * stride + slot as usize];
+                }
+            }
             NumOp::T { .. } => d.copy_from_slice(tau),
             NumOp::U { .. } => d.fill(u),
             NumOp::PosX { .. } => {
@@ -1078,7 +1116,7 @@ mod tests {
             let pos: Vec<[f64; 2]> = (0..17).map(|i| [i as f64 * 1.3, 5.0 - i as f64]).collect();
             let mut regs = Vec::new();
             let mut out = Vec::new();
-            run_lanes(&prog, 0.25, &tau, &pos, &mut regs, &mut out);
+            run_lanes(&prog, 0.25, &tau, &pos, &[], &mut regs, &mut out);
             for l in 0..tau.len() {
                 let want = run_num_program(&prog, tau[l], 0.25, Some((pos[l][0], pos[l][1])));
                 let got = out[l];

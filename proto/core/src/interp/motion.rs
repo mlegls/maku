@@ -367,6 +367,73 @@ pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionS
     panic!("motion node has no stable lowered id for pointer {ptr:#x}")
 }
 
+/// Rand-as-capture-slots (compiled-dyn milestone B, input slots): a node's
+/// rand sites extract to `(%capture i)` marker forms ONCE at node
+/// construction; each spawned entity then draws a small capture vector
+/// instead of cloning a substituted form tree, and the marker programs are
+/// shared by the whole group — which is what lets rand-bearing rows join
+/// the vel batch lanes. The node field is `Option<Rc<RandCell>>` (one word,
+/// None for rand-free forms) because DynNode size is hot: every pose walk
+/// chases these enums, and inlining the slot data measurably regressed the
+/// wall (88 → 120 bytes cost ~60% on the scaled fruit rig).
+#[derive(Debug)]
+pub enum RandCell {
+    /// Spec node: extraction + lowering, built at construction. The node's
+    /// own forms stay untouched (direct signal evaluation outside spawn
+    /// keeps per-eval rand semantics).
+    Compiled(ExtractedSig),
+    /// Rand present but the marker forms didn't lower: spawn instantiation
+    /// falls back to per-entity form substitution, the pre-slot path.
+    Bail,
+    /// Entity clone: the drawn capture values, slot-indexed.
+    Caps(Rc<[f64]>),
+}
+
+#[derive(Debug)]
+pub struct ExtractedSig {
+    /// Marker forms in node order — (a, b) for pair nodes, one for RotExpr.
+    pub forms: Vec<Form>,
+    pub sites: Vec<super::spawn::RandSite>,
+    /// One program per form; every program's `n_inputs` is bumped to
+    /// `sites.len()` so all of a node's programs read one capture vector.
+    pub programs: Vec<Rc<NumProgram>>,
+}
+
+/// Build a node's rand cell at construction: None for rand-free forms (the
+/// common case — no size or alloc cost), else extraction + marker lowering.
+pub(crate) fn rand_cell_for(
+    forms: &[&Form],
+    env: &Env,
+    sig: &SigEnv,
+    allow_pos: bool,
+) -> Option<Rc<RandCell>> {
+    if !forms.iter().any(|f| super::spawn::form_has_rand(f)) {
+        return None;
+    }
+    let mut sites = Vec::new();
+    let marked: Vec<Form> = forms.iter().map(|f| super::spawn::extract_rand(f, &mut sites)).collect();
+    let mut programs = Vec::with_capacity(marked.len());
+    for m in &marked {
+        let Some(mut p) = lower_num_form(m, env, &sig.defs) else {
+            return Some(Rc::new(RandCell::Bail));
+        };
+        if !allow_pos && program_uses_pos(&p) {
+            return Some(Rc::new(RandCell::Bail));
+        }
+        p.n_inputs = sites.len();
+        programs.push(Rc::new(p));
+    }
+    Some(Rc::new(RandCell::Compiled(ExtractedSig { forms: marked, sites, programs })))
+}
+
+/// The entity's capture vector, if this node carries one.
+pub(crate) fn caps_of(rand: &Option<Rc<RandCell>>) -> &[f64] {
+    match rand.as_deref() {
+        Some(RandCell::Caps(caps)) => caps,
+        _ => &[],
+    }
+}
+
 #[derive(Debug)]
 pub enum DynNode {
     Const(Pose),
@@ -379,6 +446,7 @@ pub enum DynNode {
         polar: bool,
         env: Env,
         programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+        rand: Option<Rc<RandCell>>,
     },
     /// Integrated velocity (Scanned): components over slot-bound t.
     Vel {
@@ -387,6 +455,7 @@ pub enum DynNode {
         polar: bool,
         env: Env,
         programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+        rand: Option<Rc<RandCell>>,
     },
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
     Translate { dx: f64, dy: f64, child: Rc<DynNode> },
@@ -406,7 +475,7 @@ pub enum DynNode {
     /// distance, you slide and turn back instantly.
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
-    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<NumProgram>>> },
+    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<NumProgram>>>, rand: Option<Rc<RandCell>> },
     /// A user function adapted to a stateless pose dyn by calling it as (f t).
     FnPose(Val),
     /// A closed evolve used in a pose slot: the fold is replayed from epoch
@@ -907,9 +976,10 @@ fn eval_num_program_pair(
     tau: f64,
     u: f64,
     pos: Option<(f64, f64)>,
+    caps: &[f64],
 ) -> (f64, f64) {
-    let av = run_num_program(a, tau, u, pos);
-    let bv = run_num_program(b, tau, u, pos);
+    let av = run_num_program_caps(a, tau, u, pos, caps);
+    let bv = run_num_program_caps(b, tau, u, pos, caps);
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         (av * c, av * s)
@@ -957,12 +1027,14 @@ pub struct VelStepPlan {
 }
 
 /// A borrowed classification — the per-row scan only clones the Rcs when a
-/// lane opens a new group, not per row.
+/// lane opens a new group, not per row. `caps` is the row's capture vector
+/// (rand draws), one lane's slice of the group's caps at stride n_inputs.
 pub struct VelStepPlanRef<'a> {
     pub vel: &'a Rc<DynNode>,
     pub ap: &'a Rc<NumProgram>,
     pub bp: &'a Rc<NumProgram>,
     pub polar: bool,
+    pub caps: &'a [f64],
 }
 
 impl VelStepPlanRef<'_> {
@@ -984,11 +1056,11 @@ pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlan
     loop {
         match &**node {
             DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
-            DynNode::Vel { a, b, polar, env, programs } => {
+            DynNode::Vel { a, b, polar, env, programs, rand } => {
                 let (ap, bp) = programs
                     .get_or_init(|| lower_program_pair(a, b, env, sig, true))
                     .as_ref()?;
-                return Some(VelStepPlanRef { vel: node, ap, bp, polar: *polar });
+                return Some(VelStepPlanRef { vel: node, ap, bp, polar: *polar, caps: caps_of(rand) });
             }
             _ => return None,
         }
@@ -1041,9 +1113,10 @@ pub fn oracle_check_vel_step(
     readers: &MotionReaders,
     tick_rate: f64,
 ) -> Result<(), String> {
-    let DynNode::Vel { a, b, polar, env, .. } = vel else {
+    let DynNode::Vel { a, b, polar, env, rand, .. } = vel else {
         return Ok(());
     };
+    let (a, b) = &oracle_forms(a, b, caps_of(rand));
     let key = vel as *const DynNode as usize;
     let mut state = MotionState::default();
     let ((ivx, ivy), _) = advance_sites_with_writes(&mut state, key, dt, readers.clone(), false, |scan| {
@@ -1052,6 +1125,16 @@ pub fn oracle_check_vel_step(
     assert_num_close("vel-batch/a", a, got.0, ivx);
     assert_num_close("vel-batch/b", b, got.1, ivy);
     Ok(())
+}
+
+/// Oracle bridge for marker forms: an interpreter re-run needs the entity's
+/// drawn capture values substituted back in (no-op clone when cap-free).
+fn oracle_form(f: &Form, caps: &[f64]) -> Form {
+    if caps.is_empty() { f.clone() } else { super::spawn::subst_captures(f, caps) }
+}
+
+fn oracle_forms(a: &Form, b: &Form, caps: &[f64]) -> (Form, Form) {
+    (oracle_form(a, caps), oracle_form(b, caps))
 }
 
 fn assert_num_close(label: &str, form: &Form, got: f64, expected: f64) {
@@ -1252,15 +1335,16 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             y: vy * tau,
             theta: Some(vy.atan2(*vx).to_degrees()),
         }),
-        DynNode::ClosedPt { a, b, polar, env, programs } => {
+        DynNode::ClosedPt { a, b, polar, env, programs, rand } => {
             let key = d as *const DynNode as usize;
             if let Some((ap, bp)) = programs
                 .get_or_init(|| lower_program_pair(a, b, env, sig, false))
                 .as_ref()
             {
-                let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None);
+                let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None, caps_of(rand));
                 if !ctx.need_theta {
                     if oracle_enabled() {
+                        let (a, b) = &oracle_forms(a, b, caps_of(rand));
                         let (ix, iy) = eval_pt_at_rate(
                             a,
                             b,
@@ -1279,8 +1363,9 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     return Ok(Pose::point(x, y));
                 }
                 let eps = 1.0 / tick_rate;
-                let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None);
+                let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None, caps_of(rand));
                 if oracle_enabled() {
+                    let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let (ix, iy) = eval_pt_at_rate(
                         a,
                         b,
@@ -1342,7 +1427,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             )?;
             Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
         }
-        DynNode::Vel { a, b, polar, env, programs } => {
+        DynNode::Vel { a, b, polar, env, programs, rand } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
             let [x, y] = readers.n2(dense_key)
@@ -1360,8 +1445,9 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 .get_or_init(|| lower_program_pair(a, b, env, sig, true))
                 .as_ref()
             {
-                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, u, Some((x, y)));
+                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, u, Some((x, y)), caps_of(rand));
                 if oracle_enabled() {
+                    let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let (ivx, ivy) = eval_pt_at_rate(
                         a,
                         b,
@@ -1401,7 +1487,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let p = dyn_node_pose_u_in(child, tau, 0.0, ctx)?;
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })
         }
-        DynNode::RotExpr { form, env, program } => {
+        DynNode::RotExpr { form, env, program, rand } => {
             if !ctx.need_theta {
                 // a rot-expr's pose IS its theta; nothing else to compute
                 return Ok(Pose::point(0.0, 0.0));
@@ -1411,8 +1497,9 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 .get_or_init(|| lower_single_program(form, env, sig, true))
                 .as_ref()
             {
-                let th = run_num_program(prog, tau, u, Some((0.0, 0.0)));
+                let th = run_num_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand));
                 if oracle_enabled() {
+                    let form = &oracle_form(form, caps_of(rand));
                     let ith = eval_sig_at_rate(
                         form,
                         env,
@@ -1585,7 +1672,7 @@ pub fn step_motion_in(
     ctx: &mut MotionStepCtx<'_>,
 ) -> Result<(), String> {
     match d {
-        DynNode::Vel { a, b, polar, env, programs } => {
+        DynNode::Vel { a, b, polar, env, programs, rand } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
             let state = &mut *ctx.state;
@@ -1607,8 +1694,9 @@ pub fn step_motion_in(
                 .get_or_init(|| lower_program_pair(a, b, env, sig, true))
                 .as_ref()
             {
-                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)));
+                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)), caps_of(rand));
                 if oracle_enabled() {
+                    let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let ((ivx, ivy), _) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
                         eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
                     })?;
@@ -1638,7 +1726,7 @@ pub fn step_motion_in(
             write_n2(dense_key, next);
             Ok(())
         }
-        DynNode::RotExpr { form, env, program } => {
+        DynNode::RotExpr { form, env, program, rand: _ } => {
             // a lowered program is scan-free: nothing to advance
             if program
                 .get_or_init(|| lower_single_program(form, env, ctx.sig, true))
@@ -2055,5 +2143,21 @@ fn evolve_form_is_live(form: &Form, locals: &[&str]) -> bool {
         Form::Vector(items) => items.iter().any(|f| evolve_form_is_live(f, locals)),
         Form::Map(kvs) => kvs.iter().any(|(k, v)| evolve_form_is_live(k, locals) || evolve_form_is_live(v, locals)),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod size_probe {
+    /// DynNode size is hot: every pose walk chases these enums, and the
+    /// round-22 inline rand-slot draft (88 → 120 bytes) cost ~60% wall on
+    /// the scaled fruit rig. New per-variant data goes behind an
+    /// `Option<Rc<..>>` (see RandCell), not inline.
+    #[test]
+    fn dyn_node_stays_small() {
+        assert!(
+            std::mem::size_of::<super::DynNode>() <= 96,
+            "DynNode grew to {} bytes — box new fields (see RandCell)",
+            std::mem::size_of::<super::DynNode>()
+        );
     }
 }

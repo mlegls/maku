@@ -3009,6 +3009,107 @@
         }
     }
 
+    /// Rand capture slots (milestone B input slots): a rand-bearing spawn
+    /// group shares ONE marker program pair across the ring (per spawn
+    /// site, not per entity) while each entity carries its own drawn
+    /// capture vector — and every lane stays interpreter-exact under the
+    /// oracle (the substituted-marker re-run).
+    #[test]
+    fn rand_capture_slots_share_programs() {
+        struct OracleGuard;
+        impl Drop for OracleGuard {
+            fn drop(&mut self) {
+                crate::interp::set_oracle_for_tests(false);
+            }
+        }
+
+        crate::interp::set_oracle_for_tests(true);
+        let _guard = OracleGuard;
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (circle 8 (vel (polar (rand 1 2) (+ (* (randpm1) 20) (* 10 t)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..6 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 8);
+        let vel_parts = |row: usize| {
+            let mut node = dyn_figure(&sim, row).pose_dyn();
+            loop {
+                match &**node {
+                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
+                        node = child
+                    }
+                    DynNode::Vel { programs, rand, .. } => {
+                        let (ap, bp) = programs.get().unwrap().as_ref().expect("rand vel compiled");
+                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(rand).to_vec());
+                    }
+                    other => panic!("unexpected node {other:?}"),
+                }
+            }
+        };
+        let (ap0, bp0, caps0) = vel_parts(0);
+        assert_eq!(caps0.len(), 2, "two rand sites -> two capture slots");
+        assert!(caps0[0] >= 1.0 && caps0[0] < 2.0);
+        assert!(caps0[1] == -1.0 || caps0[1] == 1.0);
+        let mut distinct = false;
+        for row in 1..8 {
+            let (ap, bp, caps) = vel_parts(row);
+            assert_eq!((ap, bp), (ap0, bp0), "row {row}: spawn group must share programs");
+            distinct |= caps[0] != caps0[0];
+        }
+        assert!(distinct, "capture draws must differ across the group");
+    }
+
+    /// Same seed, same card: capture-slot draws consume the RNG in the
+    /// substitution order, so runs are reproducible; and a group whose rand
+    /// sits in an unlowerable form falls back to per-entity substitution.
+    #[test]
+    fn rand_capture_slots_deterministic_and_fallback() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (circle 4 (vel (polar (rand 1 2) (* 30 t))))))
+"#;
+        let mut a = Sim::load(CARD, Some("p")).unwrap();
+        let mut b = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..5 {
+            a.step().unwrap();
+            b.step().unwrap();
+        }
+        let rows_a = a.render();
+        let rows_b = b.render();
+        assert_eq!(rows_a.len(), rows_b.len());
+        for (ra, rb) in rows_a.iter().zip(rows_b.iter()) {
+            assert_render_rows_eq(ra, rb);
+        }
+
+        // unlowerable head around the rand site: marker lowering bails,
+        // the per-entity substitution path runs
+        const FALLBACK: &str = r#"
+(defpattern p []
+  (spawn (circle 4 (vel (cart (nth [0.5 1] (rand-int 0 2)) 0.5)))))
+"#;
+        let mut sim = Sim::load(FALLBACK, Some("p")).unwrap();
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 4);
+        let caps_of = |row: usize| {
+            let mut node = dyn_figure(&sim, row).pose_dyn();
+            loop {
+                match &**node {
+                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
+                        node = child
+                    }
+                    DynNode::Vel { rand, .. } => return caps_of(rand).to_vec(),
+                    other => panic!("unexpected node {other:?}"),
+                }
+            }
+        };
+        assert!(caps_of(0).is_empty(), "bail path substitutes forms, no caps");
+    }
+
     #[test]
     fn unlowerable_user_fn_signal_falls_back() {
         const FALLBACK: &str = r#"

@@ -1161,12 +1161,17 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 if items.len() != 3 {
                     return Err(format!("{}: expected two components", s));
                 }
+                let a = expand_macros(&items[1], env, ctx, world)?;
+                let b = expand_macros(&items[2], env, ctx, world)?;
+                // pose eval lowers with allow_pos=false (dyn_node_pose_u_in)
+                let rand = motion::rand_cell_for(&[&a, &b], env, &ctx.sig, false);
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::ClosedPt {
-                    a: expand_macros(&items[1], env, ctx, world)?,
-                    b: expand_macros(&items[2], env, ctx, world)?,
+                    a,
+                    b,
                     polar: &**s == "polar",
                     env: env.clone(),
                     programs: std::cell::OnceCell::new(),
+                    rand,
                 }))));
             }
             "vel" => return sf_vel(items, env, ctx, world),
@@ -1311,10 +1316,13 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_unbound_axis(&items[1], env) => {
+                let form = expand_macros(&items[1], env, ctx, world)?;
+                let rand = motion::rand_cell_for(&[&form], env, &ctx.sig, true);
                 return Ok(Val::DynPose(DynPose::pose_node(Rc::new(DynNode::RotExpr {
-                    form: expand_macros(&items[1], env, ctx, world)?,
+                    form,
                     env: env.clone(),
                     program: std::cell::OnceCell::new(),
+                    rand,
                 }))));
             }
             "aim" => {
@@ -3215,12 +3223,16 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     if comps.len() != 2 {
         return Err("vel: expected two components".into());
     }
+    let a = expand_macros(&comps[0], env, ctx, world)?;
+    let b = expand_macros(&comps[1], env, ctx, world)?;
+    let rand = motion::rand_cell_for(&[&a, &b], env, &ctx.sig, true);
     let node = Rc::new(DynNode::Vel {
-        a: expand_macros(&comps[0], env, ctx, world)?,
-        b: expand_macros(&comps[1], env, ctx, world)?,
+        a,
+        b,
         polar,
         env: env.clone(),
         programs: std::cell::OnceCell::new(),
+        rand,
     });
     match items.get(2) {
         None => Ok(Val::DynPose(DynPose::pose_node(node))),

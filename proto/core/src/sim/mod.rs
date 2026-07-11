@@ -92,6 +92,14 @@ struct VelBatchGroup {
     rows: Vec<(usize, usize)>,
     tau: Vec<f64>,
     pos: Vec<[f64; 2]>,
+    /// Per-lane capture vectors at stride `plan.ap.n_inputs` (empty when
+    /// the group's programs take no inputs).
+    caps: Vec<f64>,
+    /// Oracle only: each lane's own Vel node — capture-slot lanes share
+    /// programs across per-entity node clones, so the interpreter re-run
+    /// must key state and substitute caps through the LANE's node, not the
+    /// group plan's.
+    nodes: Vec<Rc<DynNode>>,
     va: Vec<f64>,
     vb: Vec<f64>,
 }
@@ -104,6 +112,8 @@ impl VelBatchScratch {
             g.rows.clear();
             g.tau.clear();
             g.pos.clear();
+            g.caps.clear();
+            g.nodes.clear();
             g.va.clear();
             g.vb.clear();
             g
@@ -129,6 +139,8 @@ impl VelBatchScratch {
                         rows: Vec::new(),
                         tau: Vec::new(),
                         pos: Vec::new(),
+                        caps: Vec::new(),
+                        nodes: Vec::new(),
                         va: Vec::new(),
                         vb: Vec::new(),
                     });
@@ -141,9 +153,16 @@ impl VelBatchScratch {
             }
         };
         let g = &mut self.groups[idx];
+        // group identity = program pair, so every lane's capture width is
+        // the shared n_inputs (0 for cap-free programs)
+        debug_assert_eq!(plan.caps.len(), g.plan.ap.n_inputs);
         g.rows.push((row, slot));
         g.tau.push(tau);
         g.pos.push(pos);
+        g.caps.extend_from_slice(plan.caps);
+        if oracle_enabled() {
+            g.nodes.push(plan.vel.clone());
+        }
     }
 }
 
@@ -496,8 +515,8 @@ impl Sim {
         let mut regs = std::mem::take(&mut self.vel_batch.regs);
         for g in &mut groups {
             let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
-            run_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &mut regs, &mut g.va);
-            run_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &mut regs, &mut g.vb);
+            run_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
+            run_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (av, bv) = (g.va[l], g.vb[l]);
                 let (vx, vy) = if g.plan.polar {
@@ -511,7 +530,7 @@ impl Sim {
                 if oracle {
                     let readers = self.motion_readers(row);
                     oracle_check_vel_step(
-                        &g.plan.vel,
+                        &g.nodes[l],
                         g.tau[l],
                         dt,
                         (x, y),
