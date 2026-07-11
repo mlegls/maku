@@ -1768,20 +1768,47 @@ fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     Some(RowPredicate { tests })
 }
 
+/// Per-query resolved form of a RowPredicateTest: symbol lookups happen once
+/// per query, not once per row. A field or value that was never interned
+/// anywhere cannot match any row (mirrors sym_field_matches_at).
+enum ResolvedRowTest {
+    Kind(Rc<str>),
+    SymEq { field: FieldName, value: Symbol },
+    Never,
+}
+
 impl RowPredicate {
-    fn matches(&self, row: usize, world: &World) -> bool {
-        self.tests.iter().all(|test| match &*test.field {
-            "kind" => world.entities.dyn_figure(row).is_some_and(|figure| {
-                let kind = match figure.repr() {
-                    FigureDynRepr::Pose(_) if world.entities.is_traced(row) => "pather",
-                    FigureDynRepr::Pose(_) => "point",
-                    FigureDynRepr::Curve { .. } => "curve",
-                };
-                kind == &*test.value
-            }),
-            field => world.sym_field_matches_at(row, field, &test.value),
-        })
+    fn resolve(&self, world: &World) -> Vec<ResolvedRowTest> {
+        self.tests
+            .iter()
+            .map(|test| {
+                if &*test.field == "kind" {
+                    return ResolvedRowTest::Kind(test.value.clone());
+                }
+                match (world.symbols.lookup(&test.field), world.symbols.lookup(&test.value)) {
+                    (Some(field), Some(value)) => ResolvedRowTest::SymEq { field, value },
+                    _ => ResolvedRowTest::Never,
+                }
+            })
+            .collect()
     }
+}
+
+fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, world: &World) -> bool {
+    tests.iter().all(|test| match test {
+        ResolvedRowTest::Kind(value) => world.entities.dyn_figure(row).is_some_and(|figure| {
+            let kind = match figure.repr() {
+                FigureDynRepr::Pose(_) if world.entities.is_traced(row) => "pather",
+                FigureDynRepr::Pose(_) => "point",
+                FigureDynRepr::Curve { .. } => "curve",
+            };
+            kind == &**value
+        }),
+        ResolvedRowTest::SymEq { field, value } => {
+            world.sym_field_value_at(row, *field) == Some(*value)
+        }
+        ResolvedRowTest::Never => false,
+    })
 }
 
 fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
@@ -1836,7 +1863,12 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
     };
     // Mixed predicates deliberately fall back as a whole; partial prefiltering
     // would change the error and effect ordering of the residual expression.
-    let out = candidates.iter().copied().filter(|i| predicate.matches(*i, world)).collect::<Vec<_>>();
+    let tests = predicate.resolve(world);
+    let out = candidates
+        .iter()
+        .copied()
+        .filter(|i| resolved_row_tests_match(&tests, *i, world))
+        .collect::<Vec<_>>();
     if lower::oracle_enabled() {
         let expected = resolve_predicate_query_fallback(q, ctx, world, &candidates)?;
         assert_eq!(out, expected, "row predicate mismatch for {:?}", q);
@@ -1977,10 +2009,17 @@ fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result
         }
         .into())),
         field => {
-            if let Some(value) = world.sym_field_resolved_at(i, field) {
-                return Ok(Val::Kw(value.into()));
+            // One symbol lookup covers both stores: a name never interned
+            // anywhere can name neither a sym field nor a numeric column.
+            let Some(sym) = world.symbols.lookup(field) else {
+                return Ok(Val::Nothing);
+            };
+            if let Some(value) = world.sym_field_value_at(i, sym) {
+                if let Some(resolved) = world.symbols.resolve(value) {
+                    return Ok(Val::Kw(resolved.into()));
+                }
             }
-            Ok(world.col_get_at(i, field).map(Val::Num).unwrap_or(Val::Nothing))
+            Ok(world.col_get_sym_at(i, sym).map(Val::Num).unwrap_or(Val::Nothing))
         }
     }
 }
