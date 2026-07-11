@@ -34,10 +34,16 @@ interpreted. Gaps, in dependency order:
    sym-field equality, pose/channel/scan-cell reads) and re-express the
    three recognizers as lowerings onto it. Biggest chunk; without it a
    JIT covers only motion integrands (~1% post-round-19).
-2. **Input slots + capture vectors** (open half of milestone B): one
-   program per spawn SITE, per-entity data in capture vectors, plus
-   structural interning — the compile units and the compile-cache key.
-   Compiling per-entity/per-ring programs is a non-starter.
+2. **Input slots + capture vectors** — LANDED round 22 for the motion
+   surface: rand draws and numeric env captures fill per-entity capture
+   vectors over `(%capture i)` marker programs (one program per spawn
+   site; draws consume the RNG in the old substitution order), and
+   programs are structurally interned (the compile-cache key) — sites
+   differing only in captured/drawn values share one program and fuse
+   into one vel-batch group (polar joined the group key). Still open:
+   the same treatment on the other IR surfaces as item 1 lands, and the
+   entity-representation flip (spec id + capture vector replacing
+   per-row node clones).
 3. **Totality contract (decided): no Interp fallback op in JIT v1.**
    All-or-nothing classification means every compiled program is total
    and infallible — no interpreter re-entry from native code, no error
@@ -310,19 +316,26 @@ Landed (round 19), deviations vs the plan above:
   `motion_readers` collapsed out of the profile top; collider
   materialization is now the top row.
 
-Still open under B: input slots (captures/rand as data — one program per
-spawn SITE; unlocks cross-spawn sharing for rand-bearing groups and is
-what the capture-vector plumbing below describes), ClosedPt group pose
-evaluation (the pose fill for closed shapes still runs per row), AxisSel
-lane scatter, and — per the milestone-A bail census — ReadScan + Channel
-ops for the homing-slew integrands. The 2026-07 scale target (TODO.md:
-10k normal, 100k–1M ceiling) promotes input slots + interning from JIT
-prep to load-bearing: entity = (spec id, capture vector, state cells) is
-the only representation that fits 1M rows, and structural interning is
-both the compile-cache key and the offline-AOT key. Related group-level
-lever recorded there: integrator-state dedup per (program, captures,
-birth) — ring lanes carry bit-identical folds, the per-bullet angle
-lives in the wrapper frame.
+Input slots + interning LANDED (round 22, second slice of B): rand sites
+extract to `(%capture i)` markers once at node construction; spawn draws
+a per-entity capture vector (same RNG order as the old substitution
+walk) and clones share the marker programs, so rand-bearing rows join
+the vel batch lanes; numeric env captures lower to input slots in the
+same vector; programs intern structurally, fusing batch groups across
+spawn sites and repeated constructions (fruit −8% wall). Implementation
+notes: DynNode carries the slot data as one word (`Option<Rc<RandCell>>`
+— the inline draft grew the enum 88→120 bytes and cost ~60% wall on
+pose-chain walks; a size-guard test pins ≤96); lowering bails keep the
+per-entity substitution path bit-exactly; the batch oracle re-runs each
+LANE's own node (clones share programs but not state keys or caps).
+Still open under B: ClosedPt group pose evaluation (the pose fill for
+closed shapes still runs per row), AxisSel lane scatter, the
+entity-representation flip (spec id + capture vector replacing per-row
+node clones — the 1M-row layout), and — per the milestone-A bail census
+— ReadScan + Channel ops for the homing-slew integrands. Related
+group-level lever recorded in TODO.md: integrator-state dedup per
+(program, captures, birth) — ring lanes carry bit-identical folds, the
+per-bullet angle lives in the wrapper frame.
 
 ### C — beyond figure signals
 

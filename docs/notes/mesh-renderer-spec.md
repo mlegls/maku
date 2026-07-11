@@ -1,9 +1,13 @@
 # Touhou mesh renderer pack — implementation spec
 
-Status: WORK ORDER 2026-07 (round 22, track B). Architecture decided in
+Status: LANDED 2026-07 (round 22, track B — implemented by codex from
+this spec; player extraction 823a9dd, pack fad0071, adoption 963ffb3,
+docs 89cef06; all acceptance gates verified). Architecture decided in
 render-output-design.md "Mesh renderers are hosts": the pack is a HOST —
 a separate optional crate consuming the public `render_frame()` API with
-no privileged engine relationship. This spec is the concrete build plan.
+no privileged engine relationship. This spec was the build plan; the
+implementation matches it (StyleTable took `px_per_unit` for line
+widths; spans split per frame item rather than per texture — one atlas).
 
 ## Deliverables
 

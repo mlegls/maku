@@ -94,11 +94,16 @@ headers, not here.
   `VelBatchScratch` — writing n2 columns directly) plus the pos_only
   pose fast path (collide fill + cull read integrator state through the
   wrappers; single-cell schemas resolve their slot without hashing),
-  both oracle-checked per lane/row. Still open under B: input slots
-  (captures/rand as data — one program per spawn SITE; with structural
-  interning this widens lanes across spawns), ClosedPt group pose
-  evaluation, AxisSel lane scatter, and the bail census's homing-slew
-  nodes needing ReadScan + Channel ops. Remaining cheap win #1: motion
+  both oracle-checked per lane/row. Round 22 landed the input-slot half:
+  rand draws and numeric env captures are per-entity CAPTURE VECTORS over
+  `(%capture i)` marker programs (one program per spawn site, drawn in
+  the old substitution order), programs are structurally INTERNED (sites
+  differing only in captured/drawn values share one program and fuse
+  into one vel-batch group; polar joined the group key), and DynNode
+  stayed one word bigger (`Option<Rc<RandCell>>` — the inline draft's
+  88→120 bytes cost ~60% wall; a size-guard test pins ≤96). Still open
+  under B: ClosedPt group pose evaluation, AxisSel lane scatter, and the
+  bail census's homing-slew nodes needing ReadScan + Channel ops. Remaining cheap win #1: motion
   readers closing over SoA columns + row index instead of building
   per-row snapshots (readers are constructed per entity per phase).
   Also open: partial prefiltering for mixed entities-where predicates
@@ -164,7 +169,9 @@ headers, not here.
     Rc-laden entities don't fly at 1M rows; input slots + structural
     interning (compiled-dyn milestone B open half / JIT gap 2) is
     load-bearing on three paths now: kernels, memory layout, offline
-    card AOT. It is the next round's work.
+    card AOT. FIRST SLICE LANDED round 22 (capture vectors + interning
+    for ClosedPt/Vel/RotExpr programs); the full entity-representation
+    flip (spec id replacing per-row node clones) remains.
   - **Group integrator dedup**: ring lanes often carry bit-identical
     integrator state (the per-bullet angle lives in the ConstFrame
     wrapper) — one integrator per (program, captures, birth) group,
@@ -180,18 +187,19 @@ headers, not here.
     channel-freeness survives interaction. Cards known in advance ⇒
     kernel codegen can happen offline at publish (wasm module per card,
     same NumProgram lowering as the native JIT), runtime binds channels.
-- Perf campaign (ongoing; rounds 7-21 landed — narrative in git history).
+- Perf campaign (ongoing; rounds 7-22 landed — narrative in git history).
   Rig: `MAKU_WALL_ONLY=1 cargo run --release --example profile` for bare
   walls (the flat profiler's own bookkeeping is ~18% on dense cards);
   macOS `sample` on the release binary is ground truth; scaled case
   `profile cards/tutorials/t03.maku ex3-fruit-colors 12000`. Bare walls
-  as of round 21: fruit 119.3ms/900t (5050ms at round 7 — 42x), scaled
-  12k rig 2.49s (3.11s at round-21 start, −20% same-session; 16.9s at
-  round 15), reimu ~137ms, spell-2 20.7ms, cradle 48.7ms. Round 21 =
-  milestone-C SoA render output (render-output-design.md): compiled
-  point rules emit column batches with direct numeric gather; the
-  `eval_compiled_row_val` + recycle rows collapsed. Remaining levers on
-  the round-21 sample, in payoff order:
+  as of round 22: fruit 121.2ms/900t (5050ms at round 7 — 42x), scaled
+  12k rig 2.40s (2.61s at round-22 start, −8% same-session from
+  cross-site batch fusion; 16.9s at round 15), reimu ~132ms, spell-2
+  22.4ms, cradle 48.8ms. Round 21 = milestone-C SoA render output
+  (render-output-design.md); round 22 = input slots + structural
+  interning (capture vectors over marker programs) plus the mesh
+  renderer pack (maku-mesh-touhou, player extracted to its own crate).
+  Remaining levers on the round-21 sample, in payoff order:
   - compiled tick passes ~28% of step (predicate scan + batch field
     reads/sym columns) but mostly irreducible per-row reads now; sym
     columns still clone `Rc<str>` per row (a per-batch symbol-id table
@@ -203,8 +211,9 @@ headers, not here.
     rule-effect audit before it's sound;
   - remaining interpreted rule scans (`evaluate_list_inner` ~8% — beam/
     cull/hp rules) — the rule-lowering surface;
-  - milestone-B widening (input slots, interning, ClosedPt group pose)
-    is now JIT prep more than wall win on this rig.
+  - milestone-B remainder (ClosedPt group pose, AxisSel scatter) is now
+    JIT prep more than wall win on this rig (input slots + interning
+    landed round 22 at −8%).
 - Follow-ups on the load-time AST rewrite pass (`interp/rewrite.rs`):
   (b) macro-expansion output is not rewritten (expansion is lazy per-eval;
   shapes inside macro-generated forms keep interpreted cost); (c) purity
