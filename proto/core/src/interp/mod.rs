@@ -1718,32 +1718,86 @@ fn is_query_value(v: &Val) -> bool {
 
 #[derive(Debug)]
 pub(crate) struct RowPredicate {
-    tests: Vec<RowPredicateTest>,
+    tests: Vec<RowTest>,
 }
 
 #[derive(Debug)]
-struct RowPredicateTest {
-    field: Rc<str>,
-    value: Rc<str>,
+pub(crate) enum RowTest {
+    KwEq { field: Rc<str>, value: Rc<str> },
+    NumCmp { op: CmpOp, lhs: RowNum, rhs: RowNum },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CmpOp { Lt, Le, Gt, Ge, Eq }
+
+#[derive(Debug)]
+pub(crate) enum RowNum {
+    Lit(f64),
+    Tau,
+    Tick,
+    ColOr(Rc<str>, Box<RowNum>),
+    Add(Box<RowNum>, Box<RowNum>),
+    Sub(Box<RowNum>, Box<RowNum>),
+    Mul(Box<RowNum>, Box<RowNum>),
+}
+
+fn row_head_unshadowed(name: &str, param: &str, env: &Env, ctx: &Ctx) -> bool {
+    name != param && env.lookup(name).is_none() && !ctx.sig.defs.contains_key(name)
+}
+
+fn row_access(form: &Form, param: &str) -> Option<Rc<str>> {
+    let Form::List(items) = form else { return None };
+    let [Form::Kw(field), Form::Sym(subject)] = &items[..] else { return None };
+    (subject.as_ref() == param).then(|| field.clone())
+}
+
+fn row_num(form: &Form, param: &str, env: &Env, ctx: &Ctx) -> Option<RowNum> {
+    match form {
+        Form::Num(n) => Some(RowNum::Lit(*n)),
+        Form::Sym(name) if name.as_ref() == "inf" && row_head_unshadowed("inf", param, env, ctx) => {
+            Some(RowNum::Lit(f64::INFINITY))
+        }
+        _ => {
+            if let Some(field) = row_access(form, param) {
+                return match field.as_ref() {
+                    "t" => Some(RowNum::Tau),
+                    "tick" => Some(RowNum::Tick),
+                    _ => None,
+                };
+            }
+            let Form::List(items) = form else { return None };
+            let Form::Sym(head) = items.first()? else { return None };
+            if !row_head_unshadowed(head, param, env, ctx) { return None; }
+            match (head.as_ref(), &items[1..]) {
+                ("%value-or", [value, default]) => {
+                    let field = row_access(value, param)?;
+                    if matches!(field.as_ref(), "pos" | "vel" | "t" | "tick" | "handle" | "kind") {
+                        return None;
+                    }
+                    Some(RowNum::ColOr(field, Box::new(row_num(default, param, env, ctx)?)))
+                }
+                ("+", [a, b]) => Some(RowNum::Add(
+                    Box::new(row_num(a, param, env, ctx)?), Box::new(row_num(b, param, env, ctx)?))),
+                ("-", [a, b]) => Some(RowNum::Sub(
+                    Box::new(row_num(a, param, env, ctx)?), Box::new(row_num(b, param, env, ctx)?))),
+                ("*", [a, b]) => Some(RowNum::Mul(
+                    Box::new(row_num(a, param, env, ctx)?), Box::new(row_num(b, param, env, ctx)?))),
+                _ => None,
+            }
+        }
+    }
 }
 
 pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     let Val::Fn { params, body, env } = q else { return None };
     let [Form::Sym(param)] = &params[..] else { return None };
-    if &**param == "&"
-        || env.lookup("*").is_some()
-        || env.lookup("=").is_some()
-        || ctx.sig.defs.contains_key("*")
-        || ctx.sig.defs.contains_key("=")
-        || &**param == "*"
-        || &**param == "="
-    {
+    if &**param == "&" {
         return None;
     }
     let [body] = &body[..] else { return None };
     let forms = match body {
         Form::List(items) if matches!(items.first(), Some(Form::Sym(head)) if &**head == "*") => {
-            if items.len() < 2 {
+            if items.len() < 2 || !row_head_unshadowed("*", param, env, ctx) {
                 return None;
             }
             &items[1..]
@@ -1752,53 +1806,116 @@ pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     };
     let mut tests = Vec::with_capacity(forms.len());
     for form in forms {
-        let Form::List(eq) = form else { return None };
-        let [Form::Sym(head), left, right] = &eq[..] else { return None };
-        if &**head != "=" {
-            return None;
+        let Form::List(call) = form else { return None };
+        let [Form::Sym(head), left, right] = &call[..] else { return None };
+        if head.as_ref() == "=" && row_head_unshadowed("=", param, env, ctx) {
+            let kw = match (left, right) {
+                (access, Form::Kw(value)) | (Form::Kw(value), access) => {
+                    row_access(access, param).map(|field| (field, value.clone()))
+                }
+                _ => None,
+            };
+            if let Some((field, value)) = kw {
+                if matches!(field.as_ref(), "pos" | "vel" | "t" | "tick" | "handle") {
+                    return None;
+                }
+                tests.push(RowTest::KwEq { field, value });
+                continue;
+            }
         }
-        let (access, value) = match (left, right) {
-            (access, Form::Kw(value)) | (Form::Kw(value), access) => (access, value),
-            _ => return None,
+        let op = match head.as_ref() {
+            "<" => CmpOp::Lt, "<=" => CmpOp::Le, ">" => CmpOp::Gt,
+            ">=" => CmpOp::Ge, "=" => CmpOp::Eq, _ => return None,
         };
-        let Form::List(access) = access else { return None };
-        let [Form::Kw(field), Form::Sym(subject)] = &access[..] else { return None };
-        if subject != param || matches!(&**field, "pos" | "vel" | "t" | "tick" | "handle") {
+        if !row_head_unshadowed(head, param, env, ctx)
+            || matches!(left, Form::Kw(_)) || matches!(right, Form::Kw(_)) {
             return None;
         }
-        tests.push(RowPredicateTest { field: field.clone(), value: value.clone() });
+        tests.push(RowTest::NumCmp {
+            op, lhs: row_num(left, param, env, ctx)?, rhs: row_num(right, param, env, ctx)?,
+        });
     }
     Some(RowPredicate { tests })
 }
 
-/// Per-query resolved form of a RowPredicateTest: symbol lookups happen once
+/// Per-query resolved form of a RowTest: symbol lookups happen once
 /// per query, not once per row. A field or value that was never interned
 /// anywhere cannot match any row (mirrors sym_field_matches_at).
 pub(crate) enum ResolvedRowTest {
     Kind(Rc<str>),
     SymEq { field: FieldName, value: Symbol },
     Never,
+    NumCmp { op: CmpOp, lhs: ResolvedRowNum, rhs: ResolvedRowNum },
+}
+
+pub(crate) enum ResolvedRowNum {
+    Lit(f64), Tau, Tick,
+    ColOr(Option<Symbol>, Box<ResolvedRowNum>),
+    Add(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
+    Sub(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
+    Mul(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
+}
+
+fn resolve_row_num(value: &RowNum, world: &World) -> ResolvedRowNum {
+    match value {
+        RowNum::Lit(n) => ResolvedRowNum::Lit(*n), RowNum::Tau => ResolvedRowNum::Tau,
+        RowNum::Tick => ResolvedRowNum::Tick,
+        RowNum::ColOr(name, d) => ResolvedRowNum::ColOr(world.symbols.lookup(name), Box::new(resolve_row_num(d, world))),
+        RowNum::Add(a, b) => ResolvedRowNum::Add(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
+        RowNum::Sub(a, b) => ResolvedRowNum::Sub(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
+        RowNum::Mul(a, b) => ResolvedRowNum::Mul(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
+    }
 }
 
 impl RowPredicate {
     pub(crate) fn resolve(&self, world: &World) -> Vec<ResolvedRowTest> {
         self.tests
             .iter()
-            .map(|test| {
-                if &*test.field == "kind" {
-                    return ResolvedRowTest::Kind(test.value.clone());
+            .map(|test| match test {
+                RowTest::KwEq { field, value } => {
+                    if &**field == "kind" { return ResolvedRowTest::Kind(value.clone()); }
+                    match (world.symbols.lookup(field), world.symbols.lookup(value)) {
+                        (Some(field), Some(value)) => ResolvedRowTest::SymEq { field, value },
+                        _ => ResolvedRowTest::Never,
+                    }
                 }
-                match (world.symbols.lookup(&test.field), world.symbols.lookup(&test.value)) {
-                    (Some(field), Some(value)) => ResolvedRowTest::SymEq { field, value },
-                    _ => ResolvedRowTest::Never,
-                }
+                RowTest::NumCmp { op, lhs, rhs } => ResolvedRowTest::NumCmp {
+                    op: *op,
+                    lhs: resolve_row_num(lhs, world), rhs: resolve_row_num(rhs, world),
+                },
             })
             .collect()
     }
 }
 
-pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, world: &World) -> bool {
-    tests.iter().all(|test| match test {
+fn resolved_row_num(value: &ResolvedRowNum, row: usize, world: &World) -> Option<f64> {
+    Some(match value {
+        ResolvedRowNum::Lit(n) => *n, ResolvedRowNum::Tau => world.entity_tau(row, world.tick),
+        ResolvedRowNum::Tick => world.tick as f64,
+        ResolvedRowNum::ColOr(sym, default) => {
+            if sym.is_some_and(|sym| world.sym_field_value_at(row, sym).is_some()) { return None; }
+            match sym.and_then(|sym| world.col_get_sym_at(row, sym)) {
+                Some(value) => value,
+                None => resolved_row_num(default, row, world)?,
+            }
+        }
+        ResolvedRowNum::Add(a, b) | ResolvedRowNum::Sub(a, b) | ResolvedRowNum::Mul(a, b) => {
+            let (left, right) = (resolved_row_num(a, row, world), resolved_row_num(b, row, world));
+            let (left, right) = (left?, right?);
+            match value {
+                ResolvedRowNum::Add(_, _) => left + right,
+                ResolvedRowNum::Sub(_, _) => left - right,
+                ResolvedRowNum::Mul(_, _) => left * right,
+                _ => unreachable!(),
+            }
+        }
+    })
+}
+
+pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, world: &World) -> Option<bool> {
+    let mut all_pass = true;
+    for test in tests {
+        let passes = match test {
         ResolvedRowTest::Kind(value) => world.entities.dyn_figure(row).is_some_and(|figure| {
             let kind = match figure.repr() {
                 FigureDynRepr::Pose(_) if world.entities.is_traced(row) => "pather",
@@ -1810,8 +1927,17 @@ pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, wo
         ResolvedRowTest::SymEq { field, value } => {
             world.sym_field_value_at(row, *field) == Some(*value)
         }
-        ResolvedRowTest::Never => false,
-    })
+            ResolvedRowTest::Never => false,
+            ResolvedRowTest::NumCmp { op, lhs, rhs } => {
+                let (a, b) = (resolved_row_num(lhs, row, world), resolved_row_num(rhs, row, world));
+                let (a, b) = (a?, b?);
+                match op { CmpOp::Lt => a < b, CmpOp::Le => a <= b, CmpOp::Gt => a > b,
+                    CmpOp::Ge => a >= b, CmpOp::Eq => (a - b).abs() < 1e-9 }
+            }
+        };
+        all_pass &= passes;
+    }
+    Some(all_pass)
 }
 
 fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
@@ -1867,11 +1993,13 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
     // Mixed predicates deliberately fall back as a whole; partial prefiltering
     // would change the error and effect ordering of the residual expression.
     let tests = predicate.resolve(world);
-    let out = candidates
-        .iter()
-        .copied()
-        .filter(|i| resolved_row_tests_match(&tests, *i, world))
-        .collect::<Vec<_>>();
+    let mut out = Vec::new();
+    for &i in &candidates {
+        let Some(matches) = resolved_row_tests_match(&tests, i, world) else {
+            return resolve_predicate_query_fallback(q, ctx, world, &candidates);
+        };
+        if matches { out.push(i); }
+    }
     if lower::oracle_enabled() {
         let expected = resolve_predicate_query_fallback(q, ctx, world, &candidates)?;
         assert_eq!(out, expected, "row predicate mismatch for {:?}", q);
@@ -3370,6 +3498,50 @@ mod tests {
             "(fn [e] (= e.team :enemy))",
         ] {
             assert!(row_predicate(&predicate(src), &ctx).is_some(), "{src}");
+        }
+    }
+
+    #[test]
+    fn row_predicate_recognizes_numeric_comparisons() {
+        fn intrinsic(form: &Form) -> Form {
+            match form {
+                Form::Sym(name) if name.as_ref() == "value-or" => Form::sym("%value-or"),
+                Form::List(items) => Form::List(items.iter().map(intrinsic).collect()),
+                Form::Vector(items) => Form::Vector(items.iter().map(intrinsic).collect()),
+                other => other.clone(),
+            }
+        }
+        let ctx = Ctx::default();
+        for src in [
+            "(fn [e] (* (= e.team :enemy) (<= (value-or (:hp e) 1) 0)))",
+            "(fn [e] (* (= e.team :player-body) (<= (value-or (:lives e) 1) 0) (< (value-or (:game-over-fired e) 0) 1)))",
+            "(fn [e] (* (= e.kind :curve) (> (:t e) (+ (value-or (:warn e) 0) (value-or (:active e) inf)))))",
+            "(fn [e] (= (value-or (:hp e) 0) 1))",
+        ] {
+            let form = intrinsic(&read_one(src).unwrap());
+            let q = evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap();
+            assert!(row_predicate(&q, &ctx).is_some(), "{src}");
+        }
+    }
+
+    #[test]
+    fn row_predicate_rejects_unsafe_numeric_shapes_and_shadowing() {
+        let ctx = Ctx::default();
+        for src in [
+            "(fn [e] (<= (:hp e) 0))",
+            "(fn [e] (< (+ 1 2 3) 4))",
+        ] {
+            assert!(row_predicate(&predicate(src), &ctx).is_none(), "{src}");
+        }
+        for (name, src) in [
+            ("+", "(fn [e] (< (+ (:t e) 1) 4))"),
+            ("inf", "(fn [e] (< (:t e) inf))"),
+            ("<=", "(fn [e] (<= (:t e) 1))"),
+        ] {
+            let form = read_one(src).unwrap();
+            let env = Env::empty().bind(name.into(), Val::Num(0.0));
+            let q = evaluate(&form, &env, &mut Ctx::default(), &mut World::default()).unwrap();
+            assert!(row_predicate(&q, &ctx).is_none(), "{src}");
         }
     }
 

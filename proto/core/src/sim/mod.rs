@@ -517,9 +517,12 @@ impl Sim {
             for (form, compiled) in rule.body.iter().zip(rule.compiled.iter()) {
                 let result = (|| -> Result<(), String> {
                     if let Some(compiled) = compiled {
-                        if oracle_enabled() {
-                            let before = self.world.render_rows.len();
-                            self.run_compiled_tick_form(compiled)?;
+                        let before = self.world.render_rows.len();
+                        if self.run_compiled_tick_form(compiled)?.is_none() {
+                            self.world.render_rows.truncate(before);
+                            let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)?;
+                            self.exec_tick_value(value)
+                        } else if oracle_enabled() {
                             let actual = self.world.render_rows.split_off(before);
                             let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)?;
                             self.exec_tick_value(value)?;
@@ -527,7 +530,7 @@ impl Sim {
                                 "compiled deftick render rows mismatch for {:?}", form);
                             Ok(())
                         } else {
-                            self.run_compiled_tick_form(compiled)
+                            Ok(())
                         }
                     } else {
                         let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)?;
@@ -540,14 +543,24 @@ impl Sim {
         Ok(())
     }
 
-    fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<(), String> {
+    fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
         let tests = form.predicate.resolve(&self.world);
+        // The whole predicate scan runs before any row body, mirroring the
+        // interpreted phase order (entities-where completes before map), so
+        // a body error cannot preempt a later row's predicate bail.
+        let mut rows = Vec::new();
         for row in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(row)
-                || !resolved_row_tests_match(&tests, row, &self.world)
-            {
+            if !self.world.entities.is_alive(row) {
                 continue;
             }
+            let Some(matches) = resolved_row_tests_match(&tests, row, &self.world) else {
+                return Ok(None);
+            };
+            if matches {
+                rows.push(row);
+            }
+        }
+        for row in rows {
             let pose = form.needs_pose
                 .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
                 .transpose()?;
@@ -558,7 +571,7 @@ impl Sim {
             let rendered = fields.finish(&mut self.world, &self.ctx.sig)?;
             self.world.render_rows.push(Rc::new(rendered));
         }
-        Ok(())
+        Ok(Some(()))
     }
 
     fn eval_compiled_row_val(&self, value: &RowVal, row: usize, pose: Option<&Pose>) -> Result<Val, String> {

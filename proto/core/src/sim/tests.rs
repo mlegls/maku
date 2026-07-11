@@ -1168,6 +1168,59 @@
     }
 
     #[test]
+    fn numeric_predicate_falls_back_on_keyword_valued_field() {
+        // A keyword-valued field under a numeric read makes the interpreted
+        // predicate error; the compiled scan must bail to the interpreter and
+        // reproduce that error rather than silently reading the col default.
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (<= (value-or (:hp e) 1) 0)))))
+(defpattern p [] (spawn (pose c[0 0]) {:hp :full}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number, got Kw(\"full\")"), "{err}");
+    }
+
+    #[test]
+    fn compiled_render_rule_bails_to_interpreter_on_keyword_valued_field() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (emit :render {:shape :point :x 1}))
+       (entities-where (fn [e] (> (value-or (:size e) 0) 10)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:size 50})
+    (spawn (pose c[0 0]) {:size :big})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number, got Kw(\"big\")"), "{err}");
+    }
+
+    #[test]
+    fn numeric_predicate_reads_entity_age() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (> (:t e) 0.02)))))
+(defpattern p [] (spawn (pose c[0 0]) {:tag :x}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let alive = |sim: &Sim| {
+            (0..sim.world.entities.len()).filter(|i| sim.world.entities.is_alive(*i)).count()
+        };
+        sim.step().unwrap();
+        assert_eq!(alive(&sim), 1);
+        for _ in 0..6 {
+            sim.step().unwrap();
+        }
+        assert_eq!(alive(&sim), 0);
+    }
+
+    #[test]
     fn literal_and_computed_render_maps_match() {
         const LITERAL: &str = r#"
 (deftick
