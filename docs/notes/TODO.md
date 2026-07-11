@@ -68,9 +68,11 @@ headers, not here.
 ## Engine Refactor
 
 - Deduplicate `EntitySpecStore` cold dyn/projector data into shared
-  spawn-site/program/archetype storage where possible. Load-bearing for
-  compiled-dyn milestone B (group evaluation needs shared per-spawn-site
-  programs).
+  spawn-site/program/archetype storage where possible. (Milestone B's
+  first slice turned out not to need it: rand-free spawn groups already
+  share node/program Rcs, and ring-sized lanes amortize op decode. Still
+  the lever for cross-spawn lane widening — structural program interning
+  would fuse per-ring groups — and for memory.)
 - Move remaining gameplay-domain behavior out of core: bare hostile
   `(cull)`. Host palette tables (`style_rgb`, `dot_radius`) remain stock
   host policy in `host.rs`; move them behind host/profile config when a
@@ -86,9 +88,16 @@ headers, not here.
   and Kw-head/Const-fold coverage) is DONE and oracle-gated
   (MAKU_LOWER_ORACLE=1); the renderer half of milestone C (compiled
   deftick render rules + numeric row predicates, `interp/rulelower.rs`)
-  is DONE. Next: milestone B — input slots (captures/rand as data, one
-  program per spawn site) + group evaluation with SoA scratch; the bail
-  census says the remaining interpreted integrand volume is homing-slew
+  is DONE. Milestone B first slice (round 19) is DONE: batched Vel steps
+  (rows whose figure is constant wrappers over one compiled-integrand
+  Vel node run as lanes of one program run — `run_lanes`,
+  `VelBatchScratch` — writing n2 columns directly) plus the pos_only
+  pose fast path (collide fill + cull read integrator state through the
+  wrappers; single-cell schemas resolve their slot without hashing),
+  both oracle-checked per lane/row. Still open under B: input slots
+  (captures/rand as data — one program per spawn SITE; with structural
+  interning this widens lanes across spawns), ClosedPt group pose
+  evaluation, AxisSel lane scatter, and the bail census's homing-slew
   nodes needing ReadScan + Channel ops. Remaining cheap win #1: motion
   readers closing over SoA columns + row index instead of building
   per-row snapshots (readers are constructed per entity per phase).
@@ -113,21 +122,25 @@ headers, not here.
   investments that do survive: SoA layout, spec-store dedup, group
   evaluation of shared programs, fixed scratch, and hoisting
   per-spawn-site invariants to load time.
-- Perf campaign (ongoing; rounds 7-18 landed — narrative in git history).
+- Perf campaign (ongoing; rounds 7-19 landed — narrative in git history).
   Rig: `MAKU_WALL_ONLY=1 cargo run --release --example profile` for bare
   walls (the flat profiler's own bookkeeping is ~18% on dense cards);
   macOS `sample` on the release binary is ground truth; scaled case
   `profile cards/tutorials/t03.maku ex3-fruit-colors 12000`. Bare walls
-  as of round 18: fruit 262.5ms/900t (5050ms at round 7 — 19x), scaled
-  12k rig 6.36s (16.9s at round 15), reimu 139.7ms, spell-2 24.0ms.
-  Remaining levers by the round-18 sample, in payoff order:
-  - `step_motion_in` ~20%: lowered integrand op dispatch — compiled-dyn
-    milestone B (group evaluation) is the designed fix;
-  - collider materialization ~15%: genuine per-bullet slot eval,
-    memory-bound — batching territory;
-  - pose eval (`dyn_node_pose_u_in`) ~10%;
-  - compiled render row eval ~9%;
-  - motion-reader construction ~7% (compiled-dyn cheap win #1).
+  as of round 19: fruit 186.5ms/900t (5050ms at round 7 — 27x), scaled
+  12k rig 3.84s (5.86s at round-19 start, −34% same-session; 16.9s at
+  round 15), reimu 136.7ms, spell-2 22.2ms. Remaining levers by the
+  round-19 sample, in payoff order:
+  - collider materialization (`materialize_direct_colliders`) ~12%:
+    per-bullet projector walk + closure + slot eval — batching territory
+    (the sampled pose is already computed; a direct-circle group path
+    mirrors the Vel batch shape);
+  - compiled render row eval (`eval_compiled_row_val`) ~6%;
+  - collision index capture ~5%;
+  - remaining interpreted rule scans (`evaluate_list_inner`,
+    `resolved_row_tests_match`, `sym_field_matches_at`) ~5% combined;
+  - motion-reader construction ~2% residual on unbatched paths
+    (compiled-dyn cheap win #1).
 - Follow-ups on the load-time AST rewrite pass (`interp/rewrite.rs`):
   (b) macro-expansion output is not rewritten (expansion is lazy per-eval;
   shapes inside macro-generated forms keep interpreted cost); (c) purity

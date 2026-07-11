@@ -193,15 +193,49 @@ Exit criteria: corpus suites green; profile shows dyn:vel/closed-pt self
 collapsing into a new `dyn:compiled` row that is a small fraction of the
 current 1.7s.
 
-### B — group evaluation + AxisSel lanes
+### B — group evaluation + AxisSel lanes — first slice DONE (round 19)
 
 Evaluate one program once per GROUP per tick where the only per-entity
 inputs are `t`-offsets and capture slots: batch rows sharing a spawn site,
 loop entities in the inner loop per op (SoA scratch: `Vec<f64>` per
 register over the batch). This is where AxisSel (array-valued shared meta)
 stops being evaluated per entity: the shared program runs once, lanes
-scatter. Requires spec-store dedup of spawn-site programs (the existing
-`EntitySpecStore` dedup TODO becomes load-bearing here).
+scatter.
+
+Landed (round 19), deviations vs the plan above:
+- **Batched Vel steps** (`lower::run_lanes`, `sim::VelBatchScratch`):
+  rows whose figure is constant wrappers (ConstFrame/Translate) over one
+  compiled-integrand Vel node — the dominant bullet shape — collect as
+  lanes during the scan-step walk, grouped by program-pair address, and
+  run as one lane-batched program per component (one op decode per op
+  per group; registers at `regs[r*n + lane]`, always-fresh dst makes
+  `split_at_mut` legal). Integrator writes go straight to the n2 columns
+  (`state_n2_at_slot`); single-cell schemas resolve the slot without
+  hashing. Lanes are bit-identical to scalar runs by construction, and
+  MAKU_LOWER_ORACLE=1 interpreter-checks every lane.
+- **pos_only pose fast path** (`vel_chain_ptr`/`wrapper_chain_pos_pose`):
+  the pos_only pose of that same shape is integrator state pushed through
+  the constant wrappers (the Vel arm never evaluates its integrand when
+  theta is discarded), so the collide fill and cull loops read it
+  directly — no readers, no dispatch. Oracle asserts exact equality with
+  the interpreted pose.
+- **Spec-store dedup was NOT needed for this slice**: rand-free spawn
+  groups already share node Rcs (and OnceCell programs), so grouping by
+  program address works at ring granularity (~20 lanes in the fruit
+  census), which already amortizes the per-row overhead. Structural
+  program interning would fuse per-ring groups across spawns; it's a
+  widening lever, not a prerequisite.
+- Result (scaled fruit rig, 12k ticks, same-session): 5.86s → 3.84s
+  (−34%); `step_motion_in`, `dyn_node_pose_u_in`, and per-row
+  `motion_readers` collapsed out of the profile top; collider
+  materialization is now the top row.
+
+Still open under B: input slots (captures/rand as data — one program per
+spawn SITE; unlocks cross-spawn sharing for rand-bearing groups and is
+what the capture-vector plumbing below describes), ClosedPt group pose
+evaluation (the pose fill for closed shapes still runs per row), AxisSel
+lane scatter, and — per the milestone-A bail census — ReadScan + Channel
+ops for the homing-slew integrands.
 
 ### C — beyond figure signals
 
