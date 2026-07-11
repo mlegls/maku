@@ -798,16 +798,22 @@ pub struct CollisionIndex {
 }
 
 impl CollisionIndex {
-    pub(crate) fn capture(&mut self, rows: Vec<ColliderData>, ranges: Vec<std::ops::Range<usize>>, eligible: Vec<bool>) {
-        self.rows = rows;
-        self.ranges = ranges;
+    /// Take this tick's collider rows/ranges from the caller's scratch and
+    /// hand last tick's buffers back (cleared, capacity kept) — the scratch
+    /// never regrows from zero at steady state.
+    pub(crate) fn capture(&mut self, rows: &mut Vec<ColliderData>, ranges: &mut Vec<std::ops::Range<usize>>, eligible: Vec<bool>) {
+        std::mem::swap(&mut self.rows, rows);
+        std::mem::swap(&mut self.ranges, ranges);
+        rows.clear();
+        ranges.clear();
         self.eligible = eligible;
         self.aabbs.clear();
         self.layer_entities.clear();
         self.memo.clear();
+        let mut layers: Vec<Symbol> = Vec::new();
         for i in 0..self.ranges.len() {
             let mut bounds = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
-            let mut layers = Vec::new();
+            layers.clear();
             for collider in self.row(i) {
                 let Some(layer) = collider.layer() else { continue };
                 if !layers.contains(&layer) { layers.push(layer); }
@@ -830,7 +836,7 @@ impl CollisionIndex {
             let aabb = (!bounds.0.is_nan() && !bounds.1.is_nan() && !bounds.2.is_nan() && !bounds.3.is_nan()).then_some(bounds);
             self.aabbs.push(aabb);
             if self.eligible.get(i) == Some(&true) && aabb.is_some() {
-                for layer in layers { self.layer_entities.entry(layer).or_default().push(i); }
+                for &layer in &layers { self.layer_entities.entry(layer).or_default().push(i); }
             }
         }
     }

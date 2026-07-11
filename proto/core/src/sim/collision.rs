@@ -140,8 +140,8 @@ impl Sim {
             .map(|i| self.world.entities.is_alive(i) && pos[i].is_some())
             .collect::<Vec<_>>();
         self.world.collision_index.capture(
-            std::mem::take(&mut self.collider_scratch.rows),
-            std::mem::take(&mut self.collider_scratch.ranges),
+            &mut self.collider_scratch.rows,
+            &mut self.collider_scratch.ranges,
             eligible,
         );
         if let Some(f) = probe {
