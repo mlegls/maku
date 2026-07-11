@@ -304,21 +304,12 @@ impl Sim {
             }
             _ => {}
         }
-        let dense_n2 = Rc::new(self.world.entities.state_n2_snapshot(row));
-        let dense_dyn = Rc::new(self.world.entities.state_dyn_snapshot(row));
-        let dense_val = Rc::new(self.world.entities.state_val_snapshot(row));
-        let node_ids = self
+        let snapshot = self
             .world
             .entities
-            .motion_schema(row)
-            .map(|schema| schema.shared_node_ids())
-            .unwrap_or_default();
-        MotionReaders {
-            n2: Rc::new(move |key| dense_n2.get(&key).copied()),
-            dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
-            vals: Rc::new(move |key| dense_val.get(&key).cloned()),
-            node_ids,
-        }
+            .row_state_snapshot(row)
+            .expect("schema presence checked above");
+        MotionReaders::for_row_snapshot(snapshot)
     }
 
     pub(crate) fn channel_u64(&self, name: &str) -> u64 {

@@ -452,15 +452,14 @@ impl EntityStore {
         self.state_n2.get(slot)?.get(row).copied()
     }
 
-    pub fn state_n2_snapshot(&self, row: usize) -> HashMap<MotionStateKey, [f64; 2]> {
-        let Some(schema) = self.motion_schema(row) else { return HashMap::new() };
-        let mut out = HashMap::with_capacity(schema.n2_keys.len());
-        for key in schema.n2_keys.iter().copied() {
-            if let Some(value) = self.state_n2(row, key) {
-                out.insert(key, value);
-            }
-        }
-        out
+    /// Slot-indexed snapshot of one row's state cells, in schema slot order.
+    /// None when the row carries no schema.
+    pub fn row_state_snapshot(&self, row: usize) -> Option<RowStateSnapshot> {
+        let schema = self.specs.motion_schema.get(row)?.clone();
+        let n2 = schema.n2_keys.iter().map(|k| self.state_n2(row, *k)).collect();
+        let dyns = schema.dyn_keys.iter().map(|k| self.state_dyn(row, *k)).collect();
+        let vals = schema.val_keys.iter().map(|k| self.state_val(row, *k)).collect();
+        Some(RowStateSnapshot { schema, n2, dyns, vals })
     }
 
     pub fn set_state_n2(&mut self, row: usize, key: MotionStateKey, value: [f64; 2]) -> bool {
@@ -483,17 +482,6 @@ impl EntityStore {
         self.state_dyn.get(slot)?.get(row)?.clone()
     }
 
-    pub fn state_dyn_snapshot(&self, row: usize) -> HashMap<MotionStateKey, DynPose> {
-        let Some(schema) = self.motion_schema(row) else { return HashMap::new() };
-        let mut out = HashMap::with_capacity(schema.dyn_keys.len());
-        for key in schema.dyn_keys.iter().copied() {
-            if let Some(value) = self.state_dyn(row, key) {
-                out.insert(key, value);
-            }
-        }
-        out
-    }
-
     pub fn set_state_dyn(&mut self, row: usize, key: MotionStateKey, value: DynPose) -> bool {
         let Some(slot) = self
             .motion_schema(row)
@@ -512,17 +500,6 @@ impl EntityStore {
         let schema = self.motion_schema(row)?;
         let slot = schema.val_slots.get(&key)?.0 as usize;
         self.state_val.get(slot)?.get(row)?.clone()
-    }
-
-    pub fn state_val_snapshot(&self, row: usize) -> HashMap<MotionStateKey, EvolveCell> {
-        let Some(schema) = self.motion_schema(row) else { return HashMap::new() };
-        let mut out = HashMap::with_capacity(schema.val_keys.len());
-        for key in schema.val_keys.iter().copied() {
-            if let Some(value) = self.state_val(row, key) {
-                out.insert(key, value);
-            }
-        }
-        out
     }
 
     pub fn set_state_val(&mut self, row: usize, key: MotionStateKey, value: EvolveCell) -> bool {

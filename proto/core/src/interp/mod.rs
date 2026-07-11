@@ -1605,7 +1605,7 @@ fn read_stage_exit_pose(ctx: &Ctx, slot: &Rc<StageExitSlot>, field: StageExitFie
         Some(Cell::N(v)) => Some(*v),
         _ => None,
     }
-    .or_else(|| io.readers.as_ref().and_then(|readers| (readers.n2)(key)))
+    .or_else(|| io.readers.as_ref().and_then(|readers| readers.n2(key)))
     .ok_or("stage exit has not been written")?;
     Ok(Pose::point(value[0], value[1]))
 }
@@ -1681,20 +1681,11 @@ fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
         }
         _ => {}
     }
-    let dense_n2 = Rc::new(world.entities.state_n2_snapshot(i));
-    let dense_dyn = Rc::new(world.entities.state_dyn_snapshot(i));
-    let dense_val = Rc::new(world.entities.state_val_snapshot(i));
-    let node_ids = world
+    let snapshot = world
         .entities
-        .motion_schema(i)
-        .map(|schema| schema.shared_node_ids())
-        .unwrap_or_default();
-    MotionReaders {
-        n2: Rc::new(move |key| dense_n2.get(&key).copied()),
-        dyns: Rc::new(move |key| dense_dyn.get(&key).cloned()),
-        vals: Rc::new(move |key| dense_val.get(&key).cloned()),
-        node_ids,
-    }
+        .row_state_snapshot(i)
+        .expect("schema presence checked above");
+    MotionReaders::for_row_snapshot(snapshot)
 }
 
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
@@ -3398,7 +3389,7 @@ fn sf_sited_evolve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) 
         let io = scan.borrow();
         io.readers
             .as_ref()
-            .and_then(|readers| (readers.vals)(site))
+            .and_then(|readers| readers.vals(site))
             .or_else(|| match io.state.get(&site) {
                 Some(Cell::V(cell)) => Some(cell.clone()),
                 _ => None,

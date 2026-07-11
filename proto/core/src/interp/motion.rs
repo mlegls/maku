@@ -139,45 +139,89 @@ pub struct ScanIo {
     pub val_writes: Vec<(MotionStateKey, EvolveCell)>,
 }
 pub type ScanShared = Rc<std::cell::RefCell<ScanIo>>;
-pub type N2Reader = Rc<dyn Fn(MotionStateKey) -> Option<[f64; 2]>>;
-pub type DynReader = Rc<dyn Fn(MotionStateKey) -> Option<DynPose>>;
-pub type ValReader = Rc<dyn Fn(MotionStateKey) -> Option<EvolveCell>>;
+
+/// One row's state cells, snapshotted at reader construction. Reads must see
+/// the values as of construction even while the step pass writes through to
+/// the world's columns. Values sit at their schema slot index; key lookup is
+/// a linear scan over the schema's key vectors — a schema holds one entry per
+/// stateful site of a motion tree, so the vectors are tiny.
+pub struct RowStateSnapshot {
+    pub(crate) schema: Rc<MotionStateSchema>,
+    pub(crate) n2: Vec<Option<[f64; 2]>>,
+    pub(crate) dyns: Vec<Option<DynPose>>,
+    pub(crate) vals: Vec<Option<EvolveCell>>,
+}
+
+#[derive(Clone)]
+enum ReaderBacking {
+    /// No state cells behind these readers: ad-hoc evaluation and rows
+    /// whose schema holds no state.
+    Empty,
+    Row(Rc<RowStateSnapshot>),
+}
 
 #[derive(Clone)]
 pub struct MotionReaders {
-    pub n2: N2Reader,
-    pub dyns: DynReader,
-    pub vals: ValReader,
+    backing: ReaderBacking,
     pub node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>,
 }
 
 impl MotionReaders {
+    pub fn n2(&self, key: MotionStateKey) -> Option<[f64; 2]> {
+        match &self.backing {
+            ReaderBacking::Empty => None,
+            ReaderBacking::Row(snap) => snap
+                .schema
+                .n2_keys
+                .iter()
+                .position(|k| *k == key)
+                .and_then(|slot| snap.n2.get(slot).copied().flatten()),
+        }
+    }
+
+    pub fn dyns(&self, key: MotionStateKey) -> Option<DynPose> {
+        match &self.backing {
+            ReaderBacking::Empty => None,
+            ReaderBacking::Row(snap) => snap
+                .schema
+                .dyn_keys
+                .iter()
+                .position(|k| *k == key)
+                .and_then(|slot| snap.dyns.get(slot).cloned().flatten()),
+        }
+    }
+
+    pub fn vals(&self, key: MotionStateKey) -> Option<EvolveCell> {
+        match &self.backing {
+            ReaderBacking::Empty => None,
+            ReaderBacking::Row(snap) => snap
+                .schema
+                .val_keys
+                .iter()
+                .position(|k| *k == key)
+                .and_then(|slot| snap.vals.get(slot).cloned().flatten()),
+        }
+    }
+
     pub fn legacy() -> MotionReaders {
         MotionReaders {
-            n2: Rc::new(|_| None),
-            dyns: Rc::new(|_| None),
-            vals: Rc::new(|_| None),
+            backing: ReaderBacking::Empty,
             node_ids: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
     /// Readers for a row whose schema holds no state cells — the common
-    /// stateless-bullet case. Shared no-op closures make construction
-    /// four Rc bumps instead of three snapshot maps + closure allocs.
+    /// stateless-bullet case: no snapshot, just the shared node-id map.
     pub fn stateless(node_ids: Rc<RefCell<HashMap<usize, MotionNodeId>>>) -> MotionReaders {
-        thread_local! {
-            static EMPTY: (N2Reader, DynReader, ValReader) = (
-                Rc::new(|_| None),
-                Rc::new(|_| None),
-                Rc::new(|_| None),
-            );
-        }
-        EMPTY.with(|(n2, dyns, vals)| MotionReaders {
-            n2: n2.clone(),
-            dyns: dyns.clone(),
-            vals: vals.clone(),
+        MotionReaders { backing: ReaderBacking::Empty, node_ids }
+    }
+
+    pub(crate) fn for_row_snapshot(snapshot: RowStateSnapshot) -> MotionReaders {
+        let node_ids = snapshot.schema.shared_node_ids();
+        MotionReaders {
+            backing: ReaderBacking::Row(Rc::new(snapshot)),
             node_ids,
-        })
+        }
     }
 
     pub fn for_node(d: &DynNode) -> MotionReaders {
@@ -1145,7 +1189,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
         DynNode::Vel { a, b, polar, env, programs } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
-            let [x, y] = (readers.n2)(dense_key)
+            let [x, y] = readers.n2(dense_key)
                 .or_else(|| match state.get(&dense_key) {
                     Some(Cell::N(v)) => Some(*v),
                     _ => None,
@@ -1263,7 +1307,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
             let tick = evolve_tick(tau, tick_rate);
-            let cell = (readers.vals)(dense_key)
+            let cell = readers.vals(dense_key)
                 .or_else(|| match state.get(&dense_key) {
                     Some(Cell::V(v)) => Some(v.clone()),
                     _ => None,
@@ -1291,7 +1335,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
         DynNode::Stages { segs } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
-            let [idx, epoch] = (readers.n2)(dense_key)
+            let [idx, epoch] = readers.n2(dense_key)
                 .or_else(|| match state.get(&dense_key) {
                     Some(Cell::N(v)) => Some(*v),
                     _ => None,
@@ -1391,7 +1435,7 @@ pub fn step_motion_in(
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
             let write_val = &mut *ctx.write_val;
-            let [x, y] = (readers.n2)(dense_key)
+            let [x, y] = readers.n2(dense_key)
                 .or_else(|| match state.get(&dense_key) {
                     Some(Cell::N(v)) => Some(*v),
                     _ => None,
@@ -1488,7 +1532,7 @@ pub fn step_motion_in(
                 let tick_rate = ctx.tick_rate;
                 let mirror_legacy = ctx.mirror_legacy;
                 let write_n2 = &mut *ctx.write_n2;
-                let [mut idx, mut epoch] = (readers.n2)(dense_key)
+                let [mut idx, mut epoch] = readers.n2(dense_key)
                     .or_else(|| match state.get(&dense_key) {
                         Some(Cell::N(v)) => Some(*v),
                         _ => None,
@@ -1572,7 +1616,7 @@ pub fn step_motion_in(
             let closed_sig = SigEnv { defs: ctx.sig.defs.clone(), ..SigEnv::default() };
             let step_sig = if ev.live { ctx.sig } else { &closed_sig };
             let mut world = if ev.live { ctx.world.as_deref_mut() } else { None };
-            let mut cell = (ctx.readers.vals)(dense_key)
+            let mut cell = ctx.readers.vals(dense_key)
                 .or_else(|| match ctx.state.get(&dense_key) {
                     Some(Cell::V(v)) => Some(v.clone()),
                     _ => None,
@@ -1653,7 +1697,7 @@ pub(crate) fn clamp_integrator(
                 Some(Cell::N(v)) => Some(*v),
                 _ => None,
             }
-            .or_else(|| (readers.n2)(dense_key))
+            .or_else(|| readers.n2(dense_key))
             {
                 let next = [x.clamp(lo.0, hi.0), y.clamp(lo.1, hi.1)];
                 if mirror_legacy {
