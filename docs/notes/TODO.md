@@ -398,6 +398,27 @@ work.
   queries/tick — needs query result caching or kind/team indexes,
   not micro-trims), render-row extras allocs + Rc churn (~8%),
   motion-reader construction (~5%, compiled-dyn cheap-win #1).
+  Round-18: three trims. Resolved row scans short-circuit on the
+  first failing test when the remaining tests are infallible (cannot
+  force the interpreter fallback — knowable per pass from FieldSlots:
+  a ColOr over a field with no sym column anywhere can never see a
+  keyword), a Never test among all-infallible tests skips the scan
+  outright (kills the team-rule and channel scans on cards with no
+  such entities), and map queries with never-interned selectors
+  return empty without scanning; direct collider EntityCol names
+  resolve once per collision pass (memo keyed by the name's Rc
+  address, cleared when the non-direct path holds &mut World);
+  render rows recycle across ticks (uniquely-owned Rc boxes keep
+  their nums/syms buffers; matched-row scratch reused; render field
+  check compares plan keys by pointer). Walls (same-session deltas):
+  fruit 383→262ms bare, scaled 12k rig 8.92s→6.36s (−29%); the
+  interpreted entities-where block collapsed 597→104 samples and
+  allocator churn (grow_one+free+Rc drops) roughly halved. Remaining
+  levers by final sample: step_motion_in ~20% (lowered integrand
+  dispatch — compiled-dyn milestone B, the designed next step),
+  collide-mat body ~15% (genuine per-bullet slot eval, memory-bound,
+  batching territory), pose eval ~10%, compiled render row eval
+  ~9%, motion-reader construction ~7% (close over SoA columns).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
