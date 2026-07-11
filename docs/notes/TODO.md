@@ -283,12 +283,27 @@ work.
   asserts against a raw all-pairs scan of the snapshot. Eager pair work
   (510ms, and 1603ms on the newly added miracle-fruit profile case) →
   63ms capture + 2.7ms queries; walls: spell-2 215→66ms, reimu
-  629→365ms, fruit 5050→3555ms. Remaining fixed-overhead levers, in
-  payoff order: `phase:collide-mat` 1677ms self, 1412 of it fruit
-  (per-entity pose eval + snapshot readers + projector clone/eval — the
-  design-doc cheap win #1 `motion_readers` at 544ms/6.6M calls feeds
-  it), `phase:rules` 679ms self, `phase:scan-step` 323, `phase:cull`
-  205, `sig:setup` 17 (Ctx/World per interpreted signal eval).
+  629→365ms, fruit 5050→3555ms.
+  Round-12: a macOS `sample` profile (the flat profiler's own frame
+  bookkeeping is ~18% of wall on dense cards — MAKU_WALL_ONLY=1 on the
+  example now measures bare) showed ~40% allocator traffic + ~10%
+  SipHash, dominated by the touhou bullet collider: `(circle-collider
+  {:layer :damage :r e.hitbox})` under a :pose defcollider scope paid a
+  full entity_view + evaluator World/Ctx per entity per tick for a
+  plain field read. `ProjectorNum::EntityCol` now recognizes `(:field
+  e)` scope reads at spec build; materialization serves them via
+  entity_field_at (exact view-value parity incl. error text), and
+  needs_views tightened to "some ProjectorNum is a general Expr". Plus:
+  stateless-schema MotionReaders fast path (shared no-op closures),
+  all-Stable projectors evaluate by reference, interned scale read.
+  Bare walls: fruit 2848→1783ms, polar −41%, stars −33%, cradle −26%,
+  bowap −24%, spell-2 −21%, reimu −15%. Remaining levers from the
+  sample, in payoff order: reader snapshot churn for SCANNED rows (vel
+  bullets have n2 state, so the stateless path misses — cheap win #1
+  proper: readers over the SoA columns, no per-entity maps/closures),
+  FxHash for the hot HashMaps (MotionStateKey maps, symbol lookups,
+  render schema — SipHash is ~10% of fruit), render-row building
+  (RenderRowFields push/finish + per-row Rc), `Val` drop traffic.
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
