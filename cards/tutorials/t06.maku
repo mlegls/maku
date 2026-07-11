@@ -71,8 +71,9 @@
 ;; macro binds $tutorial-boss as a map-valued host channel, holds the
 ;; machine until the boss registers, and binds `boss`. {:hp 0} gates the last phase on the
 ;; health bar; the phase edge (field clear + mercy window) is the first
-;; clause's finally — card policy, not engine behavior. Shoot the boss
-;; down (in the sandbox the rig fires with the mouse).
+;; clause's finally — card policy, not engine behavior. To shoot the
+;; boss down, run the sandbox with --rig (the piloted player rig); the
+;; default mouse mock grazes but doesn't fire.
 (defpattern ex5-boss []
   (seq
     (boss $tutorial-boss (pose c[0 2.6])

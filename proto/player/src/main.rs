@@ -173,23 +173,33 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    // usage: maku [card.maku [pattern-name]] — with no card, start
-    // empty and wait for (load ...) / (run ...) from clients
-    let mut args = std::env::args().skip(1);
-    let card_path = args.next().unwrap_or_default();
-    let pattern = args.next();
+    // usage: maku [--rig] [card.maku [pattern-name]] — with no card,
+    // start empty and wait for (load ...) / (run ...) from clients
+    let (flags, plain): (Vec<String>, Vec<String>) =
+        std::env::args().skip(1).partition(|a| a.starts_with("--"));
+    let card_path = plain.first().cloned().unwrap_or_default();
+    let pattern = plain.get(1).cloned();
 
-    // this host's player contract: layer the stock rig card
-    // (swap in your own live: <localleader>es a rig defpattern)
-    // expand_src: the rig shim imports its defs ((import "touhou")), and
-    // raw source would hand the sim a literal import form
-    let rig = maku::edn::expand_src(&format!(
-        "{}\n(player-rig)",
-        maku::edn::stdlib("player-rig").unwrap()
-    ))
-    .expect("player-rig import expansion");
+    // this host's player contract: the MOUSE MOCK by default — $player
+    // rides the cursor, which is what tutorial/demo cards want. Cards
+    // that want a piloted rig spawn one in card code (reimu_vs_mima
+    // spawns `(player ...)`; `(player-rig)` is the stock invocation),
+    // or pass --rig to layer the stock arrow rig over any card.
+    let rig = if flags.iter().any(|f| f == "--rig") {
+        // expand_src: the rig shim imports its defs ((import "touhou")),
+        // and raw source would hand the sim a literal import form
+        Some(
+            maku::edn::expand_src(&format!(
+                "{}\n(player-rig)",
+                maku::edn::stdlib("player-rig").unwrap()
+            ))
+            .expect("player-rig import expansion"),
+        )
+    } else {
+        None
+    };
     let mut app = App {
-        inst: Instance::new(Some(rig)),
+        inst: Instance::new(rig),
         accum: 0.0,
         dragging: false,
         binds: Bindings::defaults(),
