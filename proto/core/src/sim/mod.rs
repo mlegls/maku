@@ -194,30 +194,58 @@ impl Sim {
         let card_forms = read_all(&card_src).map_err(|e| e.to_string())?;
         let mut card = load_card(&card_forms)?;
         let body_forms = read_all(form_src).map_err(|e| e.to_string())?;
-        let (body, env): (Rc<[Form]>, Env) = match body_forms.first() {
-            Some(Form::List(items))
-                if matches!(items.first(), Some(Form::Sym(s)) if &**s == "defpattern") =>
-            {
+        // Card-definition heads (the forms load_card consumes). A form_src
+        // carrying any defpattern is a card FRAGMENT: its definitions merge
+        // into the card (rig layered over card — later definitions shadow,
+        // load_card's defchannel rule), and the task body is the fragment's
+        // trailing action forms — or the first sent pattern when there are
+        // none (live-swapped bare defpatterns auto-play).
+        const DEF_HEADS: [&str; 7] =
+            ["def", "defn", "defmacro", "defpattern", "defcollider", "defchannel", "deftick"];
+        let head_in = |form: &Form, heads: &[&str]| {
+            matches!(form, Form::List(items)
+                if matches!(items.first(), Some(Form::Sym(s)) if heads.contains(&s.as_ref())))
+        };
+        let (body, env): (Rc<[Form]>, Env) = match body_forms
+            .iter()
+            .any(|form| head_in(form, &["defpattern"]))
+        {
+            true => {
                 let sent = load_card(&body_forms)?;
                 let first = sent.order.first().cloned().ok_or("no defpattern")?;
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
+                card.macros.extend(sent.macros);
+                for (name, expr) in sent.channels {
+                    card.channels.retain(|(k, _)| *k != name);
+                    card.channels.push((name, expr));
+                }
                 card.tick_rules.extend(sent.tick_rules);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
-                let pat = &self.ctx.patterns.clone()[&first];
-                let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
-                let mut w = World::default();
-                for (pname, default) in &pat.params {
-                    let v = evaluate(default, &env, &mut self.ctx, &mut w)?;
-                    env = env.bind(pname.clone(), v);
+                let actions: Vec<Form> = body_forms
+                    .iter()
+                    .filter(|form| !head_in(form, &DEF_HEADS))
+                    .cloned()
+                    .collect();
+                if actions.is_empty() {
+                    let pat = &self.ctx.patterns.clone()[&first];
+                    let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+                    let mut w = World::default();
+                    for (pname, default) in &pat.params {
+                        let v = evaluate(default, &env, &mut self.ctx, &mut w)?;
+                        env = env.bind(pname.clone(), v);
+                    }
+                    (pat.body.clone(), env)
+                } else {
+                    let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+                    (actions.into(), env)
                 }
-                (pat.body.clone(), env)
             }
-            _ => {
+            false => {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());

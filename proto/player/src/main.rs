@@ -181,10 +181,13 @@ async fn main() {
 
     // this host's player contract: layer the stock rig card
     // (swap in your own live: <localleader>es a rig defpattern)
-    let rig = format!(
+    // expand_src: the rig shim imports its defs ((import "touhou")), and
+    // raw source would hand the sim a literal import form
+    let rig = maku::edn::expand_src(&format!(
         "{}\n(player-rig)",
         maku::edn::stdlib("player-rig").unwrap()
-    );
+    ))
+    .expect("player-rig import expansion");
     let mut app = App {
         inst: Instance::new(Some(rig)),
         accum: 0.0,
