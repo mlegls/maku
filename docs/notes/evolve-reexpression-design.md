@@ -1,9 +1,34 @@
 # evolve re-expression — vel/slew/smooth in lib (evolve-design step 3)
 
-Status: DESIGN (round 7). Scope: `vel`, `slew`, `smooth`. `stages` is
-deferred to its own round — its three corpus sites use exit slots,
-`forever`, and `(fn [exit] ...)` handoff, a state machine over dyns that
-deserves separate treatment (likely over `states`, not raw evolve).
+Status: milestones 1-2 IMPLEMENTED (e988cd0 sited evolves, c975512
+capture-time macroexpansion); milestone 3 lands slew/smooth only.
+`vel` stays a builtin this round: its expansion-shape recognition is
+semantically mandatory (b.vel introspection, clamp_integrator's Vel
+arm, and the compiled integrand programs all key on DynNode::Vel), so
+re-expressing it is a pure surface change with no behavioral payoff
+until the model/ split — deferred with `stages` (whose three corpus
+sites use exit slots, `forever`, and `(fn [exit] ...)` handoff, a
+state machine over dyns that deserves separate treatment, likely over
+`states`, not raw evolve).
+
+Implementation findings on top of the design below:
+- The old scan builtins outside a scan context returned a deferred
+  `Val::Thunk` ("shared instance, forced in scan contexts") — how the
+  corpus let-binds a `smooth` and consumes it inside a `(rot (slew
+  ...))` expr. The macro world retires that mechanism: a stateful
+  stream is written inline in the expression tree that consumes it
+  (nested sited evolves compose — the counter discipline handles
+  evolve-inside-evolve-step), and player_homing.maku's let-smooth
+  migrates by inlining. Let-binding a live stream across expression
+  boundaries otherwise constructs a standalone live evolve with no
+  slot to advance it, which errors at sampling.
+- `smooth` is pose-only in lib (`*` has no scalar×pose arm, and the
+  old builtin's numeric arm returned Pose(x, 0) — a shape nothing
+  used). The expansion destructures x/y.
+- cart/polar/rot capture guards (`contains_unbound_axis`) run on the
+  RAW form, before expansion — a macro whose expansion introduces
+  t-dependence is not recognized as a dyn expression. Known
+  limitation; revisit if a real card hits it.
 
 Semantics per docs/notes/evolve-design.md; live/deferred-init machinery
 per docs/notes/live-evolve-design.md (milestone 3, bec0735).

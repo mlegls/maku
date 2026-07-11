@@ -77,7 +77,16 @@ work.
   sampling errors. Live evolves accept a one-behind cell in the
   post-boundary sampling window; closed keep exact-match-else-replay.
   This unblocks evolve-design step 3 (vel/slew/smooth/stages/pather in
-  lib over evolve) — now the next step on this track.
+  lib over evolve) — IN PROGRESS (round 7, design in
+  docs/notes/evolve-reexpression-design.md): sited evolves (e988cd0 —
+  an evolve under a scan context keys state by ScanSite and evaluates
+  to the settled value) and capture-time macroexpansion (c975512) are
+  on main; slew/smooth become prelude macros over sited evolves
+  (retiring sf_stateful, scan_builtin_spec, and the Val::Thunk
+  deferred-instance mechanism, with player_homing's let-smooth inlined).
+  Remaining on this track: vel (blocked on nothing, but recognition is
+  semantically mandatory so it's pure surface until the model/ split)
+  and stages (own round, likely over states).
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
@@ -212,6 +221,21 @@ work.
   `emit` 0.81s, then interpreter dispatch on `*`/`=`/`+`. `map` is 47ms
   self but 10.7s inclusive — its bodies (mostly entity queries) dominate.
   Intrinsic promotion and lib-ification calls should cite these numbers.
+  Round-7 findings on the two rows left standing: `dyn:frame`'s ~324ms
+  was mostly instrumentation artifact — the profiler String-allocated
+  the entry key on every close INSIDE the parent's still-open window,
+  charging recursive rows for their children's bookkeeping (fixed, with
+  a Frame(Const, child) fast arm + construction-time Const-frame
+  folding on top; frame_node in motion.rs). `%value-or`'s ~320ms/4.65M
+  is real: renderer deftick bodies re-interpret per entity per tick,
+  and every numeric field read (`e.scale` etc.) pays TWO string-hash
+  symbol lookups (sym_field_resolved_at then col_get_at). Structural
+  options, in payoff order: (a) lower projector/renderer bodies to
+  field-read programs at deftick registration (milestone C's
+  rule/projector half — value-or over a col read becomes slot+default),
+  (b) memoize resolved column slots beside the keyword form (OnceCell,
+  must handle not-yet-interned cols), (c) column-major row batching
+  (per-tick only; gate on body purity).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
