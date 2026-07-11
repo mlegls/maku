@@ -555,6 +555,41 @@ impl Sim {
             .map(|(key, slot, value)| (key, *slot, value.resolve(&self.world)))
             .collect();
         let mut checked: Vec<(Rc<str>, RenderFieldKind)> = Vec::new();
+        if let Some(plan) = CompiledRowPlan::from_fields(&fields) {
+            for row in rows {
+                let pose = form.needs_pose
+                    .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
+                    .transpose()?;
+                let pose = pose.as_ref();
+                // coercion order matches finish_checked: x, y, theta, scale,
+                // alpha, hue — the first bad slot surfaces the same error
+                let data = RenderData::Point {
+                    x: self.compiled_num_slot(plan.x, row, pose, 0.0)?,
+                    y: self.compiled_num_slot(plan.y, row, pose, 0.0)?,
+                    theta: self.compiled_num_slot(plan.theta, row, pose, 0.0)?,
+                    scale: self.compiled_num_slot(plan.scale, row, pose, 1.0)?,
+                    alpha: self.compiled_num_slot(plan.alpha, row, pose, 1.0)?,
+                    hue: self.compiled_num_slot(plan.hue, row, pose, 0.0)?,
+                };
+                let mut rendered = RenderRow::plain(data);
+                for (key, value) in &plan.extras {
+                    match self.eval_compiled_row_val(value, row, pose) {
+                        Val::Num(n) => {
+                            render_field_checked(&mut self.world, key, RenderFieldKind::Num, &mut checked)?;
+                            rendered.nums.push(((*key).clone(), n));
+                        }
+                        Val::Kw(sym) => {
+                            render_field_checked(&mut self.world, key, RenderFieldKind::Sym, &mut checked)?;
+                            rendered.syms.push(((*key).clone(), sym));
+                        }
+                        Val::Nothing => {}
+                        _ => return Err(format!("render: field :{key} must be a number or keyword")),
+                    }
+                }
+                self.world.render_rows.push(Rc::new(rendered));
+            }
+            return Ok(Some(()));
+        }
         for row in rows {
             let pose = form.needs_pose
                 .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
@@ -567,6 +602,19 @@ impl Sim {
             self.world.render_rows.push(Rc::new(rendered));
         }
         Ok(Some(()))
+    }
+
+    fn compiled_num_slot(
+        &self,
+        slot: Option<&ResolvedRowVal>,
+        row: usize,
+        pose: Option<&Pose>,
+        default: f64,
+    ) -> Result<f64, String> {
+        match slot {
+            Some(value) => self.eval_compiled_row_val(value, row, pose).num(),
+            None => Ok(default),
+        }
     }
 
     fn eval_compiled_row_val(&self, value: &ResolvedRowVal, row: usize, pose: Option<&Pose>) -> Val {
@@ -805,6 +853,90 @@ impl Sim {
     pub fn rewind_events(&mut self) {
         self.world.log.borrow_mut().truncate_to(self.world.cursor);
     }
+}
+
+/// Per-pass slot assignment for compiled point/dot render rows. The field
+/// list is fixed for the whole pass and named slots are first-write-wins,
+/// so each slot resolves to at most one field up front and every row build
+/// skips the RenderRowFields staging (a Val per slot plus an extras vec).
+/// None when the shape isn't a static :point/:dot keyword — the generic
+/// finish_checked path keeps its error semantics for those forms.
+struct CompiledRowPlan<'a> {
+    x: Option<&'a ResolvedRowVal>,
+    y: Option<&'a ResolvedRowVal>,
+    theta: Option<&'a ResolvedRowVal>,
+    scale: Option<&'a ResolvedRowVal>,
+    alpha: Option<&'a ResolvedRowVal>,
+    hue: Option<&'a ResolvedRowVal>,
+    extras: Vec<(&'a Rc<str>, &'a ResolvedRowVal)>,
+}
+
+impl<'a> CompiledRowPlan<'a> {
+    fn from_fields(fields: &'a [(&'a Rc<str>, RenderKey, ResolvedRowVal)]) -> Option<CompiledRowPlan<'a>> {
+        let mut shape = None;
+        let mut x = None;
+        let mut y = None;
+        let mut theta = None;
+        let mut facing = None;
+        let mut scale = None;
+        let mut alpha = None;
+        let mut opacity = None;
+        let mut hue = None;
+        let mut extras = Vec::new();
+        let set_first = |slot: &mut Option<&'a ResolvedRowVal>, value: &'a ResolvedRowVal| {
+            if slot.is_none() {
+                *slot = Some(value);
+            }
+        };
+        for (key, slot, value) in fields {
+            match slot {
+                RenderKey::Shape => set_first(&mut shape, value),
+                RenderKey::X => set_first(&mut x, value),
+                RenderKey::Y => set_first(&mut y, value),
+                RenderKey::Theta => set_first(&mut theta, value),
+                RenderKey::Facing => set_first(&mut facing, value),
+                RenderKey::Scale => set_first(&mut scale, value),
+                RenderKey::Alpha => set_first(&mut alpha, value),
+                RenderKey::Opacity => set_first(&mut opacity, value),
+                RenderKey::Hue => set_first(&mut hue, value),
+                // point data never reads these; finish_checked drops them
+                RenderKey::Points | RenderKey::Pts | RenderKey::Active => {}
+                RenderKey::Extra => extras.push((*key, value)),
+            }
+        }
+        let Some(ResolvedRowVal::Kw(kw)) = shape else {
+            return None;
+        };
+        if !matches!(kw.as_ref(), "point" | "dot") {
+            return None;
+        }
+        Some(CompiledRowPlan {
+            x,
+            y,
+            theta: theta.or(facing),
+            scale,
+            alpha: alpha.or(opacity),
+            hue,
+            extras,
+        })
+    }
+}
+
+/// `render_field_check` behind the same per-pass (key, kind) memo
+/// finish_checked keeps: the schema only accretes within a rule pass, so an
+/// accepted pair cannot conflict later in the pass.
+fn render_field_checked(
+    world: &mut World,
+    key: &Rc<str>,
+    kind: RenderFieldKind,
+    checked: &mut Vec<(Rc<str>, RenderFieldKind)>,
+) -> Result<(), String> {
+    if checked.iter().any(|(k, seen)| *seen == kind && k == key) {
+        return Ok(());
+    }
+    world.render_field_check(key, kind)?;
+    checked.push((key.clone(), kind));
+    Ok(())
 }
 
 fn truthy_pub(v: &Val) -> bool {
