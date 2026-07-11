@@ -1670,22 +1670,7 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
 }
 
 fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
-    match world.entities.motion_schema(i) {
-        None => return MotionReaders::stateless(Rc::default()),
-        Some(schema)
-            if schema.n2_keys.is_empty()
-                && schema.dyn_keys.is_empty()
-                && schema.val_keys.is_empty() =>
-        {
-            return MotionReaders::stateless(schema.shared_node_ids());
-        }
-        _ => {}
-    }
-    let snapshot = world
-        .entities
-        .row_state_snapshot(i)
-        .expect("schema presence checked above");
-    MotionReaders::for_row_snapshot(snapshot)
+    world.entities.row_motion_readers(i)
 }
 
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {

@@ -293,23 +293,7 @@ impl Sim {
     }
 
     fn motion_readers_inner(&self, row: usize) -> MotionReaders {
-        match self.world.entities.motion_schema(row) {
-            None => return MotionReaders::stateless(Rc::default()),
-            Some(schema)
-                if schema.n2_keys.is_empty()
-                    && schema.dyn_keys.is_empty()
-                    && schema.val_keys.is_empty() =>
-            {
-                return MotionReaders::stateless(schema.shared_node_ids());
-            }
-            _ => {}
-        }
-        let snapshot = self
-            .world
-            .entities
-            .row_state_snapshot(row)
-            .expect("schema presence checked above");
-        MotionReaders::for_row_snapshot(snapshot)
+        self.world.entities.row_motion_readers(row)
     }
 
     pub(crate) fn channel_u64(&self, name: &str) -> u64 {

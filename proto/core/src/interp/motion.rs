@@ -159,6 +159,12 @@ enum ReaderBacking {
     /// whose schema holds no state.
     Empty,
     Row(Rc<RowStateSnapshot>),
+    /// n2-only schemas with at most two cells — the vel-integrator bullet
+    /// case. Values sit inline, so construction allocates nothing.
+    RowN2 {
+        schema: Rc<MotionStateSchema>,
+        n2: [Option<[f64; 2]>; 2],
+    },
 }
 
 #[derive(Clone)]
@@ -177,12 +183,17 @@ impl MotionReaders {
                 .iter()
                 .position(|k| *k == key)
                 .and_then(|slot| snap.n2.get(slot).copied().flatten()),
+            ReaderBacking::RowN2 { schema, n2 } => schema
+                .n2_keys
+                .iter()
+                .position(|k| *k == key)
+                .and_then(|slot| n2.get(slot).copied().flatten()),
         }
     }
 
     pub fn dyns(&self, key: MotionStateKey) -> Option<DynPose> {
         match &self.backing {
-            ReaderBacking::Empty => None,
+            ReaderBacking::Empty | ReaderBacking::RowN2 { .. } => None,
             ReaderBacking::Row(snap) => snap
                 .schema
                 .dyn_keys
@@ -194,7 +205,7 @@ impl MotionReaders {
 
     pub fn vals(&self, key: MotionStateKey) -> Option<EvolveCell> {
         match &self.backing {
-            ReaderBacking::Empty => None,
+            ReaderBacking::Empty | ReaderBacking::RowN2 { .. } => None,
             ReaderBacking::Row(snap) => snap
                 .schema
                 .val_keys
@@ -221,6 +232,19 @@ impl MotionReaders {
         let node_ids = snapshot.schema.shared_node_ids();
         MotionReaders {
             backing: ReaderBacking::Row(Rc::new(snapshot)),
+            node_ids,
+        }
+    }
+
+    /// Caller guarantees the schema holds no dyn/val cells and at most two
+    /// n2 cells, with `n2` in schema slot order.
+    pub(crate) fn for_row_n2(
+        schema: Rc<MotionStateSchema>,
+        n2: [Option<[f64; 2]>; 2],
+    ) -> MotionReaders {
+        let node_ids = schema.shared_node_ids();
+        MotionReaders {
+            backing: ReaderBacking::RowN2 { schema, n2 },
             node_ids,
         }
     }

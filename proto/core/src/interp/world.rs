@@ -452,14 +452,31 @@ impl EntityStore {
         self.state_n2.get(slot)?.get(row).copied()
     }
 
-    /// Slot-indexed snapshot of one row's state cells, in schema slot order.
-    /// None when the row carries no schema.
-    pub fn row_state_snapshot(&self, row: usize) -> Option<RowStateSnapshot> {
-        let schema = self.specs.motion_schema.get(row)?.clone();
+    /// Readers over a snapshot of the row's state cells, in schema slot
+    /// order. Stateless schemas share no-op readers; n2-only schemas with at
+    /// most two cells snapshot inline (no allocation).
+    pub fn row_motion_readers(&self, row: usize) -> MotionReaders {
+        let Some(schema) = self.specs.motion_schema.get(row) else {
+            return MotionReaders::stateless(Rc::default());
+        };
+        if schema.n2_keys.is_empty()
+            && schema.dyn_keys.is_empty()
+            && schema.val_keys.is_empty()
+        {
+            return MotionReaders::stateless(schema.shared_node_ids());
+        }
+        if schema.dyn_keys.is_empty() && schema.val_keys.is_empty() && schema.n2_keys.len() <= 2 {
+            let mut n2 = [None, None];
+            for (slot, key) in schema.n2_keys.iter().enumerate() {
+                n2[slot] = self.state_n2(row, *key);
+            }
+            return MotionReaders::for_row_n2(schema.clone(), n2);
+        }
+        let schema = schema.clone();
         let n2 = schema.n2_keys.iter().map(|k| self.state_n2(row, *k)).collect();
         let dyns = schema.dyn_keys.iter().map(|k| self.state_dyn(row, *k)).collect();
         let vals = schema.val_keys.iter().map(|k| self.state_val(row, *k)).collect();
-        Some(RowStateSnapshot { schema, n2, dyns, vals })
+        MotionReaders::for_row_snapshot(RowStateSnapshot { schema, n2, dyns, vals })
     }
 
     pub fn set_state_n2(&mut self, row: usize, key: MotionStateKey, value: [f64; 2]) -> bool {
