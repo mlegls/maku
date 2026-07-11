@@ -2,7 +2,8 @@
 
 The spec in `docs/language.md` is authoritative. This file tracks only work
 that is still open in the prototype or decisions that should constrain that
-work.
+work. Completed work lives in git history and the design notes' status
+headers, not here.
 
 ## Language Gaps
 
@@ -24,69 +25,30 @@ work.
   differ. NOTE: the channel/cell unification design
   (`docs/notes/channel-unification.md`, converged 2026-07, not yet
   ratified) makes the manifest check fall out of scoping — a free `$name`
-  neither bound nor def'd is a load error, and the manifest is the set
-  of `(from-host :name)` sites — a standalone stream-valued expression
-  (anonymous injected streams work; bind! just names one), so host
-  injection is not special syntax. Cells dissolve into let-bound sigiled streams; the
-  dynamic cell scope (CELLS_KEY/cell_scope/adapter caller-cells) becomes
-  deletable kernel surface.
-- `remat` / `manip`: semantics decided — `(remat handle spec)` is the
-  handle-preserving primitive, strictly 1:1 (single handle, single-element
-  spec; multi-element figures error). The spec is PARTIAL: supplied slots
-  replace, absent slots retain. Epochs are per-slot: a rematted slot's
-  local `t` restarts and its runtime state (scan cells) is cleared — the
-  new figure has no relation to the old — while untouched slots keep clock
-  and state, so field-only remats (the `set-col` story) never disturb
-  motion. Writes apply at/right before the NEXT tick: all reads within a
-  tick see pre-tick state, keeping ephemeral row indices
-  (`entities-where`) stable within the tick. The field-write primitive is
-  the FUNCTIONAL update `(change-col e col f)`: writes queue their update
-  function, and at the tick boundary a slot's queued functions compose in
-  deterministic action-execution order over the pre-tick value — so
-  concurrent decrements accumulate instead of losing updates, a plain set
-  is the constant function (`set-col` = lib sugar `(fn [_] v)`, making
-  last-writer-wins a consequence, not a rule), and the aggregate-over-domain
-  form stays the preferred idiom that the recognizer fuses. Remat's partial
-  spec admits values or update functions per field; `change-col` is the
-  single-field case. Update functions must be pure. A new
-  figure evaluates anchored where the entity currently IS (current world
-  pose); callers wanting the old parent frame store/pass it explicitly.
-  Milestones 1 AND 2 are DONE (write queue + `change-col` + `set-col`-as-
-  prelude-sugar + lib migration; partial `(remat h spec-map)` with the
-  reserved `:motion` key, remat on the queue with drain-time exit snapshot,
-  and the motion-slot epoch split from the entity clock — see
-  `docs/notes/remat-design.md` for landed shapes and known edges; the
-  atomic multi-field spec now covers the same-tick multi-contact iframe
-  guard if a card needs it). Still missing: per-dyn-field epochs (fades
-  surviving motion remats), soft-cull fades, the F1 lint, and the
-  masked-SoA fast path (the lowering target for batch `map`-remat shapes).
-  Live-evolve integration keys on the per-slot epochs (implementation
-  design in `docs/notes/live-evolve-design.md`). Milestones 1–2 are DONE:
-  EvolveCell Val motion cells (schema/store/snapshot/reader/write_val
-  plumbing), evolves are scanned, step_motion_in advances closed evolves
-  once per tick boundary against the closed SigEnv, on-clock pose reads
-  hit the settled cell and off-clock sampling replays unchanged — closed
-  evolves stopped being O(n²); a motion remat's schema swap restarts the
-  epoch. Milestone 3 is DONE (bec0735): init is a deferred thunk
-  evaluated at epoch start (closed env for closed, real env for live —
-  `(evolve (:pos e) ...)` remat continuity works), a syntactic liveness
-  classifier roots keyword access at the step fn's params (param-rooted
-  access is the fold's own state → closed; capture-rooted, channels,
-  rand, world-reading heads → live), live evolves advance in the
-  scanned pass against the real SigEnv/world, and off-clock live
-  sampling errors. Live evolves accept a one-behind cell in the
-  post-boundary sampling window; closed keep exact-match-else-replay.
-  This unblocks evolve-design step 3 (vel/slew/smooth/stages/pather in
-  lib over evolve) — IN PROGRESS (round 7, design in
-  docs/notes/evolve-reexpression-design.md): sited evolves (e988cd0 —
-  an evolve under a scan context keys state by ScanSite and evaluates
-  to the settled value) and capture-time macroexpansion (c975512) are
-  on main; slew/smooth become prelude macros over sited evolves
-  (retiring sf_stateful, scan_builtin_spec, and the Val::Thunk
-  deferred-instance mechanism, with player_homing's let-smooth inlined).
-  Remaining on this track: vel (blocked on nothing, but recognition is
-  semantically mandatory so it's pure surface until the model/ split)
-  and stages (own round, likely over states).
+  neither bound nor def'd is a load error, and the manifest is the set of
+  `(from-host :name)` sites. Cells dissolve into let-bound sigiled
+  streams; the dynamic cell scope (CELLS_KEY/cell_scope/adapter
+  caller-cells) becomes deletable kernel surface.
+- `remat` / `change-col`: contract settled and landed (write queue,
+  functional `change-col` composition, partial `(remat h spec-map)`,
+  per-slot epochs, sited/live evolves, slew/smooth as prelude macros —
+  landed shapes and known edges in `docs/notes/remat-design.md`,
+  `docs/notes/live-evolve-design.md`,
+  `docs/notes/evolve-reexpression-design.md`). Still open on this track:
+  - per-dyn-field epochs (fades surviving motion remats), soft-cull
+    fades, the F1 lint, and the masked-SoA fast path (the lowering
+    target for batch `map`-remat shapes);
+  - `vel` re-expression: pure surface change until the model/ split
+    (b.vel introspection, clamp_integrator, and the compiled integrand
+    programs all key on `DynNode::Vel` — recognition is semantically
+    mandatory), so deferred to that split;
+  - `stages` re-expression: own round, likely over `states`, not raw
+    evolve (its corpus sites use exit slots, `forever`, and
+    `(fn [exit] ...)` handoff);
+  - known limitation: cart/polar/rot capture guards
+    (`contains_unbound_axis`) run on the RAW form, before expansion — a
+    macro whose expansion introduces t-dependence is not recognized as a
+    dyn expression. Revisit if a real card hits it.
 - Extraction and 3D embedding remain unimplemented.
 - Tick/rule ergonomics are still settling. Core now has primitive `deftick`
   plus domain expressions such as `(entities-where ...)` and `(collisions
@@ -95,116 +57,41 @@ work.
 - Blocking lasers / world-geometry extent from DMK §13.7 remains unported.
 - RNG is sequential splitmix, so replay determinism holds but spawn-order
   independence does not.
-- Array-valued dyn meta now binds per spawn element (`NumDynRepr::AxisSel`
-  captures the element's axis path at spawn; evaluation selects one lane
-  with the style-axis rules). Interim shape: each entity evaluates the
-  full shared array per tick and keeps its lane — the compiled-dyn pass
-  should recognize the shared program and evaluate once per group,
-  scattering lanes (SS5 array-of-signals/signal-of-array interchange).
+- Array-valued dyn meta binds per spawn element (`NumDynRepr::AxisSel`),
+  but each entity still evaluates the full shared array per tick and keeps
+  its lane — the compiled-dyn pass should recognize the shared program and
+  evaluate once per group, scattering lanes (SS5 array-of-signals/
+  signal-of-array interchange; compiled-dyn milestone B).
 
 ## Engine Refactor
 
 - Deduplicate `EntitySpecStore` cold dyn/projector data into shared
-  spawn-site/program/archetype storage where possible.
-- (done) Motion state is keyed by stable lowered ids only; the pointer-keyed
-  compatibility variants are gone and direct evaluation seeds ids via
-  `MotionReaders::for_node/for_pose/for_figure`.
-- DONE: lazy `stages` lower at construction to load-time-closed dyns. The
-  `(fn [exit] ...)` closure runs once against a symbolic `StageExit` token;
-  exit reads become deferred `StageExitPose` values resolved from fixed
-  pos/vel cells (stable lowered ids, seeded like node ids) written at the
-  stage boundary. `StageMake::Lazy`, `MotionStateKey::LazyStage`, and the
-  runtime dense-schema extension path are gone — motion schemas are closed
-  at load. Known limit: a closure that forces a numeric exit read EAGERLY
-  at construction (outside a deferred dyn component form) errors at load
-  ("stage exit can only be read inside a staged signal"); corpus bodies are
-  all pure constructors and unaffected.
+  spawn-site/program/archetype storage where possible. Load-bearing for
+  compiled-dyn milestone B (group evaluation needs shared per-spawn-site
+  programs).
 - Move remaining gameplay-domain behavior out of core: bare hostile
-  `(cull)`. Core no longer knows style axes or lasers; the remaining
-  family->color/radius tables are stock host policy in `host.rs` (see the
-  renderer item). The laser bridge is gone: `(curve shape? {geometry})` is
-  the core figure constructor, `laser`/`laser-shot` are lib spawn macros,
-  lifecycle (`:warn`/`:active`/`:fill`) is ordinary entity fields that
-  `laser-collider`/`beam-renderer` bodies translate per tick into STATIC
-  collider/render descriptions (primitives take concrete numbers; no
-  stored dyn slots), and beam end-of-life is a lib cull rule. The
-  circle->capsule adaptation that borrowed collider truth from render
-  specs is deleted; a :pose collider on a curve element yields no collider.
-- Projector/render surface (done): `(collider :pose|:parametric [e ctx]
-  body)` is the constructor special (`defcollider` = `def` + that form;
-  bodies and spawn slots yield `primitive | [primitive] | nothing`,
-  flattened one level; `colliders`/`ColliderSum` are gone), and render
-  output is rule code calling `render` — `defrenderer`, render slots,
-  and the spawn renderer arg are deleted, the stock dot is host policy
-  over the absent-or-`:dot` `render` field, and deferred curve geometry
-  is the opaque `(curve-samples e {:u-max h :resolution r})` value
-  (static numbers, validated at construction) expanded when the action
-  executes. Rationale for the asymmetry: collision is engine-pulled
-  closed algebra (opaque values attached at spawn; user code never emits
-  collider rows), rendering is host-pushed open data. Known trade:
-  rule-emitted rows are tick-cadence snapshots, so frame-time
-  re-evaluation/interpolation becomes a host concern. Remaining render
-  work: per-kind registered row schemas with manifest negotiation (the
-  current schema is one global key->kind map), the builtin field
-  rename/pick adapter, and a mesh/sprite-batch kind. Host palette tables
-  (`style_rgb`, `dot_radius`) remain stock host policy in `host.rs`;
-  move them behind host/profile config when a second frontend needs
-  different vocabulary.
+  `(cull)`. Host palette tables (`style_rgb`, `dot_radius`) remain stock
+  host policy in `host.rs`; move them behind host/profile config when a
+  second frontend needs different vocabulary.
+- Remaining render-surface work: per-kind registered row schemas with
+  manifest negotiation (the current schema is one global key->kind map),
+  the builtin field rename/pick adapter, and a mesh/sprite-batch kind.
+  Known trade (decided): rule-emitted rows are tick-cadence snapshots, so
+  frame-time re-evaluation/interpolation is a host concern.
 - Compile dyn evaluation to a flat program with fixed scratch storage.
-  Design: `docs/notes/compiled-dyn-design.md`. Milestone A (first slice)
-  is DONE: fully-numeric ClosedPt/Vel/RotExpr component forms lower to
-  flat f64 register programs (all-or-nothing per form, interpreter as
-  per-node fallback, defs-shadowing guarded, oracle-verified via
-  MAKU_LOWER_ORACLE=1); Vel/RotExpr step arms reuse the programs. 40%/58%
-  of closed-pt/vel evals compile at ~30x per-eval; `*` interpreted count
-  down 1M. User-defn inlining is also DONE (hygienic beta-reduction at
-  lower time; required pinning live-only cell reads in signal slots —
-  Ctx.signal_scope — since a captured cell scope otherwise disabled it
-  for 100% of corpus lowerings) but bought no corpus coverage: the bail
-  census showed the remaining interpreted volume was (a) homing-slew
-  nodes (scan + channel inputs → milestones B/C), (b) `lerpsmooth` with
-  a static easing-kind sym, (c) keyword reads on captured poses/maps.
-  (b) and (c) are DONE (300b6cb): a LerpSmooth op with statically
-  resolved easing kind, real Form::Kw-head lowering — the old `:x`/`:y`
-  arm was dead code matching a form shape the reader never emits, so
-  `(:x pos)`/`(:y pos)` PosX/PosY ops fire for the first time — and
-  Const folding of keyword-access chains rooted at env-captured
-  Maps/Poses (sound: the program cache lives on the node beside its
-  captured env). Remaining lever: (a) slew's scan + channel inputs,
-  which is milestone B (input slots + group evaluation) territory. The
-  interpreter path may remain as a compatibility implementation, but hot
-  steady-state execution should not allocate or hash by node pointer.
-- Move the dyn kernel (and entity spec / state-schema semantic halves) to
-  model/ as a backend-parametric `Dyn<E>`, AFTER the evolve re-expression
-  shrinks the kernel (moving now would enshrine Vel/Stages, which become
-  lib shapes). Direction + sequencing: `docs/notes/model-split.md`.
-- DONE (cfd2218): entities-where predicates shaped as conjunctions of
-  `(= (:field e) :kw)` tests compile to a RowPredicate over interned sym
-  columns (with `:kind` computed as entity_view does); recognition is
-  structural per query call (no cache — the sf_matches Fn is rebuilt per
-  call, and recognition is trivially cheap next to per-row apply_fn),
-  bails whole on anything else (mixed numeric tests fall back entirely
-  to preserve error/effect order), and dual-runs under
-  MAKU_LOWER_ORACLE. Also aligned entity_field_at's `:kind` for traced
-  pathers (`:pather`, not `:point`) with entity_view. Aggregate: `=`
-  452→193ms, `*` 455→312ms, entities-where inclusive 1569→1125ms.
-  Remaining on this track: partial prefiltering (mixed predicates beyond
-  the recognized set still fall back whole). Numeric comparisons are DONE
-  (round 9): conjuncts shaped `(op lhs rhs)` over `<`/`<=`/`>`/`>=`/`=`
-  compile when both sides classify as total numeric reads — literals,
-  `inf`, `(:t e)`/`(:tick e)`, `(%value-or (:col e) default)`, and 2-arg
-  `+`/`-`/`*` over those; a BARE `(:col e)` numeric read bails (a missing
-  col is Nothing and the interpreted comparison errors). Exact-parity
-  guard: a numeric read that hits a KEYWORD-valued field aborts the whole
-  compiled query and reruns the interpreted fallback (predicates are pure,
-  so the rerun reproduces the interpreted error byte-for-byte); compiled
-  render rules truncate partial rows and re-interpret the form on that
-  same signal, with the predicate scan completing before any row body so
-  phase order matches entities-where-then-map. Numeric `=` mirrors
-  val_eq's 1e-9 epsilon. This covered the three hot lib rules (hp-cull,
-  game-over, beam end-of-life). Map queries (`sum-entities` channels)
-  also resolve selector symbols once per query now instead of four
-  string hashes per row.
+  Design and status: `docs/notes/compiled-dyn-design.md` — milestone A
+  (closed numeric ClosedPt/Vel/RotExpr programs, defn inlining, LerpSmooth
+  and Kw-head/Const-fold coverage) is DONE and oracle-gated
+  (MAKU_LOWER_ORACLE=1); the renderer half of milestone C (compiled
+  deftick render rules + numeric row predicates, `interp/rulelower.rs`)
+  is DONE. Next: milestone B — input slots (captures/rand as data, one
+  program per spawn site) + group evaluation with SoA scratch; the bail
+  census says the remaining interpreted integrand volume is homing-slew
+  nodes needing ReadScan + Channel ops. Remaining cheap win #1: motion
+  readers closing over SoA columns + row index instead of building
+  per-row snapshots (readers are constructed per entity per phase).
+  Also open: partial prefiltering for mixed entities-where predicates
+  (recognized-plus-residual conjunctions still fall back whole).
   Stance (decided): this is a load-time lowering (AOT at card load), not a
   JIT. The interpreter splits by role: the CONTROL PLANE (card loading,
   macros, the scheduler/action tree, states/phases, live eval/swap) stays
@@ -224,240 +111,26 @@ work.
   investments that do survive: SoA layout, spec-store dedup, group
   evaluation of shared programs, fixed scratch, and hoisting
   per-spawn-site invariants to load time.
-- DONE: profiling harness — `interp::profile` (flat self/inclusive-time
-  by evaluated head symbol + dyn-node variant, thread-local, off by
-  default) with `examples/profile.rs` running the representative set.
-  First numbers (aggregate self time over 8 cases): `dyn:vel` 1.96s,
-  `entities-where` 1.83s self / 7.8s incl (per-row predicate eval),
-  `dyn:closed-pt` 1.59s, `value-or` 1.25s at 4.6M calls (a two-line
-  prelude defn paying full interpreted-call overhead — the canonical
-  AST-rewrite-intrinsic candidate), `dyn:frame` 0.89s self / 13.7s incl,
-  `emit` 0.81s, then interpreter dispatch on `*`/`=`/`+`. `map` is 47ms
-  self but 10.7s inclusive — its bodies (mostly entity queries) dominate.
-  Intrinsic promotion and lib-ification calls should cite these numbers.
-  Round-7 findings on the two rows left standing: `dyn:frame`'s ~324ms
-  was mostly instrumentation artifact — the profiler String-allocated
-  the entry key on every close INSIDE the parent's still-open window,
-  charging recursive rows for their children's bookkeeping (fixed, with
-  a Frame(Const, child) fast arm + construction-time Const-frame
-  folding on top; frame_node in motion.rs). `%value-or`'s ~320ms/4.65M
-  is real: renderer deftick bodies re-interpret per entity per tick,
-  and every numeric field read (`e.scale` etc.) pays TWO string-hash
-  symbol lookups (sym_field_resolved_at then col_get_at). Structural
-  options, in payoff order: (a) lower projector/renderer bodies to
-  field-read programs at deftick registration (milestone C's
-  rule/projector half — value-or over a col read becomes slot+default),
-  (b) memoize resolved column slots beside the keyword form (OnceCell,
-  must handle not-yet-interned cols), (c) column-major row batching
-  (per-tick only; gate on body purity).
-  Round-8 resolution: (a) is DONE for the renderer half — deftick bodies
-  macroexpand once at registration and the sprite-rule shape compiles to a
-  native rule (`interp/rulelower.rs`, oracle-gated; see
-  compiled-dyn-design.md milestone C for the landed shape and bail set) —
-  plus the interpreter-path halves of (b): entity field reads resolve ONE
-  symbol for both stores, and RowPredicate tests intern their symbols once
-  per query instead of per row.
-  Round-10 finding: head-level rows only covered a fraction of wall time.
-  New phase frames in the profiler (`phase:*`, `sim:motion-readers`,
-  `sig:setup`) attributed the rest: the collision pass was ~65% of
-  aggregate wall — the O(n²) pair loop 992ms of ~2.0s, collider
-  materialization 302ms (an `entity_view` built per entity per tick that
-  static projectors never read). Fixed (sim/collision.rs): x-axis
-  sweep-and-prune over per-entity union AABBs, one narrow-phase visit per
-  unordered pair (overlap is exactly symmetric), stable (i, j) sort
-  reproducing the old fact order that `(collisions ...)` observes, a
-  brute-force dual-run under MAKU_LOWER_ORACLE=1, and a `needs_views`
-  classification skipping view construction for Stable/unscoped
-  projectors. Pairs 992→510ms (rest is genuine near-neighbor density in
-  homing streams / dense rings); walls: reimu 939→629ms, spell-2
-  385→215ms.
-  Round-11: collision facts are now LAZY per queried layer pair — the
-  pass only captures a snapshot (collider rows, union AABBs, per-layer
-  entity lists, eligibility) into `World::CollisionIndex`; the
-  `(collisions :a :b)` query computes layer-a × layer-b with AABB
-  rejection, memoized per tick as the Rc CollisionSet payload. Query
-  results derive from the captured snapshot, never live state (control
-  tasks keep seeing the previous tick's facts), and same-layer bullet
-  clouds nobody queries are never narrow-phased; the round-10 sweep is
-  superseded and removed. Under MAKU_LOWER_ORACLE=1 every fresh query
-  asserts against a raw all-pairs scan of the snapshot. Eager pair work
-  (510ms, and 1603ms on the newly added miracle-fruit profile case) →
-  63ms capture + 2.7ms queries; walls: spell-2 215→66ms, reimu
-  629→365ms, fruit 5050→3555ms.
-  Round-12: a macOS `sample` profile (the flat profiler's own frame
-  bookkeeping is ~18% of wall on dense cards — MAKU_WALL_ONLY=1 on the
-  example now measures bare) showed ~40% allocator traffic + ~10%
-  SipHash, dominated by the touhou bullet collider: `(circle-collider
-  {:layer :damage :r e.hitbox})` under a :pose defcollider scope paid a
-  full entity_view + evaluator World/Ctx per entity per tick for a
-  plain field read. `ProjectorNum::EntityCol` now recognizes `(:field
-  e)` scope reads at spec build; materialization serves them via
-  entity_field_at (exact view-value parity incl. error text), and
-  needs_views tightened to "some ProjectorNum is a general Expr". Plus:
-  stateless-schema MotionReaders fast path (shared no-op closures),
-  all-Stable projectors evaluate by reference, interned scale read.
-  Bare walls: fruit 2848→1783ms, polar −41%, stars −33%, cradle −26%,
-  bowap −24%, spell-2 −21%, reimu −15%. Remaining levers from the
-  sample, in payoff order: reader snapshot churn for SCANNED rows (vel
-  bullets have n2 state, so the stateless path misses — cheap win #1
-  proper: readers over the SoA columns, no per-entity maps/closures),
-  FxHash for the hot HashMaps (MotionStateKey maps, symbol lookups,
-  render schema — SipHash is ~10% of fruit), render-row building
-  (RenderRowFields push/finish + per-row Rc), `Val` drop traffic.
-  Round-13: both remaining alloc/hash levers. (a) Per-row reader
-  construction (3 HashMaps + 3 boxed closures per entity per phase)
-  replaced by a slot-indexed `RowStateSnapshot` behind method-based
-  `MotionReaders` — values in schema slot order, key lookup a linear
-  scan of the schema's tiny key vectors; snapshot-at-construction
-  semantics unchanged (reads see pre-step values while the step pass
-  writes through). (b) In-repo FxHash (`src/fxhash.rs`, the rustc-hash
-  fold, 64-bit internally so wasm32 matches) on MotionState, schema
-  slot/node-id maps, symbol table, world field slots, collision index,
-  render schema. Bare walls: fruit 1783→1195ms (readers alone →1386),
-  bowap −35%, reimu −20%, stars −20%, cradle −19%. Next levers from
-  the round-12 sample, still open: render-row building
-  (RenderRowFields push/finish + per-row Rc, phase:rules self ~554ms
-  on fruit), `Val` drop traffic (drop_in_place<Val> ~124 samples);
-  re-sample before choosing — the alloc profile has shifted.
-  Round-14: a fresh sample put the render-row cluster at ~26% of
-  fruit (field reads re-hashing names through the symbol table per
-  row, push_kw string-matching per field, render_field_check per
-  extra per row) plus ~10% collider defs glue and ~7% residual
-  reader-snapshot allocs. Compiled tick rules now resolve field
-  names to symbols once per rule pass (`ResolvedRowVal`; sound
-  because field writes are pending until the tick boundary), carry
-  key slots from lowering (`RenderKey`), and memoize accepted
-  (key, kind) schema checks within a pass; the collider defs pass
-  binds the projector scope only when some slot is a general Expr
-  (Const/EntityCol never read the views); n2-only schemas with ≤2
-  cells snapshot readers into an inline array (no allocation), with
-  construction centralized in EntityStore::row_motion_readers. Bare
-  walls: fruit 1195→740ms (−38%), stars −28%, cradle −22%, spell-2
-  −20%, bowap −14%, reimu −8%. Note: entity_pose_at already serves
-  the tick's sampled-pose cache, so compiled-rule pose reads were
-  already cheap. Remaining from the round-14 sample: step_motion's
-  lowered-program runs + a per-stepped-row HashMap insert (~8%),
-  collide-mat pose/eval work (~14% incl.), Rc<RenderRow> per-row
-  churn, Val drops. Also still open: compiled-dyn milestone B,
-  channel unification, trace-phase reader construction.
-  Round-15: three trims from a fresh sample. Keyword field reads
-  built a fresh Rc<str> per read of a name the symbol table already
-  holds (resolve_rc → refcount bump; ~6% of fruit). The Vel step's
-  state-map insert was write-only on the sim path (snapshot readers
-  + buffered write_n2) — now legacy-only, EXCEPT under Clamp, whose
-  clamp_integrator reads the child's just-stepped value
-  (clamp_slides_not_banks caught the naive gating), and Stages,
-  whose transition exit cells are read within the same step call.
-  Render-row field vectors reserve exactly. Bare walls: fruit
-  740→574ms (−22%), bowap −37%, polar −41%, reimu −10%, cradle −8%.
-  Sample-identified levers still open: collide-mat (~15% incl. —
-  per-bullet pose eval + eval_collider_slot + defs vec),
-  interpreted entities-where queries from control tasks
-  (resolve_query ~6%), lowered-program integrand runs (genuine
-  compute; compiled-dyn milestone B), Rc<RenderRow> per-row churn,
-  compiled-rule predicate scans (~4%).
-  Round-16: three trims. Direct collider projectors (every slot
-  Const/EntityCol — the plain-bullet case after defcollider
-  flattening) materialize ColliderData by reference against &World:
-  no per-bullet DynCollider defs round-trip, no dyn eval of a
-  constant radius (subsumes the all-Stable fast path). Compiled
-  point render rows build from a per-pass slot plan (field→slot
-  assignment incl. theta/facing, alpha/opacity fallbacks is static
-  and first-write-wins), skipping RenderRowFields staging; non-
-  static shapes keep the generic path. Motion-state snapshots read
-  cells by slot index (slot id == key index by intern order) instead
-  of hashing through the schema's slot maps. Bare walls: fruit
-  574→429ms (−25%), bowap −16%, polar −17%, stars −12%, cradle −9%,
-  reimu −3%; scaled fruit rig (12k ticks, bullet count compounds)
-  16.9s→9.1s (−46%). Remaining from the round-16 sample:
-  step_motion_in + dyn pose/integrand eval ~30% (genuine compute —
-  compiled-dyn milestone B is now the top lever), collide-mat
-  residue ~9% (per-bullet pose eval + EntityCol field reads),
-  CollisionIndex::capture ~4%, motion-reader construction ~6%,
-  render extras vec growth + render_field_checked memo scans ~5%,
-  interpreted entities-where from control tasks (resolve_query).
-  Round-17: five trims. Compiled query tests and render row values
-  resolve past the symbol table to store SLOTS per pass (FieldSlots:
-  per-row reads are two Vec indexes, no slot-map hash); constant
-  frame parents (ConstFrame after Const folding) pre-bake their
-  heading sin/cos at construction, removing a sincos per pose eval
-  (Pose::compose_with_rot keeps the math identical); the collision
-  index recycles the collider scratch buffers through capture()
-  (they regrew from zero capacity every tick) and hoists the
-  per-entity layers vec; direct collider EntityCol reads go through
-  FieldSlots (scope filter guarantees non-special names); query
-  :kind tests compare a parsed discriminant, not a string. Walls
-  (same-session deltas): fruit 429→383ms bare, scaled 12k rig
-  9.65s→8.63s (−11%); pose-eval samples halved (compose sincos
-  gone), capture halved; others noise-flat. The profile is now
-  mostly genuine compute: lowered integrand runs under
-  step_motion_in (~10% — compiled-dyn milestone B, still the top
-  lever), collide-mat body (~9% self, memory-bound per-bullet
-  work — batching territory), query row scans (~11%: per-row
-  entity_tau + NumCmp arithmetic over thousands of rows × 4
-  queries/tick — needs query result caching or kind/team indexes,
-  not micro-trims), render-row extras allocs + Rc churn (~8%),
-  motion-reader construction (~5%, compiled-dyn cheap-win #1).
-  Round-18: three trims. Resolved row scans short-circuit on the
-  first failing test when the remaining tests are infallible (cannot
-  force the interpreter fallback — knowable per pass from FieldSlots:
-  a ColOr over a field with no sym column anywhere can never see a
-  keyword), a Never test among all-infallible tests skips the scan
-  outright (kills the team-rule and channel scans on cards with no
-  such entities), and map queries with never-interned selectors
-  return empty without scanning; direct collider EntityCol names
-  resolve once per collision pass (memo keyed by the name's Rc
-  address, cleared when the non-direct path holds &mut World);
-  render rows recycle across ticks (uniquely-owned Rc boxes keep
-  their nums/syms buffers; matched-row scratch reused; render field
-  check compares plan keys by pointer). Walls (same-session deltas):
-  fruit 383→262ms bare, scaled 12k rig 8.92s→6.36s (−29%); the
-  interpreted entities-where block collapsed 597→104 samples and
-  allocator churn (grow_one+free+Rc drops) roughly halved. Remaining
-  levers by final sample: step_motion_in ~20% (lowered integrand
-  dispatch — compiled-dyn milestone B, the designed next step),
-  collide-mat body ~15% (genuine per-bullet slot eval, memory-bound,
-  batching territory), pose eval ~10%, compiled render row eval
-  ~9%, motion-reader construction ~7% (close over SoA columns).
-- DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
-  pass over card forms (hooked in `load_card`): structural, alpha-invariant,
-  shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
-  (purity-guarded: `?x` must be re-eval-safe), plus trivial-defn inlining
-  (single pure-builtin-call bodies inline at call sites with pure args).
-  Hand-written shapes optimize identically to the lib defn, per the
-  no-name-magic principle. Result: `value-or` 1252ms + `nothing?` 380ms +
-  most of `if`/`fn` dispatch → `%value-or` 253ms; interpreted calls down
-  4.6M. Trivial-defn collection runs to a fixpoint, so wrappers of wrappers
-  inline transitively (`col-or`'s 419ms/1.5M interpreted calls folded into
-  `%value-or`). Follow-ups: (b) macro-expansion output is not rewritten
-  (expansion is
-  lazy per-eval; shapes inside macro-generated forms keep interpreted
-  cost); (c) purity edge: a pure higher-order builtin applying an impure
-  user fn passed BY NAME is classified pure — conservative table fix if it
-  ever bites.
-- DONE: entities-where lazy row tokens — predicate queries pass a
-  generation-checked `Val::EntityView` instead of eagerly materializing a
-  map per row; keyword access/`get` read entity storage directly, any other
-  builtin use materializes the old map view. Eager views were also
-  force-sampling every entity's pose per row, so dyn eval halved too.
-  Aggregate: entities-where 1825→184ms self; dyn:vel 2030→972, closed-pt
-  1706→878, dyn:frame 895→412ms self.
-- DONE: emit :render fast path — literal keyword-map row forms build the
-  RenderRow directly (no intermediate Val::Map, no linear rescans; both
-  paths share `RenderRowFields` so they can't drift), and render actions/
-  `world.render_rows` hold `Rc<RenderRow>` (host boundary clones). emit
-  333ms self (was ~810ms).
-- DONE: scratch worlds for closed evaluation — `World::default()`
-  preallocates DEFAULT_ENTITY_CAPACITY (8192) rows across ~17 vectors and
-  was constructed PER COMPONENT EVAL in `eval_sig_at_rate` (plus FnPose,
-  evolve steps, projector bodies, boundary-write fns). `World::for_eval`
-  skips the preallocation: dyn:vel 1029→258ms, dyn:closed-pt 915→271ms
-  self; cradle wall halved. Moral for the compiled-dyn pass: fixed-cost
-  eval SETUP dominated the interpreted path more than form interpretation
-  itself; the lowering must keep per-eval setup at zero (scratch reuse),
-  and the remaining interpreted rows (`*` 589ms, `=` 463ms, dyn:frame
-  429ms self) are now genuine per-node dispatch — the compiled program's
-  actual target.
+- Perf campaign (ongoing; rounds 7-18 landed — narrative in git history).
+  Rig: `MAKU_WALL_ONLY=1 cargo run --release --example profile` for bare
+  walls (the flat profiler's own bookkeeping is ~18% on dense cards);
+  macOS `sample` on the release binary is ground truth; scaled case
+  `profile cards/tutorials/t03.maku ex3-fruit-colors 12000`. Bare walls
+  as of round 18: fruit 262.5ms/900t (5050ms at round 7 — 19x), scaled
+  12k rig 6.36s (16.9s at round 15), reimu 139.7ms, spell-2 24.0ms.
+  Remaining levers by the round-18 sample, in payoff order:
+  - `step_motion_in` ~20%: lowered integrand op dispatch — compiled-dyn
+    milestone B (group evaluation) is the designed fix;
+  - collider materialization ~15%: genuine per-bullet slot eval,
+    memory-bound — batching territory;
+  - pose eval (`dyn_node_pose_u_in`) ~10%;
+  - compiled render row eval ~9%;
+  - motion-reader construction ~7% (compiled-dyn cheap win #1).
+- Follow-ups on the load-time AST rewrite pass (`interp/rewrite.rs`):
+  (b) macro-expansion output is not rewritten (expansion is lazy per-eval;
+  shapes inside macro-generated forms keep interpreted cost); (c) purity
+  edge: a pure higher-order builtin applying an impure user fn passed BY
+  NAME is classified pure — conservative table fix if it ever bites.
 - Keep dyn coercions as explicit language-semantic branches while the
   interpreter is untyped. `interp::coerce` owns the value-level `DynLike`
   bridge; a future trait-style coercion surface should be over typed IR
@@ -466,6 +139,11 @@ work.
   typed dynamic value, not a data atom; the target is still plain `Figure`
   values lifted through `Dyn<Figure>`, with `linear` and friends represented
   as optimized `Dyn<Pose>` constructors that lift to figure dynamics.
+- Move the dyn kernel (and entity spec / state-schema semantic halves) to
+  model/ as a backend-parametric `Dyn<E>`, AFTER the remaining evolve
+  re-expression (vel/stages) shrinks the kernel (moving now would enshrine
+  Vel/Stages, which become lib shapes). Direction + sequencing:
+  `docs/notes/model-split.md`.
 - Continue core-vs-lib builtin stratification before the compiler pass.
   Current interpreter categories:
   - `interp/builtins/math.rs`: deterministic numeric intrinsics;
@@ -482,16 +160,12 @@ work.
   expansion), never the name — hand-writing the same shape optimizes
   identically. Builtins return as AST-rewrite intrinsics driven by profiled
   bottlenecks (array/entity-domain paths expected first). The audit and the
-  kernel-shrink worklist live in `docs/notes/builtins-audit.md`. Note
-  `linear` is pos = v*t with STATIC velocity (it does not scan a dyn;
-  lifting a dyn argument would mean v(t)*t, not integration) — velocity
-  semantics come from the `evolve` integrator (currently the reserved
-  `scan` stub, to be renamed; design SETTLED — see
-  `docs/notes/evolve-design.md`: dyn<T> ≅ t -> T with
-  application-as-sampling, `(evolve init (fn [s ctx] ...))` as the one
-  stateful constructor, closed-vs-live sampling rule; `scan` stays free
-  for the array adverb), with `linear` as a plain lib `(fn [t] ...)` — no
-  lowering node needed.
+  kernel-shrink worklist live in `docs/notes/builtins-audit.md` (wave 1 is
+  done; easings and derived array verbs wait on profiling, `map`/`filter`
+  intrinsic-ification and the `channel` merge wait on their flags).
+  Evolve semantics (the one stateful constructor, closed-vs-live sampling,
+  dyn<T> ≅ t -> T with application-as-sampling) are settled in
+  `docs/notes/evolve-design.md`.
 - Finish shared model extraction. `model::figure` is top-level and generic
   over curve evaluators, while `interp` aliases it with `DynPose`. Symbol ids,
   entity handles, primitive data atoms, and runtime collider/render boundary
@@ -595,13 +269,8 @@ work.
   engine.
 - Richer spellcard templates (:name/:type/hp bars) should be lib macros over
   `states`, `phases`, `boss`, `finally`, and ordinary fields.
-- Candidate stdlib moves:
-  - `for` / `dotimes`: decided — `loop`/`recur` (+ `wait`) is the primitive
-    and is sufficient; per-iteration action-tree rebuild cost is a job for
-    compiled scheduling, not a fused wait-loop special. Move them to lib;
-  - family->hitbox-radius data currently repeated at call sites.
-  (The short spawner names — `bullet`, `shot`, `enemy`, `player`, `boss`,
-  `laser`, `laser-shot` — are done; `spawn-*` remain as aliases.)
+- Candidate stdlib move: family->hitbox-radius data currently repeated at
+  call sites.
 - Collision effects now use `deftick` plus `(collisions ... )` domain
   expressions and ordinary `map`/destructuring. Keep Touhou hit/graze/shot
   rules in lib over opaque layers and fields; any ergonomic row-wise API should
@@ -637,10 +306,8 @@ work.
 - Write `docs/host-api.md` from `core::host::Instance` as the first
   non-macroquad frontend exercises it.
 - Add signal tapping/plotting: select a subexpression and plot over `t`.
-- (done) The tick rate is a World-owned `TickTiming` (single
-  `DEFAULT_TICK_RATE = 120.0`); runtime paths read it, standalone eval
-  helpers default. Host-facing rate configurability remains a later policy
-  decision.
+- Host-facing tick-rate configurability remains a later policy decision
+  (the rate is World-owned `TickTiming`; runtime paths read it).
 - AOT/wasm compiler work is unstarted.
 
 ## Docs
