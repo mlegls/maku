@@ -1777,9 +1777,85 @@
             dyn_figure(&sim, 0),
             3.5 / DEFAULT_TICK_RATE,
             MotionEvalCtx::new(&state, &sig, &readers),
-        )
-        .unwrap();
+        ).unwrap();
         assert!((off_clock.x - 3.0).abs() < 1e-9, "off-clock replay pose: {off_clock:?}");
+    }
+
+    #[test]
+    fn evolve_liveness_is_rooted_at_the_step_params() {
+        let read = |s: &str| crate::edn::read_one(s).unwrap();
+        // fold-internal keyword access (state, step ctx, chains) stays closed
+        assert!(!evolve_is_live(&read("0"), &read("(fn [s c] (+ s (* 60 (:dt c))))")));
+        assert!(!evolve_is_live(&read("(cart 0 0)"), &read("(fn [s c] (:x (:vel s)))")));
+        assert!(!evolve_is_live(&read("(:x {:x 1})"), &read("(fn [s c] s)")));
+        // capture-rooted access, channels, and world reads are live
+        assert!(evolve_is_live(&read("0"), &read("(fn [s c] (+ s (:hp e)))")));
+        assert!(evolve_is_live(&read("(:pos e)"), &read("(fn [s c] s)")));
+        assert!(evolve_is_live(&read("0"), &read("(fn [s c] (+ s $dx))")));
+        assert!(evolve_is_live(&read("0"), &read("(fn [s c] (nearest-entity pos))")));
+    }
+
+    #[test]
+    fn live_evolve_reads_current_channel_and_rejects_off_clock_sampling() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) $dx) 0)))
+         {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for value in [1.0, 2.0, 3.0] {
+            sim.step_with(&Inputs { vals: vec![("dx".into(), Val::Num(value))] }).unwrap();
+        }
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        assert!(matches!(cell.state, Val::Pose(p) if (p.x - 5.0).abs() < 1e-9), "cell: {:?}", cell);
+        let err = dyn_figure_pose_in(
+            dyn_figure(&sim, 0),
+            20.0 / DEFAULT_TICK_RATE,
+            MotionEvalCtx::new(&MotionState::new(), &sim.ctx.sig, &sim.motion_readers(0)),
+        ).unwrap_err();
+        assert_eq!(err, "live evolve sampled off its clock");
+    }
+
+    #[test]
+    fn evolve_init_is_deferred_and_captures_lexical_env() {
+        const GOOD: &str = r#"
+(defpattern p []
+  (let [origin (cart 4 5)]
+    (spawn (evolve origin (fn [s c] s)) {:style {:family :gem}})))
+"#;
+        let mut sim = Sim::load(GOOD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        assert!(matches!(sim.world.entities.state_val(0, schema.val_keys[0]).unwrap().state,
+            Val::Pose(p) if (p.x - 4.0).abs() < 1e-9 && (p.y - 5.0).abs() < 1e-9));
+
+        const BAD: &str = r#"
+(def bad (evolve (unknown-init) (fn [s c] s)))
+(defpattern p [] (spawn bad {:style {:family :gem}}))
+"#;
+        let mut sim = Sim::load(BAD, Some("p")).unwrap();
+        assert!(sim.step().unwrap_err().contains("unknown-init"));
+    }
+
+    #[test]
+    fn remat_live_evolve_restarts_with_post_remat_entity_pose() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (vel (cart 120 0)) {:style {:family :gem}})]
+    (seq (wait (ticks 3))
+         (let [e (first bs)]
+           (remat e (evolve (:pos e) (fn [s c] s)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..6 {
+            sim.step().unwrap();
+        }
+        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        assert!(matches!(cell.state, Val::Pose(p)
+            if (p.x - 4.0).abs() < 1e-9 && p.y.abs() < 1e-9),
+            "cell: {:?}", cell);
     }
 
     #[test]

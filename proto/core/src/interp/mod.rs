@@ -1363,12 +1363,13 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 if items.len() != 3 {
                     return Err("evolve: expected (evolve init step)".into());
                 }
-                let init = evaluate(&items[1], env, ctx, world)?;
                 let step = evaluate(&items[2], env, ctx, world)?;
                 if !matches!(step, Val::Fn { .. } | Val::Builtin(_)) {
                     return Err(format!("evolve: step must be callable, got {:?}", step));
                 }
-                return Ok(Val::Evolve(Rc::new(EvolveDyn { init, step })));
+                let live = evolve_is_live(&items[1], &items[2]);
+                let init = EvolveInit::Thunk { form: items[1].clone(), env: env.clone() };
+                return Ok(Val::Evolve(Rc::new(EvolveDyn { init, step, live })));
             }
             _ => {}
         }
@@ -1949,6 +1950,9 @@ fn singleton_or_array(mut vals: Vec<Val>) -> Val {
 fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv) -> Result<Val, String> {
     match field {
         "pos" => {
+            if let Some((x, y)) = world.entities.sampled_pos(i, world.tick) {
+                return Ok(Val::Pose(Pose::point(x, y)));
+            }
             let dyn_figure = world
                 .entities
                 .dyn_figure(i)

@@ -224,6 +224,7 @@ impl<'a> MotionEvalCtx<'a> {
 pub struct MotionStepCtx<'a> {
     pub state: &'a mut MotionState,
     pub sig: &'a SigEnv,
+    pub world: Option<&'a mut World>,
     pub readers: &'a MotionReaders,
     pub tick_rate: f64,
     pub mirror_legacy: bool,
@@ -318,14 +319,18 @@ pub enum DynNode {
     Stages { segs: Vec<StageSeg> },
 }
 
-/// `(evolve init step)` — the kernel's stateful signal constructor
-/// (docs/notes/evolve-design.md). `init` is the state at epoch start
-/// (already evaluated: construction is epoch start until remat lands);
-/// `step` is a callable `(fn [s ctx] ...)` applied once per tick.
+/// `(evolve init step)` — the kernel's stateful signal constructor.
 #[derive(Debug)]
 pub struct EvolveDyn {
-    pub init: Val,
+    pub init: EvolveInit,
     pub step: Val,
+    pub live: bool,
+}
+
+#[derive(Debug)]
+pub enum EvolveInit {
+    Value(Val),
+    Thunk { form: Form, env: Env },
 }
 
 #[derive(Clone, Debug)]
@@ -346,7 +351,7 @@ fn evolve_step_ctx(k: u64, dt: f64) -> Val {
     ]))
 }
 
-fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate: f64) -> Result<Val, String> {
+fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate: f64, world: Option<&mut World>) -> Result<Val, String> {
     let step_ctx = evolve_step_ctx(k, 1.0 / tick_rate);
     let mut call_ctx = Ctx {
         sig: sig.clone(),
@@ -358,21 +363,43 @@ fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate
         projector_scope: None,
         signal_scope: false,
     };
-    let mut w = World::for_eval(tick_rate);
-    apply_fn(ev.step.clone(), &[state, step_ctx], &mut call_ctx, &mut w, false)
+    let mut fallback = World::for_eval(tick_rate);
+    apply_fn(ev.step.clone(), &[state, step_ctx], &mut call_ctx, world.unwrap_or(&mut fallback), false)
+}
+
+fn resolve_evolve_init(ev: &EvolveDyn, sig: &SigEnv, tick_rate: f64, world: Option<&mut World>) -> Result<Val, String> {
+    match &ev.init {
+        EvolveInit::Value(value) => Ok(value.clone()),
+        EvolveInit::Thunk { form, env } => {
+            let mut call_ctx = Ctx {
+                sig: sig.clone(),
+                ambient: Pose::IDENTITY,
+                scan: None,
+                patterns: Rc::new(HashMap::new()),
+                macros: Rc::new(HashMap::new()),
+                deferred: Vec::new(),
+                projector_scope: None,
+                signal_scope: false,
+            };
+            let mut fallback = World::for_eval(tick_rate);
+            evaluate(form, env, &mut call_ctx, world.unwrap_or(&mut fallback))
+        }
+    }
 }
 
 /// The value of a closed evolve at time tau: the fold of `step` over ticks
 /// 0..floor(tau·rate), starting from `init`. Steps evaluate against a
 /// CLOSED SigEnv — defs carry over (pure), but channels/cells are empty so
-/// live channel reads error, enforcing the closed-evolve rule (live
-/// evolves get engine-clock advance in a later milestone).
+/// live channel reads error, enforcing the closed-evolve rule.
 pub fn evolve_value(ev: &EvolveDyn, tau: f64, sig: &SigEnv, tick_rate: f64) -> Result<Val, String> {
+    if ev.live {
+        return Err("live evolve sampled off its clock".into());
+    }
     let closed_sig = SigEnv { defs: sig.defs.clone(), ..SigEnv::default() };
     let n = evolve_tick(tau, tick_rate);
-    let mut s = ev.init.clone();
+    let mut s = resolve_evolve_init(ev, &closed_sig, tick_rate, None)?;
     for k in 0..n {
-        s = apply_evolve_step(ev, s, k, &closed_sig, tick_rate)?;
+        s = apply_evolve_step(ev, s, k, &closed_sig, tick_rate, None)?;
     }
     Ok(s)
 }
@@ -1201,6 +1228,14 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 });
             let value = match cell {
                 Some(cell) if cell.tick == tick => cell.state,
+                // Post-boundary window: sampling after the world tick
+                // increments, before the new boundary's step pass runs. A
+                // live evolve cannot replay, and its settled state IS the
+                // pre-step boundary value, so accept one-behind for live
+                // only. Closed evolves keep exact-match-else-replay —
+                // memoization must be invisible (evolve-design rule 2).
+                Some(cell) if ev.live && cell.tick + 1 == tick => cell.state,
+                Some(_) if ev.live => return Err("live evolve sampled off its clock".into()),
                 _ => evolve_value(ev, tau, sig, tick_rate)?,
             };
             match value {
@@ -1281,6 +1316,7 @@ pub fn step_motion(
     let mut ctx = MotionStepCtx {
         state,
         sig,
+        world: None,
         readers: &readers,
         tick_rate: TickTiming::default().rate(),
         mirror_legacy: true,
@@ -1475,14 +1511,17 @@ pub fn step_motion_in(
             let dense_key = ctx.node_key(key);
             let target_tick = evolve_tick(tau, ctx.tick_rate);
             let closed_sig = SigEnv { defs: ctx.sig.defs.clone(), ..SigEnv::default() };
+            let step_sig = if ev.live { ctx.sig } else { &closed_sig };
+            let mut world = if ev.live { ctx.world.as_deref_mut() } else { None };
             let mut cell = (ctx.readers.vals)(dense_key)
                 .or_else(|| match ctx.state.get(&dense_key) {
                     Some(Cell::V(v)) => Some(v.clone()),
                     _ => None,
                 })
-                .unwrap_or_else(|| EvolveCell { state: ev.init.clone(), tick: 0 });
+                .map(Ok)
+                .unwrap_or_else(|| resolve_evolve_init(ev, step_sig, ctx.tick_rate, world.as_deref_mut()).map(|state| EvolveCell { state, tick: 0 }))?;
             if cell.tick < target_tick {
-                let next = apply_evolve_step(ev, cell.state, cell.tick, &closed_sig, ctx.tick_rate)?;
+                let next = apply_evolve_step(ev, cell.state, cell.tick, step_sig, ctx.tick_rate, world.as_deref_mut())?;
                 cell = EvolveCell { state: next, tick: cell.tick + 1 };
             }
             if ctx.mirror_legacy {
@@ -1509,6 +1548,7 @@ pub fn step_dyn_figure(
     let mut ctx = MotionStepCtx {
         state,
         sig,
+        world: None,
         readers: &readers,
         tick_rate: TickTiming::default().rate(),
         mirror_legacy: true,
@@ -1657,6 +1697,63 @@ pub(crate) fn contains_t(form: &Form) -> bool {
         }
         Form::Vector(items) => items.iter().any(contains_t),
         Form::Map(kvs) => kvs.iter().any(|(k, v)| contains_t(k) || contains_t(v)),
+        _ => false,
+    }
+}
+
+/// Syntactic liveness for `(evolve init step)` (live-evolve-design.md):
+/// channel reads, rand, and world-reading heads mark the evolve live.
+/// Keyword access is live only when it reads OUTSIDE the fold — an
+/// access rooted at one of the step fn's own params (`(:x s)`,
+/// `(:dt c)`, chains like `(:x (:vel s))`) is the fold's own state and
+/// stays closed; an access rooted at a capture (`(:hp e)`) reads world
+/// state through a view and marks live. The init form has no binders,
+/// so any capture-rooted access there is live — which is exactly the
+/// `(evolve (:pos e) ...)` continuity case. Conservative direction per
+/// the design doc: false-live only forbids off-clock sampling.
+pub(crate) fn evolve_is_live(init: &Form, step: &Form) -> bool {
+    if evolve_form_is_live(init, &[]) {
+        return true;
+    }
+    if let Form::List(items) = step {
+        if let [Form::Sym(head), Form::Vector(params), body @ ..] = &items[..] {
+            if &**head == "fn" {
+                let locals = params
+                    .iter()
+                    .filter_map(|p| match p {
+                        Form::Sym(s) if &**s != "&" => Some(&**s),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                return body.iter().any(|f| evolve_form_is_live(f, &locals));
+            }
+        }
+    }
+    evolve_form_is_live(step, &[])
+}
+
+fn evolve_form_is_live(form: &Form, locals: &[&str]) -> bool {
+    match form {
+        Form::Sym(s) => s.starts_with('$') || &**s == "rand",
+        Form::List(items) => {
+            match &items[..] {
+                // keyword access: live iff its root escapes the locals
+                [Form::Kw(_), base] => match base {
+                    Form::Sym(s) => !locals.contains(&&**s),
+                    other => evolve_form_is_live(other, locals),
+                },
+                _ => {
+                    let live_head = matches!(items.first(), Some(Form::Sym(s)) if matches!(&**s,
+                        "live" | "rand" | "entities-where" | "nearest-entity"
+                        | "entity-col" | "sum-entities" | "count-entities"
+                        | "collisions" | "curve-samples" | "on-curve"
+                        | "matches"));
+                    live_head || items.iter().any(|f| evolve_form_is_live(f, locals))
+                }
+            }
+        }
+        Form::Vector(items) => items.iter().any(|f| evolve_form_is_live(f, locals)),
+        Form::Map(kvs) => kvs.iter().any(|(k, v)| evolve_form_is_live(k, locals) || evolve_form_is_live(v, locals)),
         _ => false,
     }
 }

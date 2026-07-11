@@ -562,11 +562,13 @@ impl Sim {
                 let mut write_n2 = |key, value| n2_writes.push((key, value));
                 let mut ignore_dyn = |_, _| {};
                 let mut write_val = |key, value| val_writes.push((key, value));
+                let tick_rate = self.world.tick_rate();
                 let mut motion = MotionStepCtx {
                     state: &mut state,
                     sig: &sig,
+                    world: Some(&mut self.world),
                     readers: &readers,
-                    tick_rate: self.world.tick_rate(),
+                    tick_rate,
                     mirror_legacy: false,
                     write_n2: &mut write_n2,
                     write_dyn: &mut ignore_dyn,
