@@ -702,7 +702,7 @@ pub fn collect_scan_sites(
             if let Some(Form::Sym(s)) = items.first() {
                 if &**s == "evolve" {
                     // a sited evolve: expression-embedded stateful signal,
-                    // Val state at the site (evolve-reexpression-design.md)
+                    // Val state at the site (evolve-design.md, sited evolves)
                     schema.intern_val(MotionStateKey::ScanSite { base, index });
                     index += 1;
                 }
@@ -1888,7 +1888,7 @@ pub(crate) fn contains_t(form: &Form) -> bool {
     }
 }
 
-/// Syntactic liveness for `(evolve init step)` (live-evolve-design.md):
+/// Syntactic liveness for `(evolve init step)` (evolve-design.md):
 /// channel reads, rand, and world-reading heads mark the evolve live.
 /// Keyword access is live only when it reads OUTSIDE the fold — an
 /// access rooted at one of the step fn's own params (`(:x s)`,

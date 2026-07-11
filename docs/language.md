@@ -175,15 +175,27 @@ Rate inference is shape inference; hoisting is automatic. The REPL uses inferred
   application; the dyn coercion happens only at dyn-typed boundaries.
 - `(evolve init step)` is the one stateful dyn constructor (see
   `docs/notes/evolve-design.md`): it returns a dyn whose value at tick n of its
-  epoch is the n-fold application of `step`, a `(fn [s ctx] ...)`, to `init`
-  (evaluated at construction = epoch start). `ctx` is a map `{:t :dt :tick}`
+  epoch is the n-fold application of `step`, a `(fn [s ctx] ...)`, to `init`.
+  `init` is deferred: it evaluates at epoch START (first advance), so a remat
+  that restarts the slot's epoch re-runs it against the current world —
+  `(evolve (:pos e) ...)` continuity works. `ctx` is a map `{:t :dt :tick}`
   (epoch-local); rate-independence is the step body's job via `:dt`. The
   carried state is any value — a pose-state evolve coerces into pose/figure
   slots; scalar or map state is read by applying the evolve to a time inside
-  an ordinary `(fn [t] ...)`. Steps evaluate CLOSED: defs resolve, but live
-  channel reads error and cell reads miss — a closed evolve is a pure function
-  of epoch time, and sampling replays the fold from epoch start (live evolves
-  advanced on the entity clock are a later milestone).
+  an ordinary `(fn [t] ...)`. Steps are classified syntactically at
+  construction. A CLOSED step reads only its own params, defs, and dyns it
+  closes over: the evolve is a pure function of epoch time, advanced once per
+  tick at the boundary (within-tick sampling sees the settled value), and
+  off-clock sampling replays the fold from epoch start. A LIVE step reads
+  channels, entity views, or `rand`: it is still a valid slot dyn, advanced
+  on the entity's clock against the real environment, but off-clock sampling
+  is an error (its value depends on the input trace, not on t). An evolve
+  evaluated inside a per-tick re-evaluated dyn expression (a vel component, a
+  rot expr) is SITED: its state is keyed by the expression site, `init` runs
+  at the site's first evaluation, the step advances when the enclosing slot
+  advances, and the expression evaluates to the settled state VALUE (inside
+  the enclosing clock, "the dyn sampled at the ambient tick" IS that value).
+  `slew`/`smooth` are prelude macros expanding to sited evolves.
 - Dyns are applicable. A dyn in head position with a numeric first argument
   samples it at that time: `(d 3.5)`. With a second numeric argument it samples
   a curve/materialization axis as well: `(d 0 1)` returns the pose at `t = 0`,

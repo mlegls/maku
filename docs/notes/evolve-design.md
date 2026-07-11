@@ -66,11 +66,48 @@ word until it's convenient to sweep.
 - Cross-entity reads and RNG inside steps: forbidden initially
   (closedness is a capability and the columnar-lowering unit; revisit on
   demand).
+- Liveness is classified SYNTACTICALLY at construction, rooted at the
+  step fn's params: param-rooted keyword access ((:x s), (:dt c)) is the
+  fold's own state and stays closed; capture-rooted access ((:hp e)),
+  channel reads, rand, and world-reading heads mark the evolve live.
+  Conservative in both directions (a false-live only forbids off-clock
+  sampling; a false-closed errors at advance).
+- Live evolves accept a one-behind cell in the post-boundary sampling
+  window (after the world tick increments, before the new boundary's
+  pass) where replay is impossible; closed evolves keep
+  exact-match-else-replay so memoization stays invisible.
+- `init` is a deferred thunk evaluated at epoch start (closed env for
+  closed evolves, real env for live) — this is what makes
+  `(evolve (:pos e) ...)` remat continuity work: the re-run init sees
+  the post-remat world.
 
 Note: the old `sample` special evaluated dyns against a fresh
 `MotionState`, so stateful dyns sampled that way silently read
 init-state. The closed/live rule replaces that accident with a
 definition.
+
+## Sited evolves — evolve identity inside dyn expressions
+
+An `evolve` evaluated under an active scan context (inside a per-tick
+re-evaluated captured expression: a vel component, a rot expr) is a
+*sited* evolve: its state is keyed by ScanSite (enclosing node's lowered
+id + a per-evaluation counter, stable for a fixed expr tree), its init
+runs at the site's first evaluation, its step advances when the context
+advances, and the expression evaluates to the settled state VALUE (not a
+dyn) — inside the enclosing slot's clock, "the dyn sampled at the
+ambient tick" IS that value. A sited evolve advances inside the
+enclosing expression's evaluation against the real SigEnv, so
+channel-reading targets need no extra classification (it has no
+independent clock to sample off). Dyn capture sites macroexpand forms
+BEFORE capture, so a macro expanding to an evolve is collected as a site
+at spawn and expansion stays out of the hot loop. Known limitation:
+cart/polar/rot capture guards (`contains_unbound_axis`) run on the raw
+form, so a macro whose expansion introduces t-dependence is not
+recognized as a dyn expression. Follow-up kept open: standalone evolve
+steps do not yet provide a scan context, so a sited evolve nested in an
+UNRECOGNIZED vel-like evolve's step errors (the vel expansion-shape
+recognizer re-hosts components under Vel's scan context precisely to
+keep the homing-slew shape working).
 
 ## What re-expresses over evolve (lib, then AST-rewrite fast paths)
 
@@ -106,14 +143,17 @@ shapes for the optimized paths, never the names.
 
 1. DONE — dyn values callable in application position (`(d t)`, `(d t u)`);
    `(fn [t] ...)` accepted in dyn slots; `sample` deleted.
-2. DONE (closed form) — `evolve` special replaces the reserved `scan`
-   stub. Closed evolves only: evaluation replays the fold from epoch
-   start (pure in tau; `Val::Evolve` + stateless `DynNode::Evolve`, no
-   per-entity motion state). Steps run against a closed SigEnv (defs
-   yes, channels/cells no), enforcing the closed rule. Live evolves
-   (engine-clock advance through ScanSite state + per-slot epochs) and
-   memoized monotone sampling are the follow-up — driven by remat and
-   profiling respectively.
-3. Re-express `vel`/`slew`/`smooth`/`stages`/`pather` in lib; keep the
-   builtins as recognized expansion shapes (or delete + rewrite-match,
-   per profiling).
+2. DONE — `evolve` special replaces the reserved `scan` stub, including
+   engine-clock advance (EvolveCell val state, step once per boundary,
+   on-clock reads hit the settled cell), deferred init, the liveness
+   classifier, live evolves, and sited evolves (above).
+3. Re-express the stateful family in lib. DONE for `slew`/`smooth`
+   (prelude macros over sited evolves; `sf_stateful`,
+   `scan_builtin_spec`, and the deferred-instance `Val::Thunk`
+   mechanism retired; `smooth` is pose-only in lib — the old numeric
+   arm returned a shape nothing used). Still open: `vel` (deferred to
+   the model/ split — b.vel introspection, clamp_integrator, and the
+   compiled integrand programs key on `DynNode::Vel`, so re-expression
+   is pure surface until then) and `stages` (own round, likely over
+   `states`: its corpus sites are a state machine over dyns, not a raw
+   fold).

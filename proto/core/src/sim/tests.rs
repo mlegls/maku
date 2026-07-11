@@ -4023,7 +4023,7 @@ fn entity_rows_do_not_shift_after_cull() {
 fn sited_evolve_advances_once_per_tick_and_persists() {
     // An evolve inside a per-tick re-evaluated vel component: state lives
     // at the ScanSite, advances once per boundary, and within-tick reads
-    // see the settled value (evolve-reexpression-design.md milestone 1).
+    // see the settled value (evolve-design.md, sited evolves).
     const CARD: &str = r#"
 (defpattern p []
   (spawn (vel c[(evolve 0 (fn [s c] (+ s (* 60 (:dt c))))) 0])))
@@ -4113,7 +4113,7 @@ fn captured_dyn_exprs_expand_macros_at_capture() {
     // spawn-time site walk must see the expansion (the val site is
     // collected) and the state must persist — impossible if the macro
     // re-expanded per tick to a fresh construction
-    // (evolve-reexpression-design.md milestone 2).
+    // (evolve-design.md, capture-time expansion).
     const CARD: &str = r#"
 (defmacro ramp [rate] `(evolve 0 (fn [s c] (+ s (* ~rate (:dt c))))))
 (defpattern p []

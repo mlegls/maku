@@ -31,10 +31,12 @@ headers, not here.
   caller-cells) becomes deletable kernel surface.
 - `remat` / `change-col`: contract settled and landed (write queue,
   functional `change-col` composition, partial `(remat h spec-map)`,
-  per-slot epochs, sited/live evolves, slew/smooth as prelude macros —
-  landed shapes and known edges in `docs/notes/remat-design.md`,
-  `docs/notes/live-evolve-design.md`,
-  `docs/notes/evolve-reexpression-design.md`). Still open on this track:
+  per-slot epochs, sited/live evolves, slew/smooth as prelude macros;
+  semantics in `docs/language.md` and `docs/notes/evolve-design.md`).
+  Known edge: the player-hit iframe guard reads pre-tick state, so two
+  damage contacts in ONE tick both pass the guard — the atomic
+  multi-field remat spec covers it if a card ever needs it. Still open
+  on this track:
   - per-dyn-field epochs (fades surviving motion remats), soft-cull
     fades, the F1 lint, and the masked-SoA fast path (the lowering
     target for batch `map`-remat shapes);

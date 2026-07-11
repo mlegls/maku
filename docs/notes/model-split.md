@@ -33,9 +33,10 @@ dyn: `interp::DynNode` is hardwired to poses (the Frame/Translate/Clamp
 algebra is SE(2)-specific), dyn COLUMNS are a separate scalar path
 (`DynNum`, `refresh_dyn_cols`), and `EvolveDyn` is the only genuinely
 Val-valued one. `Vel`, `slew`/`smooth`, and `Stages` are clocked folds
-wearing a sampling interface — semantically evolve shapes, slated to be
-re-expressed in lib over evolve once engine-clock advance lands
-(live-evolve-design.md; evolve-design step 3).
+wearing a sampling interface — semantically evolve shapes. `slew`/
+`smooth` are re-expressed (prelude macros over sited evolves); `vel`
+and `stages` remain kernel nodes pending this split and their own
+round respectively (evolve-design step 3).
 
 ## The model dyn (target shape)
 

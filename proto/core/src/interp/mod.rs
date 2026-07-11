@@ -1344,7 +1344,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 // slot. Under an active scan context the SITE, not the
                 // construction, is the evolve's identity, and the form
                 // evaluates to the settled state value
-                // (docs/notes/evolve-reexpression-design.md).
+                // (docs/notes/evolve-design.md, sited evolves).
                 if items.len() != 3 {
                     return Err("evolve: expected (evolve init step)".into());
                 }
@@ -3298,7 +3298,7 @@ fn sf_curve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Resu
 /// expanding at capture keeps macro expansion out of the hot loop and —
 /// the real point — makes expansion shapes (sited evolves) visible to
 /// the spawn-time scan-site walk and the lowerer
-/// (evolve-reexpression-design.md).
+/// (evolve-design.md, sited evolves).
 ///
 /// Head resolution mirrors evaluate_list_inner's macro dispatch: a head
 /// is a macro call only when unbound in the env / defs, not a '$'
