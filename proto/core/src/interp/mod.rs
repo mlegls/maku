@@ -1876,6 +1876,23 @@ pub(crate) enum ResolvedRowNum {
     Mul(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
 }
 
+impl ResolvedRowNum {
+    /// Whether evaluating this term can return None (a keyword where a
+    /// number is needed — the interpreter would error, so the whole query
+    /// must fall back). A field with no sym column anywhere cannot hold a
+    /// keyword on any row; slot maps are append-only, so this holds for
+    /// the entire read-only scan the resolution serves.
+    fn fallible(&self) -> bool {
+        match self {
+            ResolvedRowNum::Lit(_) | ResolvedRowNum::Tau | ResolvedRowNum::Tick => false,
+            ResolvedRowNum::ColOr(slots, default) => slots.sym.is_some() || default.fallible(),
+            ResolvedRowNum::Add(a, b) | ResolvedRowNum::Sub(a, b) | ResolvedRowNum::Mul(a, b) => {
+                a.fallible() || b.fallible()
+            }
+        }
+    }
+}
+
 fn resolve_row_num(value: &RowNum, world: &World) -> ResolvedRowNum {
     match value {
         RowNum::Lit(n) => ResolvedRowNum::Lit(*n), RowNum::Tau => ResolvedRowNum::Tau,
@@ -1908,6 +1925,32 @@ impl RowPredicate {
     }
 }
 
+impl ResolvedRowTest {
+    fn fallible(&self) -> bool {
+        match self {
+            ResolvedRowTest::Kind(_) | ResolvedRowTest::SymEq { .. } | ResolvedRowTest::Never => false,
+            ResolvedRowTest::NumCmp { lhs, rhs, .. } => lhs.fallible() || rhs.fallible(),
+        }
+    }
+}
+
+/// The smallest index whose suffix is all-infallible: once a test has
+/// failed, tests past this point can neither flip the result nor force
+/// the interpreter fallback, so the row scan may stop early.
+pub(crate) fn infallible_suffix_start(tests: &[ResolvedRowTest]) -> usize {
+    let mut start = tests.len();
+    while start > 0 && !tests[start - 1].fallible() {
+        start -= 1;
+    }
+    start
+}
+
+/// A query that contains a Never test and no fallible test matches no
+/// row and can never trigger the fallback — the scan can be skipped.
+pub(crate) fn resolved_tests_match_nothing(tests: &[ResolvedRowTest], bail_at: usize) -> bool {
+    bail_at == 0 && tests.iter().any(|t| matches!(t, ResolvedRowTest::Never))
+}
+
 fn resolved_row_num(value: &ResolvedRowNum, row: usize, world: &World) -> Option<f64> {
     Some(match value {
         ResolvedRowNum::Lit(n) => *n, ResolvedRowNum::Tau => world.entity_tau(row, world.tick),
@@ -1932,9 +1975,14 @@ fn resolved_row_num(value: &ResolvedRowNum, row: usize, world: &World) -> Option
     })
 }
 
-pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, world: &World) -> Option<bool> {
+pub(crate) fn resolved_row_tests_match(
+    tests: &[ResolvedRowTest],
+    bail_at: usize,
+    row: usize,
+    world: &World,
+) -> Option<bool> {
     let mut all_pass = true;
-    for test in tests {
+    for (k, test) in tests.iter().enumerate() {
         let passes = match test {
         ResolvedRowTest::Kind(value) => world.entities.dyn_figure(row).is_some_and(|figure| {
             let kind = match figure.repr() {
@@ -1956,6 +2004,9 @@ pub(crate) fn resolved_row_tests_match(tests: &[ResolvedRowTest], row: usize, wo
             }
         };
         all_pass &= passes;
+        if !all_pass && k + 1 >= bail_at {
+            return Some(false);
+        }
     }
     Some(all_pass)
 }
@@ -2001,27 +2052,27 @@ pub(crate) fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result
 }
 
 fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
-    let candidates = world
-        .entities
-        .iter()
-        .enumerate()
-        .filter_map(|(i, _)| world.entities.is_alive(i).then_some(i))
-        .collect::<Vec<_>>();
     let Some(predicate) = row_predicate(q, ctx) else {
-        return resolve_predicate_query_fallback(q, ctx, world, &candidates);
+        return resolve_predicate_query_fallback(q, ctx, world);
     };
     // Mixed predicates deliberately fall back as a whole; partial prefiltering
     // would change the error and effect ordering of the residual expression.
     let tests = predicate.resolve(world);
+    let bail_at = infallible_suffix_start(&tests);
     let mut out = Vec::new();
-    for &i in &candidates {
-        let Some(matches) = resolved_row_tests_match(&tests, i, world) else {
-            return resolve_predicate_query_fallback(q, ctx, world, &candidates);
-        };
-        if matches { out.push(i); }
+    if !resolved_tests_match_nothing(&tests, bail_at) {
+        for i in 0..world.entities.len() {
+            if !world.entities.is_alive(i) {
+                continue;
+            }
+            let Some(matches) = resolved_row_tests_match(&tests, bail_at, i, world) else {
+                return resolve_predicate_query_fallback(q, ctx, world);
+            };
+            if matches { out.push(i); }
+        }
     }
     if lower::oracle_enabled() {
-        let expected = resolve_predicate_query_fallback(q, ctx, world, &candidates)?;
+        let expected = resolve_predicate_query_fallback(q, ctx, world)?;
         assert_eq!(out, expected, "row predicate mismatch for {:?}", q);
     }
     Ok(out)
@@ -2031,10 +2082,14 @@ fn resolve_predicate_query_fallback(
     q: &Val,
     ctx: &mut Ctx,
     world: &mut World,
-    candidates: &[usize],
 ) -> Result<Vec<usize>, String> {
+    // Snapshot before any predicate body runs: the compiled scan that may
+    // precede this is read-only, so this set equals a pre-scan snapshot.
+    let candidates = (0..world.entities.len())
+        .filter(|&i| world.entities.is_alive(i))
+        .collect::<Vec<_>>();
     let mut out = Vec::new();
-    for &i in candidates {
+    for &i in &candidates {
         let view = Val::EntityView(world.entity_ref(i));
         if truthy(&apply_fn(q.clone(), &[view], ctx, world, false)?) {
             out.push(i);
@@ -2083,6 +2138,19 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
         SelSyms::Many(xs) => xs.contains(&Some(actual)),
         SelSyms::Never => false,
     };
+    // A filter whose field or selector was never interned matches no
+    // row, and map filters cannot error — skip the scan outright.
+    let impossible = filters.iter().any(|(field, sel)| {
+        field.is_none()
+            || match sel {
+                SelSyms::One(s) => s.is_none(),
+                SelSyms::Many(xs) => xs.iter().all(|x| x.is_none()),
+                SelSyms::Never => true,
+            }
+    });
+    if impossible {
+        return Ok(Vec::new());
+    }
     let mut candidates: Vec<usize> = Vec::new();
     for (i, _) in world.entities.iter().enumerate() {
         if !world.entities.is_alive(i) {
@@ -3620,10 +3688,7 @@ mod tests {
         sim.step().unwrap();
         let mut ctx = Ctx::default();
         let q = predicate("(fn [e] (* (= e.team :enemy) (= e.kind :point)))");
-        let candidates = sim.world.entities.iter().enumerate()
-            .filter_map(|(i, _)| sim.world.entities.is_alive(i).then_some(i))
-            .collect::<Vec<_>>();
-        let expected = resolve_predicate_query_fallback(&q, &mut ctx, &mut sim.world, &candidates).unwrap();
+        let expected = resolve_predicate_query_fallback(&q, &mut ctx, &mut sim.world).unwrap();
         let actual = resolve_predicate_query(&q, &mut ctx, &mut sim.world).unwrap();
         assert_eq!(actual, expected);
     }

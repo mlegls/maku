@@ -560,19 +560,22 @@ impl Sim {
 
     fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
         let tests = form.predicate.resolve(&self.world);
+        let bail_at = infallible_suffix_start(&tests);
         // The whole predicate scan runs before any row body, mirroring the
         // interpreted phase order (entities-where completes before map), so
         // a body error cannot preempt a later row's predicate bail.
         let mut rows = Vec::new();
-        for row in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(row) {
-                continue;
-            }
-            let Some(matches) = resolved_row_tests_match(&tests, row, &self.world) else {
-                return Ok(None);
-            };
-            if matches {
-                rows.push(row);
+        if !resolved_tests_match_nothing(&tests, bail_at) {
+            for row in 0..self.world.entities.len() {
+                if !self.world.entities.is_alive(row) {
+                    continue;
+                }
+                let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
+                    return Ok(None);
+                };
+                if matches {
+                    rows.push(row);
+                }
             }
         }
         // field names resolve once per pass; entity fields cannot change
