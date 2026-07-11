@@ -61,6 +61,13 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
                 FrameSpec::World => p = Pose::IDENTITY, // escape the caller anchor
                 FrameSpec::Const(fp) => p = p.compose(fp),
                 FrameSpec::Node(node) => p = p.compose(&resolve_node_pose(node, world, sig)),
+                FrameSpec::Entity(h) => {
+                    if let Some(i) = world.find(*h) {
+                        if let Ok(ep) = crate::interp::entity_pose_at(i, world, sig) {
+                            p = p.compose(&ep);
+                        }
+                    }
+                }
             }
         }
     }

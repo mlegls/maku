@@ -345,6 +345,11 @@ pub enum FrameSpec {
     /// don't self-anchor, so the caller's anchor (e.g. the boss) is the
     /// default; player-side patterns opt out explicitly.
     World,
+    /// (in-frame handle body): anchor to a LIVE entity — the scheduler
+    /// reads its current pose at action time, so the frame follows moves
+    /// and remats (a boss machine fires from wherever the boss is now).
+    /// A dead anchor contributes identity.
+    Entity(EntityRef),
 }
 
 #[derive(Debug, Clone)]
@@ -1092,6 +1097,15 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                                 .unwrap_or(Pose::IDENTITY);
                             ctx.ambient = ctx.ambient.compose(&p);
                         }
+                        // live entity anchor: ambient sees its pose NOW;
+                        // the deferred wrap re-reads at action time
+                        Val::Handle(h) => {
+                            let p = world
+                                .find(*h)
+                                .and_then(|i| entity_pose_at(i, world, &ctx.sig).ok())
+                                .unwrap_or(Pose::IDENTITY);
+                            ctx.ambient = ctx.ambient.compose(&p);
+                        }
                         other => {
                             let p = as_pose(other.clone()).unwrap_or(Pose::IDENTITY);
                             ctx.ambient = ctx.ambient.compose(&p);
@@ -1112,6 +1126,21 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                             other => other, // dyns: value composition has no anchor to strip
                         },
                         Val::DynPose(d) => apply_dyn_frame(d.into_node(), val)?,
+                        Val::Handle(h) => match val {
+                            Val::Action(a) => Val::Action(Rc::new(ActionV::InFrame {
+                                frame: FrameSpec::Entity(h),
+                                inner: a,
+                            })),
+                            // non-action values anchor at the entity's
+                            // pose now (there is no live handle dyn)
+                            other => {
+                                let p = world
+                                    .find(h)
+                                    .and_then(|i| entity_pose_at(i, world, &ctx.sig).ok())
+                                    .unwrap_or(Pose::IDENTITY);
+                                apply_frame_val(p, other)?
+                            }
+                        },
                         other => apply_frame_val(as_pose(other)?, val)?,
                     };
                 }
@@ -2664,6 +2693,19 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::InFrame { frame: FrameSpec::Const(p), inner } => {
             let saved = ctx.ambient;
             ctx.ambient = ctx.ambient.compose(p);
+            let r = exec_instant(inner, ctx, world);
+            ctx.ambient = saved;
+            r?;
+            Ok(Val::Nothing)
+        }
+        // an entity anchor in an instant context resolves NOW
+        ActionV::InFrame { frame: FrameSpec::Entity(h), inner } => {
+            let p = world
+                .find(*h)
+                .and_then(|i| entity_pose_at(i, world, &ctx.sig).ok())
+                .unwrap_or(Pose::IDENTITY);
+            let saved = ctx.ambient;
+            ctx.ambient = ctx.ambient.compose(&p);
             let r = exec_instant(inner, ctx, world);
             ctx.ambient = saved;
             r?;

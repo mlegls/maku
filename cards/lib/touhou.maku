@@ -218,7 +218,9 @@
          (bind-channel! ~chan {:hp (hp-of boss-main)
                                :pos (:pos boss-main)})
          (wait-for (> (hp-of boss-main) 0))
-         ~@machine))))
+         ;; the machine fires from wherever the boss is NOW — the anchor
+         ;; is the live entity, so :root moves carry the fire with them
+         (in-frame boss-main (seq ~@machine))))))
 (defmacro spawn-boss [chan dyn meta & machine] `(boss ~chan ~dyn ~meta ~@machine))
 
 ;; ---------------------------------------------------------------------
