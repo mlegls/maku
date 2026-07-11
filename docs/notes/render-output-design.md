@@ -1,0 +1,167 @@
+# SoA render output — milestone C design (host boundary)
+
+Status: DESIGN 2026-07, round 21. Companion to compiled-dyn-design.md
+(milestone C) and types.md "Schema Checking" (render kinds/schemas). Goal:
+settle the render-output semantics and host API before JIT work — the JIT
+optimizes over these settled semantics, it does not get to change them.
+
+## What this replaces
+
+Today every render row is an `Rc<RenderRow>` built row-at-a-time: compiled
+deftick rules evaluate each field to a `Val` per row (`eval_compiled_row_val`),
+push through per-row schema checks, and the host's `render()` clones every
+row's boxes out per tick. Post-round-20 profile: ~6% row eval + ~2% row
+pool churn, and the shape is wrong for any column-oriented consumer (GPU
+attribute buffers, wasm typed arrays).
+
+## Semantics (settled here)
+
+1. **The render output of a tick is an ordered frame.** Draw order is
+   emission order: standing-rule registration order, and within one rule's
+   pass, entity row order. This is exactly today's observable order;
+   batching must not change it. Explicit layering (z/layer fields) remains
+   future renderer-projector policy (types.md), not transport semantics.
+2. **A frame is a sequence of items**: interpreted/legacy rows one at a
+   time, and per-rule **batches** — one batch per compiled point-rule pass,
+   holding that pass's rows as typed columns. A batch occupies one position
+   in the stream; expanding it in place reproduces the row sequence
+   exactly.
+3. **Row expansion is the semantic reference.** `RenderRow` (geometry +
+   keyed nums/syms) stays the canonical row form; a batch is a layout, not
+   a new value universe. `expand` from batch to rows is total and exact —
+   the oracle compares expanded rows against the interpreted rows with
+   `==`, and the compat `render()` is defined as frame expansion.
+4. **Schema checks keep interpreted semantics.** The per-world render
+   field schema (one kind per key, accreting) is enforced for batch fills
+   by STAGING: the batch pass validates keys against the world schema plus
+   a local pending set, and commits registrations only when the whole pass
+   succeeds. Any error or kind surprise aborts the batch, discards it, and
+   reruns the rule through the row-at-a-time path — which reproduces the
+   interpreted error, error site, and partial-row state exactly (same
+   driver-level abort-and-rerun stance as compiled predicate bails and the
+   JIT totality contract).
+5. **Absent fields stay absent.** A field whose value is `nothing` for a
+   row is simply not present on that row (today: no push). Columns
+   therefore carry optional presence; a field that is `nothing` for every
+   matched row contributes no column at all that pass.
+
+## Host API
+
+```rust
+// model/renderers.rs — transport types (model-side: any backend needs
+// them unchanged; layout choice is exactly what they encode, which is
+// the host boundary's job)
+pub struct RenderSchema {
+    /// Extra (non-geometry) fields in emission order: key + kind.
+    pub cols: Vec<(Rc<str>, RenderFieldKind)>,
+}
+
+pub enum NumColumn { Const(f64), Rows(Vec<f64>) }
+
+pub enum Column {
+    Num(NumColumn),
+    /// Per-row nums with presence (mask[i] == value present).
+    NumOpt(Vec<f64>, Vec<bool>),
+    SymConst(Rc<str>),
+    /// Per-row syms; None == absent on that row.
+    Syms(Vec<Option<Rc<str>>>),
+}
+
+pub struct RenderBatch {
+    pub schema: Rc<RenderSchema>,
+    pub len: usize,
+    // Point geometry as columns; Const covers literal/default slots.
+    pub x: NumColumn, pub y: NumColumn, pub theta: NumColumn,
+    pub scale: NumColumn, pub alpha: NumColumn, pub hue: NumColumn,
+    /// Parallel to schema.cols.
+    pub cols: Vec<Column>,
+}
+
+pub enum RenderItem {
+    Row(Rc<RenderRow>),
+    Batch(Rc<RenderBatch>),
+}
+```
+
+```rust
+impl Sim {
+    /// The tick's render output in draw order. Batches are Rc-shared with
+    /// the sim's pools; hosts read columns in place.
+    pub fn render_frame(&mut self) -> Vec<RenderItem>;
+    /// Compat: the frame expanded to rows (exactly today's output).
+    pub fn render(&mut self) -> Vec<RenderRow>;
+}
+```
+
+Schema negotiation, this milestone: a host inspects `batch.schema` and may
+key precomputed layouts on `Rc::ptr_eq` — the sim memoizes the schema per
+rule and rebuilds only if observed kinds change, so schema identity is
+stable at steady state (it can evolve during the first ticks while
+dynamic-kind fields settle). Full load-time negotiation — render-kind
+manifests, hosts declaring supported kinds, load failure on unsupported
+kinds — is the renderer-projector milestone (types.md); it will hand its
+extraction output to THIS transport. `RenderSchema` is deliberately the
+record-schema shape that manifest will use.
+
+Both hosts keep working unchanged through `render()`; the wasm host's
+`dots()` is the first consumer to read columns directly.
+
+## Batch fill (the compiled-rule pass)
+
+For a `CompiledRowPlan` (point-shape) rule, replace the per-row
+`Rc<RenderRow>` loop with column fills over the matched-row set:
+
+1. Pose pass: if the rule needs a pose, fill a scratch `Vec<Pose>`
+   (fast_pos_pose, falling back to `entity_pose_at`) — one pose read per
+   row per pass, shared by all pose-reading columns.
+2. Geometry columns in coercion order (x, y, theta, scale, alpha, hue):
+   literal → `Const`, missing → `Const(default)`, else fill per row.
+3. Extra columns in field order: evaluate per row; the first non-nothing
+   value fixes the column kind (staged against the schema); later rows
+   that disagree in kind abort the batch.
+4. Commit staged schema registrations, push one `RenderItem::Batch`.
+5. Any error anywhere → discard the batch (world untouched: staged checks,
+   no partial pushes) and rerun the rule row-at-a-time for exact
+   interpreted error behavior.
+
+Batch bodies are pooled like row boxes (`Rc::get_mut` + clear on recycle);
+column `Vec`s amortize to zero allocation at steady state.
+
+Oracle (`MAKU_LOWER_ORACLE=1`): each compiled pass expands its batch and
+asserts row-exact equality against the interpreted rerun, as today.
+
+## Parallelism — where it lives (decided, round 21)
+
+Per-entity per-tick loops (motion lanes, collider materialization, these
+column fills) are data-parallel, but parallelism is a BACKEND/DRIVER
+property, not an IR marking:
+
+- The batch call convention already makes kernels parallel-safe by
+  construction — total, callback-free, per-lane reads, disjoint per-lane
+  writes, rand/captures as pre-filled inputs. A per-program "parallel ok"
+  bit would be constant true; there is nothing to mark.
+- What the semantics must guarantee (and the design docs record) are the
+  invariants that make any schedule legal AND bit-deterministic: no
+  cross-lane reads, no `&mut World` exposure during a kernel run, and all
+  cross-lane combining (frame item order, collision index build, channel
+  accumulation) in a fixed merge order independent of thread schedule.
+  Same ops per lane in the same order ⇒ bit-identical output at any
+  thread count, preserving the oracle/replay story.
+- Scheduling (rayon chunk size, SIMD width, single-threaded wasm) differs
+  per host, so it lives in the driver loops. Wasm is the forcing case: the
+  IR must stay meaningful on a host with no threads.
+
+The frame is parallel-ready under these rules: each batch's columns can be
+filled by independent workers; item order is fixed by rule registration
+before any fill starts.
+
+## Sequencing
+
+1. Transport types + `render_rows: Vec<RenderItem>` migration (rows only —
+   behavior-neutral).
+2. Batch fill for compiled point rules + staged schema checks + oracle
+   expansion + pooling.
+3. wasm `dots()` reads columns.
+4. Later, separate work: renderer-projector extraction targets the same
+   transport; JIT render kernels drop in behind the column-fill seam
+   (compiled-dyn-design.md gap 4).

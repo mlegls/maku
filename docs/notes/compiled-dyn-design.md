@@ -56,6 +56,16 @@ interpreted. Gaps, in dependency order:
    IR interpreter tier stays a permanently supported backend, not a
    transitional one — a wasm/web host cannot JIT.
 
+Parallelism (decided, round 21): data-parallel execution of the
+per-entity loops is a backend/driver property, NOT an IR marking — every
+kernel under the batch convention is parallel-safe by construction
+(total, callback-free, disjoint per-lane writes), so a per-program flag
+would be constant true. The semantic invariants that make any schedule
+legal and bit-deterministic (no cross-lane reads, no `&mut World` during
+kernel runs, fixed merge order for all cross-lane combining) are recorded
+in render-output-design.md "Parallelism"; scheduling itself (rayon/SIMD/
+single-threaded wasm) lives in the driver loops per host.
+
 Non-blockers: evolve/live/stages coverage (classification excludes them;
 per-row interpretation is fine indefinitely), ReadScan/Channel op
 coverage for homing-slew (IR extension, slots in whenever), and the
@@ -296,6 +306,11 @@ lane scatter, and — per the milestone-A bail census — ReadScan + Channel
 ops for the homing-slew integrands.
 
 ### C — beyond figure signals
+
+The host-boundary half — SoA render output (typed columns per compiled
+rule, schema objects hosts negotiate against, `render_frame()` API) — is
+designed in render-output-design.md (round 21); it settles the render
+semantics/API the JIT's render kernels compile against.
 
 - Scan ADVANCE (step_motion) ops join the program (fused eval+step).
 - dyn cols (`refresh_dyn_cols`) run their `DynNum` programs on the same
