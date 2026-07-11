@@ -102,6 +102,12 @@ impl SymbolTable {
     pub fn resolve(&self, sym: Symbol) -> Option<&str> {
         self.names.get(sym.0 as usize).map(|s| s.as_ref())
     }
+
+    /// The interned name as its shared Rc — for callers that keep the
+    /// string (e.g. `Val::Kw`), a refcount bump instead of a fresh copy.
+    pub fn resolve_rc(&self, sym: Symbol) -> Option<&Rc<str>> {
+        self.names.get(sym.0 as usize)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1349,9 +1355,9 @@ impl World {
             .enumerate()
             .filter_map(|(slot, values)| {
                 let value = values.get(row).copied().flatten()?;
-                let field = self.symbols.resolve(*self.fields.sym_names.get(slot)?)?;
-                let value = self.symbols.resolve(value)?;
-                Some((field.into(), value.into()))
+                let field = self.symbols.resolve_rc(*self.fields.sym_names.get(slot)?)?;
+                let value = self.symbols.resolve_rc(value)?;
+                Some((field.clone(), value.clone()))
             })
             .collect()
     }

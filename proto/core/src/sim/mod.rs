@@ -408,7 +408,7 @@ impl Sim {
                     .map(Val::Num)
                     .or_else(|| {
                         self.world.sym_field_value_at(row, col).and_then(|sym| {
-                            self.world.symbols.resolve(sym).map(|name| Val::Kw(name.into()))
+                            self.world.symbols.resolve_rc(sym).map(|name| Val::Kw(name.clone()))
                         })
                     })
                     .unwrap_or(Val::Nothing);

@@ -2151,8 +2151,8 @@ pub(crate) fn entity_field_sym_at(i: usize, sym: Option<Symbol>, world: &World) 
         return Val::Nothing;
     };
     if let Some(value) = world.sym_field_value_at(i, sym) {
-        if let Some(resolved) = world.symbols.resolve(value) {
-            return Val::Kw(resolved.into());
+        if let Some(resolved) = world.symbols.resolve_rc(value) {
+            return Val::Kw(resolved.clone());
         }
     }
     world.col_get_sym_at(i, sym).map(Val::Num).unwrap_or(Val::Nothing)
