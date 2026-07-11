@@ -1897,58 +1897,57 @@ fn resolve_predicate_query_fallback(
 
 fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
     let Val::Map(kvs) = q else { return Err("query: expected a map".into()) };
-    let get = |name: &str| {
-        kvs.iter().find_map(|(k, v)| match k {
-            Val::Kw(kw) if &**kw == name => Some(v.clone()),
-            _ => None,
-        })
-    };
-    let reserved_query_key = |name: &str| {
-        matches!(
-            name,
-            "team"
-                | "family"
-                | "color"
-                | "variant"
-        )
-    };
-    let axis_ok = |sel: &Option<Val>, actual: &str| match sel {
-        None => true,
-        Some(Val::Kw(k)) => &**k == actual,
-        Some(Val::Arr(xs)) => xs.iter().any(|v| matches!(v, Val::Kw(k) if &**k == actual)),
-        _ => false,
-    };
-    let (family, color, variant, team) =
-        (
-            get("family"),
-            get("color"),
-            get("variant"),
-            get("team"),
-        );
-    let kw_filters = kvs
-        .iter()
-        .filter_map(|(k, v)| {
-            let Val::Kw(field) = k else { return None };
-            if reserved_query_key(field.as_ref()) {
-                return None;
+    // Selector symbols resolve once per query, not per row. A keyword that
+    // was never interned anywhere can match no row's sym field; likewise a
+    // non-keyword selector matches nothing. Reserved axis keys keep their
+    // first-occurrence-wins behavior; other keys test every occurrence.
+    enum SelSyms {
+        One(Option<Symbol>),
+        Many(Vec<Option<Symbol>>),
+        Never,
+    }
+    let mut seen_reserved: Vec<&str> = Vec::new();
+    let mut filters: Vec<(Option<FieldName>, SelSyms)> = Vec::new();
+    for (k, v) in kvs.iter() {
+        let Val::Kw(field) = k else { continue };
+        if matches!(field.as_ref(), "team" | "family" | "color" | "variant") {
+            if seen_reserved.contains(&field.as_ref()) {
+                continue;
             }
-            Some((field.clone(), v.clone()))
-        })
-        .collect::<Vec<_>>();
+            seen_reserved.push(field.as_ref());
+        }
+        let sel = match v {
+            Val::Kw(kw) => SelSyms::One(world.symbols.lookup(kw)),
+            Val::Arr(xs) => SelSyms::Many(
+                xs.iter()
+                    .map(|x| match x {
+                        Val::Kw(kw) => world.symbols.lookup(kw),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => SelSyms::Never,
+        };
+        filters.push((world.symbols.lookup(field), sel));
+    }
+    let sel_matches = |sel: &SelSyms, actual: Symbol| match sel {
+        SelSyms::One(s) => *s == Some(actual),
+        SelSyms::Many(xs) => xs.contains(&Some(actual)),
+        SelSyms::Never => false,
+    };
     let mut candidates: Vec<usize> = Vec::new();
     for (i, _) in world.entities.iter().enumerate() {
-        if !world.entities.is_alive(i)
-            || !axis_ok(&family, world.sym_field_resolved_at(i, "family").unwrap_or(""))
-            || !axis_ok(&color, world.sym_field_resolved_at(i, "color").unwrap_or(""))
-            || !axis_ok(&variant, world.sym_field_resolved_at(i, "variant").unwrap_or(""))
-            || !axis_ok(&team, world.sym_field_resolved_at(i, "team").unwrap_or(""))
-            || kw_filters
-                .iter()
-                .any(|(field, sel)| !axis_ok(&Some(sel.clone()), world.sym_field_resolved_at(i, field).unwrap_or("")))
-        {
+        if !world.entities.is_alive(i) {
             continue;
         }
-        candidates.push(i);
+        let ok = filters.iter().all(|(field, sel)| {
+            field
+                .and_then(|field| world.sym_field_value_at(i, field))
+                .is_some_and(|actual| sel_matches(sel, actual))
+        });
+        if ok {
+            candidates.push(i);
+        }
     }
     Ok(candidates)
 }
