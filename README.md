@@ -27,7 +27,7 @@ replays, rewind, and live code-swap are exact by construction.
 
 ```sh
 # play the demo fight: WASD move, Shift focus, X bomb
-cargo run --manifest-path proto/Cargo.toml --features player --bin maku -- cards/reimu_vs_mima.maku
+cargo run --manifest-path proto/Cargo.toml -p maku-player -- cards/reimu_vs_mima.maku
 
 # tests (52: conformance corpus + gameplay + session/scrubbing)
 cargo test --manifest-path proto/Cargo.toml -p maku

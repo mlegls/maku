@@ -5,7 +5,7 @@ newline-delimited EDN over 127.0.0.1:7777.
 
 Start the player once:
 
-    cargo run --manifest-path proto/Cargo.toml --features player --bin maku -- cards/translations/130_bowap.maku
+    cargo run --manifest-path proto/Cargo.toml -p maku-player -- cards/translations/130_bowap.maku
 
 Then from any `.maku` card buffer:
 
