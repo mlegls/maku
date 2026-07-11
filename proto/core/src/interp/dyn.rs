@@ -135,7 +135,7 @@ impl Dyn<Pose> {
     }
 
     pub fn framed(&self, frame: Rc<DynNode>) -> DynPose {
-        DynPose::pose_node(Rc::new(DynNode::Frame(frame, self.node().clone())))
+        DynPose::pose_node(frame_node(frame, self.node().clone()))
     }
 }
 

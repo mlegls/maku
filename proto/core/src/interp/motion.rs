@@ -257,6 +257,30 @@ pub fn scan_builtin_spec(name: &str) -> Option<ScanBuiltinSpec> {
     }
 }
 
+/// Frame smart constructor: folds constant parents at build time.
+/// Pose composition is associative SE(2), and nodes are immutable after
+/// construction, so Frame(Const a, Const b) is Const(a∘b) and
+/// Frame(Const a, Frame(Const b, c)) is Frame(Const(a∘b), c). Folding
+/// happens before spawn-time schema lowering, so node identity used for
+/// state keys is unaffected (Const/Frame carry no state).
+pub fn frame_node(parent: Rc<DynNode>, child: Rc<DynNode>) -> Rc<DynNode> {
+    if let DynNode::Const(p) = &*parent {
+        match &*child {
+            DynNode::Const(q) => return Rc::new(DynNode::Const(p.compose(q))),
+            DynNode::Frame(inner, gc) => {
+                if let DynNode::Const(q) = &**inner {
+                    return Rc::new(DynNode::Frame(
+                        Rc::new(DynNode::Const(p.compose(q))),
+                        gc.clone(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Rc::new(DynNode::Frame(parent, child))
+}
+
 pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
     if let Some(id) = readers.node_ids.borrow().get(&ptr).copied() {
         return MotionStateKey::Node(id);
@@ -1305,6 +1329,11 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             dyn_node_pose_u_in(curve, tau, u, ctx)
         }
         DynNode::Frame(parent, child) => {
+            // constant parent: skip the recursion (and its profile scope)
+            if let DynNode::Const(pp) = &**parent {
+                let cp = dyn_node_pose_u_in(child, tau, u, ctx)?;
+                return Ok(pp.compose(&cp));
+            }
             // compose rotates the child offset by the parent theta, so the
             // parent needs its heading even when the caller discards ours
             let pp = dyn_node_pose_u_in(parent, tau, u, ctx.with_theta())?;

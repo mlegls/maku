@@ -23,7 +23,6 @@ struct Entry {
 }
 
 struct State {
-    enabled: bool,
     entries: HashMap<String, Entry>,
     /// (child-time accumulated inside the currently open frame), one per
     /// open frame; popped self time = elapsed - child accum.
@@ -31,17 +30,17 @@ struct State {
 }
 
 thread_local! {
+    static ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static STATE: RefCell<State> = RefCell::new(State {
-        enabled: false,
         entries: HashMap::new(),
         stack: Vec::new(),
     });
 }
 
 pub fn set_enabled(on: bool) {
+    ENABLED.with(|e| e.set(on));
     STATE.with(|s| {
         let mut s = s.borrow_mut();
-        s.enabled = on;
         s.entries.clear();
         s.stack.clear();
     });
@@ -49,7 +48,7 @@ pub fn set_enabled(on: bool) {
 
 #[inline]
 pub fn enabled() -> bool {
-    STATE.with(|s| s.borrow().enabled)
+    ENABLED.with(|e| e.get())
 }
 
 /// An open profiling frame; finish with `close(name, frame)`.
@@ -71,7 +70,14 @@ pub fn close(name: &str, frame: Frame) {
         if let Some(parent) = s.stack.last_mut() {
             *parent += elapsed;
         }
-        let e = s.entries.entry(name.to_string()).or_default();
+        // Allocate the String key only on first sight: an alloc + hash
+        // insert on every close would charge the PARENT's self time (it
+        // runs inside the parent's still-open window), inflating
+        // recursive rows like dyn:frame far past their real work.
+        if !s.entries.contains_key(name) {
+            s.entries.insert(name.to_string(), Entry::default());
+        }
+        let e = s.entries.get_mut(name).expect("just inserted");
         e.count += 1;
         e.total_nanos += elapsed;
         e.self_nanos += elapsed.saturating_sub(child);
