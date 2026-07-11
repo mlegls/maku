@@ -32,7 +32,7 @@
 //!   (pause) (resume)
 
 use maku::host::Instance;
-use maku::interp::{Val, TICK_RATE};
+use maku::interp::Val;
 use maku::model::{RenderData, RenderRow};
 use maku::sim::Inputs;
 use macroquad::prelude::*;
@@ -302,7 +302,7 @@ async fn main() {
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !app.inst.paused() {
             app.accum += get_frame_time() as f64;
-            let dt = 1.0 / TICK_RATE;
+            let dt = 1.0 / app.inst.tick_rate();
             while app.accum >= dt {
                 app.accum -= dt;
                 app.inst.advance(inputs.clone());

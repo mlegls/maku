@@ -9,7 +9,7 @@
 //! scrubbing) sits underneath and stays reachable for advanced hosts.
 
 use crate::edn::{expand_card, expand_card_with, read_all, Form};
-use crate::interp::{load_card, Event, Val};
+use crate::interp::{load_card, Event, Val, DEFAULT_TICK_RATE};
 use crate::model::RenderRow;
 use crate::session::Session;
 use crate::sim::{Inputs, Sim};
@@ -349,6 +349,12 @@ impl Instance {
 
     pub fn tick(&self) -> Option<u64> {
         self.session.tick()
+    }
+
+    /// The running sim's tick rate in Hz (the default rate when no card
+    /// runs) — hosts pace their fixed-timestep loop against this.
+    pub fn tick_rate(&self) -> f64 {
+        self.session.sim.as_ref().map(|s| s.world.tick_rate()).unwrap_or(DEFAULT_TICK_RATE)
     }
 
     pub fn render(&mut self) -> Vec<RenderRow> {
