@@ -2129,6 +2129,15 @@ fn resolve_map_query(q: &Val, _ctx: &mut Ctx, world: &mut World) -> Result<Vec<u
                     })
                     .collect(),
             ),
+            // a fn in a map query is the removed {:where f} shape — fail
+            // loudly instead of silently matching nothing; the predicate
+            // form composes field tests with computed conditions
+            Val::Fn { .. } | Val::Builtin(_) => {
+                return Err(format!(
+                    "query: map queries are data-only (:{field} got a fn); \
+                     use a predicate, e.g. (fn [b] (* (= b.family :x) ...))"
+                ));
+            }
             _ => SelSyms::Never,
         };
         filters.push((world.symbols.lookup(field), sel));

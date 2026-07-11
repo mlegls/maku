@@ -4066,6 +4066,21 @@ fn predicate_queries_drive_manip() {
 }
 
 #[test]
+fn fn_valued_map_query_errors() {
+    // the removed {:where f} shape must fail loudly, not match nothing
+    const CARD: &str = r#"
+(defpattern p []
+  (seq
+    (spawn (pose c[0 0]) {:style {:family :circle}})
+    (manip {:family :circle :where (fn [b] 1)} (fn [b] (cull b)))
+    (wait (ticks 1))))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    let err = (0..2).find_map(|_| sim.step().err()).expect("map query with fn should error");
+    assert!(err.contains("map queries are data-only"), "{err}");
+}
+
+#[test]
 fn keyword_metadata_fields_query_and_access() {
     const CARD: &str = r#"
 (defchannel $boss-role (:role (entities-where (matches :role :boss))))

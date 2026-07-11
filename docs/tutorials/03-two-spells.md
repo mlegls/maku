@@ -190,7 +190,7 @@ cull:
 
 ```clojure
 (control (ticks 5)
-         (where (* (= b.family :gcircle) (> b.t 3.2) (< b.k 0.5)))
+         (where (* (= b.family :gcircle) (> b.t 3.2) (< (value-or b.k 1) 0.5)))
          (fn [b]
            ((pose (pos b))
              ((rot b.ang)
@@ -199,6 +199,10 @@ cull:
          (where (* (= b.family :gcircle) (> b.t 3.2)))
          (fn [b] (cull b)))
 ```
+
+`:k` only exists on beads, and every factor of `*` evaluates on every
+live bullet — a bare `b.k` would error on the long bullets. `value-or`
+gives the missing field a harmless default (1 is not `< 0.5`).
 
 The re-fired bullet is `:family :keine`, so **act 1's control catches it
 again**: the pattern rebuilds itself outward, generation by generation —
