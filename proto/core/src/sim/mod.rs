@@ -78,6 +78,9 @@ struct VelBatchScratch {
     /// (a-program ptr, b-program ptr) → index into `groups`, valid for one
     /// tick (the plans' Rcs keep the keyed programs alive for the tick).
     index: crate::fxhash::FxHashMap<(usize, usize), usize>,
+    /// Last (key, group) pushed: spawn groups occupy contiguous rows, so
+    /// consecutive lanes almost always hit the same group without hashing.
+    last: Option<((usize, usize), usize)>,
     pool: Vec<VelBatchGroup>,
     regs: Vec<f64>,
 }
@@ -95,6 +98,7 @@ struct VelBatchGroup {
 impl VelBatchScratch {
     fn begin_tick(&mut self) {
         self.index.clear();
+        self.last = None;
         self.pool.extend(self.groups.drain(..).map(|mut g| {
             g.rows.clear();
             g.tau.clear();
@@ -107,26 +111,34 @@ impl VelBatchScratch {
 
     fn push_lane(
         &mut self,
-        plan: VelStepPlan,
+        plan: VelStepPlanRef<'_>,
         row: usize,
         slot: usize,
         tau: f64,
         pos: [f64; 2],
     ) {
-        let key = (Rc::as_ptr(&plan.ap) as usize, Rc::as_ptr(&plan.bp) as usize);
-        let idx = *self.index.entry(key).or_insert_with(|| {
-            let mut g = self.pool.pop().unwrap_or_else(|| VelBatchGroup {
-                plan: plan.clone(),
-                rows: Vec::new(),
-                tau: Vec::new(),
-                pos: Vec::new(),
-                va: Vec::new(),
-                vb: Vec::new(),
-            });
-            g.plan = plan;
-            self.groups.push(g);
-            self.groups.len() - 1
-        });
+        let key = (Rc::as_ptr(plan.ap) as usize, Rc::as_ptr(plan.bp) as usize);
+        let idx = match self.last {
+            Some((k, idx)) if k == key => idx,
+            _ => {
+                let idx = *self.index.entry(key).or_insert_with(|| {
+                    let owned = plan.to_plan();
+                    let mut g = self.pool.pop().unwrap_or_else(|| VelBatchGroup {
+                        plan: owned.clone(),
+                        rows: Vec::new(),
+                        tau: Vec::new(),
+                        pos: Vec::new(),
+                        va: Vec::new(),
+                        vb: Vec::new(),
+                    });
+                    g.plan = owned;
+                    self.groups.push(g);
+                    self.groups.len() - 1
+                });
+                self.last = Some((key, idx));
+                idx
+            }
+        };
         let g = &mut self.groups[idx];
         g.rows.push((row, slot));
         g.tau.push(tau);
@@ -451,15 +463,15 @@ impl Sim {
     /// Classify a row for the batched Vel step: the plan plus the Vel
     /// node's n2 slot resolved through the row's schema. None falls back
     /// to the general per-row walk.
-    fn vel_batch_lane(
+    fn vel_batch_lane<'a>(
         &self,
-        dyn_figure: &DynFigure,
+        dyn_figure: &'a DynFigure,
         row: usize,
         sig: &SigEnv,
-    ) -> Option<(VelStepPlan, usize)> {
+    ) -> Option<(VelStepPlanRef<'a>, usize)> {
         let plan = vel_step_plan(dyn_figure, sig)?;
         let schema = self.world.entities.motion_schema(row)?;
-        let slot = vel_chain_n2_slot(schema, Rc::as_ptr(&plan.vel) as usize)?;
+        let slot = vel_chain_n2_slot(schema, Rc::as_ptr(plan.vel) as usize)?;
         Some((plan, slot))
     }
 

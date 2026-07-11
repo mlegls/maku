@@ -956,7 +956,27 @@ pub struct VelStepPlan {
     pub polar: bool,
 }
 
-pub fn vel_step_plan(fig: &DynFigure, sig: &SigEnv) -> Option<VelStepPlan> {
+/// A borrowed classification — the per-row scan only clones the Rcs when a
+/// lane opens a new group, not per row.
+pub struct VelStepPlanRef<'a> {
+    pub vel: &'a Rc<DynNode>,
+    pub ap: &'a Rc<NumProgram>,
+    pub bp: &'a Rc<NumProgram>,
+    pub polar: bool,
+}
+
+impl VelStepPlanRef<'_> {
+    pub fn to_plan(&self) -> VelStepPlan {
+        VelStepPlan {
+            vel: self.vel.clone(),
+            ap: self.ap.clone(),
+            bp: self.bp.clone(),
+            polar: self.polar,
+        }
+    }
+}
+
+pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlanRef<'a>> {
     if fig.curve().is_some() {
         return None;
     }
@@ -968,12 +988,7 @@ pub fn vel_step_plan(fig: &DynFigure, sig: &SigEnv) -> Option<VelStepPlan> {
                 let (ap, bp) = programs
                     .get_or_init(|| lower_program_pair(a, b, env, sig, true))
                     .as_ref()?;
-                return Some(VelStepPlan {
-                    vel: node.clone(),
-                    ap: ap.clone(),
-                    bp: bp.clone(),
-                    polar: *polar,
-                });
+                return Some(VelStepPlanRef { vel: node, ap, bp, polar: *polar });
             }
             _ => return None,
         }
