@@ -32,7 +32,7 @@ position reads by today's channel conventions.
 
 ```clojure
 (def $player)                                ; declare
-(bind! $player (from-host))                  ; produce (host is just a producer)
+(bind! $player (from-host :player))          ; produce (host is just a producer)
 (export! $player)                            ; publish
 
 (def $num-enemies)
@@ -64,16 +64,25 @@ Declare, produce, publish are three orthogonal ops:
 - declare: `(def $x)` / `(def $x init)` top level, `(let [$x init] ...)`
   local;
 - produce: `(bind! $x expr)` attaches a per-tick refresh producer. Host
-  injection is NOT special syntax — `(from-host)` is just a producer
-  (name inferred from the stream, or explicit), so the writer axis is
-  simply set!-only (no producer) vs bind!ed;
+  injection is NOT special syntax — `(from-host :name)` is just a
+  producer, so the writer axis is simply set!-only (no producer) vs
+  bind!ed;
 - publish: `(export! $x)` registers the stream with the host/registry.
 
 Today's cells = unbound+unpublished; today's channels = bind!ed+
-published (injected ones bind!ed to `(from-host)`). The other quadrants
-(bind!ed-private, set!-only-public) become expressible. The channel
-manifest = the set of `(from-host)` bind sites, checked at load against
-what the host provides.
+published (injected ones bind!ed to `(from-host :name)`). The other
+quadrants (bind!ed-private, set!-only-public) become expressible. The
+channel manifest = the set of `(from-host ...)` SITES (bound or not),
+checked at load against what the host provides.
+
+Because `(from-host :name)` names the host input explicitly, it is a
+stream-valued expression in its own right — usable standalone, not only
+as a bind! producer. Injection and naming decouple: an anonymous
+injected stream can be snapped at an eval site, wrapped in
+`(live ...)`, or passed to a sigiled param directly; `(bind! $x
+(from-host :name))` is just the case where you give it a local name.
+This detaches the two things `defchannel` was conflating (declaring a
+host input, and declaring a named stream).
 
 `set!` vs `bind!` coexistence — resolved by the EXISTING defchannel
 fallback rule rather than a seal, and keyed purely on bind!ed-ness (no
@@ -111,8 +120,9 @@ frame-stamped action — scrub story unchanged).
 - Export/registration collisions across instances of one pattern:
   rename form (`(export! $vol :as $p1-vol)`) + collision as load error
   (lean), vs latest-wins like bound channels today.
-- `(from-host)` name resolution: inferred from the bound stream's name
-  vs explicit `(from-host :player)` (explicit survives export renames).
+- Naming: `from-host` vs `inject` (or similar) for the host-input
+  producer form. (Name resolution itself is settled: explicit arg —
+  inference is incoherent for the standalone/anonymous form.)
 - Exact surface of `bind!` vs today's `bind-channel!` (local producer
   attachment vs global-name registration — likely one form once names
   are scoped).

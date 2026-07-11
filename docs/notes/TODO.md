@@ -25,8 +25,9 @@ work.
   (`docs/notes/channel-unification.md`, converged 2026-07, not yet
   ratified) makes the manifest check fall out of scoping — a free `$name`
   neither bound nor def'd is a load error, and the manifest is the set
-  of `(from-host)` producer bind sites (host injection is not special
-  syntax). Cells dissolve into let-bound sigiled streams; the
+  of `(from-host :name)` sites — a standalone stream-valued expression
+  (anonymous injected streams work; bind! just names one), so host
+  injection is not special syntax. Cells dissolve into let-bound sigiled streams; the
   dynamic cell scope (CELLS_KEY/cell_scope/adapter caller-cells) becomes
   deletable kernel surface.
 - `remat` / `manip`: semantics decided — `(remat handle spec)` is the
