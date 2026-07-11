@@ -42,6 +42,7 @@ pub enum NumOp {
     Lerp { dst: u16, a: u16, b: u16, ctrl: u16, v1: u16, v2: u16 },
     Lerp3 { dst: u16, a1: u16, b1: u16, a2: u16, b2: u16, ctrl: u16, v1: u16, v2: u16, v3: u16 },
     Ease { dst: u16, kind: EaseKind, x: u16 },
+    LerpSmooth { dst: u16, kind: EaseKind, a: u16, b: u16, ctrl: u16, v1: u16, v2: u16 },
     Lssht { dst: u16, c: u16, pv: u16, f1: u16, f2: u16 },
 }
 
@@ -166,6 +167,9 @@ impl Builder<'_> {
     }
 
     fn lower_list(&mut self, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+        if let Some(Form::Kw(field)) = items.first() {
+            return self.lower_kw_access(field, items, env, scope);
+        }
         let Some(Form::Sym(head)) = items.first() else {
             return None;
         };
@@ -191,19 +195,22 @@ impl Builder<'_> {
                 }
             }
         }
-        if matches!(scope, LowerScope::Current) && items.len() == 3 && matches!(name, ":x" | ":y") {
-            let Form::Sym(sym) = &items[2] else {
-                return None;
-            };
-            if &**sym != "pos" {
-                return None;
-            }
+        if name == "lerpsmooth" && items.len() == 7 {
+            let kind = self.ease_kind_arg(&items[1], env, scope)?;
+            let args = items[2..]
+                .iter()
+                .map(|f| self.lower(f, env, scope))
+                .collect::<Option<Vec<_>>>()?;
             let dst = self.reg()?;
-            return if name == ":x" {
-                self.push(NumOp::PosX { dst })
-            } else {
-                self.push(NumOp::PosY { dst })
-            };
+            return self.push(NumOp::LerpSmooth {
+                dst,
+                kind,
+                a: args[0],
+                b: args[1],
+                ctrl: args[2],
+                v1: args[3],
+                v2: args[4],
+            });
         }
 
         let args = items[1..]
@@ -211,6 +218,61 @@ impl Builder<'_> {
             .map(|f| self.lower(f, env, scope))
             .collect::<Option<Vec<_>>>()?;
         self.lower_call(name, &args)
+    }
+
+    /// Keyword-head application `(:field base)`: `pos` component reads
+    /// become PosX/PosY ops; access chains rooted at an env-captured
+    /// Map/Pose fold to Const at lower time (the program cache lives on
+    /// the node next to its captured env, so captures are stable for the
+    /// program's lifetime). Def scope bails: def bodies evaluate in a
+    /// fresh env, so neither `pos` nor captures are visible there (F12).
+    fn lower_kw_access(&mut self, field: &str, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+        if items.len() != 2 || !matches!(scope, LowerScope::Current) {
+            return None;
+        }
+        if let Form::Sym(base) = &items[1] {
+            // slot-bound pos: only when not shadowed by a capture (a
+            // captured `pos` wins at non-pos eval sites, so it's ambiguous)
+            if &**base == "pos" && env.lookup("pos").is_none() {
+                let dst = self.reg()?;
+                return match field {
+                    "x" => self.push(NumOp::PosX { dst }),
+                    "y" => self.push(NumOp::PosY { dst }),
+                    _ => None,
+                };
+            }
+        }
+        match kw_get_val(field, &fold_access_val(&items[1], env)?)? {
+            Val::Num(v) => {
+                let dst = self.reg()?;
+                self.push(NumOp::Const { dst, v })
+            }
+            _ => None,
+        }
+    }
+
+    /// Static easing argument for lerpsmooth: a bare easing-builtin name
+    /// (not shadowed by env or defs) or a captured Val::Builtin. Mirrors
+    /// the interpreter's resolution order per scope.
+    fn ease_kind_arg(&self, form: &Form, env: &Env, scope: LowerScope<'_>) -> Option<EaseKind> {
+        let Form::Sym(s) = form else {
+            return None;
+        };
+        let name = &**s;
+        match scope {
+            LowerScope::Current => match env.lookup(name) {
+                Some(Val::Builtin(nm)) => ease_kind(&nm),
+                Some(_) => None,
+                None if self.defs.contains_key(name) => None,
+                None => ease_kind(name),
+            },
+            LowerScope::Def { params } => {
+                if params.contains_key(name) || self.defs.contains_key(name) {
+                    return None;
+                }
+                ease_kind(name)
+            }
+        }
     }
 
     fn lower_bare_def(&mut self, name: &str, env: &Env) -> Option<u16> {
@@ -401,6 +463,7 @@ fn op_dst(op: NumOp) -> u16 {
         | NumOp::Lerp { dst, .. }
         | NumOp::Lerp3 { dst, .. }
         | NumOp::Ease { dst, .. }
+        | NumOp::LerpSmooth { dst, .. }
         | NumOp::Lssht { dst, .. } => dst,
     }
 }
@@ -419,6 +482,44 @@ fn literal_fn_parts(form: &Form) -> Option<(&[Form], &Form)> {
             }
             Some((params, &rest[1]))
         }
+        _ => None,
+    }
+}
+
+/// Resolve an access-chain base to a lower-time-stable value: an
+/// env-captured binding, or a nested keyword access on one. `t`/`u`/`pos`
+/// are excluded — the eval site rebinds them, so a capture never wins.
+fn fold_access_val(form: &Form, env: &Env) -> Option<Val> {
+    match form {
+        Form::Sym(s) if !matches!(&**s, "t" | "u" | "pos") => env.lookup(s),
+        Form::List(items) if items.len() == 2 => {
+            let Form::Kw(field) = &items[0] else {
+                return None;
+            };
+            kw_get_val(field, &fold_access_val(&items[1], env)?)
+        }
+        _ => None,
+    }
+}
+
+/// One keyword read, restricted to the cases whose interpreter semantics
+/// need no ctx/world (mod.rs keyword application): pose components and
+/// plain map lookup. Missing keys and every other value kind bail.
+fn kw_get_val(field: &str, v: &Val) -> Option<Val> {
+    match (field, v) {
+        ("x", Val::Pose(p)) => Some(Val::Num(p.x)),
+        ("y", Val::Pose(p)) => Some(Val::Num(p.y)),
+        ("th", Val::Pose(p)) => Some(Val::Num(p.angle_or(0.0))),
+        (_, Val::Map(_)) => super::spawn::map_get(v, field),
+        _ => None,
+    }
+}
+
+fn ease_kind(name: &str) -> Option<EaseKind> {
+    match name {
+        "einsine" => Some(EaseKind::InSine),
+        "eoutsine" => Some(EaseKind::OutSine),
+        "eiosine" => Some(EaseKind::InOutSine),
         _ => None,
     }
 }
@@ -502,6 +603,10 @@ pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, regs: &mu
                 regs[dst as usize] = out;
             }
             NumOp::Ease { dst, kind, x } => regs[dst as usize] = ease_num(kind, regs[x as usize]),
+            NumOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
+                let r = ((regs[ctrl as usize] - regs[a as usize]) / (regs[b as usize] - regs[a as usize])).clamp(0.0, 1.0);
+                regs[dst as usize] = regs[v1 as usize] + ease_num(kind, r) * (regs[v2 as usize] - regs[v1 as usize]);
+            }
             NumOp::Lssht { dst, c, pv, f1, f2 } => {
                 let c = regs[c as usize];
                 let pv = regs[pv as usize];
@@ -666,6 +771,76 @@ mod tests {
         let defs = defs(&[("speed2", "3")]);
         let prog = lower_num_form(&read("(* speed2 t)"), &env, &defs).unwrap();
         assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 20.0);
+    }
+
+    #[test]
+    fn lowers_lerpsmooth_with_static_easing() {
+        for ez in ["einsine", "eoutsine", "eiosine"] {
+            let src = format!("(lerpsmooth {} 0 4 t 0 480)", ez);
+            let prog = lower_num_form(&read(&src), &Env::empty(), &no_defs()).unwrap();
+            for t in [-1.0, 0.0, 1.3, 4.0, 9.0] {
+                let got = run_num_program(&prog, t, 0.0, None);
+                let want = eval_num(&src, &Env::empty(), &no_defs(), t, 0.0);
+                assert!((got - want).abs() <= 1e-12, "{} t={}: {} vs {}", ez, t, got, want);
+            }
+        }
+    }
+
+    #[test]
+    fn lerpsmooth_easing_resolution() {
+        // captured Val::Builtin under another name folds
+        let env = Env::empty().bind("ez".into(), Val::Builtin("eoutsine".into()));
+        let prog = lower_num_form(&read("(lerpsmooth ez 0 1 t 0 10)"), &env, &no_defs()).unwrap();
+        let want = eval_num("(lerpsmooth ez 0 1 t 0 10)", &env, &no_defs(), 0.5, 0.0);
+        assert_eq!(run_num_program(&prog, 0.5, 0.0, None), want);
+
+        // def-shadowed easing name bails; non-builtin capture bails;
+        // non-sym easing arg bails
+        let shadow = defs(&[("eoutsine", "(fn [x] x)")]);
+        assert!(lower_num_form(&read("(lerpsmooth eoutsine 0 1 t 0 10)"), &Env::empty(), &shadow).is_none());
+        let bad = Env::empty().bind("ez".into(), Val::Num(1.0));
+        assert!(lower_num_form(&read("(lerpsmooth ez 0 1 t 0 10)"), &bad, &no_defs()).is_none());
+        assert!(lower_num_form(&read("(lerpsmooth (pick-ease) 0 1 t 0 10)"), &Env::empty(), &no_defs()).is_none());
+    }
+
+    #[test]
+    fn lowers_pos_component_reads() {
+        let prog = lower_num_form(&read("(+ (:x pos) (:y pos))"), &Env::empty(), &no_defs()).unwrap();
+        assert!(program_uses_pos(&prog));
+        assert_eq!(run_num_program(&prog, 0.0, 0.0, Some((3.0, 4.0))), 7.0);
+
+        // captured pos shadows the slot at non-pos eval sites: ambiguous, bail
+        let shadowed = Env::empty().bind("pos".into(), Val::Pose(Pose::point(1.0, 2.0)));
+        assert!(lower_num_form(&read("(:x pos)"), &shadowed, &no_defs()).is_none());
+        // no theta op
+        assert!(lower_num_form(&read("(:th pos)"), &Env::empty(), &no_defs()).is_none());
+    }
+
+    #[test]
+    fn folds_captured_keyword_reads() {
+        let exit = Val::Map(Rc::new(vec![(
+            Val::Kw("vel".into()),
+            Val::Pose(Pose::point(1.5, -2.0)),
+        )]));
+        let env = Env::empty()
+            .bind("exit".into(), exit)
+            .bind("delta".into(), Val::Pose(Pose::point(6.0, 8.0)));
+
+        let prog = lower_num_form(&read("(* (:x (:vel exit)) t)"), &env, &no_defs()).unwrap();
+        assert_eq!(run_num_program(&prog, 2.0, 0.0, None), 3.0);
+        let prog = lower_num_form(&read("(:y delta)"), &env, &no_defs()).unwrap();
+        assert_eq!(run_num_program(&prog, 0.0, 0.0, None), 8.0);
+        // pointless pose has no theta: angle_or(0.0), same as the interpreter
+        let prog = lower_num_form(&read("(:th delta)"), &env, &no_defs()).unwrap();
+        assert_eq!(
+            run_num_program(&prog, 0.0, 0.0, None),
+            eval_num("(:th delta)", &env, &no_defs(), 0.0, 0.0)
+        );
+
+        // missing key, unbound base, non-num terminal: bail
+        assert!(lower_num_form(&read("(:speed exit)"), &env, &no_defs()).is_none());
+        assert!(lower_num_form(&read("(:x (:vel nothere))"), &env, &no_defs()).is_none());
+        assert!(lower_num_form(&read("(:vel exit)"), &env, &no_defs()).is_none());
     }
 
     #[test]
