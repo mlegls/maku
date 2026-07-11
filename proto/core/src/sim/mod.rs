@@ -72,6 +72,11 @@ struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynCollider>,
+    /// Per-pass memo of collider EntityCol name → store slots, keyed by the
+    /// name's Rc address (specs stay alive for the whole pass). Cleared at
+    /// pass start and after any non-direct materialization, which holds
+    /// `&mut World` and could intern new columns.
+    field_slots: Vec<(*const u8, FieldSlots)>,
 }
 
 impl ColliderScratch {
@@ -79,6 +84,7 @@ impl ColliderScratch {
         self.rows.clear();
         self.ranges.clear();
         self.defs.clear();
+        self.field_slots.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }

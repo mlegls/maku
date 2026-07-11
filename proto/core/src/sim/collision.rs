@@ -14,6 +14,7 @@ fn materialize_colliders_into(
     row: Option<usize>,
     defs: &mut Vec<DynCollider>,
     out: &mut Vec<ColliderData>,
+    slot_cache: &mut Vec<(*const u8, FieldSlots)>,
     tick_rate: f64,
 ) -> Result<(), String> {
     let (trace, traced): (&[Pose], bool) = match row {
@@ -25,7 +26,8 @@ fn materialize_colliders_into(
     // no per-tick DynCollider round-trip through the defs vec.
     if projector.is_direct() {
         return materialize_direct_colliders(
-            dyn_figure, projector, tau, sig, scale, pose, world, row, trace, traced, out, tick_rate,
+            dyn_figure, projector, tau, sig, scale, pose, world, row, trace, traced, out, slot_cache,
+            tick_rate,
         )
         .map_err(|e| format!("colliders: {}", e));
     }
@@ -33,6 +35,8 @@ fn materialize_colliders_into(
     defs.clear();
     materialize_collider_defs_into(projector, tau, &state, sig, e_view, ctx_view, world, row, defs, tick_rate)
         .map_err(|e| format!("colliders: {}", e))?;
+    // the defs pass held &mut World: cached slot resolutions may be stale
+    slot_cache.clear();
     // re-borrow: the defs pass may have grown the symbol table
     let (trace, traced): (&[Pose], bool) = match row {
         Some(row) => (world.entities.trace_samples(row), world.entities.is_traced(row)),
@@ -127,6 +131,7 @@ impl Sim {
                 Some(i),
                 &mut self.collider_scratch.defs,
                 &mut self.collider_scratch.rows,
+                &mut self.collider_scratch.field_slots,
                 tick_rate,
             )?;
             self.collider_scratch.finish_row(start);

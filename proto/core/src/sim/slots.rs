@@ -320,17 +320,29 @@ pub(super) fn materialize_direct_colliders(
     trace: &[Pose],
     traced: bool,
     out: &mut Vec<ColliderData>,
+    slot_cache: &mut Vec<(*const u8, FieldSlots)>,
     tick_rate: f64,
 ) -> Result<(), String> {
-    let num = |n: &ProjectorNum| -> Result<f64, String> {
+    let mut num = |n: &ProjectorNum| -> Result<f64, String> {
         match n {
             ProjectorNum::Const(n) => Ok(*n),
             // EntityCol is never a special view field (scope filter), so the
             // read skips entity_field_at's special-name match and goes
             // straight through resolved store slots — same Val, same errors.
+            // Names resolve once per pass, keyed by the name's Rc address
+            // (the spec outlives the pass, so the key cannot be reused).
             ProjectorNum::EntityCol(col) => {
                 let row = row.ok_or("collider: entity field read outside an entity context")?;
-                entity_field_at_slots(row, world.field_slots(col), world).num()
+                let key = Rc::as_ptr(col) as *const u8;
+                let slots = match slot_cache.iter().find(|(k, _)| *k == key) {
+                    Some((_, slots)) => *slots,
+                    None => {
+                        let slots = world.field_slots(col);
+                        slot_cache.push((key, slots));
+                        slots
+                    }
+                };
+                entity_field_at_slots(row, slots, world).num()
             }
             ProjectorNum::Expr(_) => Err("collider: expression slot on the direct path".into()),
         }
@@ -360,7 +372,7 @@ pub(super) fn materialize_direct_colliders(
                 };
                 let slot = CapsuleChainSlot {
                     sample_set,
-                    u_max: spec.u_max.as_ref().map(&num).transpose()?.unwrap_or(10.0),
+                    u_max: spec.u_max.as_ref().map(&mut num).transpose()?.unwrap_or(10.0),
                     width: num(&spec.width)?,
                 };
                 let radius = num(&spec.radius)?;
