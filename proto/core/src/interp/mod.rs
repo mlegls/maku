@@ -136,9 +136,6 @@ pub enum Val {
     Evolve(Rc<EvolveDyn>),
     Builtin(Rc<str>),
     Handle(EntityRef),
-    /// A deferred signal expression (shared stateful instance, §5): forced
-    /// when referenced inside a scan context.
-    Thunk(Rc<(Form, Env)>),
     StageExit(Rc<StageExitSlot>),
     StageExitPose { slot: Rc<StageExitSlot>, field: StageExitField },
     /// The pattern instance's cell scope (name → cell id), bound in the Env
@@ -487,13 +484,6 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 .ok_or_else(|| format!("host does not provide channel {}", name)),
             name => {
                 if let Some(v) = env.lookup(name) {
-                    // a deferred signal (shared scan) forces inside scan contexts
-                    if ctx.scan.is_some() {
-                        if let Val::Thunk(t) = &v {
-                            let (f, e) = &**t;
-                            return evaluate(f, e, ctx, world);
-                        }
-                    }
                     return Ok(v);
                 }
                 if !ctx.signal_scope {
@@ -1286,16 +1276,6 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     Some(default) => evaluate(default, env, ctx, world),
                     None => Ok(Val::Nothing),
                 };
-            }
-            name if scan_builtin_spec(name).is_some() => {
-                if ctx.scan.is_none() {
-                    // deferred shared instance (§5): forced in scan contexts
-                    return Ok(Val::Thunk(Rc::new((
-                        Form::List(items.to_vec().into()),
-                        env.clone(),
-                    ))));
-                }
-                return sf_stateful(name, items, env, ctx, world);
             }
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_unbound_axis(&items[1], env) => {
@@ -3250,91 +3230,6 @@ fn sf_sited_evolve(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) 
     Ok(cell.state)
 }
 
-fn sf_stateful(
-    which: &str,
-    items: &[Form],
-    env: &Env,
-    ctx: &mut Ctx,
-    world: &mut World,
-) -> Result<Val, String> {
-    let scan = ctx.scan.clone().unwrap();
-    let (key, site, advance, dt) = {
-        let mut io = scan.borrow_mut();
-        let base = io.dense_base.expect("scan context missing stable lowered base id");
-        let site = MotionStateKey::ScanSite { base, index: io.counter as u32 };
-        io.counter += 1;
-        (site, site, io.advance, io.dt)
-    };
-    match which {
-        "slew" => {
-            // (slew rate init? target)
-            let rate = evaluate(&items[1], env, ctx, world)?.num()?;
-            let (init, target_form) = if items.len() > 3 {
-                (Some(evaluate(&items[2], env, ctx, world)?.num()?), &items[3])
-            } else {
-                (None, &items[2])
-            };
-            let target = evaluate(target_form, env, ctx, world)?.num()?;
-            let stored = {
-                let io = scan.borrow();
-                io.readers
-                    .as_ref()
-                    .and_then(|readers| (readers.n2)(site))
-                    .or_else(|| match io.state.get(&key) {
-                        Some(Cell::N(v)) => Some(*v),
-                        _ => None,
-                    })
-                    .map(|v| v[0])
-            };
-            let mut cur = stored.unwrap_or(init.unwrap_or(target));
-            if advance {
-                let d = shortest_arc(cur, target);
-                cur += d.clamp(-rate * dt, rate * dt);
-                let next = [cur, 0.0];
-                let mut io = scan.borrow_mut();
-                if io.mirror_legacy {
-                    io.state.insert(key, Cell::N(next));
-                }
-                io.n2_writes.push((site, next));
-            }
-            Ok(Val::Num(cur))
-        }
-        "smooth" => {
-            // (smooth k target): one-pole follower, per tick
-            let k = evaluate(&items[1], env, ctx, world)?.num()?;
-            let target = evaluate(&items[2], env, ctx, world)?;
-            let (tx, ty) = match target {
-                Val::Pose(p) => (p.x, p.y),
-                Val::Num(x) => (x, 0.0),
-                v => return Err(format!("smooth: bad target {:?}", v)),
-            };
-            let stored = {
-                let io = scan.borrow();
-                io.readers
-                    .as_ref()
-                    .and_then(|readers| (readers.n2)(site))
-                    .or_else(|| match io.state.get(&key) {
-                        Some(Cell::N(v)) => Some(*v),
-                        _ => None,
-                    })
-            };
-            let [mut x, mut y] = stored.unwrap_or([tx, ty]);
-            if advance {
-                x += k * (tx - x);
-                y += k * (ty - y);
-                let next = [x, y];
-                let mut io = scan.borrow_mut();
-                if io.mirror_legacy {
-                    io.state.insert(key, Cell::N(next));
-                }
-                io.n2_writes.push((site, next));
-            }
-            Ok(Val::Pose(Pose::point(x, y)))
-        }
-        _ => unreachable!(),
-    }
-}
-
 /// (stages (stage dur sig) (until pred sig) (forever sig-or-fn) ...)
 fn sf_stages(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     let mut segs = Vec::new();
@@ -3707,18 +3602,11 @@ mod tests {
     }
 
     #[test]
-    fn motion_state_schema_collects_scan_sites() {
+    fn motion_state_schema_does_not_recognize_scan_sites_by_name() {
         let Val::DynPose(d) = ev("(vel (cart m\"smooth(0.5, 4)\" m\"slew(10, 0, 90)\"))") else { panic!() };
         let schema = collect_motion_state_schema(&DynFigure::pose(d));
-        assert_eq!(schema.n2_keys.len(), 3, "vel plus smooth/slew state slots");
-        assert!(schema
-            .n2_keys
-            .iter()
-            .any(|key| matches!(key, MotionStateKey::ScanSite { index: 0, .. })));
-        assert!(schema
-            .n2_keys
-            .iter()
-            .any(|key| matches!(key, MotionStateKey::ScanSite { index: 1, .. })));
+        assert_eq!(schema.n2_keys.len(), 1, "vel numeric state slot");
+        assert!(schema.val_keys.is_empty(), "unexpanded names are not scan sites");
     }
 
     #[test]

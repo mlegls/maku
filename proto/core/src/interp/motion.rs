@@ -23,7 +23,7 @@ pub enum MotionStateKey {
     /// Stable lowered node id for dense entity state.
     Node(MotionNodeId),
     /// Expression-local stateful sites under a scanned node. These are
-    /// discovered from scan builtin specs during expression lowering.
+    /// discovered from sited evolves during expression lowering.
     ScanSite { base: MotionNodeId, index: u32 },
     /// A stage segment's exit parameter cell (pos/vel), written at the stage
     /// boundary. Keyed by the slot token's stable lowered id — slot ptrs are
@@ -240,23 +240,6 @@ impl<'a> MotionStepCtx<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScanStateShape {
-    N2,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScanBuiltinSpec {
-    pub state: ScanStateShape,
-}
-
-pub fn scan_builtin_spec(name: &str) -> Option<ScanBuiltinSpec> {
-    match name {
-        "slew" | "smooth" => Some(ScanBuiltinSpec { state: ScanStateShape::N2 }),
-        _ => None,
-    }
-}
-
 /// Frame smart constructor: folds constant parents at build time.
 /// Pose composition is associative SE(2), and nodes are immutable after
 /// construction, so Frame(Const a, Const b) is Const(a∘b) and
@@ -286,14 +269,6 @@ pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionS
         return MotionStateKey::Node(id);
     }
     panic!("motion node has no stable lowered id for pointer {ptr:#x}")
-}
-
-pub(crate) fn shortest_arc(from: f64, to: f64) -> f64 {
-    let mut d = (to - from).rem_euclid(360.0);
-    if d > 180.0 {
-        d -= 360.0;
-    }
-    d
 }
 
 #[derive(Debug)]
@@ -619,14 +594,7 @@ pub fn collect_scan_sites(
         Form::List(items) => {
             let mut index = start_index;
             if let Some(Form::Sym(s)) = items.first() {
-                if let Some(spec) = scan_builtin_spec(s) {
-                    match spec.state {
-                        ScanStateShape::N2 => {
-                            schema.intern_n2(MotionStateKey::ScanSite { base, index });
-                        }
-                    }
-                    index += 1;
-                } else if &**s == "evolve" {
+                if &**s == "evolve" {
                     // a sited evolve: expression-embedded stateful signal,
                     // Val state at the site (evolve-reexpression-design.md)
                     schema.intern_val(MotionStateKey::ScanSite { base, index });
@@ -657,7 +625,7 @@ pub(crate) fn form_site_count(form: &Form) -> u32 {
     match form {
         Form::List(items) => {
             let own = match items.first() {
-                Some(Form::Sym(s)) if scan_builtin_spec(s).is_some() || &**s == "evolve" => 1,
+                Some(Form::Sym(s)) if &**s == "evolve" => 1,
                 _ => 0,
             };
             own + items.iter().map(form_site_count).sum::<u32>()

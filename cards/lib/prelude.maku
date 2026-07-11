@@ -123,3 +123,26 @@
   `(seq
      (move ~entity (line-to (- ~dest (:pos ~entity))) (fill-ease ~ease 0 ~dur))
      (wait ~dur)))
+
+;; slew: rate-limited approach to a target angle, shortest arc in
+;; degrees. (slew rate target) or (slew rate init target). The step is
+;; the exact lib translation of the old engine builtin: d = euclidean
+;; mod of (target - s) into [0,360), fold >180 down, clamp to rate*dt.
+(defmacro slew [rate & args]
+  (let [init (if (= (count args) 2) (nth args 0) (nth args 1))
+        target (if (= (count args) 2) (nth args 1) (nth args 0))]
+    `(evolve ~init
+       (fn [s c]
+         (let [d (mod (- ~target s) 360)
+               d (if (> d 180) (- d 360) d)
+               lim (* ~rate (:dt c))]
+           (+ s (max (- 0 lim) (min lim d))))))))
+
+;; smooth: one-pole follower toward a point target, per tick.
+;; (smooth k target); target and state are point poses.
+(defmacro smooth [k target]
+  `(evolve ~target
+     (fn [s c]
+       (let [tv ~target]
+         (cart (+ (:x s) (* ~k (- (:x tv) (:x s))))
+               (+ (:y s) (* ~k (- (:y tv) (:y s)))))))))

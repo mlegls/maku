@@ -3818,8 +3818,8 @@ fn sited_evolve_advances_once_per_tick_and_persists() {
 
 #[test]
 fn sited_evolve_reproduces_slew() {
-    // The slew semantics written as a sited evolve must match the slew
-    // builtin tick for tick (the step-3 re-expression contract).
+    // The prelude slew macro must match a hand-written sited evolve tick
+    // for tick (the step-3 re-expression contract).
     const CARD: &str = r#"
 (defpattern p []
   (par
@@ -3835,7 +3835,7 @@ fn sited_evolve_reproduces_slew() {
         let b = sim.world.entities.sampled_pose(1, sim.world.tick - 1).unwrap();
         assert!(
             (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9,
-            "slew builtin vs sited evolve diverged at tick {}: ({}, {}) vs ({}, {})",
+            "slew macro vs sited evolve diverged at tick {}: ({}, {}) vs ({}, {})",
             sim.world.tick,
             a.x,
             a.y,
@@ -3858,19 +3858,20 @@ fn sited_evolve_counter_skips_hold_step_regions() {
     sim.step().unwrap();
     let slew_site = {
         let schema = sim.world.entities.motion_schema(0).unwrap();
-        assert_eq!(schema.val_keys.len(), 1, "evolve val site");
-        assert_eq!(schema.n2_keys.len(), 2, "vel state plus slew site");
+        assert_eq!(schema.val_keys.len(), 2, "evolve and slew val sites");
+        assert_eq!(schema.n2_keys.len(), 1, "vel state");
         schema
-            .n2_keys
+            .val_keys
             .iter()
             .copied()
-            .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
+            .find(|key| matches!(key, MotionStateKey::ScanSite { index: 1, .. }))
             .unwrap()
     };
     for _ in 0..3 {
         sim.step().unwrap();
     }
-    let [angle, _] = sim.world.entities.state_n2(0, slew_site).unwrap();
+    let cell = sim.world.entities.state_val(0, slew_site).unwrap();
+    let Val::Num(angle) = cell.state else { panic!("numeric slew state, got {:?}", cell.state) };
     let expected = 4.0 * 720.0 / DEFAULT_TICK_RATE;
     assert!((angle - expected).abs() < 1e-9, "slew site aligned after evolve skip: {angle} (expected {expected})");
 }
@@ -3956,7 +3957,8 @@ fn spawned_entity_rows_carry_motion_schema() {
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
     let schema = sim.world.entities.motion_schema(0).unwrap();
-    assert_eq!(schema.n2_keys.len(), 2, "vel plus slew scan-site state");
+    assert_eq!(schema.n2_keys.len(), 1, "vel integrator state");
+    assert_eq!(schema.val_keys.len(), 1, "slew evolve state");
     assert_eq!(schema.dyn_keys.len(), 0);
 }
 
@@ -3996,14 +3998,14 @@ fn scan_sites_write_dense_state_slots() {
         .entities
         .motion_schema(0)
         .unwrap()
-        .n2_keys
+        .val_keys
         .iter()
         .copied()
         .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
         .unwrap();
-    let [angle, aux] = sim.world.entities.state_n2(0, key).unwrap();
+    let cell = sim.world.entities.state_val(0, key).unwrap();
+    let Val::Num(angle) = cell.state else { panic!("numeric slew state, got {:?}", cell.state) };
     assert!((angle - 6.0).abs() < 1e-9, "dense slew angle: {angle}");
-    assert_eq!(aux, 0.0);
 }
 
 #[test]
@@ -4019,13 +4021,14 @@ fn numeric_motion_reads_dense_state_before_legacy_map() {
         .entities
         .motion_schema(0)
         .unwrap()
-        .n2_keys
+        .val_keys
         .iter()
         .copied()
         .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
         .unwrap();
     sim.step().unwrap();
-    let [angle, _] = sim.world.entities.state_n2(0, key).unwrap();
+    let cell = sim.world.entities.state_val(0, key).unwrap();
+    let Val::Num(angle) = cell.state else { panic!("numeric slew state, got {:?}", cell.state) };
     assert!((angle - 12.0).abs() < 1e-9, "dense slew angle after legacy clear: {angle}");
 }
 
@@ -4068,6 +4071,9 @@ fn entity_motion_writes_dense_without_entity_state() {
     let schema = sim.world.entities.motion_schema(0).unwrap();
     for key in schema.n2_keys.iter().copied() {
         assert!(sim.world.entities.state_n2(0, key).is_some());
+    }
+    for key in schema.val_keys.iter().copied() {
+        assert!(sim.world.entities.state_val(0, key).is_some());
     }
     assert!(schema.dyn_keys.is_empty());
 }
