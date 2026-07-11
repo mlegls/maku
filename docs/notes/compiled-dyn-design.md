@@ -212,6 +212,36 @@ scatter. Requires spec-store dedup of spawn-site programs (the existing
   (rules emit ordered effects — those stay sequential; only the pure
   per-row math compiles).
 
+The RENDERER half of the rule/projector piece is DONE (round 8, out of the
+planned order because `emit`/`%value-or` were the top two profile rows):
+- `deftick` bodies are macroexpanded ONCE at registration (`sf_deftick` runs
+  round-7 `expand_macros` and stores the expanded forms in `StandingRule`) —
+  per-tick macro dispatch in rule bodies is gone, aligned with capture-time
+  expansion semantics (card macros are fixed at load).
+- `interp/rulelower.rs` recognizes the expansion shape
+  `(map (fn [e] (let [p (:pos e)]? (emit :render {literal kw map}))) (entities-where (fn [x] ...)))`
+  — pred must pass the existing `row_predicate`, `:shape` must be a literal
+  `:point`/`:dot`, and each map value must classify as Num/Kw literal,
+  `(:x|:y|:th p)` pose read, `(:field e)` field read, or
+  `(%value-or (:field e) <literal-or-pose-read>)`. All heads
+  shadow-checked against the rule env and sig.defs; any deviation bails the
+  WHOLE form to the interpreter (all-or-nothing, same stance as milestone A).
+- Execution (`Sim::run_compiled_tick_form`) resolves predicate symbols once
+  per rule per tick, iterates alive rows in index order, reads the pose via
+  the shared `entity_pose_at` (refactored out of `entity_field_at` so the
+  paths cannot drift), and builds rows through the SAME `RenderRowFields`
+  push/finish the interpreter uses (alias handling, schema checks, and error
+  messages stay identical), pushing straight into `world.render_rows`.
+- MAKU_LOWER_ORACLE=1 dual-runs each compiled form per tick and asserts the
+  emitted `RenderRow`s are exactly equal (RenderRow/RenderData now derive
+  PartialEq; both paths run identical arithmetic so exact f64 equality is
+  correct).
+- Not covered (interpreter fallback, by design): polyline/curve-samples
+  rows (the beam rule — conditionals + deferred geometry), non-literal row
+  maps, extra let bindings, and cull/field-write rules. Those are the
+  remaining rule-lowering surface, alongside numeric row predicates
+  (`(<= (:hp e) 0)`) and projector bodies.
+
 Data-parallelism (rayon over batches) is deliberately NOT part of A/B; the
 compiled form makes it nearly free later (pure lanes, fixed scratch,
 deterministic merge), per the TODO stance.

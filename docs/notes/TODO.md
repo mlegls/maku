@@ -236,6 +236,13 @@ work.
   (b) memoize resolved column slots beside the keyword form (OnceCell,
   must handle not-yet-interned cols), (c) column-major row batching
   (per-tick only; gate on body purity).
+  Round-8 resolution: (a) is DONE for the renderer half — deftick bodies
+  macroexpand once at registration and the sprite-rule shape compiles to a
+  native rule (`interp/rulelower.rs`, oracle-gated; see
+  compiled-dyn-design.md milestone C for the landed shape and bail set) —
+  plus the interpreter-path halves of (b): entity field reads resolve ONE
+  symbol for both stores, and RowPredicate tests intern their symbols once
+  per query instead of per row.
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
