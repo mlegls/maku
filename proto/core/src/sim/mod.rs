@@ -3,6 +3,7 @@
 
 use crate::edn::{read_all, Form};
 use crate::interp::*;
+use crate::model::RenderItem;
 use std::rc::Rc;
 
 mod channels;
@@ -750,7 +751,18 @@ impl Sim {
                             let actual = self.world.render_rows.split_off(before);
                             let value = evaluate(form, &rule.env, &mut self.ctx, &mut self.world)?;
                             self.exec_tick_value(value)?;
-                            assert_eq!(actual.as_slice(), &self.world.render_rows[before..],
+                            // compare EXPANDED rows: the compiled pass may have
+                            // emitted a column batch where the interpreter
+                            // emits rows — expansion is the semantic reference
+                            let mut compiled_rows = Vec::new();
+                            for item in &actual {
+                                item.expand_into(&mut compiled_rows);
+                            }
+                            let mut interp_rows = Vec::new();
+                            for item in &self.world.render_rows[before..] {
+                                item.expand_into(&mut interp_rows);
+                            }
+                            assert_eq!(compiled_rows, interp_rows,
                                 "compiled deftick render rows mismatch for {:?}", form);
                             Ok(())
                         } else {
@@ -831,7 +843,7 @@ impl Sim {
                             _ => return Err(format!("render: field :{key} must be a number or keyword")),
                         }
                     }
-                    self.world.render_rows.push(rc);
+                    self.world.render_rows.push(RenderItem::Row(rc));
                 }
                 return Ok(Some(()));
             }
@@ -844,7 +856,7 @@ impl Sim {
                     row_fields.push_slot(*slot, key, self.eval_compiled_row_val(value, row, pose.as_ref()));
                 }
                 let rendered = row_fields.finish_checked(&mut self.world, &self.ctx.sig, Some(&mut checked))?;
-                self.world.render_rows.push(Rc::new(rendered));
+                self.world.render_rows.push(RenderItem::Row(Rc::new(rendered)));
             }
             Ok(Some(()))
         })();

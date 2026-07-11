@@ -931,8 +931,10 @@ pub struct World {
     /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
     pub symbols: SymbolTable,
-    /// Ephemeral host-facing render rows emitted by tick/render rules for the current tick.
-    pub render_rows: Vec<Rc<RenderRow>>,
+    /// Ephemeral host-facing render output emitted by tick/render rules for
+    /// the current tick, in draw order: interpreted rows one at a time,
+    /// compiled point-rule passes as column batches.
+    pub render_rows: Vec<crate::model::RenderItem>,
     /// Accreted schema for open host-facing render row fields.
     pub render_schema: FxHashMap<FieldName, RenderFieldKind>,
     /// Card-defined standing rules over row domains, run once per tick.

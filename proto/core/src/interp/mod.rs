@@ -2576,7 +2576,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::arr(handles))
         }
         ActionV::Render { row } => {
-            world.render_rows.push(row.clone());
+            world.render_rows.push(crate::model::RenderItem::Row(row.clone()));
             Ok(Val::Nothing)
         }
         ActionV::Manipulate { targets, query, callback } => {

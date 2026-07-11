@@ -8,19 +8,30 @@ pub(super) struct RenderScratch {
     /// nums/syms buffers are reused next tick instead of reallocated.
     /// Rows a host still holds are simply dropped, not pooled.
     pub(super) row_pool: Vec<Rc<RenderRow>>,
+    /// Retired render batches, same uniquely-owned reuse rule as rows.
+    pub(super) batch_pool: Vec<Rc<crate::model::RenderBatch>>,
     /// Matched-row scratch for the compiled deftick scan.
     pub(super) match_rows: Vec<usize>,
 }
 
 impl RenderScratch {
-    /// Retire this tick's render rows, keeping uniquely-owned boxes.
-    pub(super) fn recycle_rows(&mut self, rows: &mut Vec<Rc<RenderRow>>) {
-        for mut row in rows.drain(..) {
-            if let Some(r) = Rc::get_mut(&mut row) {
-                r.data = RenderData::None;
-                r.nums.clear();
-                r.syms.clear();
-                self.row_pool.push(row);
+    /// Retire this tick's render output, keeping uniquely-owned boxes.
+    pub(super) fn recycle_rows(&mut self, items: &mut Vec<RenderItem>) {
+        for item in items.drain(..) {
+            match item {
+                RenderItem::Row(mut row) => {
+                    if let Some(r) = Rc::get_mut(&mut row) {
+                        r.data = RenderData::None;
+                        r.nums.clear();
+                        r.syms.clear();
+                        self.row_pool.push(row);
+                    }
+                }
+                RenderItem::Batch(batch) => {
+                    if Rc::strong_count(&batch) == 1 {
+                        self.batch_pool.push(batch);
+                    }
+                }
             }
         }
     }
@@ -129,10 +140,8 @@ impl Sim {
     pub fn render(&mut self) -> Vec<RenderRow> {
         let sig = &self.ctx.sig;
         let mut out = Vec::new();
-        for row in &self.world.render_rows {
-            if !matches!(row.data, RenderData::None) {
-                out.push(row.as_ref().clone());
-            }
+        for item in &self.world.render_rows {
+            item.expand_into(&mut out);
         }
         let mut scratch = std::mem::take(&mut self.render_scratch);
         scratch.clear_for_entities(self.world.entities.len());
