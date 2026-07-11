@@ -257,6 +257,24 @@ work.
   plus the interpreter-path halves of (b): entity field reads resolve ONE
   symbol for both stores, and RowPredicate tests intern their symbols once
   per query instead of per row.
+  Round-10 finding: head-level rows only covered a fraction of wall time.
+  New phase frames in the profiler (`phase:*`, `sim:motion-readers`,
+  `sig:setup`) attributed the rest: the collision pass was ~65% of
+  aggregate wall — the O(n²) pair loop 992ms of ~2.0s, collider
+  materialization 302ms (an `entity_view` built per entity per tick that
+  static projectors never read). Fixed (sim/collision.rs): x-axis
+  sweep-and-prune over per-entity union AABBs, one narrow-phase visit per
+  unordered pair (overlap is exactly symmetric), stable (i, j) sort
+  reproducing the old fact order that `(collisions ...)` observes, a
+  brute-force dual-run under MAKU_LOWER_ORACLE=1, and a `needs_views`
+  classification skipping view construction for Stable/unscoped
+  projectors. Pairs 992→510ms (rest is genuine near-neighbor density in
+  homing streams / dense rings); walls: reimu 939→629ms, spell-2
+  385→215ms. Remaining fixed-overhead levers, in payoff order:
+  `phase:collide-mat` 266ms self (first pose eval + per-entity readers +
+  projector materialization), `phase:rules` 118ms self, snapshot-free
+  `motion_readers` (77ms self at ~1M calls — the design-doc cheap win #1,
+  still open), `sig:setup` 17ms (Ctx/World per interpreted signal eval).
 - DONE: first expansion-shape intrinsic — `interp/rewrite.rs` is a load-time
   pass over card forms (hooked in `load_card`): structural, alpha-invariant,
   shadow-aware matching of `(if (nothing? ?x) ?d ?x)` → native `%value-or`
