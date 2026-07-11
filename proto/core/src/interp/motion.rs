@@ -941,6 +941,70 @@ fn lower_single_program(form: &Form, env: &Env, sig: &SigEnv, allow_pos: bool) -
     Some(Rc::new(prog))
 }
 
+/// One row's batchable motion step (milestone B): a point figure whose pose
+/// tree is constant wrappers over a single compiled-integrand Vel node.
+/// Stepping such a row is exactly `state += programs(tau, pos=state)·dt` —
+/// no scan sites, no other state cells — so rows sharing the program pair
+/// can run as lanes of one batched program run.
+#[derive(Clone)]
+pub struct VelStepPlan {
+    /// The Vel node itself: its address keys the n2 state slot, and the
+    /// oracle re-runs its integrand through the interpreter.
+    pub vel: Rc<DynNode>,
+    pub ap: Rc<NumProgram>,
+    pub bp: Rc<NumProgram>,
+    pub polar: bool,
+}
+
+pub fn vel_step_plan(fig: &DynFigure, sig: &SigEnv) -> Option<VelStepPlan> {
+    if fig.curve().is_some() {
+        return None;
+    }
+    let mut node = fig.pose_dyn();
+    loop {
+        match &**node {
+            DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
+            DynNode::Vel { a, b, polar, env, programs } => {
+                let (ap, bp) = programs
+                    .get_or_init(|| lower_program_pair(a, b, env, sig, true))
+                    .as_ref()?;
+                return Some(VelStepPlan {
+                    vel: node.clone(),
+                    ap: ap.clone(),
+                    bp: bp.clone(),
+                    polar: *polar,
+                });
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Batch-path oracle: re-run one lane's integrand through the interpreter,
+/// the same check `step_motion_in`'s compiled Vel arm makes per row.
+pub fn oracle_check_vel_step(
+    vel: &DynNode,
+    tau: f64,
+    dt: f64,
+    pos: (f64, f64),
+    got: (f64, f64),
+    sig: &SigEnv,
+    readers: &MotionReaders,
+    tick_rate: f64,
+) -> Result<(), String> {
+    let DynNode::Vel { a, b, polar, env, .. } = vel else {
+        return Ok(());
+    };
+    let key = vel as *const DynNode as usize;
+    let mut state = MotionState::default();
+    let ((ivx, ivy), _) = advance_sites_with_writes(&mut state, key, dt, readers.clone(), false, |scan| {
+        eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some(pos), tick_rate)
+    })?;
+    assert_num_close("vel-batch/a", a, got.0, ivx);
+    assert_num_close("vel-batch/b", b, got.1, ivy);
+    Ok(())
+}
+
 fn assert_num_close(label: &str, form: &Form, got: f64, expected: f64) {
     assert!(
         (got - expected).abs() <= 1e-9,

@@ -2885,6 +2885,33 @@
         }
     }
 
+    /// The batched Vel step (milestone B): every lane's velocity is
+    /// interpreter-checked under the oracle, across polar/cart integrands
+    /// and const-frame wrappers — the fruit-card hot shape.
+    #[test]
+    fn vel_batch_oracle_card_step() {
+        struct OracleGuard;
+        impl Drop for OracleGuard {
+            fn drop(&mut self) {
+                crate::interp::set_oracle_for_tests(false);
+            }
+        }
+
+        crate::interp::set_oracle_for_tests(true);
+        let _guard = OracleGuard;
+        const CARD: &str = r#"
+(defpattern p []
+  (par
+    (spawn (circle 6 ((pose c[0.4 0]) (vel p[(lerp 0.3 1.4 t 0 2.6) 0]))))
+    (spawn (circle 3 (vel (polar (+ 1 (* 0.5 t)) (* 20 t)))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..6 {
+            sim.step().unwrap();
+            assert_eq!(sim.render().len(), 9);
+        }
+    }
+
     #[test]
     fn unlowerable_user_fn_signal_falls_back() {
         const FALLBACK: &str = r#"

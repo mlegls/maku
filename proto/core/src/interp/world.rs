@@ -503,6 +503,23 @@ impl EntityStore {
         MotionReaders::for_row_snapshot(RowStateSnapshot { schema, n2, dyns, vals })
     }
 
+    /// Direct n2 column access by schema slot (the batched motion step).
+    /// Reads mirror reader semantics — an absent cell is [0, 0]; writes on
+    /// an absent cell are dropped, matching set_state_n2's silent-false.
+    pub fn state_n2_at_slot(&self, slot: usize, row: usize) -> [f64; 2] {
+        self.state_n2
+            .get(slot)
+            .and_then(|col| col.get(row))
+            .copied()
+            .unwrap_or([0.0, 0.0])
+    }
+
+    pub fn set_state_n2_at_slot(&mut self, slot: usize, row: usize, value: [f64; 2]) {
+        if let Some(cell) = self.state_n2.get_mut(slot).and_then(|col| col.get_mut(row)) {
+            *cell = value;
+        }
+    }
+
     pub fn set_state_n2(&mut self, row: usize, key: MotionStateKey, value: [f64; 2]) -> bool {
         let Some(slot) = self
             .motion_schema(row)

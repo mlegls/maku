@@ -1,39 +1,107 @@
+// Census: how many scanned rows match the milestone-B batchable shape
+// (ConstFrame|Translate)* -> Vel{programs: Some}, and how they group by
+// program-pair pointer within one tick.
 
+use maku::interp::DynNode;
 use maku::sim::Sim;
+use std::collections::HashMap;
+use std::rc::Rc;
 
-fn live_count(sim: &Sim) -> usize {
-    sim.world
-        .entities
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| sim.world.entities.is_alive(*i))
-        .count()
+fn root_chain_vel(node: &Rc<DynNode>) -> Option<&Rc<DynNode>> {
+    match &**node {
+        DynNode::Vel { .. } => Some(node),
+        DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
+            root_chain_vel(child)
+        }
+        _ => None,
+    }
+}
+
+fn node_name(node: &DynNode) -> &'static str {
+    match node {
+        DynNode::Const(_) => "const",
+        DynNode::Linear { .. } => "linear",
+        DynNode::ClosedPt { .. } => "closed-pt",
+        DynNode::Vel { .. } => "vel",
+        DynNode::Translate { .. } => "translate",
+        DynNode::Path { .. } => "path",
+        DynNode::Frame(..) => "frame",
+        DynNode::ConstFrame { .. } => "const-frame",
+        DynNode::Live { .. } => "live",
+        DynNode::Clamp { .. } => "clamp",
+        DynNode::RotExpr { .. } => "rot-expr",
+        DynNode::FnPose(_) => "fn-pose",
+        DynNode::Evolve(_) => "evolve",
+        DynNode::Stages { .. } => "stages",
+    }
+}
+
+fn census(sim: &Sim, label: &str) {
+    let mut scanned = 0usize;
+    let mut alive = 0usize;
+    let mut vel_match = 0usize;
+    let mut vel_compiled = 0usize;
+    let mut root_kinds: HashMap<String, usize> = HashMap::new();
+    let mut groups: HashMap<usize, usize> = HashMap::new();
+    for i in 0..sim.world.entities.len() {
+        if !sim.world.entities.is_alive(i) {
+            continue;
+        }
+        alive += 1;
+        let Some(fig) = sim.world.entities.dyn_figure(i) else {
+            continue;
+        };
+        let root = fig.pose_dyn().clone();
+        *root_kinds.entry(node_name(&root).to_string()).or_default() += 1;
+        if !sim.world.entities.is_scanned(i) {
+            continue;
+        }
+        scanned += 1;
+        if let Some(vel) = root_chain_vel(&root) {
+            vel_match += 1;
+            if let DynNode::Vel { programs, .. } = &**vel {
+                if let Some(Some((ap, _))) = programs.get() {
+                    vel_compiled += 1;
+                    *groups.entry(Rc::as_ptr(ap) as usize).or_default() += 1;
+                }
+            }
+        }
+    }
+    let mut sizes: Vec<usize> = groups.values().copied().collect();
+    sizes.sort_unstable_by(|a, b| b.cmp(a));
+    println!(
+        "{label}: alive={alive} scanned={scanned} vel-chain={vel_match} compiled={vel_compiled} groups={} sizes(top12)={:?}",
+        groups.len(),
+        &sizes[..sizes.len().min(12)]
+    );
+    let mut kinds: Vec<(String, usize)> = root_kinds.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1));
+    println!("  root kinds: {:?}", kinds);
 }
 
 fn main() {
     let cases: &[(&str, &str, usize)] = &[
-        ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.maku", "bowap", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/130_bowap.maku", "bowap-fold", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/020_gsrepeat.maku", "gsrepeat-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/040_spread.maku", "spread-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/060_polar.maku", "polar-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/080_aimed.maku", "aimed-demo", 400),
-        ("/Users/mlegls/dev/Maku/cards/translations/070_dynamic_lasers.maku", "lasers-demo", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/110_exploding_stars.maku", "exploding-stars", 400),
-        ("/Users/mlegls/dev/Maku/cards/translations/200_cradle.maku", "cradle", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.maku", "reimu-free-fire", 300),
-        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.maku", "reimu-focus", 400),
-        ("/Users/mlegls/dev/Maku/cards/translations/player_homing.maku", "fantasy-seal", 700),
-        ("/Users/mlegls/dev/Maku/cards/translations/ph_boss2_spell2.maku", "spell-2", 900),
+        ("cards/tutorials/t03.maku", "ex3-fruit-colors", 900),
+        ("cards/tutorials/t03.maku", "ex5-chimera", 900),
+        ("cards/translations/130_bowap.maku", "bowap", 300),
+        ("cards/translations/200_cradle.maku", "cradle", 300),
+        ("cards/translations/player_homing.maku", "fantasy-seal", 700),
+        ("cards/translations/ph_boss2_spell2.maku", "spell-2", 900),
     ];
     for (path, pattern, ticks) in cases {
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
-            Err(e) => { println!("READ FAIL {}: {}", path, e); continue; }
+            Err(e) => {
+                println!("READ FAIL {}: {}", path, e);
+                continue;
+            }
         };
         let mut sim = match Sim::load(&src, Some(pattern)) {
             Ok(s) => s,
-            Err(e) => { println!("LOAD FAIL {} [{}]: {}", path, pattern, e); continue; }
+            Err(e) => {
+                println!("LOAD FAIL {} [{}]: {}", path, pattern, e);
+                continue;
+            }
         };
         let mut failed = false;
         for k in 0..*ticks {
@@ -44,13 +112,7 @@ fn main() {
             }
         }
         if !failed {
-            println!(
-                "OK   {} [{}]: {} live / {} total entities",
-                path,
-                pattern,
-                live_count(&sim),
-                sim.world.entities.len()
-            );
+            census(&sim, &format!("{path} [{pattern}] @{ticks}"));
         }
     }
 }

@@ -62,9 +62,76 @@ pub struct Sim {
     ctx: Ctx,
     collider_scratch: ColliderScratch,
     render_scratch: render::RenderScratch,
+    vel_batch: VelBatchScratch,
     /// (defchannel $name expr) rules from the loaded card (stdlib included),
     /// evaluated once per tick at the end of refresh_channels.
     card_channels: Vec<(Rc<str>, Form)>,
+}
+
+/// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
+/// chain of constant wrappers over one compiled-integrand Vel node step as
+/// lanes of a single batched program run, grouped by program-pair address.
+/// Rebuilt every tick; groups recycle through `pool` to keep lane capacity.
+#[derive(Default)]
+struct VelBatchScratch {
+    groups: Vec<VelBatchGroup>,
+    /// (a-program ptr, b-program ptr) → index into `groups`, valid for one
+    /// tick (the plans' Rcs keep the keyed programs alive for the tick).
+    index: crate::fxhash::FxHashMap<(usize, usize), usize>,
+    pool: Vec<VelBatchGroup>,
+    regs: Vec<f64>,
+}
+
+struct VelBatchGroup {
+    plan: VelStepPlan,
+    /// (row, n2 slot) per lane.
+    rows: Vec<(usize, usize)>,
+    tau: Vec<f64>,
+    pos: Vec<[f64; 2]>,
+    va: Vec<f64>,
+    vb: Vec<f64>,
+}
+
+impl VelBatchScratch {
+    fn begin_tick(&mut self) {
+        self.index.clear();
+        self.pool.extend(self.groups.drain(..).map(|mut g| {
+            g.rows.clear();
+            g.tau.clear();
+            g.pos.clear();
+            g.va.clear();
+            g.vb.clear();
+            g
+        }));
+    }
+
+    fn push_lane(
+        &mut self,
+        plan: VelStepPlan,
+        row: usize,
+        slot: usize,
+        tau: f64,
+        pos: [f64; 2],
+    ) {
+        let key = (Rc::as_ptr(&plan.ap) as usize, Rc::as_ptr(&plan.bp) as usize);
+        let idx = *self.index.entry(key).or_insert_with(|| {
+            let mut g = self.pool.pop().unwrap_or_else(|| VelBatchGroup {
+                plan: plan.clone(),
+                rows: Vec::new(),
+                tau: Vec::new(),
+                pos: Vec::new(),
+                va: Vec::new(),
+                vb: Vec::new(),
+            });
+            g.plan = plan;
+            self.groups.push(g);
+            self.groups.len() - 1
+        });
+        let g = &mut self.groups[idx];
+        g.rows.push((row, slot));
+        g.tau.push(tau);
+        g.pos.push(pos);
+    }
 }
 
 #[derive(Clone, Default)]
@@ -131,6 +198,7 @@ impl Clone for Sim {
             ctx,
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
+            vel_batch: VelBatchScratch::default(),
             card_channels: self.card_channels.clone(),
         }
     }
@@ -188,6 +256,7 @@ impl Sim {
             ctx,
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
+            vel_batch: VelBatchScratch::default(),
             card_channels: card.channels,
         })
     }
@@ -305,6 +374,7 @@ impl Sim {
             ctx,
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
+            vel_batch: VelBatchScratch::default(),
             card_channels: card.channels.clone(),
         })
     }
@@ -328,6 +398,77 @@ impl Sim {
 
     fn motion_readers_inner(&self, row: usize) -> MotionReaders {
         self.world.entities.row_motion_readers(row)
+    }
+
+    /// Classify a row for the batched Vel step: the plan plus the Vel
+    /// node's n2 slot resolved through the row's schema. None falls back
+    /// to the general per-row walk.
+    fn vel_batch_lane(
+        &self,
+        dyn_figure: &DynFigure,
+        row: usize,
+        sig: &SigEnv,
+    ) -> Option<(VelStepPlan, usize)> {
+        let plan = vel_step_plan(dyn_figure, sig)?;
+        let schema = self.world.entities.motion_schema(row)?;
+        let id = schema
+            .node_ids
+            .get(&(Rc::as_ptr(&plan.vel) as usize))
+            .copied()?;
+        let slot = schema.n2_slots.get(&MotionStateKey::Node(id))?.0 as usize;
+        Some((plan, slot))
+    }
+
+    /// Run the tick's collected Vel batches: per group, one lane-batched
+    /// program run per component, then `state += v·dt` written straight to
+    /// the n2 columns — the same value and write the per-row compiled arm
+    /// of `step_motion_in` produces for each lane.
+    fn run_vel_batches(&mut self, dt: f64, sig: &SigEnv) -> Result<(), String> {
+        if self.vel_batch.groups.is_empty() {
+            return Ok(());
+        }
+        let tick_rate = self.world.tick_rate();
+        let oracle = oracle_enabled();
+        let mut groups = std::mem::take(&mut self.vel_batch.groups);
+        let mut regs = std::mem::take(&mut self.vel_batch.regs);
+        for g in &mut groups {
+            let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
+            run_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &mut regs, &mut g.va);
+            run_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &mut regs, &mut g.vb);
+            for l in 0..g.rows.len() {
+                let (av, bv) = (g.va[l], g.vb[l]);
+                let (vx, vy) = if g.plan.polar {
+                    let (s, c) = bv.to_radians().sin_cos();
+                    (av * c, av * s)
+                } else {
+                    (av, bv)
+                };
+                let (row, slot) = g.rows[l];
+                let [x, y] = g.pos[l];
+                if oracle {
+                    let readers = self.motion_readers(row);
+                    oracle_check_vel_step(
+                        &g.plan.vel,
+                        g.tau[l],
+                        dt,
+                        (x, y),
+                        (vx, vy),
+                        sig,
+                        &readers,
+                        tick_rate,
+                    )?;
+                }
+                self.world
+                    .entities
+                    .set_state_n2_at_slot(slot, row, [x + vx * dt, y + vy * dt]);
+            }
+            if let Some(f) = probe {
+                crate::interp::profile::close("dyn:vel-batch", f);
+            }
+        }
+        self.vel_batch.groups = groups;
+        self.vel_batch.regs = regs;
+        Ok(())
     }
 
     pub(crate) fn channel_u64(&self, name: &str) -> u64 {
@@ -712,12 +853,23 @@ impl Sim {
         let dt = self.world.tick_dt();
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
+        // Batchable rows (constant wrappers over one compiled-integrand Vel;
+        // see VelBatchScratch) collect lanes instead of stepping inline;
+        // everything else takes the general per-row walk. A step only ever
+        // touches its own row's state cells, so running the batches after
+        // the walk is unobservable.
+        self.vel_batch.begin_tick();
         for i in 0..self.world.entities.len() {
             if self.world.entities.is_alive(i) && self.world.entities.is_scanned(i) {
                 let tau = self.world.entity_motion_tau(i, tick);
                 let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
                     continue;
                 };
+                if let Some((plan, slot)) = self.vel_batch_lane(&dyn_figure, i, &sig) {
+                    let pos = self.world.entities.state_n2_at_slot(slot, i);
+                    self.vel_batch.push_lane(plan, i, slot, tau, pos);
+                    continue;
+                }
                 let readers = self.motion_readers(i);
                 let mut state = MotionState::default();
                 let mut n2_writes = Vec::new();
@@ -746,6 +898,7 @@ impl Sim {
                 }
             }
         }
+        self.run_vel_batches(dt, &sig)?;
         if let Some(f) = probe {
             crate::interp::profile::close("phase:scan-step", f);
         }

@@ -619,6 +619,215 @@ pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, regs: &mu
     prog.ops.last().map(|op| regs[op_dst(*op) as usize]).unwrap_or(0.0)
 }
 
+/// Lane-batched program run over per-lane (t, pos) inputs (u is one shared
+/// scalar): one op decode per op for the whole batch instead of per entity.
+/// Each lane computes exactly the ops `run` would execute with that lane's
+/// inputs, in the same order, so a lane's result is bit-identical to the
+/// scalar run. The builder allocates a fresh destination register for every
+/// op, so `dst` is strictly greater than any operand register and
+/// `split_at_mut` separates the write lanes from the read lanes.
+///
+/// Registers live at `regs[r * n + lane]`. Appends the n results to `out`
+/// (0.0 per lane for an empty program, matching `run`).
+pub fn run_lanes(
+    prog: &NumProgram,
+    u: f64,
+    tau: &[f64],
+    pos: &[[f64; 2]],
+    regs: &mut Vec<f64>,
+    out: &mut Vec<f64>,
+) {
+    let n = tau.len();
+    debug_assert_eq!(pos.len(), n);
+    regs.clear();
+    regs.resize(prog.n_regs * n, 0.0);
+    for op in &prog.ops {
+        let dst = op_dst(*op) as usize;
+        let (src, d) = regs.split_at_mut(dst * n);
+        let d = &mut d[..n];
+        let at = |r: u16, l: usize| src[r as usize * n + l];
+        match *op {
+            NumOp::Const { v, .. } => d.fill(v),
+            NumOp::T { .. } => d.copy_from_slice(tau),
+            NumOp::U { .. } => d.fill(u),
+            NumOp::PosX { .. } => {
+                for l in 0..n {
+                    d[l] = pos[l][0];
+                }
+            }
+            NumOp::PosY { .. } => {
+                for l in 0..n {
+                    d[l] = pos[l][1];
+                }
+            }
+            NumOp::Add { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l) + at(b, l);
+                }
+            }
+            NumOp::Sub { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l) - at(b, l);
+                }
+            }
+            NumOp::Mul { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l) * at(b, l);
+                }
+            }
+            NumOp::Div { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l) / at(b, l);
+                }
+            }
+            NumOp::Eq { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = mask_num((at(a, l) - at(b, l)).abs() < 1e-9);
+                }
+            }
+            NumOp::Lt { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = mask_num(at(a, l) < at(b, l));
+                }
+            }
+            NumOp::Gt { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = mask_num(at(a, l) > at(b, l));
+                }
+            }
+            NumOp::Lte { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = mask_num(at(a, l) <= at(b, l));
+                }
+            }
+            NumOp::Gte { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = mask_num(at(a, l) >= at(b, l));
+                }
+            }
+            NumOp::Neg { x, .. } => {
+                for l in 0..n {
+                    d[l] = -at(x, l);
+                }
+            }
+            NumOp::Not { x, .. } => {
+                for l in 0..n {
+                    d[l] = mask_num(at(x, l) == 0.0);
+                }
+            }
+            NumOp::Abs { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).abs();
+                }
+            }
+            NumOp::Floor { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).floor();
+                }
+            }
+            NumOp::Ceil { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).ceil();
+                }
+            }
+            NumOp::Round { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).round();
+                }
+            }
+            NumOp::Sin { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).to_radians().sin();
+                }
+            }
+            NumOp::Cos { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).to_radians().cos();
+                }
+            }
+            NumOp::Sqrt { x, .. } => {
+                for l in 0..n {
+                    d[l] = at(x, l).sqrt();
+                }
+            }
+            NumOp::Pow { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l).powf(at(b, l));
+                }
+            }
+            NumOp::Min { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l).min(at(b, l));
+                }
+            }
+            NumOp::Max { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l).max(at(b, l));
+                }
+            }
+            NumOp::Mod { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = at(a, l).rem_euclid(at(b, l));
+                }
+            }
+            NumOp::Quot { a, b, .. } => {
+                for l in 0..n {
+                    d[l] = (at(a, l) / at(b, l)).trunc();
+                }
+            }
+            NumOp::Sine { period, amp, x, .. } => {
+                for l in 0..n {
+                    d[l] = at(amp, l) * (std::f64::consts::TAU * at(x, l) / at(period, l)).sin();
+                }
+            }
+            NumOp::Lerp { a, b, ctrl, v1, v2, .. } => {
+                for l in 0..n {
+                    let r = ((at(ctrl, l) - at(a, l)) / (at(b, l) - at(a, l))).clamp(0.0, 1.0);
+                    d[l] = at(v1, l) + r * (at(v2, l) - at(v1, l));
+                }
+            }
+            NumOp::Lerp3 { a1, b1, a2, b2, ctrl, v1, v2, v3, .. } => {
+                for l in 0..n {
+                    d[l] = if at(ctrl, l) < at(a2, l) {
+                        let r = ((at(ctrl, l) - at(a1, l)) / (at(b1, l) - at(a1, l))).clamp(0.0, 1.0);
+                        at(v1, l) + r * (at(v2, l) - at(v1, l))
+                    } else {
+                        let r = ((at(ctrl, l) - at(a2, l)) / (at(b2, l) - at(a2, l))).clamp(0.0, 1.0);
+                        at(v2, l) + r * (at(v3, l) - at(v2, l))
+                    };
+                }
+            }
+            NumOp::Ease { kind, x, .. } => {
+                for l in 0..n {
+                    d[l] = ease_num(kind, at(x, l));
+                }
+            }
+            NumOp::LerpSmooth { kind, a, b, ctrl, v1, v2, .. } => {
+                for l in 0..n {
+                    let r = ((at(ctrl, l) - at(a, l)) / (at(b, l) - at(a, l))).clamp(0.0, 1.0);
+                    d[l] = at(v1, l) + ease_num(kind, r) * (at(v2, l) - at(v1, l));
+                }
+            }
+            NumOp::Lssht { c, pv, f1, f2, .. } => {
+                for l in 0..n {
+                    let c = at(c, l);
+                    let pv = at(pv, l);
+                    let _w = 1.0 / (1.0 + (c.abs() * 4.0 * (pv - pv)).exp());
+                    let m = (c * at(f1, l)).exp() + (c * at(f2, l)).exp();
+                    d[l] = m.ln() / c;
+                }
+            }
+        }
+    }
+    match prog.ops.last() {
+        Some(op) => {
+            let base = op_dst(*op) as usize * n;
+            out.extend_from_slice(&regs[base..base + n]);
+        }
+        None => out.extend(std::iter::repeat(0.0).take(n)),
+    }
+}
+
 fn mask_num(b: bool) -> f64 {
     if b { 1.0 } else { 0.0 }
 }
@@ -841,6 +1050,44 @@ mod tests {
         assert!(lower_num_form(&read("(:speed exit)"), &env, &no_defs()).is_none());
         assert!(lower_num_form(&read("(:x (:vel nothere))"), &env, &no_defs()).is_none());
         assert!(lower_num_form(&read("(:vel exit)"), &env, &no_defs()).is_none());
+    }
+
+    #[test]
+    fn lanes_match_scalar_run() {
+        // every op class the lowering can emit, exercised across lanes with
+        // distinct (t, pos) inputs — the batch runner must be bit-identical
+        // to the scalar runner per lane
+        let srcs = [
+            "(+ (* 2 t) (- (:x pos) (/ (:y pos) 3)))",
+            "(min (max t 2) (mod t 7))",
+            "(sine 12.94 2 t)",
+            "(lerp 0.3 1.4 t 0 2.6)",
+            "(lerp3 0 1 1 2 t 0 5 9)",
+            "(lerpsmooth eiosine 0 4 t 0 480)",
+            "(if (< t 3) (sqrt (abs t)) (pow t 0.5))",
+            "(quot (floor (* t 3)) (ceil (+ t 0.1)))",
+            "(einsine (mod t 1))",
+            "(sin (* 10 t))",
+            "(round (cos t))",
+        ];
+        for src in srcs {
+            let Some(prog) = lower_num_form(&read(src), &Env::empty(), &no_defs()) else {
+                continue;
+            };
+            let tau: Vec<f64> = (0..17).map(|i| i as f64 * 0.37 - 2.0).collect();
+            let pos: Vec<[f64; 2]> = (0..17).map(|i| [i as f64 * 1.3, 5.0 - i as f64]).collect();
+            let mut regs = Vec::new();
+            let mut out = Vec::new();
+            run_lanes(&prog, 0.25, &tau, &pos, &mut regs, &mut out);
+            for l in 0..tau.len() {
+                let want = run_num_program(&prog, tau[l], 0.25, Some((pos[l][0], pos[l][1])));
+                let got = out[l];
+                assert!(
+                    got == want || (got.is_nan() && want.is_nan()),
+                    "{src} lane {l}: batch {got} vs scalar {want}"
+                );
+            }
+        }
     }
 
     #[test]
