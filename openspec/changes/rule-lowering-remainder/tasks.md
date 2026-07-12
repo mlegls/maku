@@ -6,10 +6,10 @@ Gate for every task: core suite green; lowering-touching tasks also pass the
 
 ## 1. Recognizer: short-circuit conjunction chains
 
-- [ ] 1.1 Capture the actual post-expansion shape of the lib's short-circuit
+- [x] 1.1 Capture the actual post-expansion shape of the lib's short-circuit
       conjunction (`and`) and disjunction (`or`) macros in unit tests
       (expand the real macros; don't hand-write the expected forms).
-- [ ] 1.2 Extend `row_predicate` to fold the `and` if-chain shape into the
+- [x] 1.2 Extend `row_predicate` to fold the `and` if-chain shape into the
       existing conjunct list; recognize the `or` chain shape only to return
       `None`. Shadow-check every structural head. Unit tests: folded chain
       equals the equivalent `*` form's tests; shadowed heads bail; `or`

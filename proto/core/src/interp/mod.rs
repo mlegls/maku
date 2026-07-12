@@ -1962,6 +1962,88 @@ fn row_num(form: &Form, param: &str, env: &Env, ctx: &Ctx) -> Option<RowNum> {
     }
 }
 
+fn contains_sym(form: &Form, name: &str) -> bool {
+    match form {
+        Form::Sym(s) => s.as_ref() == name,
+        Form::List(items) | Form::Vector(items) => items.iter().any(|f| contains_sym(f, name)),
+        Form::Map(kvs) => kvs.iter().any(|(k, v)| contains_sym(k, name) || contains_sym(v, name)),
+        _ => false,
+    }
+}
+
+/// Flatten the short-circuit conjunction expansion shape — a left-nested
+/// `(let [s <acc>] (if s <next> s))` chain — into conjunct forms in
+/// evaluation order. Keys on structure, never on the binder's name. The
+/// binder must not be the row param, and `<next>` (evaluated in the
+/// binder's scope) must not mention it, or the fold would change what the
+/// conjunct sees. The disjunction link `(if s s <next>)` fails the `else ==
+/// binder` check and falls through to the caller's whole-form bail.
+fn sc_and_conjuncts<'a>(
+    form: &'a Form,
+    param: &str,
+    env: &Env,
+    ctx: &Ctx,
+    out: &mut Vec<&'a Form>,
+) -> bool {
+    let Form::List(items) = form else { return false };
+    let [Form::Sym(head), Form::Vector(binds), body] = &items[..] else { return false };
+    if head.as_ref() != "let" || !row_head_unshadowed("let", param, env, ctx) {
+        return false;
+    }
+    let [Form::Sym(binder), acc] = &binds[..] else { return false };
+    if binder.as_ref() == param {
+        return false;
+    }
+    let Form::List(branches) = body else { return false };
+    let [Form::Sym(ifhead), Form::Sym(cond), then, Form::Sym(els)] = &branches[..] else {
+        return false;
+    };
+    if ifhead.as_ref() != "if" || !row_head_unshadowed("if", param, env, ctx) {
+        return false;
+    }
+    if cond != binder || els != binder || contains_sym(then, binder) {
+        return false;
+    }
+    // <acc> evaluates before the binder is bound, so it needs no
+    // binder-scope check: it is either the inner chain link or the first
+    // conjunct.
+    if !sc_and_conjuncts(acc, param, env, ctx, out) {
+        out.push(acc);
+    }
+    out.push(then);
+    true
+}
+
+fn row_test(form: &Form, param: &str, env: &Env, ctx: &Ctx) -> Option<RowTest> {
+    let Form::List(call) = form else { return None };
+    let [Form::Sym(head), left, right] = &call[..] else { return None };
+    if head.as_ref() == "=" && row_head_unshadowed("=", param, env, ctx) {
+        let kw = match (left, right) {
+            (access, Form::Kw(value)) | (Form::Kw(value), access) => {
+                row_access(access, param).map(|field| (field, value.clone()))
+            }
+            _ => None,
+        };
+        if let Some((field, value)) = kw {
+            if matches!(field.as_ref(), "pos" | "vel" | "t" | "tick" | "handle") {
+                return None;
+            }
+            return Some(RowTest::KwEq { field, value });
+        }
+    }
+    let op = match head.as_ref() {
+        "<" => CmpOp::Lt, "<=" => CmpOp::Le, ">" => CmpOp::Gt,
+        ">=" => CmpOp::Ge, "=" => CmpOp::Eq, _ => return None,
+    };
+    if !row_head_unshadowed(head, param, env, ctx)
+        || matches!(left, Form::Kw(_)) || matches!(right, Form::Kw(_)) {
+        return None;
+    }
+    Some(RowTest::NumCmp {
+        op, lhs: row_num(left, param, env, ctx)?, rhs: row_num(right, param, env, ctx)?,
+    })
+}
+
 pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     let Val::Fn { params, body, env } = q else { return None };
     let [Form::Sym(param)] = &params[..] else { return None };
@@ -1969,45 +2051,23 @@ pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
         return None;
     }
     let [body] = &body[..] else { return None };
-    let forms = match body {
+    let mut forms: Vec<&Form> = Vec::new();
+    match body {
         Form::List(items) if matches!(items.first(), Some(Form::Sym(head)) if &**head == "*") => {
             if items.len() < 2 || !row_head_unshadowed("*", param, env, ctx) {
                 return None;
             }
-            &items[1..]
+            forms.extend(items[1..].iter());
         }
-        form => std::slice::from_ref(form),
-    };
-    let mut tests = Vec::with_capacity(forms.len());
-    for form in forms {
-        let Form::List(call) = form else { return None };
-        let [Form::Sym(head), left, right] = &call[..] else { return None };
-        if head.as_ref() == "=" && row_head_unshadowed("=", param, env, ctx) {
-            let kw = match (left, right) {
-                (access, Form::Kw(value)) | (Form::Kw(value), access) => {
-                    row_access(access, param).map(|field| (field, value.clone()))
-                }
-                _ => None,
-            };
-            if let Some((field, value)) = kw {
-                if matches!(field.as_ref(), "pos" | "vel" | "t" | "tick" | "handle") {
-                    return None;
-                }
-                tests.push(RowTest::KwEq { field, value });
-                continue;
+        form => {
+            if !sc_and_conjuncts(form, param, env, ctx, &mut forms) {
+                forms.push(form);
             }
         }
-        let op = match head.as_ref() {
-            "<" => CmpOp::Lt, "<=" => CmpOp::Le, ">" => CmpOp::Gt,
-            ">=" => CmpOp::Ge, "=" => CmpOp::Eq, _ => return None,
-        };
-        if !row_head_unshadowed(head, param, env, ctx)
-            || matches!(left, Form::Kw(_)) || matches!(right, Form::Kw(_)) {
-            return None;
-        }
-        tests.push(RowTest::NumCmp {
-            op, lhs: row_num(left, param, env, ctx)?, rhs: row_num(right, param, env, ctx)?,
-        });
+    }
+    let mut tests = Vec::with_capacity(forms.len());
+    for form in forms {
+        tests.push(row_test(form, param, env, ctx)?);
     }
     Some(RowPredicate { tests })
 }
@@ -3881,6 +3941,79 @@ mod tests {
             let q = evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap();
             assert!(row_predicate(&q, &ctx).is_some(), "{src}");
         }
+    }
+
+    /// Evaluate a predicate fn source with the REAL prelude macros
+    /// expanded first — the same expansion `sf_deftick` performs at rule
+    /// registration — so tests exercise the actual `and`/`or` chain shape,
+    /// not a hand-written imitation.
+    fn expanded_predicate(src: &str) -> Val {
+        let expanded = crate::edn::expand_src("").unwrap();
+        let forms = read_all(&expanded).unwrap();
+        let card = load_card(&forms).unwrap();
+        let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(card.defs.clone());
+        ctx.macros = Rc::new(card.macros.clone());
+        let mut world = World::default();
+        let form = read_one(src).unwrap();
+        let form = expand_macros(&form, &Env::empty(), &mut ctx, &mut world).unwrap();
+        evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut world).unwrap()
+    }
+
+    #[test]
+    fn row_predicate_recognizes_and_chain_expansion() {
+        let ctx = Ctx::default();
+        for (chain, product) in [
+            (
+                "(fn [e] (and (= e.render :beam) (= e.kind :curve)))",
+                "(fn [e] (* (= e.render :beam) (= e.kind :curve)))",
+            ),
+            (
+                "(fn [e] (and (= e.team :enemy) (= e.kind :point) (> (:t e) 8)))",
+                "(fn [e] (* (= e.team :enemy) (= e.kind :point) (> (:t e) 8)))",
+            ),
+            ("(fn [e] (and (= e.team :enemy)))", "(fn [e] (= e.team :enemy))"),
+        ] {
+            let folded = row_predicate(&expanded_predicate(chain), &ctx)
+                .unwrap_or_else(|| panic!("chain should compile: {chain}"));
+            let reference = row_predicate(&predicate(product), &ctx).unwrap();
+            assert_eq!(format!("{folded:?}"), format!("{reference:?}"), "{chain}");
+        }
+    }
+
+    #[test]
+    fn row_predicate_bails_on_or_chain_expansion() {
+        let ctx = Ctx::default();
+        for src in [
+            "(fn [e] (or (= e.render :beam) (= e.kind :curve)))",
+            "(fn [e] (and (= e.team :enemy) (or (= e.kind :point) (= e.kind :curve))))",
+        ] {
+            assert!(row_predicate(&expanded_predicate(src), &ctx).is_none(), "{src}");
+        }
+    }
+
+    #[test]
+    fn row_predicate_bails_on_unhygienic_chain_shapes() {
+        let ctx = Ctx::default();
+        for src in [
+            // binder is the row param: conjuncts would read the test value
+            "(fn [e] (let [e (= e.team :enemy)] (if e (= e.kind :point) e)))",
+            // binder mentioned inside the next conjunct
+            "(fn [e] (let [q (= e.team :enemy)] (if q (= q :point) q)))",
+            // degenerate link: then == binder (the `or` shape's tell)
+            "(fn [e] (let [q (= e.team :enemy)] (if q q q)))",
+        ] {
+            assert!(row_predicate(&predicate(src), &ctx).is_none(), "{src}");
+        }
+        // a shadowed `let`/`if` head means the chain shape is not the
+        // expansion it looks like
+        let form = read_one(
+            "(fn [e] (let [q (= e.team :enemy)] (if q (= e.kind :point) q)))",
+        )
+        .unwrap();
+        let env = Env::empty().bind("if".into(), Val::Num(1.0));
+        let q = evaluate(&form, &env, &mut Ctx::default(), &mut World::default()).unwrap();
+        assert!(row_predicate(&q, &ctx).is_none());
     }
 
     #[test]
