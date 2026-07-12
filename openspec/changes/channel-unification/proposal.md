@@ -1,7 +1,5 @@
 # Channel/cell unification and load-time schema pass
 
-Backlog stub — design/specs/tasks are generated when this is picked up.
-
 ## Why
 
 Missing host channels such as `$wind` fail mid-run instead of at load. Decided: channel manifests, per-kind render row schemas, and entity field tables are ONE load-time schema collection pass — shared machinery, separate tables where the columns differ. The converged (not yet ratified) design in `openspec/changes/channel-unification/design.md` makes the manifest check fall out of scoping: a free `$name` neither bound nor def'd is a load error, and the manifest is the set of `(from-host :name)` sites.
@@ -14,7 +12,8 @@ Missing host channels such as `$wind` fail mid-run instead of at load. Decided: 
 
 ## Capabilities
 
-To be finalized at pick-up; likely channel-scoping and load-time-schema capabilities.
+- `language` (modified): stream unification — sigiled bindings, `bind!`/`export!`/`from-host`, free-`$name` load errors, producer/set! interplay, export collisions.
+- `load-time-schema` (new): the shared load-time schema collection pass and host-manifest checking.
 
 ## Impact
 

@@ -118,17 +118,18 @@ store can remain as the runtime representation (handles get
 deterministic identity from deterministic re-execution; `set!` stays a
 frame-stamped action — scrub story unchanged).
 
-## [decide]
+## Decisions (ratified at pick-up)
 
 - Export/registration collisions across instances of one pattern:
-  rename form (`(export! $vol :as $p1-vol)`) + collision as load error
-  (lean), vs latest-wins like bound channels today.
-- Naming: `from-host` vs `inject` (or similar) for the host-input
-  producer form. (Name resolution itself is settled: explicit arg —
-  inference is incoherent for the standalone/anonymous form.)
-- Exact surface of `bind!` vs today's `bind-channel!` (local producer
-  attachment vs global-name registration — likely one form once names
-  are scoped).
-- Migration: two corpus files use cells (cards/tutorials/t05.maku,
-  cards/translations/ph_boss2_spell2.maku) plus stdlib defchannels
-  rewritten as `def $name`.
+  collision is a LOAD ERROR; explicit rename form
+  `(export! $vol :as $p1-vol)`. (Rejected: latest-wins like bound
+  channels today.)
+- Naming: `from-host` stands for the host-input producer form. (Name
+  resolution itself was already settled: explicit arg — inference is
+  incoherent for the standalone/anonymous form.)
+- One producer-attachment form: `bind!` attaches to whatever stream the
+  name resolves to in scope; `bind-channel!` dissolves (no separate
+  global-name registration form).
+- Migration surface: two corpus files use cells
+  (cards/tutorials/t05.maku, cards/translations/ph_boss2_spell2.maku)
+  plus stdlib defchannels rewritten as `def $name` + `bind!`/`export!`.
