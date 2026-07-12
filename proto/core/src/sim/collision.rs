@@ -111,6 +111,11 @@ impl Sim {
 
         // phase 0: materialized collider data + contact velocities
         let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
+        // batched pos-only fill for closed-chain rows; per-row paths cover
+        // the rest below. The emptiness bool hoists the check out of the
+        // row loop (whose &mut self calls block the load from hoisting).
+        self.fill_closed_poses(tick, &sig)?;
+        let closed_any = self.has_closed_poses();
         let n = self.world.entities.len();
         let mut pos: Vec<Option<(f64, f64)>> = Vec::with_capacity(n);
         self.collider_scratch.clear_for_entities(n);
@@ -126,7 +131,9 @@ impl Sim {
                 continue;
             }
             let tau = self.world.entity_motion_tau(i, tick);
-            let p = if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
+            let p = if let Some(p) = if closed_any { self.closed_pose_at(i) } else { None } {
+                p
+            } else if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
                 p
             } else {
                 let dyn_figure = self

@@ -1214,6 +1214,41 @@ pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlan
     }
 }
 
+/// One row's batchable pos-only POSE fill (milestone B): a point figure
+/// whose pose tree is constant wrappers over a single compiled aux-free
+/// ClosedPt node. Its pos-only pose is one program-pair sample at
+/// (tau, u=0) — no state, no readers — pushed through the wrappers, so
+/// rows sharing the interned pair evaluate as lanes of one batched run.
+pub struct ClosedChainRef<'a> {
+    /// The figure's root pose node: wrapper composition (and the oracle)
+    /// walk from here.
+    pub root: &'a Rc<DynNode>,
+    pub ap: &'a Rc<NumProgram>,
+    pub bp: &'a Rc<NumProgram>,
+    pub polar: bool,
+    pub caps: &'a [f64],
+}
+
+pub fn closed_chain_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<ClosedChainRef<'a>> {
+    if fig.curve().is_some() {
+        return None;
+    }
+    let root = fig.pose_dyn();
+    let mut node = root;
+    loop {
+        match &**node {
+            DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
+            DynNode::ClosedPt { a, b, polar, env, programs, rand } => {
+                let (ap, bp) = programs
+                    .get_or_init(|| lower_program_pair(a, b, env, sig, false, false))
+                    .as_ref()?;
+                return Some(ClosedChainRef { root, ap, bp, polar: *polar, caps: caps_of(rand) });
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// The fast pos_only pose shape: constant wrappers over a Vel node
 /// (compiled or not — the pos_only Vel arm never evaluates its integrand,
 /// so the pose is pure integrator state pushed through the wrappers).

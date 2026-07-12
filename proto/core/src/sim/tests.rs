@@ -2987,6 +2987,40 @@
         }
     }
 
+    /// The batched ClosedPt pose fill (milestone B): closed-chain rows
+    /// take the lane path (closed_pose_at fills), grouped by interned
+    /// program pair, and every lane is interpreter-checked under the
+    /// oracle at both fill sites (collide, cull).
+    #[test]
+    fn closed_pose_batch_fills_and_matches() {
+        struct OracleGuard;
+        impl Drop for OracleGuard {
+            fn drop(&mut self) {
+                crate::interp::set_oracle_for_tests(false);
+            }
+        }
+
+        crate::interp::set_oracle_for_tests(true);
+        let _guard = OracleGuard;
+        // sites sharing the integrand shape (differing only in a captured
+        // value) intern to one program pair and fuse; a distinct shape
+        // groups separately
+        const CARD: &str = r#"
+(defpattern shot [spd 2]
+  (spawn (polar (* spd t) (* 20 t))))
+(defpattern p []
+  (par (shot 2) (shot 2) (shot 3) (spawn (cart (* 2 t) (sin (* 90 t))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        let filled = (0..sim.world.entities.len())
+            .filter(|i| sim.world.entities.is_alive(*i) && sim.closed_pose_at(*i).is_some())
+            .count();
+        assert_eq!(filled, 4, "every closed-chain row takes the batch fill");
+    }
+
     /// The batched Vel step (milestone B): every lane's velocity is
     /// interpreter-checked under the oracle, across polar/cart integrands
     /// and const-frame wrappers â the fruit-card hot shape.

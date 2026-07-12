@@ -64,6 +64,7 @@ pub struct Sim {
     collider_scratch: ColliderScratch,
     render_scratch: render::RenderScratch,
     vel_batch: VelBatchScratch,
+    closed_pose: ClosedPoseScratch,
     /// Host inputs the loaded card requires: the (from-host :name) sites
     /// collected by the load-time schema pass, in first-use order.
     host_manifest: Vec<String>,
@@ -168,6 +169,97 @@ impl VelBatchScratch {
         if oracle_enabled() {
             g.nodes.push(plan.vel.clone());
         }
+    }
+}
+
+/// Batched pos-only pose fill for wrapper-chain-over-ClosedPt rows
+/// (milestone B): grouped by interned program-pair address, one
+/// lane-batched run per component per phase (collide fill, cull), then
+/// per-row wrapper composition — the same value the per-row pos_only walk
+/// produces, lane-bit-identical by `run_lanes` construction and
+/// oracle-checked per lane.
+#[derive(Default)]
+struct ClosedPoseScratch {
+    groups: Vec<ClosedPoseGroup>,
+    index: crate::fxhash::FxHashMap<(usize, usize, bool), usize>,
+    /// Contiguous spawn groups hit the same group without hashing.
+    last: Option<((usize, usize, bool), usize)>,
+    pool: Vec<ClosedPoseGroup>,
+    regs: Vec<f64>,
+    /// ClosedPt programs never read pos (allow_pos=false); the lanes API
+    /// still wants a slice.
+    zero_pos: Vec<[f64; 2]>,
+    /// Per-row results for the current phase; left empty when the phase
+    /// found no closed rows, so non-closed cards pay nothing.
+    out: Vec<Option<Pose>>,
+    /// Cross-tick classification cache: per row, (figure root ptr,
+    /// is-closed-chain). A row whose figure Rc is unchanged skips the
+    /// chain walk — figures change only at spawn/remat.
+    class: Vec<(*const DynNode, bool)>,
+    /// Closed rows found by the tick's collect pass (collide); the cull
+    /// pass re-lanes only these — validated per use against the row's
+    /// current figure root, so a remat between the phases falls back to
+    /// the per-row path.
+    candidates: Vec<(usize, *const DynNode)>,
+}
+
+struct ClosedPoseGroup {
+    ap: Rc<NumProgram>,
+    bp: Rc<NumProgram>,
+    polar: bool,
+    rows: Vec<usize>,
+    tau: Vec<f64>,
+    caps: Vec<f64>,
+    va: Vec<f64>,
+    vb: Vec<f64>,
+}
+
+impl ClosedPoseScratch {
+    fn begin_pass(&mut self) {
+        self.out.clear();
+        self.index.clear();
+        self.last = None;
+        self.pool.extend(self.groups.drain(..).map(|mut g| {
+            g.rows.clear();
+            g.tau.clear();
+            g.caps.clear();
+            g.va.clear();
+            g.vb.clear();
+            g
+        }));
+    }
+
+    fn push_lane(&mut self, plan: &ClosedChainRef<'_>, row: usize, tau: f64) {
+        let key = (Rc::as_ptr(plan.ap) as usize, Rc::as_ptr(plan.bp) as usize, plan.polar);
+        let idx = match self.last {
+            Some((k, idx)) if k == key => idx,
+            _ => {
+                let idx = *self.index.entry(key).or_insert_with(|| {
+                    let mut g = self.pool.pop().unwrap_or_else(|| ClosedPoseGroup {
+                        ap: plan.ap.clone(),
+                        bp: plan.bp.clone(),
+                        polar: plan.polar,
+                        rows: Vec::new(),
+                        tau: Vec::new(),
+                        caps: Vec::new(),
+                        va: Vec::new(),
+                        vb: Vec::new(),
+                    });
+                    g.ap = plan.ap.clone();
+                    g.bp = plan.bp.clone();
+                    g.polar = plan.polar;
+                    self.groups.push(g);
+                    self.groups.len() - 1
+                });
+                self.last = Some((key, idx));
+                idx
+            }
+        };
+        let g = &mut self.groups[idx];
+        debug_assert_eq!(plan.caps.len(), g.ap.n_inputs);
+        g.rows.push(row);
+        g.tau.push(tau);
+        g.caps.extend_from_slice(plan.caps);
     }
 }
 
@@ -296,6 +388,7 @@ impl Clone for Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
+            closed_pose: ClosedPoseScratch::default(),
             host_manifest: self.host_manifest.clone(),
             load_warnings: self.load_warnings.clone(),
         }
@@ -357,6 +450,7 @@ impl Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
+            closed_pose: ClosedPoseScratch::default(),
             host_manifest: schema.host_channels,
             load_warnings: schema.warnings,
         })
@@ -501,6 +595,7 @@ impl Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
+            closed_pose: ClosedPoseScratch::default(),
             host_manifest: schema.host_channels,
             load_warnings: schema.warnings,
         })
@@ -552,6 +647,155 @@ impl Sim {
             assert_eq!(p, want, "fast pos_only pose diverged from interpreter for row {row}");
         }
         Some(p)
+    }
+
+    /// Batched pos-only pose fill, collect pass (collide phase 0): walk
+    /// every row once, classify through the cross-tick (figure ptr →
+    /// is-closed) cache, collect closed-chain lanes and this tick's
+    /// candidate list, run the groups. Non-closed cards pay one pointer
+    /// compare per row and skip everything else.
+    fn fill_closed_poses(&mut self, tick: u64, sig: &SigEnv) -> Result<(), String> {
+        let n = self.world.entities.len();
+        let mut s = std::mem::take(&mut self.closed_pose);
+        // Cards with no closed rows skip the scan except a rediscovery
+        // sweep every 16 ticks (tick-keyed: deterministic, replay-safe).
+        // Newly spawned closed rows go unbatched for at most 15 ticks —
+        // the per-row path is bit-identical, so only wall time differs.
+        if s.candidates.is_empty() && tick % 16 != 0 {
+            s.begin_pass();
+            self.closed_pose = s;
+            return Ok(());
+        }
+        s.begin_pass();
+        s.candidates.clear();
+        s.class.resize(n, (std::ptr::null(), false));
+        for i in 0..n {
+            if !self.world.entities.is_alive(i) {
+                continue;
+            }
+            let Some(fig) = self.world.entities.dyn_figure(i) else {
+                continue;
+            };
+            let root = Rc::as_ptr(fig.pose_dyn());
+            let closed = if s.class[i].0 == root {
+                s.class[i].1
+            } else {
+                let closed = closed_chain_plan(fig, sig).is_some();
+                s.class[i] = (root, closed);
+                closed
+            };
+            if !closed {
+                continue;
+            }
+            // re-derive the plan (cheap for closed rows: the OnceCell is
+            // warm); classification above only cached the boolean
+            let Some(plan) = closed_chain_plan(fig, sig) else {
+                continue;
+            };
+            let tau = self.world.entity_motion_tau(i, tick);
+            s.push_lane(&plan, i, tau);
+            s.candidates.push((i, root));
+        }
+        self.run_closed_groups(s, sig)
+    }
+
+    /// Re-lane pass (cull, after the tick advanced): only this tick's
+    /// candidates, validated against the row's current figure root — a
+    /// remat between the phases falls back to the per-row path. Cards
+    /// with no closed rows skip this entirely.
+    fn refill_closed_poses(&mut self, tick: u64, sig: &SigEnv) -> Result<(), String> {
+        let mut s = std::mem::take(&mut self.closed_pose);
+        let candidates = std::mem::take(&mut s.candidates);
+        s.begin_pass();
+        for &(i, root) in &candidates {
+            if !self.world.entities.is_alive(i) {
+                continue;
+            }
+            let Some(fig) = self.world.entities.dyn_figure(i) else {
+                continue;
+            };
+            if Rc::as_ptr(fig.pose_dyn()) != root {
+                continue;
+            }
+            let Some(plan) = closed_chain_plan(fig, sig) else {
+                continue;
+            };
+            let tau = self.world.entity_motion_tau(i, tick);
+            s.push_lane(&plan, i, tau);
+        }
+        s.candidates = candidates;
+        self.run_closed_groups(s, sig)
+    }
+
+    /// Shared batch-run half: one lane run per component per group, then
+    /// per-row wrapper composition into the sparse out vec.
+    fn run_closed_groups(&mut self, mut s: ClosedPoseScratch, sig: &SigEnv) -> Result<(), String> {
+        if s.groups.is_empty() {
+            self.closed_pose = s;
+            return Ok(());
+        }
+        s.out.resize(self.world.entities.len(), None);
+        let oracle = oracle_enabled();
+        let tick_rate = self.world.tick_rate();
+        let mut regs = std::mem::take(&mut s.regs);
+        for g in &mut s.groups {
+            let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
+            s.zero_pos.clear();
+            s.zero_pos.resize(g.rows.len(), [0.0; 2]);
+            g.va.clear();
+            g.vb.clear();
+            run_lanes(&g.ap, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
+            run_lanes(&g.bp, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
+            for l in 0..g.rows.len() {
+                let (x, y) = if g.polar {
+                    let (sn, cs) = g.vb[l].to_radians().sin_cos();
+                    (g.va[l] * cs, g.va[l] * sn)
+                } else {
+                    (g.va[l], g.vb[l])
+                };
+                let row = g.rows[l];
+                let fig = self
+                    .world
+                    .entities
+                    .dyn_figure(row)
+                    .ok_or_else(|| format!("closed pose fill: missing dyn figure for row {row}"))?;
+                let p = wrapper_chain_pos_pose(fig.pose_dyn(), [x, y]);
+                if oracle {
+                    let readers = self.motion_readers(row);
+                    let mstate = MotionState::default();
+                    // an interpreted error leaves the row unfilled so the
+                    // per-row path surfaces it (fast_pos_pose's stance)
+                    let Ok(want) = dyn_figure_pose_in(
+                        fig,
+                        g.tau[l],
+                        MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, tick_rate).pos_only(),
+                    ) else {
+                        continue;
+                    };
+                    assert_eq!(p, want, "batched closed pose diverged from per-row for row {row}");
+                }
+                s.out[row] = Some(p);
+            }
+            if let Some(f) = probe {
+                crate::interp::profile::close("dyn:closed-batch", f);
+            }
+        }
+        s.regs = regs;
+        self.closed_pose = s;
+        Ok(())
+    }
+
+    /// This phase's batched closed-chain pose for a row, if it was filled.
+    /// Inline: called per row in the collide/cull hot loops, and the
+    /// common non-closed card must pay only the empty-vec check.
+    #[inline(always)]
+    pub(crate) fn closed_pose_at(&self, row: usize) -> Option<Pose> {
+        self.closed_pose.out.get(row).copied().flatten()
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_closed_poses(&self) -> bool {
+        !self.closed_pose.out.is_empty()
     }
 
     /// Classify a row for the batched Vel step: the plan plus the Vel
@@ -1385,6 +1629,10 @@ impl Sim {
         let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         // cull: off-playfield poses/traces; curve lifetime is card/library policy
         let tick = self.world.tick;
+        // refill: the tick advanced since the collide-phase fill, so
+        // closed-chain poses re-sample at the new tau
+        self.refill_closed_poses(tick, &sig)?;
+        let closed_any = self.has_closed_poses();
         let mut err = None;
         for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
@@ -1394,7 +1642,9 @@ impl Sim {
                 continue; // the player rides a channel; never field-culled
             }
             let tau = self.world.entity_motion_tau(i, tick);
-            let keep = if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
+            let keep = if let Some(p) = if closed_any { self.closed_pose_at(i) } else { None } {
+                p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
+            } else if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
                 p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
             } else {
                 let readers = self.motion_readers(i);

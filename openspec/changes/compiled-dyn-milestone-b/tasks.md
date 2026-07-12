@@ -24,7 +24,7 @@ tests. Perf claims via wall-only interleaved A/B on the scaled fruit rig
       the interpreted step). Test: the census homing-slew shape compiles,
       oracle-equal over a multi-tick run; site-counter pin test with
       nested evolve regions.
-- [ ] 4. ClosedPt group pose fill: shared classification
+- [x] 4. ClosedPt group pose fill: shared classification
       (VelChain / ClosedChain / interpreted) + pooled lane scratch;
       batched fill at collide phase 0 and the cull loop with per-row
       wrapper composition; per-lane oracle. Wall A/B recorded.
