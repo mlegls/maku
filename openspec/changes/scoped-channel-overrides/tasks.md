@@ -18,4 +18,4 @@
 
 ## 4. Spec sync (archive time)
 
-- [ ] 4.1 Update `openspec/specs/language/spec.md`: §3 scoped-overrides paragraph loses its residual [decide], §13.8 marked resolved (nesting = innermost wins; all channels overridable; values snap with stream-handle aliasing), §13.12 note stays open only for `:sealed`.
+- [ ] 4.1 Update `openspec/specs/language/spec.md`: §3 scoped-overrides paragraph loses its residual [decide], §13.8 marked resolved (nesting = innermost wins; all channels overridable; values snap with stream-handle aliasing), §13.12 note stays open only for `:sealed`. Also rewrite the stale let-vs-with clause in §3 ("`let` binds bare symbols only" predates channel-unification and contradicts the local-sigiled-binding form): post-merge, `(let [$x ...])` shadowing an existing name is legal and means a fresh private stream reaching only text it contains; `with` alone rebinds the existing stream's resolution for code it causes (callees, pre-built dyns).
