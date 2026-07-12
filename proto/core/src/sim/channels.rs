@@ -24,33 +24,6 @@ impl Sim {
                 }
             }
         }
-        // (defchannel $name expr) — card-defined derived channel defaults:
-        // evaluated in definition order, before runtime producers.
-        let rules = self.card_channels.clone();
-        for (name, form) in rules.iter() {
-            self.ctx.sig.channels = Rc::new(ch.clone());
-            let v = evaluate(form, &Env::empty(), &mut self.ctx, &mut self.world)
-                .map_err(|e| format!("defchannel ${}: {}", name, e))?;
-            if !matches!(v, Val::Nothing) {
-                ch.insert(name.to_string(), v);
-            }
-        }
-        // (export cell) — pattern cells published as read-only channels
-        for (name, id) in self.ctx.sig.exports.borrow().iter() {
-            if let Some((_, v)) = self.ctx.sig.cells.borrow().get(id) {
-                ch.insert(name.clone(), v.clone());
-            }
-        }
-        // (bind-channel! $name expr) — instance-scoped derived channels.
-        let bound = self.ctx.sig.bound_channels.borrow().clone();
-        for (name, form, env) in bound.iter() {
-            self.ctx.sig.channels = Rc::new(ch.clone());
-            let v = evaluate(form, env, &mut self.ctx, &mut self.world)
-                .map_err(|e| format!("bind-channel ${}: {}", name, e))?;
-            if !matches!(v, Val::Nothing) {
-                ch.insert(name.to_string(), v);
-            }
-        }
         // (bind! $x expr) stream producers, in attachment order (top-level
         // binds in card order, then runtime attachments). A producer
         // yielding `nothing` leaves the last value — a set! — standing.

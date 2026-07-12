@@ -577,7 +577,7 @@ fn special_or_channel_head(name: &str) -> bool {
 
 pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
     // Def inlining needs no cell-scope guard: signal evaluation skips bare
-    // cell reads (Ctx.signal_scope — signals read cells via (live name)
+    // stream reads (signals read streams via (live $name)
     // only), so a def name can never be shadowed by a cell at runtime.
     let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0, n_inputs: 0, env_slots: None };
     b.lower(form, env, LowerScope::Current)?;
@@ -1136,10 +1136,10 @@ mod tests {
     }
 
     #[test]
-    fn cell_scope_does_not_disable_def_inlining() {
-        // signals read cells only via (live name) (Ctx.signal_scope), so a
-        // captured cell scope cannot shadow defs during signal evaluation
-        let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+    fn stream_bindings_do_not_disable_def_inlining() {
+        // streams are sigiled ($name), so a captured stream handle can
+        // never shadow an unsigiled def during signal evaluation
+        let env = Env::empty().bind("$mode".into(), Val::Stream(7));
         let defs = defs(&[("speed2", "3")]);
         let prog = lower_num_form(&read("(* speed2 t)"), &env, &defs).unwrap();
         assert_eq!(run_num_program(&prog, 2.0, 0.0, None), 6.0);

@@ -112,7 +112,7 @@
     #[test]
     fn rewrite_inlines_wrappers_transitively() {
         // col-or's shape: a trivial wrapper around a defn that only becomes
-        // trivial after its own body is rewritten — needs the fixpoint
+        // trivial after its own body is rewritten â needs the fixpoint
         let card = "(defn base [x d] (if (nothing? x) d x))\n\
                     (defn wrap [x d] (base x d))\n\
                     (defn use-wrap [x] (wrap x 5))";
@@ -218,7 +218,7 @@
         for _ in 0..120 {
             sim.step().unwrap();
         }
-        assert_eq!(sim.world.entities.len(), 15 * 5, "15 volleys × 5 arms");
+        assert_eq!(sim.world.entities.len(), 15 * 5, "15 volleys Ã 5 arms");
 
         let sig = SigEnv::default();
         assert_eq!(sim.world.entities.birth(0), Some(0));
@@ -299,7 +299,7 @@
         let stars = live_family_count(&sim, "star");
         assert_eq!(lstars, 3, "one big star culled");
         assert_eq!(stars, 8, "explosion ring spawned");
-        // ring anchored at the culled star's position at t≈0.5 (x = 0.5 from
+        // ring anchored at the culled star's position at tâ0.5 (x = 0.5 from
         // anchor (0,1)); fn bodies drop the ambient frame, so no double anchor
         let sig = SigEnv::default();
         let ring: Vec<_> = sim
@@ -362,8 +362,8 @@
                  {:team :player-body
                   :lives 3 :graze 0 :hits 0})]
     (let [body (nth p 0)]
-      (bind-channel! $graze (:graze body))
-      (bind-channel! $hits (:hits body)))))
+      (bind! $graze (:graze body))
+      (bind! $hits (:hits body)))))
 (defpattern atk []
   (par (rig)
     (dotimes [i 2 :every (ticks 10)]
@@ -401,8 +401,8 @@
                  {:team :player-body
                   :graze 0 :hits 0})]
     (let [body (nth p 0)]
-      (bind-channel! $graze (:graze body))
-      (bind-channel! $hits (:hits body)))))
+      (bind! $graze (:graze body))
+      (bind! $hits (:hits body)))))
 (defpattern g []
   (par (rig) (bullet (in-frame (pose c[0.25 3]) (vel c[0 -6])) {})))
 "#;
@@ -956,7 +956,7 @@
         let mut sess = Session::default();
         sess.rig = Some(
             "(defpattern rig [] (let [p (spawn (live $player) (circle-collider {:layer :player-hurt :r 0.06}) {:team :player-body \
-             :graze 0 :hits 0})] (let [body (nth p 0)] (bind-channel! $graze (:graze body)) (bind-channel! $hits (:hits body)))))"
+             :graze 0 :hits 0})] (let [body (nth p 0)] (bind! $graze (:graze body)) (bind! $hits (:hits body)))))"
                 .into(),
         );
         sess.last_inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
@@ -989,8 +989,8 @@
                  {:team :player-body
                   :lives 2 :graze 0 :hits 0})]
     (let [body (nth p 0)]
-      (bind-channel! $graze (:graze body))
-      (bind-channel! $hits (:hits body)))))
+      (bind! $graze (:graze body))
+      (bind! $hits (:hits body)))))
 (defpattern atk []
   (par (rig)
     (dotimes [i 5 :every (ticks 70)]
@@ -1082,8 +1082,8 @@
                  {:team :player-body
                   :graze 0 :hits 0})]
     (let [body (nth p 0)]
-      (bind-channel! $graze (:graze body))
-      (bind-channel! $hits (:hits body)))))
+      (bind! $graze (:graze body))
+      (bind! $hits (:hits body)))))
 (defpattern beam []
   (par (rig) (laser ((pose c[-2 0]) (curve {:u-max 6})) {:warn 0.5 :active 2})))
 "#;
@@ -1861,10 +1861,10 @@
 
     /// The duel-card bug: aim inside an expression-level frame must aim
     /// FROM that frame's position (the frame is ambient for its body),
-    /// not from the world origin. Player just below the source → entities
+    /// not from the world origin. Player just below the source â entities
     /// head down at the player, not up.
     /// Lifecycle trees: handles + per-entity forked timelines express
-    /// multi-stage lifecycles with no queries — (for [b handles] …)
+    /// multi-stage lifecycles with no queries â (for [b handles] â¦)
     /// iterates an array in the lead binding.
     #[test]
     fn lifecycle_tree_via_handles() {
@@ -1895,7 +1895,7 @@
     }
 
     /// Invulnerability windows: (invuln b dur) writes iframe-until, which
-    /// BOTH resolve paths honor — shots are absorbed (die, no hp write)
+    /// BOTH resolve paths honor â shots are absorbed (die, no hp write)
     /// while a boss is invulnerable, and hp flows again after expiry.
     #[test]
     fn invuln_window_absorbs_damage() {
@@ -1912,7 +1912,7 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         // boss at y=3, shots at 6/s reach it in ~60 ticks; invuln covers
-        // the first second (120 ticks) — early shots are absorbed
+        // the first second (120 ticks) â early shots are absorbed
         for _ in 0..115 {
             sim.step().unwrap();
         }
@@ -1969,7 +1969,7 @@
     }
 
     /// Curves are values: (curve t u) evaluates a u-parameterized dyn without
-    /// expressing an entity — pose plus tangent heading.
+    /// expressing an entity â pose plus tangent heading.
     #[test]
     fn dyn_application_samples_curves() {
         const CARD: &str = r#"
@@ -1999,7 +1999,7 @@
         // top-level defs resolve via SigEnv::defs, so use the sim's sig
         let sig = sim.ctx.sig.clone();
         let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
-        // 120 Hz: 60 steps of +60·dt = +0.5 each.
+        // 120 Hz: 60 steps of +60Â·dt = +0.5 each.
         assert!((p.x - 30.0).abs() < 1e-6 && p.y.abs() < 1e-6, "evolved scalar: {:?}", p);
     }
 
@@ -2257,8 +2257,8 @@
                  {:team :player-body
                   :graze 0 :hits 0})]
     (let [body (nth p 0)]
-      (bind-channel! $graze (:graze body))
-      (bind-channel! $hits (:hits body)))))
+      (bind! $graze (:graze body))
+      (bind! $hits (:hits body)))))
 (defpattern beam []
   (par (rig)
        (laser ((pose c[-2 0]) (curve {:u-max 6}))
@@ -2269,13 +2269,13 @@
         // player parked on the beam line at u = 2 (x = 0); 120 ticks/s
         let inputs = Inputs::classic((0.0, 0.0), (0.0, 0.0));
         // warn ends at 0.5s (tick 60); the front reaches u=2 at
-        // tau = 0.5 + (2/6)*2 ≈ 1.17s (tick ~140, less the capsule radii)
+        // tau = 0.5 + (2/6)*2 â 1.17s (tick ~140, less the capsule radii)
         for _ in 0..100 {
-            sim.step_with(&inputs).unwrap(); // t ≈ 0.83s: front at u ≈ 1.0
+            sim.step_with(&inputs).unwrap(); // t â 0.83s: front at u â 1.0
         }
         assert_eq!(sim.channel_u64("hits"), 0, "front hasn't reached the player");
         for _ in 0..60 {
-            sim.step_with(&inputs).unwrap(); // t ≈ 1.33s: front at u = 2.5
+            sim.step_with(&inputs).unwrap(); // t â 1.33s: front at u = 2.5
         }
         assert_eq!(sim.channel_u64("hits"), 1, "the sweeping front arrived");
         // full path is still telegraphed while filling: dim + bright polylines
@@ -2371,7 +2371,7 @@
         let pa = dyn_figure_pose(dyn_figure(&a, 0), 0.5, &state, &sig).unwrap();
         let pb = dyn_figure_pose(dyn_figure(&b, 0), 0.5, &state, &sig).unwrap();
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
-        // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 → (0, 1.5)
+        // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 â (0, 1.5)
         assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
     }
 
@@ -2418,19 +2418,19 @@
     }
 
     /// (until pred body): the tick the predicate holds, the body's whole
-    /// task subtree — including forks — dies. §8 phase-end cancellation.
+    /// task subtree â including forks â dies. Â§8 phase-end cancellation.
     #[test]
     fn until_cancels_subtree() {
         const CARD: &str = r#"
 (defpattern u []
-  (defcell stop 0)
+  (let [$stop 0]
   (par
-    (until (= stop 1)
+    (until (= $stop 1)
       (par (fork (dotimes [i inf :every (ticks 5)]
                    (spawn (linear c[0.01 0]))))
            (dotimes [j inf :every (ticks 5)]
              (spawn (linear c[0 0.01])))))
-    (seq (wait (ticks 52)) (set! stop 1))))
+    (seq (wait (ticks 52)) (set! $stop 1)))))
 "#;
         let mut sim = Sim::load(CARD, Some("u")).unwrap();
         for _ in 0..60 {
@@ -2449,17 +2449,19 @@
     }
 
     /// (clamp lo hi dyn) clamps the INTEGRATOR state: pushing a wall banks
-    /// no phantom distance — reversing moves away immediately.
+    /// no phantom distance â reversing moves away immediately.
     #[test]
     fn clamp_slides_not_banks() {
         const CARD: &str = r#"
+(def $player)
+(export! $player)
 (defpattern c []
   (let [h (spawn (clamp c[-2 -2] c[2 2]
                    (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
                  (circle-collider {:layer :player-hurt :r 0.05})
                  {:team :player-body
                   :pilot 1})]
-    (bind-channel! $player (:pos (nth h 0)))))
+    (bind! $player (:pos (nth h 0)))))
 "#;
         let mut sim = Sim::load(CARD, Some("c")).unwrap();
         let mut inputs = Inputs::default();
@@ -2555,12 +2557,12 @@
     fn accessor_sugar() {
         const CARD: &str = r#"
 (defpattern p []
-  (seq
-    (defcell probe 0)
-    (export probe)
-    (spawn (pose c[3 4]) {:style {:family :circle}})
-    (manip (fn [b] (* (= b.family :circle) (> b.pos.y 1)))
-      (fn [b] (set! probe b.pos.y)))))
+  (let [$probe 0]
+    (seq
+      (export! $probe)
+      (spawn (pose c[3 4]) {:style {:family :circle}})
+      (manip (fn [b] (* (= b.family :circle) (> b.pos.y 1)))
+        (fn [b] (set! $probe b.pos.y))))))
 (defpattern gather []
   (spawn ((rot m"(30 * iota(12)).[iota(3)]") (linear c[1 0]))))
 "#;
@@ -2637,49 +2639,49 @@
         assert!(swept >= 9, "tutorial patterns swept: {}", swept);
     }
 
-    /// The §10 embedding adapters: pattern instances get ISOLATED cells by
-    /// default (two embeddings of the same pattern don't share defcell
-    /// state); (inline …) shares the caller's scope; defns called from a
-    /// pattern see its cells dynamically (spell-2's guide-rig idiom).
+    /// Stream scoping: pattern instances get ISOLATED local streams by
+    /// default (two embeddings of the same pattern do not share state);
+    /// sharing is EXPLICIT — sigiled params pass the handle (spell-2's
+    /// guide-rig idiom).
     #[test]
     fn embedding_adapters() {
         const CARD: &str = r#"
-(defn helper-reads [] (spawn (circle (live n) (linear c[1 0]))))
+(defn helper-reads [$n] (spawn (circle (live $n) (linear c[1 0]))))
 (defpattern counter [start 1]
-  (seq
-    (defcell n start)
-    (set! n (+ (live n) 1))
-    (helper-reads)))                      ; defn sees THIS instance's n
+  (let [$n start]
+    (seq
+      (set! $n (+ (live $n) 1))
+      (helper-reads $n))))                ; explicit handle: THIS instance's n
 (defpattern outer []
-  (seq
-    (defcell n 100)
-    (export n)
-    (par (counter 1) (counter 5))         ; isolated: 2 and 6, not shared
-    (wait (ticks 2))
-    (inline (bump))))                     ; inline: mutates OUR n
-(defpattern bump []
-  (set! n 200))
+  (let [$n 100]
+    (seq
+      (export! $n)
+      (par (counter 1) (counter 5))       ; isolated: 2 and 6, not shared
+      (wait (ticks 2))
+      (bump $n))))                        ; explicit handle: mutates OUR n
+(defpattern bump [$n 0]
+  (set! $n 200))
 "#;
         let mut sim = Sim::load(CARD, Some("outer")).unwrap();
         for _ in 0..5 {
             sim.step().unwrap();
         }
-        // two counter instances spawned rings of 2 and 6 — isolated cells
+        // two counter instances spawned rings of 2 and 6 â isolated cells
         // (shared cells would give 2 and 3, or collide with outer's 100)
         let mut sizes: Vec<usize> = Vec::new();
         let counts = sim.world.entities.len();
         assert_eq!(counts, 8, "2 + 6 entities: {}", counts);
         sizes.push(counts);
-        // inline (bump) wrote through to OUTER's exported cell
+        // (bump $n) wrote through to OUTER's exported stream
         assert!(
             matches!(sim.channel_val("n"), Some(Val::Num(v)) if v == 200.0),
-            "inline shares the caller's cells: {:?}",
+            "handle passing shares the caller's stream: {:?}",
             sim.channel_val("n")
         );
     }
 
     /// Handle-scoped derived channels can publish entity fields for gates;
-    /// (export cell) publishes a pattern cell read-only.
+    /// (export! $x) publishes a pattern-local stream read-only.
     #[test]
     fn bind_channel_and_export() {
         const CARD: &str = r#"
@@ -2720,14 +2722,14 @@
     }
 
     /// Two pilots: distinct input channels move distinct rigs, channels
-    /// derive per pilot-value, and iframes are per-entity — both pilots
+    /// derive per pilot-value, and iframes are per-entity â both pilots
     /// can be hit in the same window.
     #[test]
     fn two_players() {
         let rig = std::fs::read_to_string("../../cards/coop.maku").unwrap();
         let mut sim = Sim::load(&rig, Some("coop")).unwrap();
         let mut inputs = Inputs::default();
-        // p1 pushes right, p2 pushes left — they cross
+        // p1 pushes right, p2 pushes left â they cross
         inputs.set_num("p1-move-x", 1.0);
         inputs.set_num("p1-move-y", 0.0);
         inputs.set_num("p2-move-x", -1.0);
@@ -2747,7 +2749,7 @@
         assert!(matches!(sim.channel_val("lives-1"), Some(Val::Num(n)) if n == 3.0));
         assert!(sim.channel_val("nearest-pilot").is_some());
 
-        // per-entity iframes: park both pilots in the aimed spray column —
+        // per-entity iframes: park both pilots in the aimed spray column â
         // over time BOTH lose lives (a global iframe would shield one)
         let mut inputs = Inputs::default();
         inputs.set_num("p1-move-x", 0.35); // drift toward center
@@ -2984,7 +2986,7 @@
 
     /// The batched Vel step (milestone B): every lane's velocity is
     /// interpreter-checked under the oracle, across polar/cart integrands
-    /// and const-frame wrappers — the fruit-card hot shape.
+    /// and const-frame wrappers â the fruit-card hot shape.
     #[test]
     fn vel_batch_oracle_card_step() {
         struct OracleGuard;
@@ -3012,7 +3014,7 @@
     /// Rand capture slots (milestone B input slots): a rand-bearing spawn
     /// group shares ONE marker program pair across the ring (per spawn
     /// site, not per entity) while each entity carries its own drawn
-    /// capture vector — and every lane stays interpreter-exact under the
+    /// capture vector â and every lane stays interpreter-exact under the
     /// oracle (the substituted-marker re-run).
     #[test]
     fn rand_capture_slots_share_programs() {
@@ -3121,7 +3123,7 @@
         let p8 = sim.world.entities.latest_sampled_pose(8, sim.world.tick).unwrap();
         assert!(
             (p0.x - p8.x).abs() > 1e-6 || (p0.y - p8.y).abs() > 1e-6,
-            "polar and cart rows stepped identically — group key lost polar"
+            "polar and cart rows stepped identically â group key lost polar"
         );
     }
 
@@ -3244,7 +3246,7 @@
         };
         assert!((scale - 2.0).abs() < 0.02, "scale(1s) = 2: {}", scale);
         assert!((alpha - 0.5).abs() < 0.02, "opacity(1s) = 0.5: {}", alpha);
-        assert!((th - 90.0).abs() < 1.0, "facing(1s) = 90°: {}", th);
+        assert!((th - 90.0).abs() < 1.0, "facing(1s) = 90Â°: {}", th);
 
         // collision: a bullet whose base radius misses the player connects
         // once :scale grows the collider.
@@ -3256,8 +3258,8 @@
                  {:team :player-body
                   :graze 0 :hits 0})]
     (let [body (nth p 0)]
-      (bind-channel! $graze (:graze body))
-      (bind-channel! $hits (:hits body)))))
+      (bind! $graze (:graze body))
+      (bind! $hits (:hits body)))))
 (defpattern scaled [s 1]
   (par (rig)
        (spawn ((pose c[0.5 0]) (still))
@@ -3372,20 +3374,20 @@
         }
     }
 
-    /// §8 scope semantics under the guard-unwind rule: cancellation kills
-    /// the scope, and the TASK CONTINUES after it — (seq (until p a) b)
+    /// Â§8 scope semantics under the guard-unwind rule: cancellation kills
+    /// the scope, and the TASK CONTINUES after it â (seq (until p a) b)
     /// reaches b.
     #[test]
     fn until_cancels_scope_not_task() {
         const CARD: &str = r#"
 (defpattern uc []
-  (seq
-    (defcell stop 0)
-    (fork (seq (wait 0.1) (set! stop 1)))
-    (until (> stop 0)
+  (let [$stop 0]
+   (seq
+    (fork (seq (wait 0.1) (set! $stop 1)))
+    (until (> $stop 0)
       (for [i inf :every (ticks 2)]
         (spawn (still))))
-    (event :after-until)))
+    (event :after-until))))
 "#;
         let mut sim = Sim::load(CARD, Some("uc")).unwrap();
         for _ in 0..30 {
@@ -3428,14 +3430,14 @@
     fn finally_runs_on_cancellation() {
         const CARD: &str = r#"
 (defpattern f []
-  (seq
-    (defcell stop 0)
-    (fork (seq (wait 0.05) (set! stop 1)))
-    (until (> stop 0)
+  (let [$stop 0]
+   (seq
+    (fork (seq (wait 0.05) (set! $stop 1)))
+    (until (> $stop 0)
       (finally
         (seq (event :body-start) (wait 999) (event :body-late))
         (event :cleanup)))
-    (event :after)))
+    (event :after))))
 "#;
         let mut sim = Sim::load(CARD, Some("f")).unwrap();
         for _ in 0..30 {
@@ -3455,14 +3457,14 @@
     fn finally_runs_when_fork_dies() {
         const CARD: &str = r#"
 (defpattern f []
-  (seq
-    (defcell p 0)
-    (fork (seq (wait 0.05) (set! p 1)))
-    (until (> p 0)
+  (let [$p 0]
+   (seq
+    (fork (seq (wait 0.05) (set! $p 1)))
+    (until (> $p 0)
       (fork (finally
         (seq (wait 999))
         (event :fork-cleanup)))
-      (wait 999))))
+      (wait 999)))))
 "#;
         let mut sim = Sim::load(CARD, Some("f")).unwrap();
         for _ in 0..30 {
@@ -3554,15 +3556,15 @@
     }
 
     /// goto is a scoped exit: from a fork inside the state body it cancels
-    /// the whole state scope — including a nested (until …) guard the body
-    /// wrapped itself in — and re-enters at the target label.
+    /// the whole state scope â including a nested (until â¦) guard the body
+    /// wrapped itself in â and re-enters at the target label.
     #[test]
     fn states_goto_from_fork_and_until() {
         const CARD: &str = r#"
 (defpattern m []
-  (seq
-    (defcell hp 10)
-    (export hp)
+  (let [$hp 10]
+   (seq
+    (export! $hp)
     (states
       (:spell
         (finally
@@ -3571,7 +3573,7 @@
             (until (<= $hp 0)                    ; the hp gate, as body code
               (for [i inf :every (ticks 2)] (spawn (still)))))
           (event :spell-out)))
-      (:post (event :post)))))
+      (:post (event :post))))))
 "#;
         let mut sim = Sim::load(CARD, Some("m")).unwrap();
         for _ in 0..30 {
@@ -3611,8 +3613,8 @@
         assert!(a > 0 && b > 0, "both states visited: a={} b={}", a, b);
     }
 
-    /// The `phases` sugar over `states` — a touhou.maku MACRO now: clause
-    /// opts desugar to body code at macro time — :timeout to a fork racing
+    /// The `phases` sugar over `states` â a touhou.maku MACRO now: clause
+    /// opts desugar to body code at macro time â :timeout to a fork racing
     /// the body, :until to an until wrapper (a bare wait-for when the
     /// clause has no body).
     #[test]
@@ -3640,13 +3642,13 @@
         const CARD2: &str = r#"
 (import "touhou")
 (defpattern m []
-  (seq
-    (defcell hp 5)
-    (export hp)
-    (fork (seq (wait 0.2) (set! hp 0)))
+  (let [$hp 5]
+   (seq
+    (export! $hp)
+    (fork (seq (wait 0.2) (set! $hp 0)))
     (phases
       (:gate {:until (<= $hp 0)})
-      (:end (event :end)))))
+      (:end (event :end))))))
 "#;
         let mut sim2 = Sim::load(CARD2, Some("m")).unwrap();
         for _ in 0..12 {
@@ -3729,8 +3731,8 @@
         );
     }
 
-    /// spawn takes several meta maps merged per-key, later wins — the hook
-    /// library templates use: (spawn d {defaults…} user-meta).
+    /// spawn takes several meta maps merged per-key, later wins â the hook
+    /// library templates use: (spawn d {defaultsâ¦} user-meta).
     #[test]
     fn spawn_meta_merges() {
         const CARD: &str = r#"
@@ -3747,7 +3749,7 @@
         assert_eq!(style(&sim, 0).family, "star", ":style replaces wholesale");
     }
 
-    /// $tick: the world clock as a channel — what lets deadline columns
+    /// $tick: the world clock as a channel â what lets deadline columns
     /// (iframe-until) be written by library code instead of engine verbs.
     #[test]
     fn tick_channel() {
@@ -3987,7 +3989,7 @@
     }
 
 /// Variadic macros (& rest) + macro-time form processing: a macro that
-/// walks its clause list with map/nth and splices the transforms — the
+/// walks its clause list with map/nth and splices the transforms â the
 /// mechanism the stdlib's `phases` is built from.
 #[test]
 fn variadic_macro_processes_clauses() {
@@ -4109,7 +4111,7 @@ fn spawn_boss_owns_conventions() {
     assert!(has(&sim, "phase-two"), "hp gate released into the next phase");
 }
 
-/// (bind-channel! $name expr): instance-scoped derived channels can close
+/// (bind! $name expr): instance-scoped derived channels can close
 /// over handles and cells, overriding a top-level defchannel default.
 #[test]
 fn bind_channel_closes_over_handles_and_cells() {
@@ -4144,7 +4146,7 @@ fn bind_channel_closes_over_handles_and_cells() {
 }
 
 /// (defchannel $name expr): card-defined derived channels, recomputed
-/// each tick — the stdlib's $enemies/$nearest-enemy are these; a custom
+/// each tick â the stdlib's $enemies/$nearest-enemy are these; a custom
 /// one composes engine channels and world queries freely.
 #[test]
 fn defchannel_derives_per_tick() {
@@ -4262,7 +4264,7 @@ fn prelude_and_or_short_circuit() {
     assert_eq!(num("default"), 7.0);
     // truthiness is presence: keywords are truthy, 0 and nothing falsy
     assert_eq!((num("kw"), num("kwor")), (0.0, 1.0));
-    // default coalesces only on nothing — 0 is a value
+    // default coalesces only on nothing â 0 is a value
     assert_eq!((num("zero"), num("missing")), (0.0, 9.0));
 }
 
@@ -4451,7 +4453,7 @@ fn sited_evolve_counter_skips_hold_step_regions() {
 fn captured_dyn_exprs_expand_macros_at_capture() {
     // A macro expanding to a sited evolve inside a vel component: the
     // spawn-time site walk must see the expansion (the val site is
-    // collected) and the state must persist — impossible if the macro
+    // collected) and the state must persist â impossible if the macro
     // re-expanded per tick to a fresh construction
     // (evolve-design.md, capture-time expansion).
     const CARD: &str = r#"
@@ -4690,10 +4692,10 @@ fn stale_handles_do_not_target_reused_rows() {
     assert!(matches!(sim.ctx.sig.channel("enemy-hp"), Some(Val::Num(n)) if n == 2.0));
 }
 
-    /// Ancestor clocks are lib-expressible (§13.1 audit): a parent
+    /// Ancestor clocks are lib-expressible (Â§13.1 audit): a parent
     /// captures $tick into an ordinary binding (eager, an ir constant)
-    /// and the child signal reads (live $tick) minus it — a
-    /// pattern-epoch clock with no engine operator. The (live …) read
+    /// and the child signal reads (live $tick) minus it â a
+    /// pattern-epoch clock with no engine operator. The (live â¦) read
     /// alone must make the closed form defer (time-dependence is not
     /// just syntactic t/u), or the signal silently constant-folds at
     /// spawn to a frozen clock.
@@ -4749,7 +4751,7 @@ fn stale_handles_do_not_target_reused_rows() {
     }
 
     /// A sigiled param with a defaulted argument gets a fresh PRIVATE
-    /// stream per instance — writes in one instance stay invisible to
+    /// stream per instance â writes in one instance stay invisible to
     /// the other.
     #[test]
     fn stream_default_param_is_private() {
@@ -4783,7 +4785,7 @@ fn stale_handles_do_not_target_reused_rows() {
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         // a set! is visible until the next refresh, where the
-        // always-writing producer overwrites it — the gate, checked one
+        // always-writing producer overwrites it â the gate, checked one
         // tick later, never opens
         for _ in 0..8 {
             sim.step().unwrap();

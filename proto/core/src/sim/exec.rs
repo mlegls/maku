@@ -345,8 +345,6 @@ fn run_action(
         | ActionV::Event { .. }
         | ActionV::Cull { .. }
         | ActionV::CullHostile
-        | ActionV::Export { .. }
-        | ActionV::BindChannel { .. }
         | ActionV::Remat { .. }
         | ActionV::Render { .. }
         | ActionV::ChangeCol { .. }
@@ -377,9 +375,7 @@ fn run_action(
                 Ok(true)
             }
         }
-        ActionV::DefVar { .. }
-        | ActionV::SetVar { .. }
-        | ActionV::SetStream { .. }
+        ActionV::SetStream { .. }
         | ActionV::BindStream { .. }
         | ActionV::ExportStream { .. } => {
             exec_instant(a, ctx, world)?;
@@ -554,15 +550,8 @@ fn run_action(
             }
             Ok(false)
         }
-        ActionV::CallPattern { params, body, args, caller_cells, fresh_cells } => {
-            // the §10 embedding adapter: fresh cells by default (isolated
-            // defcell state per instance), the caller's for (inline …)
-            let cells = if *fresh_cells {
-                fresh_cell_scope()
-            } else {
-                caller_cells.clone().unwrap_or_else(fresh_cell_scope)
-            };
-            let mut env = Env::empty().bind(CELLS_KEY.into(), cells);
+        ActionV::CallPattern { params, body, args } => {
+            let mut env = Env::empty();
             for (i, (pname, default)) in params.iter().enumerate() {
                 let mut v = match args.get(i) {
                     Some(v) => v.clone(),

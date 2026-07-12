@@ -285,7 +285,7 @@ over map forms, `form-type`/`form-name`, and evaluator-backed
 `map`/`filter`. With those, `phases` moved out of Rust entirely: a
 touhou.maku macro walking its clause list with a helper defn and
 splicing `states` clauses. Second, `boss` now owns the boss
-conventions: it binds a structured boss channel with `bind-channel!`,
+conventions: it rebinds the card's boss stream with `bind!`,
 holds the machine until the boss registers, and binds `boss`/`boss-main`;
 `phases` gained `{:hp n}` as gate sugar reading that local handle.
 The engine keeps only the bare FSM (`states`/`goto`) — what a
@@ -536,12 +536,12 @@ Possible future sugar: `(on-axis k xs)`. DMK avoids the ambiguity by
 attaching modifiers to repeater levels — positional information our
 spawn-level meta must encode by length or annotation.
 
-**F16 — pattern-scoped control cells (adopted).** `(defcell name init)` +
-`(set! name v)` actions + reads. The internal analogue of injected channels
+**F16 — pattern-scoped control state (adopted).** Now sigiled local
+streams: `(let [$name init] …)` + `(set! $name v)` actions + reads. The internal analogue of injected channels
 (SC control-bus precedent): writes are frame-stamped events on the log, so
-replay/scrub survives; the control layer reads the cell plainly (it owns it,
-tick-synchronous); *signal* slots must mark `live(name)` — snap-by-default
-applies to cells exactly as to injected channels. Dissolves ph_boss2's
+replay/scrub survives; the control layer reads the stream plainly (it owns it,
+tick-synchronous); *signal* slots must mark `live($name)` — snap-by-default
+applies to local streams exactly as to injected ones. Dissolves ph_boss2's
 `exec b{ hvar isAccel }` + `whiletrue` polling + mode-dependent render
 functions. Structure is still preferred where the gating IS structure
 (successive stages of a loop); cells are for state read *concurrently* by
@@ -584,8 +584,8 @@ The ambient itch decomposes:
    anywhere without threading. F19(a)'s root cause was misclassification:
    DMK's `dl` IS rank, already an injected channel per §3 —
    `(def factor (pow rank 0.3))` and the threading disappears.
-2. **Read-write ambient = cells** (`defcell`/`set!`, F16): already a shared
-   namespace, but pattern-scoped; embedding adapters decide sharing.
+2. **Read-write ambient = local streams** (`let [$x]`/`set!`, F16): a shared
+   namespace, but pattern-scoped; sharing is explicit handle passing.
 3. **Scoped overrides** `(with {rank 0.5} body)` — dynamic *binding*, not
    mutation: channel values overridden for a lexical subtree. Delimited
    writes, tree-visible provenance, card-macro friendly ("this card at half
@@ -649,7 +649,7 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   transition; the boss script's `switch(reflected, …)` idiom decoded as
   hand-rolled rematerialization.
 - `ph_boss2_spell2.maku` — complete (the ceiling test). Exercises everything
-  at once: `defcell` cells (F16), the first genuinely *shared* scan (the
+  at once: local control streams (F16), the first genuinely *shared* scan (the
   guide), summons-as-fork-in-frame, `whiletrue` = pause (verified) →
   `wait-for`, random-walk fold, rand/brand dissolution, macros→functions.
   ~60 lines vs ~100; the whole card except two parked guides is piecewise-

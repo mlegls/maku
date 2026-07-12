@@ -218,8 +218,8 @@ The order things earned names in this card is the general rule:
 2. **`defn`** for repeated *values* — and almost everything is a value
    here: frames, motions, whole action trees.
 3. **`defpattern` parameters** for reusable, tunable spells — each
-   invocation gets private `defcell` state, so a pattern used twice never
-   trips over itself.
+   invocation gets private local-stream state, so a pattern used twice
+   never trips over itself.
 4. **`defmacro`** last, only for genuine notation — when arguments must
    stay unevaluated (like `where`) or the shape itself is the thing being
    named (like `control`).

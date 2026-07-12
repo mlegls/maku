@@ -31,10 +31,6 @@ pub struct Card {
     pub order: Vec<String>,
     pub defs: HashMap<String, Form>,
     pub macros: HashMap<String, Macro>,
-    /// (defchannel $name expr) — derived channels, evaluated once per tick
-    /// during channel refresh, in definition order. Card code, not engine:
-    /// this is how the stdlib publishes $enemies/$nearest-enemy.
-    pub channels: Vec<(Rc<str>, Form)>,
     /// (deftick body...) — evaluated when the card is installed, registering
     /// per-tick rules into World data.
     pub tick_rules: Vec<Form>,
@@ -51,7 +47,6 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut order = Vec::new();
     let mut defs = HashMap::new();
     let mut macros = HashMap::new();
-    let channels: Vec<(Rc<str>, Form)> = Vec::new();
     let mut tick_rules: Vec<Form> = Vec::new();
     let mut streams: Vec<(Rc<str>, Option<Form>)> = Vec::new();
     let mut stream_forms: Vec<Form> = Vec::new();
@@ -198,7 +193,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
             }
         }
     }
-    let mut card = Card { patterns, order, defs, macros, channels, tick_rules, streams, stream_forms };
+    let mut card = Card { patterns, order, defs, macros, tick_rules, streams, stream_forms };
     rewrite_card(&mut card);
     Ok(card)
 }

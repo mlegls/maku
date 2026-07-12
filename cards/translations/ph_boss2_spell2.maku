@@ -146,7 +146,7 @@
 ;; ---------------------------------------------------------------------------
 ;; What this exercised (all recent machinery at once)
 ;;
-;;   defcell/set!/live (F16)   DMK's exec b{ hvar isAccel } + whiletrue polling
+;;   local stream/set!/live    DMK's exec b{ hvar isAccel } + whiletrue polling
 ;;                            + mode-multiplied facing. Control layer reads
 ;;                            the cell plainly ((= mode 1) -- it owns it);
 ;;                            SIGNAL slots must mark live(mode) (snap-by-

@@ -40,7 +40,12 @@ fn rewrite_card_forms(card: &mut Card, trivial: &HashMap<String, TrivialDef>) {
         }
         pat.body = rewrite_body(&pat.body, &mut root_bound.clone(), trivial);
     }
-    for (_, f) in &mut card.channels {
+    for (_, init) in &mut card.streams {
+        if let Some(f) = init {
+            *f = rewrite_form(f.clone(), &mut root_bound.clone(), trivial);
+        }
+    }
+    for f in &mut card.stream_forms {
         *f = rewrite_form(f.clone(), &mut root_bound.clone(), trivial);
     }
     for f in &mut card.tick_rules {

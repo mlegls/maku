@@ -64,9 +64,6 @@ pub struct Sim {
     collider_scratch: ColliderScratch,
     render_scratch: render::RenderScratch,
     vel_batch: VelBatchScratch,
-    /// (defchannel $name expr) rules from the loaded card (stdlib included),
-    /// evaluated once per tick at the end of refresh_channels.
-    card_channels: Vec<(Rc<str>, Form)>,
 }
 
 /// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
@@ -281,8 +278,6 @@ impl Clone for Sim {
             Rc::new(std::cell::RefCell::new(self.ctx.sig.cells.borrow().clone()));
         ctx.sig.exports =
             Rc::new(std::cell::RefCell::new(self.ctx.sig.exports.borrow().clone()));
-        ctx.sig.bound_channels =
-            Rc::new(std::cell::RefCell::new(self.ctx.sig.bound_channels.borrow().clone()));
         ctx.sig.streams =
             Rc::new(std::cell::RefCell::new(self.ctx.sig.streams.borrow().clone()));
         ctx.sig.host_streams =
@@ -296,7 +291,6 @@ impl Clone for Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
-            card_channels: self.card_channels.clone(),
         }
     }
 }
@@ -346,7 +340,7 @@ impl Sim {
         let mut world = World::default();
         install_tick_rules(&card, &mut ctx, &mut world)?;
         install_streams(&card, &mut ctx, &mut world)?;
-        let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+        let env = Env::empty();
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
         Ok(Sim {
             world,
@@ -355,7 +349,6 @@ impl Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
-            card_channels: card.channels,
         })
     }
 
@@ -389,10 +382,6 @@ impl Sim {
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
                 card.macros.extend(sent.macros);
-                for (name, expr) in sent.channels {
-                    card.channels.retain(|(k, _)| *k != name);
-                    card.channels.push((name, expr));
-                }
                 for (name, init) in sent.streams {
                     card.streams.retain(|(k, _)| *k != name);
                     card.streams.push((name, init));
@@ -402,7 +391,6 @@ impl Sim {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
-                self.card_channels = card.channels.clone();
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 install_streams(&card, &mut self.ctx, &mut self.world)?;
                 let actions: Vec<Form> = body_forms
@@ -412,7 +400,7 @@ impl Sim {
                     .collect();
                 if actions.is_empty() {
                     let pat = &self.ctx.patterns.clone()[&first];
-                    let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+                    let mut env = Env::empty();
                     let mut w = World::default();
                     for (pname, default) in &pat.params {
                         let v = evaluate(default, &env, &mut self.ctx, &mut w)?;
@@ -420,7 +408,7 @@ impl Sim {
                     }
                     (pat.body.clone(), env)
                 } else {
-                    let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+                    let env = Env::empty();
                     (actions.into(), env)
                 }
             }
@@ -428,10 +416,9 @@ impl Sim {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
-                self.card_channels = card.channels.clone();
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 install_streams(&card, &mut self.ctx, &mut self.world)?;
-                let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+                let env = Env::empty();
                 (body_forms.into(), env)
             }
         };
@@ -468,7 +455,7 @@ impl Sim {
         let mut world = World::default();
         install_tick_rules(card, &mut ctx, &mut world)?;
         install_streams(card, &mut ctx, &mut world)?;
-        let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
+        let mut env = Env::empty();
         for (pname, default) in &pat.params {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;
             env = env.bind(pname.clone(), v);
@@ -481,7 +468,6 @@ impl Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
-            card_channels: card.channels.clone(),
         })
     }
 
@@ -690,7 +676,6 @@ impl Sim {
             macros: Rc::new(std::collections::HashMap::new()),
             deferred: Vec::new(),
             projector_scope: None,
-            signal_scope: false,
         }
     }
 
@@ -1417,7 +1402,7 @@ impl Sim {
         self.ctx.sig.channel(name)
     }
 
-    /// DEBUG/tooling read of the pattern-scoped control cells (defcell).
+    /// DEBUG/tooling read of the stream store.
     /// Cells are deliberately NOT part of the host game contract — the
     /// export surface is channels/events/tags (§3) — but an inspector
     /// wants to see them (sorted for stable display).

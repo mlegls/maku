@@ -23,8 +23,6 @@ const NAMES: &[&str] = &[
     "emit",
     "entity-col",
     "nearest-entity",
-    "export",
-    "bind-channel!",
 ];
 
 pub(crate) fn is_special(name: &str) -> bool {
@@ -232,29 +230,6 @@ pub(crate) fn special(
                 Some((_, (x, y))) => Val::Pose(Pose::point(x, y)),
                 None => Val::Nothing,
             }
-        }
-        "export" => {
-            let Form::Sym(name) = &items[1] else {
-                return Err("export: expected a cell name".into());
-            };
-            let scope = cell_scope(env).ok_or("export: no cell scope")?;
-            Val::Action(Rc::new(ActionV::Export { scope, name: name.clone() }))
-        }
-        "bind-channel!" => {
-            let Some(Form::Sym(n)) = items.get(1) else {
-                return Err("bind-channel!: expected a $channel name".into());
-            };
-            let Some(name) = n.strip_prefix('$') else {
-                return Err("bind-channel!: name must start with $".into());
-            };
-            let Some(expr) = items.get(2) else {
-                return Err(format!("bind-channel! ${}: expected an expression", name));
-            };
-            Val::Action(Rc::new(ActionV::BindChannel {
-                name: Rc::from(name),
-                expr: expr.clone(),
-                env: env.clone(),
-            }))
         }
         _ => return Ok(None),
     };

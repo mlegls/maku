@@ -116,10 +116,10 @@ gameplay timers. Here they are host handoffs (`ex4-announce-dialogue`):
 
 ```clojure
 (seq
-  (bind-channel! $stage {:section :announce})
+  (set! $stage {:section :announce})
   (event :stage-announce)
   (wait 0.7)
-  (bind-channel! $stage {:section :dialogue})
+  (set! $stage {:section :dialogue})
   (event :dialogue)
   (wait 0.8)
   ...)

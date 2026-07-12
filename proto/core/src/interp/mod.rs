@@ -141,34 +141,12 @@ pub enum Val {
     Handle(EntityRef),
     StageExit(Rc<StageExitSlot>),
     StageExitPose { slot: Rc<StageExitSlot>, field: StageExitField },
-    /// The pattern instance's cell scope (name → cell id), bound in the Env
-    /// under "#cells" — it rides every captured (Form, Env) pair, so signal
-    /// reads resolve the right instance's cells at tick time. Shared-map
-    /// mutation across snapshots is replay-safe because ids allocate from
-    /// the deterministic world counter (re-stepping converges).
-    Cells(Rc<std::cell::RefCell<HashMap<String, u64>>>),
     /// A stream handle: `$name` in binding position constructs one, sigiled
     /// parameters and closure capture pass it, reference position snaps it.
     /// The id keys the shared `sig.cells` store; ids allocate from the
     /// deterministic world counter, so handles are replay-safe.
     Stream(u64),
     Nothing,
-}
-
-/// The hidden Env key carrying the pattern instance's cell scope. Passed
-/// through defn application and def resolution like the slot-bound t/u —
-/// cells are DYNAMIC pattern-scoped ambient (§3), not lexical.
-pub const CELLS_KEY: &str = "#cells";
-
-pub(crate) fn cell_scope(env: &Env) -> Option<Rc<std::cell::RefCell<HashMap<String, u64>>>> {
-    match env.lookup(CELLS_KEY) {
-        Some(Val::Cells(m)) => Some(m),
-        _ => None,
-    }
-}
-
-pub(crate) fn fresh_cell_scope() -> Val {
-    Val::Cells(Rc::new(std::cell::RefCell::new(HashMap::new())))
 }
 
 /// Resolve a form in STREAM position (set!/bind!/export! targets, sigiled
@@ -310,24 +288,14 @@ pub enum ActionV {
     /// Queue a functional column update on a live entity (dead handles are no-ops at drain).
     ChangeCol { target: EntityRef, col: ColName, f: Val },
     Cull { target: EntityRef },
-    /// (export cell): publish a pattern cell as a read-only channel of the
-    /// same name — the pattern-level export surface (host renders it; the
-    /// pattern stays the single writer).
-    Export { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str> },
-    /// (bind-channel! $name expr): publish an instance-scoped derived
-    /// channel. Unlike top-level defchannel, expr closes over this env.
-    BindChannel { name: Rc<str>, expr: Form, env: Env },
     /// Pattern invocation: args pre-evaluated in the CALLER's scope (ir
-    /// values); params fill from defaults. The §10 embedding adapter:
-    /// fresh_cells=true (the default — isolated defcell state per instance),
-    /// false for (inline …) — the embedded pattern shares the caller's
-    /// cells ("binds into the embedding pattern's scope").
+    /// values, sigiled params receiving stream handles); params fill from
+    /// defaults. Instance state is local sigiled bindings — isolation by
+    /// default, sharing by explicit handle passing.
     CallPattern {
         params: Vec<(Rc<str>, Form)>,
         body: Rc<[Form]>,
         args: Vec<Val>,
-        caller_cells: Option<Val>,
-        fresh_cells: bool,
     },
     /// Clear all hostile (team-less) fire — bomb semantics.
     CullHostile,
@@ -356,8 +324,6 @@ pub enum ActionV {
     Goto { cell: u64, label: Option<Rc<str>> },
     Wait { ticks: u64 },
     WaitFor { pred: Form, env: Env },
-    DefVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, init: Val },
-    SetVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, val: Val },
     /// `(set! $x v)` on a stream handle: overwrite the store slot.
     SetStream { id: u64, name: Rc<str>, val: Val },
     /// `(bind! $x expr)`: attach a per-tick refresh producer to the stream.
@@ -439,10 +405,8 @@ pub struct SigEnv {
     /// Pattern-scoped control cells (F16): written by set! (control layer),
     /// read live by signals; shared between world and signal contexts.
     pub cells: Rc<std::cell::RefCell<HashMap<u64, (String, Val)>>>,
-    /// Cells published as channels via (export cell): (public name, id).
+    /// Streams published via (export! $x [:as $name]): (public name, id).
     pub exports: Rc<std::cell::RefCell<Vec<(String, u64)>>>,
-    /// Instance-scoped derived channels registered by (bind-channel! ...).
-    pub bound_channels: Rc<std::cell::RefCell<Vec<(Rc<str>, Form, Env)>>>,
     /// Top-level `(def $name ...)` streams: bare name → stream id.
     pub streams: Rc<std::cell::RefCell<HashMap<String, u64>>>,
     /// Host-input streams claimed by `(from-host :name)`: host name → id.
@@ -463,7 +427,6 @@ impl Default for SigEnv {
             channels: Rc::new(HashMap::new()),
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
             exports: Rc::new(std::cell::RefCell::new(Vec::new())),
-            bound_channels: Rc::new(std::cell::RefCell::new(Vec::new())),
             streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             host_streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             producers: Rc::new(std::cell::RefCell::new(Vec::new())),
@@ -514,12 +477,6 @@ pub struct Ctx {
     /// projector constructors may reference only these names for entity-local
     /// and per-tick context data.
     pub projector_scope: Option<ProjectorScope>,
-    /// True while evaluating a signal slot (eval_sig_at_rate). Signals read
-    /// cells only via `(live name)` (openspec/specs/language/spec.md §control-cells: plain reads
-    /// belong to the control layer; snap-by-default applies to cells exactly
-    /// as to channels), so bare symbols skip the cell scope here — which also
-    /// makes def resolution static and inlinable for the signal lowerer.
-    pub signal_scope: bool,
 }
 
 impl Default for Ctx {
@@ -532,7 +489,6 @@ impl Default for Ctx {
             macros: Rc::new(HashMap::new()),
             deferred: Vec::new(),
             projector_scope: None,
-            signal_scope: false,
         }
     }
 }
@@ -575,22 +531,11 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 if let Some(v) = env.lookup(name) {
                     return Ok(v);
                 }
-                if !ctx.signal_scope {
-                    if let Some(scope) = cell_scope(env) {
-                        let id = scope.borrow().get(name).copied();
-                        if let Some(id) = id {
-                            if let Some((_, v)) = ctx.sig.cells.borrow().get(&id) {
-                                return Ok(v.clone());
-                            }
-                        }
-                    }
-                }
                 if let Some(f) = ctx.sig.defs.clone().get(name) {
-                    // hygienic except the slot-bound parameters (and the
-                    // cell scope, which is dynamic ambient): a def'd
+                    // hygienic except the slot-bound parameters: a def'd
                     // signal's t IS the referencing slot's t (F12)
                     let mut e = Env::empty();
-                    for slot in ["t", "u", CELLS_KEY] {
+                    for slot in ["t", "u"] {
                         if let Some(v) = env.lookup(slot) {
                             e = e.bind(slot.into(), v);
                         }
@@ -1030,22 +975,11 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 return engine::special(name, items, env, ctx, world).map(|v| v.unwrap());
             }
             "inline" => {
-                // adapter: run the embedded pattern IN the caller's cell
-                // scope ("binds into the embedding pattern's scope", §10)
-                let inner = evaluate(&items[1], env, ctx, world)?;
-                let Val::Action(a) = &inner else {
-                    return Err("inline: expected a pattern call".into());
-                };
-                let ActionV::CallPattern { params, body, args, caller_cells, .. } = &**a else {
-                    return Err("inline: expected a pattern call".into());
-                };
-                return Ok(Val::Action(Rc::new(ActionV::CallPattern {
-                    params: params.clone(),
-                    body: body.clone(),
-                    args: args.clone(),
-                    caller_cells: caller_cells.clone(),
-                    fresh_cells: false,
-                })));
+                // (inline …) dissolved with the cell scope: state sharing
+                // is explicit handle passing (sigiled params)
+                return Err(
+                    "inline: removed — pass streams explicitly via sigiled params".into(),
+                );
             }
             "until" => {
                 if items.len() < 3 {
@@ -1394,15 +1328,6 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                             }
                         };
                     }
-                    // cells read live via the env-carried scope
-                    if let Some(scope) = cell_scope(env) {
-                        let id = scope.borrow().get(ch.as_ref()).copied();
-                        if let Some(id) = id {
-                            if let Some((_, v)) = ctx.sig.cells.borrow().get(&id) {
-                                return Ok(v.clone());
-                            }
-                        }
-                    }
                 }
                 return evaluate(&items[1], env, ctx, world);
             }
@@ -1464,29 +1389,20 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     world_ang - ctx.ambient.angle_or(0.0),
                 )));
             }
-            "defcell" => {
-                let Some(Form::Sym(name)) = items.get(1) else {
-                    return Err("defcell: expected name".into());
-                };
-                let init = evaluate(&items[2], env, ctx, world)?;
-                let scope = cell_scope(env).ok_or("defcell: no cell scope")?;
-                return Ok(Val::Action(Rc::new(ActionV::DefVar { scope, name: name.clone(), init })));
-            }
             "set!" => {
                 let Some(Form::Sym(name)) = items.get(1) else {
-                    return Err("set!: expected name".into());
+                    return Err("set!: expected a $stream name".into());
                 };
-                let val = evaluate(&items[2], env, ctx, world)?;
-                if name.starts_with('$') {
-                    let id = resolve_stream(&items[1], env, ctx, world)?;
-                    return Ok(Val::Action(Rc::new(ActionV::SetStream {
-                        id,
-                        name: Rc::from(&name[1..]),
-                        val,
-                    })));
+                if !name.starts_with('$') {
+                    return Err(format!("set!: expected a $stream, got '{}'", name));
                 }
-                let scope = cell_scope(env).ok_or("set!: no cell scope")?;
-                return Ok(Val::Action(Rc::new(ActionV::SetVar { scope, name: name.clone(), val })));
+                let val = evaluate(&items[2], env, ctx, world)?;
+                let id = resolve_stream(&items[1], env, ctx, world)?;
+                return Ok(Val::Action(Rc::new(ActionV::SetStream {
+                    id,
+                    name: Rc::from(&name[1..]),
+                    val,
+                })));
             }
             "bind!" => {
                 let Some(target) = items.get(1) else {
@@ -1605,7 +1521,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
     // (arguments arrive unevaluated; the expansion evaluates in the
     // caller's scope), then pattern (§10 embedding: args evaluated in the
     // CALLER's scope as ir values, defaults filling the rest; default
-    // adapter = isolated cells, (inline …) shares the caller's), then
+    // isolation by local streams; sharing by sigiled params), then
     // fall back to builtins.
     if let Form::Sym(name) = head {
         if env.lookup(name).is_none()
@@ -1643,8 +1559,6 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     params: pat.params.clone(),
                     body: pat.body.clone(),
                     args,
-                    caller_cells: env.lookup(CELLS_KEY),
-                    fresh_cells: true,
                 })));
             }
             let args = items[1..]
@@ -1771,16 +1685,10 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            // cells are dynamic ambient: the caller's scope flows into the
-            // callee (hygiene excepts #cells, like the slot-bound t/u)
+            // hygiene excepts only the slot-bound t/u
             let f = match f {
                 Val::Fn { params, body, env: fenv } => {
                     let mut fenv = fenv;
-                    if fenv.lookup(CELLS_KEY).is_none() {
-                        if let Some(cells) = env.lookup(CELLS_KEY) {
-                            fenv = fenv.bind(CELLS_KEY.into(), cells);
-                        }
-                    }
                     for name in ["t", "u"] {
                         if fenv.lookup(name).is_none() {
                             if let Some(v) = env.lookup(name) {
@@ -2758,53 +2666,6 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.push_event(StoredEvent { tick: world.tick, name: *name, pos: *pos });
             Ok(Val::Nothing)
         }
-        ActionV::Export { scope, name } => {
-            let id = scope
-                .borrow()
-                .get(&**name)
-                .copied()
-                .ok_or_else(|| format!("export: no cell '{}' in scope", name))?;
-            {
-                let mut ex = ctx.sig.exports.borrow_mut();
-                if !ex.iter().any(|(_, i)| *i == id) {
-                    ex.push((name.to_string(), id));
-                }
-            }
-            // same-tick availability
-            let v = ctx.sig.cells.borrow().get(&id).map(|(_, v)| v.clone());
-            if let Some(v) = v {
-                let mut m = (*ctx.sig.channels).clone();
-                m.insert(name.to_string(), v);
-                ctx.sig.channels = Rc::new(m);
-            }
-            Ok(Val::Nothing)
-        }
-        ActionV::BindChannel { name, expr, env } => {
-            ctx.sig.bound_channels.borrow_mut().push((name.clone(), expr.clone(), env.clone()));
-            let v = evaluate(expr, env, ctx, world)?;
-            if !matches!(v, Val::Nothing) {
-                let mut m = (*ctx.sig.channels).clone();
-                m.insert(name.to_string(), v);
-                ctx.sig.channels = Rc::new(m);
-            }
-            Ok(Val::Nothing)
-        }
-        ActionV::DefVar { scope, name, init } => {
-            let id = world.next_id;
-            world.next_id += 1;
-            scope.borrow_mut().insert(name.to_string(), id);
-            ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), init.clone()));
-            Ok(Val::Nothing)
-        }
-        ActionV::SetVar { scope, name, val } => {
-            let id = scope
-                .borrow()
-                .get(&**name)
-                .copied()
-                .ok_or_else(|| format!("set!: no cell '{}' in scope", name))?;
-            ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), val.clone()));
-            Ok(Val::Nothing)
-        }
         ActionV::SetStream { id, name, val } => {
             ctx.sig.cells.borrow_mut().insert(*id, (name.to_string(), val.clone()));
             Ok(Val::Nothing)
@@ -2837,7 +2698,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                         slot.1 = v.clone();
                     }
                     // same-tick availability in the public snapshot for
-                    // already-exported streams (bind-channel! parity)
+                    // already-exported streams (same-tick read parity)
                     let exported: Vec<String> = ctx
                         .sig
                         .exports

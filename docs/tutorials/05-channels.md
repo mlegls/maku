@@ -47,24 +47,27 @@ habits from the start:
 toward it at spawn time (`ex3-aimed`) — aimed fire is a frame
 operation, not a special bullet type.
 
-## Publishing: defchannel, bind-channel!, expose, and export
+## Publishing: def, bind!, and export!
 
-The boundary runs both ways. A card publishes state with declared
-channels and runtime producers:
+The boundary runs both ways, and it is built from three orthogonal
+operations on *streams* — every `$name` is one:
 
-**`(defchannel $name default)`** declares a public derived channel and
-its fallback/default value. Runtime code can then produce that channel.
-**`:expose`** is the short form for the common entity-column case: it
-maps a public channel to an entity *column*. The value tracks the live
-entity, and reads 0 once it dies (`ex4-expose`):
+- **declare** — `(def $name)` at the top level, or `(let [$name init] …)`
+  for a pattern-local stream;
+- **produce** — `(bind! $name expr)` attaches a per-tick refresh
+  producer (rebinding replaces it);
+- **publish** — `(export! $name)` registers the stream with the host.
+
+**`(defchannel $name expr)`** is the one-line sugar for all three: a
+declared, produced, published stream. Its expression re-evaluates each
+tick, so an entity column tracks the live entity and reads its fallback
+once the producer yields nothing (`ex4-expose`):
 
 ```clojure
 (defchannel $dummy-hp 0)
-
-(enemy ((pose c[0 2.5]) (still)) { :hp 20
-        :expose {$dummy-hp :hp}
-        :style {:family :lstar :color :green}
-        :scale 1.5})
+…
+(let [dummy (enemy ((pose c[0 2.5]) (still)) {:hp 20 …})]
+  (bind! $dummy-hp (default (:hp (nth dummy 0)) 0)))
 ```
 
 Anything can read `$dummy-hp` now: the host draws its boss bar from it,
@@ -77,25 +80,28 @@ and other patterns react to it —
   (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))
 ```
 
-For richer state, **`(bind-channel! $name expr)`** registers an
-instance-scoped derived channel. The expression can close over local
-handles and cells, so a boss can publish a map like `{:hp … :phase …}`
-without mutating fields in a shared structure.
+The producer expression can close over local handles and streams, so a
+boss can publish a map like `{:hp … :phase …}` without mutating fields
+in a shared structure.
 
-**`(export cell)`** publishes a card-level cell by its own name
-(`ex5-export`):
+A stream doesn't need a producer at all. A pattern-local stream written
+with `set!` and published with `export!` is a counter the whole world
+can read (`ex5-export`):
 
 ```clojure
-(defcell volleys 0)
-(export volleys)
-…
-(set! volleys (+ volleys 1))
+(let [$volleys 0]
+  (seq
+    (export! $volleys)
+    …
+    (set! $volleys (+ $volleys 1))))
 ```
 
-`$volleys` is now a channel like any other — the host can display it, a
-sibling pattern can fire a bonus every fourth volley. Exposed columns
-and exported cells arrive identically at the reader; the difference is
-only where the value lives.
+`$volleys` now reads like any other stream — the host can display it, a
+sibling pattern can fire a bonus every fourth volley. Produced and
+set!-driven streams arrive identically at the reader; the difference is
+only who writes them. (If a stream has both, the producer wins at each
+tick's refresh unless it yields `nothing` — so a producer-backed stream
+is effectively sealed against `set!`.)
 
 ## The player is card content
 
