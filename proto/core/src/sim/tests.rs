@@ -1296,20 +1296,27 @@
             card.push_str("(spawn (pose c[3 4]) {:render :sprite :color :blue}) ");
         }
         card.push_str("))");
+        // oracle-forcing tests may not overlap: the standing-rule oracle
+        // keeps the interpreted rows, so no batch item ever lands
+        let _shield = crate::interp::oracle_off_shield();
         let mut sim = Sim::load(&card, Some("p")).unwrap();
         assert!(sim.world.standing_rules[0].compiled[0].is_some());
         sim.step().unwrap();
-        let batch = sim
-            .world
-            .render_rows
-            .iter()
-            .find_map(|item| match item {
-                crate::model::RenderItem::Batch(b) => Some(b.clone()),
-                _ => None,
-            })
-            .expect("compiled point rule should emit a column batch");
-        assert_eq!(batch.len, 32);
-        let schema = batch.schema.clone();
+        // under MAKU_LOWER_ORACLE=1 the expanded rows below are still the
+        // reference; only the batch-item asserts are off the table
+        let schema = (!crate::interp::oracle_enabled()).then(|| {
+            let batch = sim
+                .world
+                .render_rows
+                .iter()
+                .find_map(|item| match item {
+                    crate::model::RenderItem::Batch(b) => Some(b.clone()),
+                    _ => None,
+                })
+                .expect("compiled point rule should emit a column batch");
+            assert_eq!(batch.len, 32);
+            batch.schema.clone()
+        });
         // expansion carries per-row syms, presence-masked nums, and
         // FieldOr defaults exactly as the row path would
         let rows = sim.render();
@@ -1323,16 +1330,18 @@
         let RenderData::Point { scale, .. } = rows[0].data else { panic!() };
         assert_eq!(scale, 2.0);
         sim.step().unwrap();
-        let batch2 = sim
-            .world
-            .render_rows
-            .iter()
-            .find_map(|item| match item {
-                crate::model::RenderItem::Batch(b) => Some(b.clone()),
-                _ => None,
-            })
-            .unwrap();
-        assert!(Rc::ptr_eq(&schema, &batch2.schema), "schema memo should be pointer-stable");
+        if let Some(schema) = schema {
+            let batch2 = sim
+                .world
+                .render_rows
+                .iter()
+                .find_map(|item| match item {
+                    crate::model::RenderItem::Batch(b) => Some(b.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(Rc::ptr_eq(&schema, &batch2.schema), "schema memo should be pointer-stable");
+        }
     }
 
     #[test]
@@ -1361,11 +1370,14 @@
             );
         }
         card.push_str("))");
+        let _shield = crate::interp::oracle_off_shield();
         let mut sim = Sim::load(&card, Some("p")).unwrap();
         assert!(sim.world.standing_rules[0].compiled[0].is_some(), "rule should compile");
         sim.step().unwrap();
-        let has_batch = sim.world.render_rows.iter().any(|item| matches!(item, crate::model::RenderItem::Batch(_)));
-        assert!(has_batch, "touhou-shaped rule should batch; items: {:?}", sim.world.render_rows);
+        if !crate::interp::oracle_enabled() {
+            let has_batch = sim.world.render_rows.iter().any(|item| matches!(item, crate::model::RenderItem::Batch(_)));
+            assert!(has_batch, "touhou-shaped rule should batch; items: {:?}", sim.world.render_rows);
+        }
     }
 
     #[test]
@@ -2966,15 +2978,7 @@
 
     #[test]
     fn lowered_closed_pt_oracle_card_step() {
-        struct OracleGuard;
-        impl Drop for OracleGuard {
-            fn drop(&mut self) {
-                crate::interp::set_oracle_for_tests(false);
-            }
-        }
-
-        crate::interp::set_oracle_for_tests(true);
-        let _guard = OracleGuard;
+        let _guard = crate::interp::oracle_on_guard();
         const CARD: &str = r#"
 (defpattern p []
   (spawn (polar (+ 2 (* 3 t) (sin (* 90 t)))
@@ -2993,15 +2997,7 @@
     /// oracle at both fill sites (collide, cull).
     #[test]
     fn closed_pose_batch_fills_and_matches() {
-        struct OracleGuard;
-        impl Drop for OracleGuard {
-            fn drop(&mut self) {
-                crate::interp::set_oracle_for_tests(false);
-            }
-        }
-
-        crate::interp::set_oracle_for_tests(true);
-        let _guard = OracleGuard;
+        let _guard = crate::interp::oracle_on_guard();
         // sites sharing the integrand shape (differing only in a captured
         // value) intern to one program pair and fuse; a distinct shape
         // groups separately
@@ -3026,15 +3022,7 @@
     /// and const-frame wrappers â the fruit-card hot shape.
     #[test]
     fn vel_batch_oracle_card_step() {
-        struct OracleGuard;
-        impl Drop for OracleGuard {
-            fn drop(&mut self) {
-                crate::interp::set_oracle_for_tests(false);
-            }
-        }
-
-        crate::interp::set_oracle_for_tests(true);
-        let _guard = OracleGuard;
+        let _guard = crate::interp::oracle_on_guard();
         const CARD: &str = r#"
 (defpattern p []
   (par
@@ -3055,15 +3043,7 @@
     /// oracle (the substituted-marker re-run).
     #[test]
     fn rand_capture_slots_share_programs() {
-        struct OracleGuard;
-        impl Drop for OracleGuard {
-            fn drop(&mut self) {
-                crate::interp::set_oracle_for_tests(false);
-            }
-        }
-
-        crate::interp::set_oracle_for_tests(true);
-        let _guard = OracleGuard;
+        let _guard = crate::interp::oracle_on_guard();
         const CARD: &str = r#"
 (defpattern p []
   (spawn (circle 8 (vel (polar (rand 1 2) (+ (* (randpm1) 20) (* 10 t)))))))
@@ -3108,15 +3088,7 @@
     /// part of the batch group key). Oracle-checked per lane.
     #[test]
     fn env_capture_slots_intern_across_sites() {
-        struct OracleGuard;
-        impl Drop for OracleGuard {
-            fn drop(&mut self) {
-                crate::interp::set_oracle_for_tests(false);
-            }
-        }
-
-        crate::interp::set_oracle_for_tests(true);
-        let _guard = OracleGuard;
+        let _guard = crate::interp::oracle_on_guard();
         const CARD: &str = r#"
 (defpattern p []
   (let [s1 2 s2 3]

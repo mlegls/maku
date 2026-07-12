@@ -1396,9 +1396,37 @@ pub fn oracle_enabled() -> bool {
 #[cfg(test)]
 static ORACLE_TEST_OVERRIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// The override is process-global, so under a parallel test harness a test
+// that forces the oracle on leaks it into every concurrently running test.
+// Writers (oracle-forcing tests) serialize on this lock; tests that must
+// observe the compiled fast path (e.g. batch emission, which oracle mode
+// replaces with interpreted rows) hold a read shield for their duration.
 #[cfg(test)]
-pub(crate) fn set_oracle_for_tests(enabled: bool) {
-    ORACLE_TEST_OVERRIDE.store(enabled, std::sync::atomic::Ordering::SeqCst);
+static ORACLE_TEST_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+#[cfg(test)]
+pub(crate) struct OracleOnGuard(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()>);
+
+#[cfg(test)]
+impl Drop for OracleOnGuard {
+    fn drop(&mut self) {
+        ORACLE_TEST_OVERRIDE.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Forces the oracle on until the guard drops.
+#[cfg(test)]
+pub(crate) fn oracle_on_guard() -> OracleOnGuard {
+    let lock = ORACLE_TEST_LOCK.write().unwrap_or_else(|e| e.into_inner());
+    ORACLE_TEST_OVERRIDE.store(true, std::sync::atomic::Ordering::SeqCst);
+    OracleOnGuard(lock)
+}
+
+/// Keeps oracle-forcing tests from overlapping the holder. Does not mask a
+/// MAKU_LOWER_ORACLE=1 environment — check `oracle_enabled()` for that.
+#[cfg(test)]
+pub(crate) fn oracle_off_shield() -> std::sync::RwLockReadGuard<'static, ()> {
+    ORACLE_TEST_LOCK.read().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]
