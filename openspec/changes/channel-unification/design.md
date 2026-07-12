@@ -133,3 +133,35 @@ frame-stamped action — scrub story unchanged).
 - Migration surface: two corpus files use cells
   (cards/tutorials/t05.maku, cards/translations/ph_boss2_spell2.maku)
   plus stdlib defchannels rewritten as `def $name` + `bind!`/`export!`.
+
+## Implementation notes (as built)
+
+- `defchannel` survives as load-time sugar (card.rs desugars to
+  def + bind! + export!) rather than a lib macro: top-level macros
+  don't expand at card load, and desugar preserves the
+  redefinition-replaces import-shadowing rule.
+- `(from-host :name default)` gained an optional default — the
+  stream's value until the host first provides one. A bind! producer
+  that evaluates to a stream handle (the `(bind! $x (from-host ...))`
+  shape) MIRRORS it: the refresh derefs to the source's current value.
+- One producer per stream: rebinding replaces in place, keeping the
+  original attachment slot in refresh order. This is how a player rig
+  or boss macro overrides a stdlib/card default producer.
+- Stream identity: ids allocate from the deterministic world counter
+  at let-eval / param-default / install / from-host-claim time; the
+  id-keyed `sig.cells` store remains the runtime representation and
+  still deep-copies on snapshot.
+- The load-time pass (interp/schema.rs) resolves scoping (free `$name`
+  = load error; quasiquote templates skipped), collects the from-host
+  manifest, and lints set! against always-writing top-level producers
+  (heuristic: producer head not cond/if/when). Render row schemas and
+  entity field tables stay runtime-accreted — their kinds are
+  value-dependent — but join this pass when they become statically
+  declarable; the load-time-schema spec says so.
+- Hosts verify the manifest via `Sim::verify_host_channels`; the
+  native player provides binding-panel channels + mouse mocks and
+  fails loads with a "press B" hint. The `(channel $x default)` soft
+  read survives as the explicit default-on-absent form.
+- Lowering unchanged: `$` reads still fall back to the interpreter;
+  classifying captured handles as channel-input slots lands with
+  compiled-dyn milestone B.

@@ -23,7 +23,7 @@ A free `$name` — neither bound in scope nor `def`'d — SHALL be a load error.
 - **THEN** loading the card fails with an error naming `$wind`, before any tick runs
 
 ### Requirement: Host input is a producer expression
-`(from-host :name)` SHALL be a stream-valued expression naming a host input explicitly. It is usable standalone — snapped at an eval site, wrapped in `(live ...)`, or passed to a sigiled parameter — not only as a `bind!` producer; `(bind! $x (from-host :name))` is the case where the injected stream gets a local name. Host injection SHALL NOT be special syntax beyond this form.
+`(from-host :name)` SHALL be a stream-valued expression naming a host input explicitly. It is usable standalone — snapped at an eval site, wrapped in `(live ...)`, or passed to a sigiled parameter — not only as a `bind!` producer; `(bind! $x (from-host :name))` is the case where the injected stream gets a local name, mirroring the host stream's per-tick value. `(from-host :name default)` supplies the stream's value until the host first provides one. Host injection SHALL NOT be special syntax beyond this form.
 
 #### Scenario: Anonymous injected stream
 - **WHEN** `(from-host :player)` is passed directly to a sigiled parameter without any `bind!`
@@ -50,3 +50,19 @@ A free `$name` — neither bound in scope nor `def`'d — SHALL be a load error.
 #### Scenario: Rename avoids the collision
 - **WHEN** the instances export as `(export! $vol :as $p1-vol)` and `(export! $vol :as $p2-vol)`
 - **THEN** both publish successfully under distinct names
+
+## MODIFIED Requirements
+
+### Requirement: Spawn arguments snap by default
+Stream reads (host-injected or derived) appearing in spawn arguments SHALL be snapped (spawn-time capture); continuous tracking SHALL require explicit `(live ...)`. Streams have their own `$name` namespace, single-writer, recorded on the replay tape (derived streams exactly like injected ones); a card's host-channel manifest is the set of its `(from-host ...)` sites.
+
+#### Scenario: Aimed ring
+- **WHEN** a spawn argument reads `$player` without `live`
+- **THEN** the value is captured once at spawn and the bullets do not track the player afterward
+
+### Requirement: Field writes queue to the tick boundary
+`(change-col h :field f)` SHALL queue a functional update applied at the next tick boundary; all reads within a tick see pre-tick state, and a slot's queued updates compose in action-execution order over the pre-tick value. `remat` follows the same boundary rule, is per-slot, and restarts only the target slot's epoch. Update functions SHALL be pure (defs only — no streams or world reads).
+
+#### Scenario: Concurrent increments
+- **WHEN** two rules queue `(change-col h :hp (fn [x] (- x 1)))` in the same tick
+- **THEN** both compose and hp drops by 2, with no lost write
