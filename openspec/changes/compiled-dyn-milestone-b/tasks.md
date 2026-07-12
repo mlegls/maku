@@ -40,11 +40,13 @@ tests. Perf claims via wall-only interleaved A/B on the scaled fruit rig
       calls; fruit wall 2370 -> 2290 ms (-3.4% vs pre-round baseline,
       interleaved A/B). RowStateSnapshot pooling unnecessary at the
       residual volume.
-- [ ] 7. Cull-reuse audit: enumerate mutation paths (rules, pending
-      writes, remat, schema/figure sets) between collide fill and cull;
-      if gateable, per-tick row-dirty marks + VelChain sampled-pose reuse
-      in cull with oracle re-derivation; else record the blocking path in
-      design.md and drop the lever.
+- [x] 7. Cull-reuse audit: SOUND — between the collide fill and cull,
+      field writes and remat are PendingWrites drained at the NEXT
+      step's start, and rule kills only clear the alive flag; nothing
+      mutates n2 state or figures. Landed as class-cache-gated reuse of
+      the collide sampled pose for Vel-chain rows (figure-root ptr
+      validated; oracle re-derives and asserts per reused row). Fruit
+      wall 2372 -> 2185 ms (-7.9% net for the round).
 - [ ] 8. Final gates + bookkeeping: full suites green; aggregate wall
       delta recorded; design.md "Implementation notes (as built)"
       appended (deviations, audit outcomes); lowering spec Design

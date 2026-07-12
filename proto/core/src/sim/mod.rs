@@ -193,14 +193,36 @@ struct ClosedPoseScratch {
     /// found no closed rows, so non-closed cards pay nothing.
     out: Vec<Option<Pose>>,
     /// Cross-tick classification cache: per row, (figure root ptr,
-    /// is-closed-chain). A row whose figure Rc is unchanged skips the
-    /// chain walk — figures change only at spawn/remat.
-    class: Vec<(*const DynNode, bool)>,
+    /// class). A row whose figure Rc is unchanged skips the chain walk —
+    /// figures change only at spawn/remat.
+    class: Vec<(*const DynNode, RowClass)>,
     /// Closed rows found by the tick's collect pass (collide); the cull
     /// pass re-lanes only these — validated per use against the row's
     /// current figure root, so a remat between the phases falls back to
     /// the per-row path.
     candidates: Vec<(usize, *const DynNode)>,
+}
+
+/// Cross-tick pose classification of a row's figure, keyed by the figure
+/// root pointer in `ClosedPoseScratch::class`.
+#[derive(Clone, Copy, PartialEq)]
+enum RowClass {
+    /// Constant wrappers over one compiled aux-free ClosedPt: batch fill.
+    Closed,
+    /// Constant wrappers over a Vel node: pose = integrator state through
+    /// the wrappers, tau-invariant given state.
+    VelChain,
+    Other,
+}
+
+fn classify_row(fig: &DynFigure, sig: &SigEnv) -> RowClass {
+    if closed_chain_plan(fig, sig).is_some() {
+        RowClass::Closed
+    } else if vel_chain_ptr(fig).is_some() {
+        RowClass::VelChain
+    } else {
+        RowClass::Other
+    }
 }
 
 struct ClosedPoseGroup {
@@ -668,7 +690,7 @@ impl Sim {
         }
         s.begin_pass();
         s.candidates.clear();
-        s.class.resize(n, (std::ptr::null(), false));
+        s.class.resize(n, (std::ptr::null(), RowClass::Other));
         for i in 0..n {
             if !self.world.entities.is_alive(i) {
                 continue;
@@ -677,14 +699,14 @@ impl Sim {
                 continue;
             };
             let root = Rc::as_ptr(fig.pose_dyn());
-            let closed = if s.class[i].0 == root {
+            let class = if s.class[i].0 == root {
                 s.class[i].1
             } else {
-                let closed = closed_chain_plan(fig, sig).is_some();
-                s.class[i] = (root, closed);
-                closed
+                let class = classify_row(fig, sig);
+                s.class[i] = (root, class);
+                class
             };
-            if !closed {
+            if class != RowClass::Closed {
                 continue;
             }
             // re-derive the plan (cheap for closed rows: the OnceCell is
@@ -783,6 +805,43 @@ impl Sim {
         s.regs = regs;
         self.closed_pose = s;
         Ok(())
+    }
+
+    /// Cull-time reuse of the collide-phase pose for Vel-chain rows.
+    /// Audit (this change's task 7): between the collide fill and cull,
+    /// only standing rules and the event-log prune run — field writes and
+    /// remat are PendingWrites drained at the NEXT step's start, and rule
+    /// kills only clear the alive flag — so nothing mutates n2 state or
+    /// figures, and a Vel chain's pos ignores tau. The collide sample is
+    /// therefore exact. Gated on the class cache validating the row's
+    /// CURRENT figure root (a swapped figure recomputes); the oracle
+    /// re-derives and asserts.
+    fn cull_reused_pos(&mut self, row: usize, tick: u64, sig: &SigEnv) -> Option<(f64, f64)> {
+        let fig = self.world.entities.dyn_figure(row)?;
+        let root = Rc::as_ptr(fig.pose_dyn());
+        let class = match self.closed_pose.class.get(row) {
+            Some((p, c)) if *p == root => *c,
+            _ => {
+                let c = classify_row(fig, sig);
+                if self.closed_pose.class.len() <= row {
+                    self.closed_pose
+                        .class
+                        .resize(row + 1, (std::ptr::null(), RowClass::Other));
+                }
+                self.closed_pose.class[row] = (root, c);
+                c
+            }
+        };
+        if class != RowClass::VelChain {
+            return None;
+        }
+        let (x, y) = self.world.entities.sampled_pos(row, tick.checked_sub(1)?)?;
+        if oracle_enabled() {
+            let tau = self.world.entity_motion_tau(row, tick);
+            let want = self.fast_pos_pose(row, tau, sig)?;
+            assert_eq!((x, y), (want.x, want.y), "cull-reused pose diverged for row {row}");
+        }
+        Some((x, y))
     }
 
     /// This phase's batched closed-chain pose for a row, if it was filled.
@@ -1670,6 +1729,8 @@ impl Sim {
             let tau = self.world.entity_motion_tau(i, tick);
             let keep = if let Some(p) = if closed_any { self.closed_pose_at(i) } else { None } {
                 p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
+            } else if let Some((x, y)) = self.cull_reused_pos(i, tick, &sig) {
+                x.abs() <= PLAYFIELD && y.abs() <= PLAYFIELD
             } else if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
                 p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
             } else {
