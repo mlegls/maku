@@ -377,6 +377,6 @@
 ;; (invuln b dur): mercy window for dur seconds — a DEADLINE COLUMN both
 ;; contact paths honor (player hits skip the lives write; enemy damage is
 ;; absorbed). Pure library code: $tick + set-col. 120 = the engine tick
-;; rate (fixed, see TODO).
+;; rate (fixed by the engine).
 (defn invuln [b dur]
   (set-col b :iframe-until (+ $tick (* dur 120))))

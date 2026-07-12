@@ -132,7 +132,7 @@ interpreted. Gaps, in dependency order:
    `openspec/specs/determinism/spec.md`): kernels call shared extern math shims
    (sin/cos/pow/rem_euclid — no platform libm, no fast-math, GPU tiers
    included); oracle extends to a three-way interpreter ↔ IR-loop ↔ JIT
-   check. REVISED 2026-07 (scale target, TODO.md): the contract is same
+   check. REVISED 2026-07 (scale target): the contract is same
    ops/order/WIDTH per storage class, not blanket f64 — control plane
    stays f64, hot columns (positions, integrator state, radii, render)
    go f32. The IR gets a width per program; the oracle doubles as the
@@ -243,8 +243,8 @@ The compiled form inverts both: compile the PRE-substitution form once, with
 each rand site and each free env variable classified as an `Input` slot. The
 per-entity data is then a small capture vector (`Vec<f64>` or slots in the
 entity SoA), filled at spawn — one program per spawn SITE, shared by the
-whole group, which is also what group evaluation (TODO: AxisSel/SS5
-interchange) needs. Env variables bound to non-numeric values make the
+whole group, which is also what group evaluation (AxisSel/SS5
+interchange — milestone B below) needs. Env variables bound to non-numeric values make the
 referencing subtree an `Interp` fallback.
 
 RNG determinism is preserved: rand draws still happen at spawn in the same
@@ -415,7 +415,8 @@ rows, and cull reuses the collide-phase pose for Vel-chain rows
 (audit-gated, oracle-asserted). Round wall on the scaled fruit rig:
 −7.9%. Still open under B: the entity-representation flip (spec id +
 capture vector replacing per-row node clones — the 1M-row layout).
-Related group-level lever recorded in TODO.md: integrator-state dedup
+Related group-level lever, recorded as the `group-integrator-dedup`
+backlog change: integrator-state dedup
 per (program, captures, birth) — ring lanes carry bit-identical folds,
 the per-bullet angle lives in the wrapper frame.
 
@@ -480,7 +481,8 @@ with no new wiring.
 
 Data-parallelism (rayon over batches) is deliberately NOT part of A/B; the
 compiled form makes it nearly free later (pure lanes, fixed scratch,
-deterministic merge), per the TODO stance.
+deterministic merge), per the recorded stance (see the
+`jit-native-codegen` backlog change).
 
 ## Cheap wins worth pulling forward (independent of the IR)
 

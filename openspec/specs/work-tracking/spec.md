@@ -1,7 +1,7 @@
 # work-tracking Specification
 
 ## Purpose
-TBD - created by archiving change migrate-todos-to-openspec. Update Purpose after archive.
+Defines how open work is tracked in this repo: every open item is an OpenSpec change stub, settled decisions live in capability specs and archived change designs, and process documentation lives in the `perf` capability spec. There is no standalone TODO file or notes directory.
 ## Requirements
 ### Requirement: Open work lives as OpenSpec changes
 Every open work item SHALL be tracked as an OpenSpec change under `openspec/changes/`, containing at minimum a `proposal.md` (a backlog stub). Design, specs, and tasks artifacts SHALL be generated when the work is picked up; a stub MAY carry a design.md early when a converged target design exists for it.
