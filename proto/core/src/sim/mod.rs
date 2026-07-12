@@ -1608,11 +1608,13 @@ impl Sim {
                     continue;
                 }
                 let tau = self.world.entity_motion_tau(i, tick);
-                let readers = self.motion_readers(i);
                 if let Some(window) = self.world.entities.trace_window(i) {
                     let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
                         continue;
                     };
+                    // readers only for traced rows — construction is the
+                    // dominant per-row fixed cost on untraced cards
+                    let readers = self.motion_readers(i);
                     let state = MotionState::default();
                     if let Ok(p) = dyn_figure_pose_in(
                         dyn_figure,

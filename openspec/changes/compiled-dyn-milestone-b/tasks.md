@@ -33,10 +33,13 @@ tests. Perf claims via wall-only interleaved A/B on the scaled fruit rig
       `axis_select_val` only. Tests: shared-array group evaluates once
       (count via a probe or side-effect-free marker), per-row values
       unchanged; non-List form falls back per row.
-- [ ] 6. Readers audit (post-4): measure `sim:motion-readers` wall
-      share; if it registers, pool `RowStateSnapshot` vectors in
-      Sim-owned scratch; else record the measurement in design.md and
-      stop.
+- [x] 6. Readers audit (post-4): measured — the trace loop built
+      readers for every alive row before checking trace_window (3.1M
+      constructions on fruit-2000, the dominant sim:motion-readers
+      volume). Moved construction inside the traced branch: 3.1M -> 8k
+      calls; fruit wall 2370 -> 2290 ms (-3.4% vs pre-round baseline,
+      interleaved A/B). RowStateSnapshot pooling unnecessary at the
+      residual volume.
 - [ ] 7. Cull-reuse audit: enumerate mutation paths (rules, pending
       writes, remat, schema/figure sets) between collide fill and cull;
       if gateable, per-tick row-dirty marks + VelChain sampled-pose reuse
