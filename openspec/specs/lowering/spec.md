@@ -463,8 +463,28 @@ planned order because `emit`/`%value-or` were the top two profile rows):
   correct).
 - Not covered (interpreter fallback, by design): polyline/curve-samples
   rows (the beam rule — conditionals + deferred geometry), non-literal row
-  maps, extra let bindings, and cull/field-write rules. Those are the
+  maps, extra let bindings, compound rule bodies (e.g. the enemy-death
+  `(seq (event …) (cull e))`), and field-write rules. Those are the
   remaining rule-lowering surface, alongside projector bodies.
+
+The rule-lowering remainder is DONE (round 23, `rule-lowering-remainder`):
+- Cull rules — a map body that is exactly `(cull e)` over a compiled
+  predicate — execute as a compiled scan plus per-row cull in row order
+  through the interpreter's action-application path. Oracle mode predicts
+  the match set without applying and asserts it against the interpreted
+  cull actions, which stay the sole applier (effects never double-apply).
+- The recognizer folds the short-circuit conjunction (`and`) expansion
+  chain — the left-nested `(let [s acc] (if s next s))` shape, keyed on
+  structure never the binder name — into the same conjunct list as the
+  `(* …)` product form; disjunction chains bail whole.
+- `deftick` macro-expansion output gets the load-time rewrite (value-or
+  intrinsic + trivial-def inlining) at registration, with enclosing env
+  bindings as shadows, so macro-generated rule bodies lower too.
+- Mixed and-chain predicates split into a compiled prefix filter plus the
+  interpreted residual evaluated only on prefix survivors — exact because
+  the interpreter short-circuits the chain, so prefix-rejected rows never
+  evaluate the tail on either path. `*` products keep whole-form fallback
+  (the interpreter evaluates every product conjunct on every row).
 
 Numeric row predicates are DONE (round 9): RowPredicate conjuncts extended
 with `NumCmp` tests over a total numeric expression grammar (literals,

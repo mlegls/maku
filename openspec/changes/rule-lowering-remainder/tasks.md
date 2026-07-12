@@ -58,13 +58,13 @@ Gate for every task: core suite green; lowering-touching tasks also pass the
 
 ## 5. Measure and close
 
-- [ ] 5.1 Re-profile the round-21 sample per the perf spec (interleaved
+- [x] 5.1 Re-profile the round-21 sample per the perf spec (interleaved
       wall A/B vs pre-change baseline; macOS `sample` attribution). Record
       the delta and the new `evaluate_list_inner` share in this change's
       design.md.
-- [ ] 5.2 Decide from the profile: per-batch symbol-id table (only if
+- [x] 5.2 Decide from the profile: per-batch symbol-id table (only if
       `Rc<str>` clone traffic in sym-column reads shows) — implement or
       record as not-warranted; beam polyline lowering — leave to a
       follow-up proposal if it still dominates, noting the measured share.
-- [ ] 5.3 Update the lowering capability spec's milestone-C prose to match
+- [x] 5.3 Update the lowering capability spec's milestone-C prose to match
       what landed (delta spec syncs the requirements at archive).

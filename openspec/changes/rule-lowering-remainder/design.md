@@ -196,7 +196,38 @@ design for polyline emission. Neither is speculatively built.
   eval it precedes; worst case approaches today's cost, never exceeds it
   (one extra resolved-test pass per row).
 
+## Measured (2026-07-12, after D1–D4 landed)
+
+Interleaved wall-only A/B, 4 alternated pairs, suite run (baseline b830db8
+vs 8f14957):
+
+- reimu_vs_mima: 123.1 → 120.9 ms (−1.8%, full separation — every candidate
+  run faster than every baseline run)
+- spell-2 −1.9%, fantasy-seal −1.7%, exploding-stars −1.9%
+- fruit (t03 ex3) −0.6%, cradle flat (no interpreted cull/mixed rules there)
+
+Attribution (flat profiler, 1800-tick reimu, probe overhead included —
+attribution only per the perf spec): `phase:rules` incl 21.5 → 20.0 ms;
+interpreted `entities-where` evaluations 9000 → 7200 per run (−1800 = one
+query per tick: the beam end-of-life cull rule now compiles). The
+enemy-death rule stays interpreted **by design** — its body is
+`(seq (event :died …) (cull e))`, a compound body outside the recognized
+shape.
+
+**D5 decisions:**
+
+- Per-batch symbol-id table: NOT built. Compiled tick passes show no
+  distinguishable sym-clone row on this rig at current densities; revisit
+  when a profile shows it.
+- Beam polyline lowering: left to a follow-up proposal. Remaining
+  interpreted rule cost after this round is ~11% of the profiled reimu run
+  (`phase:rules` 20 ms / 177 ms incl), split across the beam render rule
+  (polyline/curve-samples emission) and compound-body rules.
+- Noted cheap extension for a follow-up: recognizing `(seq …)` bodies of
+  recognized actions (event + cull) would catch the enemy-death shape
+  without touching the beam problem.
+
 ## Open Questions
 
 - None blocking. The beam-rule follow-up and sym-id table are deliberately
-  deferred to post-measurement (D5).
+  deferred to post-measurement (D5) — resolved above.

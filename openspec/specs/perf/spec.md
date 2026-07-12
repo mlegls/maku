@@ -70,23 +70,30 @@ rows, interleaved runs):
   cull-time reuse of the collide pose is exact for Vel chains ONLY if
   nothing between the phases mutates n2 state or figures — needs a
   rule-effect audit before it's sound.
-- Remaining interpreted rule scans (`evaluate_list_inner` ~8% — beam/
-  cull/hp rules) — see the `rule-lowering-remainder` change.
+- Remaining interpreted rules (round 23 landed the rule-lowering
+  remainder: simple cull rules compile, and-chain predicates fold, mixed
+  and-chains prefilter): what's left is the beam RENDER rule
+  (polyline/curve-samples emission) and compound-body rules (e.g. the
+  enemy-death `(seq (event …) (cull e))`), ~11% incl of profiled reimu
+  (`phase:rules`). Cheap extension recorded in the round's design.md:
+  recognize `(seq …)` bodies of recognized actions.
 - Milestone-B remainder (ClosedPt group pose, AxisSel scatter) is now
   JIT prep more than wall win on this rig (input slots + interning
   landed round 22 at −8%) — see `compiled-dyn-milestone-b`.
-## Current walls (round 22, 2026-07, bare)
+## Current walls (round 23, 2026-07, bare)
 
 | case | wall | note |
 |---|---|---|
-| fruit (t03 ex3) 900t | 121.2ms | 5050ms at round 7 — 42x |
-| scaled fruit 12000t | 2.40s | 2.61s at round-22 start (−8%); 16.9s at round 15 |
-| reimu_vs_mima | ~132ms | |
-| spell-2 | 22.4ms | |
-| cradle | 48.8ms | |
+| fruit (t03 ex3) 900t | 111.7ms | 5050ms at round 7 — 45x |
+| scaled fruit 12000t | 2.19s | 16.9s at round 15 |
+| reimu_vs_mima | ~120.9ms | −1.8% this round (interleaved A/B) |
+| spell-2 | 19.7ms | |
+| cradle | 47.8ms | |
 
 Round 21 = milestone-C SoA render output (render-output-design.md);
 round 22 = input slots + structural interning (capture vectors over
 marker programs) plus the mesh renderer pack (maku-mesh-touhou; player
-extracted to `proto/player`).
+extracted to `proto/player`); round 23 = rule-lowering remainder
+(compiled cull rules, and-chain fold, registration-time rewrite of
+deftick expansion output, mixed-predicate prefix prefiltering).
 
