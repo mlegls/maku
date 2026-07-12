@@ -77,11 +77,15 @@ Functions SHALL broadcast elementwise over arrays; shorter arrays cycle within a
 - **THEN** the manip is a no-op rather than affecting the new occupant
 
 ### Requirement: The engine ships no genre defaults
-Genre vocabulary (bullet/enemy/player templates, hit/graze/shot rules, hp-death rules, phase templates) SHALL be library card code (`cards/lib/`, compile-time embedded, imported by bare name), not engine primitives. The core surface is a semantic kernel; surface vocabulary is lib macros over it, and optimization SHALL recognize macro expansion shapes, never names.
+Genre vocabulary (bullet/enemy/player templates, hit/graze/shot rules, hp-death rules, phase templates) SHALL be library card code (`cards/lib/`, compile-time embedded, imported by bare name), not engine primitives. The core surface is a semantic kernel; surface vocabulary is lib macros over it, and optimization SHALL recognize macro expansion shapes, never names. Genre *data* SHALL follow the same rule: library templates carry their data tables (e.g. sprite-family → hitbox radius) as ordinary lib defs, resolved at macro time over literal meta forms, with every default overridable at the call site by the ordinary meta-merge rule (later maps win, explicit fields win over table lookups).
 
 #### Scenario: Hand-written expansion
 - **WHEN** card code hand-writes the exact form a lib macro would expand to
 - **THEN** it evaluates and optimizes identically to the macro call
+
+#### Scenario: Family hitbox default
+- **WHEN** a bullet template call passes `:style {:family :gem}` with no explicit `:hitbox`
+- **THEN** the primary collider radius is the lib table's `:gem` entry, and the same call with `:hitbox 0.15` uses 0.15
 
 ### Requirement: Streams are sigiled bindings
 `$name` SHALL always name a stream. Binding position constructs a stream (`(def $x)` / `(def $x init)` at top level, `(let [$x init] ...)` locally); reference position reads by channel conventions: bare `$x` in control-layer or spawn-arg position snaps the current value, `(live $x)` yields the first-class tracking value, `(set! $x v)` writes, and signal-body reads are per-tick. Passing the stream itself (not its value) SHALL require a sigiled parameter or closure capture. The cell/channel split SHALL NOT exist as separate surface: `defcell` maps to a local sigiled binding, `defchannel` to `def` + `bind!` + `export!`.
