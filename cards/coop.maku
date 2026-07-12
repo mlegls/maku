@@ -6,6 +6,21 @@
 ;; spray aims at $nearest-pilot.
 
 (import "touhou")
+
+;; Per-pilot streams: the rigs rebind them to live entity state.
+(def $player-1 c[-2 -3])
+(export! $player-1)
+(def $lives-1 3)
+(export! $lives-1)
+(def $nearest-enemy-1 c[0 3])
+(export! $nearest-enemy-1)
+(def $player-2 c[2 -3])
+(export! $player-2)
+(def $lives-2 3)
+(export! $lives-2)
+(def $nearest-enemy-2 c[0 3])
+(export! $nearest-enemy-2)
+
 (defpattern coop []
   (par (in-frame :world (par (pilot-rig-1) (pilot-rig-2)
                              (autofire 1) (autofire 2)))
@@ -28,9 +43,9 @@
                  (pilot-meta 1))]
     (let [h (nth p 0)]
       (seq
-        (bind-channel! $player-1 (:pos h))
-        (bind-channel! $lives-1 (:lives h))
-        (bind-channel! $nearest-enemy-1 (nearest-entity {:team :enemy} $player-1))))))
+        (bind! $player-1 (:pos h))
+        (bind! $lives-1 (:lives h))
+        (bind! $nearest-enemy-1 (nearest-entity {:team :enemy} $player-1))))))
 
 (defpattern pilot-rig-2 []
   (let [p (spawn (pilot-rig-motion 2)
@@ -38,9 +53,9 @@
                  (pilot-meta 2))]
     (let [h (nth p 0)]
       (seq
-        (bind-channel! $player-2 (:pos h))
-        (bind-channel! $lives-2 (:lives h))
-        (bind-channel! $nearest-enemy-2 (nearest-entity {:team :enemy} $player-2))))))
+        (bind! $player-2 (:pos h))
+        (bind! $lives-2 (:lives h))
+        (bind! $nearest-enemy-2 (nearest-entity {:team :enemy} $player-2))))))
 
 (defchannel $nearest-pilot
   (nearest-entity {:team :player-body} c[0 3.2]))

@@ -45,7 +45,7 @@
 
 ;; --- one guide rig: reflector star + laser turret riding a guide ------------
 
-(defn guide-rig [ud]
+(defn guide-rig [ud $mode]
   ;; guide: launches at +-45deg, decelerates to a stop, then parks (Scanned).
   ;; ONE instance shared by the rider spawn and both turret loops -- the
   ;; let-binding IS the shared() node (SS5); first corpus case to need it.
@@ -56,19 +56,19 @@
              {:style {:family :lstar :color :teal}
               :scale 1.4
               :team :scenery       ; rig visual: no colliders; survives bombs
-              :facing m"240 * ud * live(mode)"})   ; tilts with the mode cell
+              :facing m"240 * ud * live($mode)"})   ; tilts with the mode stream
       ;; "inode summon" = two turret loops forked in the guide frame
       (in-frame guide
         (par
           (fork (seq (wait 1)                       ; DMK delay 1s
                   (loop []
-                    (wait-for (= mode 1))           ; whiletrue == pause
+                    (wait-for (= $mode 1))          ; whiletrue == pause
                     (laser ((aim $player)
                              (curve {:u-max 20})) {:warn 1 :active 0.2 :style {:family :gdlaser :color :blue}})
                     (wait (ticks (/ 280 factor)))
                     (recur))))
           (fork (loop []
-                  (wait-for (= mode 2))
+                  (wait-for (= $mode 2))
                   (laser ((aim $player)
                            (curve {:u-max 20 :width 2})) {:warn 1 :active 0.2 :style {:family :gdlaser :color :blue :variant :w}})
                   (wait (ticks (/ 180 factor)))
@@ -80,20 +80,22 @@
 ;; the read-only direction, so no threading through defns.
 (def factor (pow $rank 0.3))
 
+(def $boss)                               ; the spell rebinds it to the root
+
 (defpattern spell-2 []
   (let [root (spawn (pose c[0 0]) {:team :anchor})]
     (spell-2-with-root root)))
 
 (defpattern spell-2-with-root [root []]
-  (defcell mode 1)                          ; F16: pattern-scoped control cell
+  (let [$mode 1]                            ; F16: pattern-scoped control stream
   (let [root-main (nth root 0)]
     (seq
-      (bind-channel! $boss (:pos root-main))
+      (bind! $boss (:pos root-main))
       (in-frame (live $boss)
         (seq
-          (par (guide-rig 1) (guide-rig -1)) ; rigs persist for the whole phase
+          (par (guide-rig 1 $mode) (guide-rig -1 $mode)) ; rigs persist for the whole phase
           (loop []
-            (set! mode 1)
+            (set! $mode 1)
             (power-up)
             ;; four random-walk repositions, each firing a 3-speed x 5-fan wall
             (loop [k 0, cell (rand-cell)]
@@ -111,7 +113,7 @@
             (wait 1)
             (power-up)
             (move-to root-main 1.6 eoutsine (grid-cell :enemy {:x 0 :y 0}))
-            (set! mode 2)
+            (set! $mode 2)
             (v2-lasers {:family :gdlaser :color :blue :variant :b} 1)
             ;; star burst: 4 volleys 80 ticks apart, rings of 28; radius soft-
             ;; switches from a fast to a slow curve; per-bullet random swirl
@@ -124,9 +126,9 @@
                       :scale 1.5
                       :cues {:spawn "x-fire-star-3"} :hitbox 0.09}))
             (wait 1)
-            (set! mode 0)                    ; turrets pause; reflector stops
+            (set! $mode 0)                   ; turrets pause; reflector stops
             (wait 1)
-            (recur)))))))
+            (recur))))))))
 
 ;; In the boss's phases -- the boss-shaped sugar over the `states` FSM:
 ;;   (:spell2 {:root c[3.6 -0.5] :timeout 48 :until (<= (hp-of boss-main) 0)}

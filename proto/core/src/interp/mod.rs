@@ -1752,9 +1752,24 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             Ok(map_path_get(&arg, &k).unwrap_or(Val::Nothing))
         }
         f @ (Val::Fn { .. } | Val::Builtin(_)) => {
+            // sigiled fn params take the STREAM, not its snap
+            let sigiled = |i: usize| match &f {
+                Val::Fn { params, .. } => matches!(
+                    params.get(i),
+                    Some(Form::Sym(p)) if p.starts_with('$')
+                ),
+                _ => false,
+            };
             let args = items[1..]
                 .iter()
-                .map(|x| evaluate(x, env, ctx, world))
+                .enumerate()
+                .map(|(i, x)| {
+                    if sigiled(i) {
+                        resolve_stream(x, env, ctx, world).map(Val::Stream)
+                    } else {
+                        evaluate(x, env, ctx, world)
+                    }
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             // cells are dynamic ambient: the caller's scope flows into the
             // callee (hygiene excepts #cells, like the slot-bound t/u)
