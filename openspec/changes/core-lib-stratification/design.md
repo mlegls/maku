@@ -209,3 +209,13 @@ the schema/manifest pass (`channel` merge included — the
 territory), top-level macro expansion in the card loader (`defcollider` →
 lib), the `scan` design (flag 2), or the remat implementation
 (`change-col`).
+
+## Candidate intrinsics (from the old intrinsics note)
+
+Initial array/control candidates beyond the seq vocabulary already in
+the language spec: `scan`, `each-prior`, `window`, `sort-by`, `best-by`,
+and transpose/zip-style operations for tuple domains. Specialized
+operations (binsearch, case, join/split, encode/decode, converge,
+while-style adverbs) start in the prelude unless profiling proves they
+need lowering. Bullet-field image-processing ideas (rasterize query ->
+grid, FFT/filter, resample -> bullets) belong to a later intrinsic pass.
