@@ -13,9 +13,9 @@
 
 ## 3. Tests and gates
 
-- [ ] 3.1 Unit tests: extent scoping (callee resolution, set! isolation, nesting/shadowing, extent exit without restore), spawn capture outliving the body, def'd-dyn-spawned-inside-extent (read-time resolution, not construction-time), stream-handle aliasing, bind!/export! inside an extent, override of an injected channel with the base still refreshing.
-- [ ] 3.2 Card-level test exercising `with` + lowered live reads under MAKU_LOWER_ORACLE=1; full gate: `cargo test --release --manifest-path proto/core/Cargo.toml` plus the 4 ignored oracle card suites. Commit each coherent change-set.
+- [x] 3.1 Unit tests: extent scoping (callee resolution, set! isolation, nesting/shadowing, extent exit without restore), spawn capture outliving the body, def'd-dyn-spawned-inside-extent (read-time resolution, not construction-time), stream-handle aliasing, bind!/export! inside an extent, override of an injected channel with the base still refreshing.
+- [x] 3.2 Card-level test exercising `with` + lowered live reads under MAKU_LOWER_ORACLE=1; full gate: `cargo test --release --manifest-path proto/core/Cargo.toml` plus the 4 ignored oracle card suites. Commit each coherent change-set.
 
 ## 4. Spec sync (archive time)
 
-- [ ] 4.1 Update `openspec/specs/language/spec.md`: §3 scoped-overrides paragraph loses its residual [decide], §13.8 marked resolved (nesting = innermost wins; all channels overridable; values snap with stream-handle aliasing), §13.12 note stays open only for `:sealed`. Also rewrite the stale let-vs-with clause in §3 ("`let` binds bare symbols only" predates channel-unification and contradicts the local-sigiled-binding form): post-merge, `(let [$x ...])` shadowing an existing name is legal and means a fresh private stream reaching only text it contains; `with` alone rebinds the existing stream's resolution for code it causes (callees, pre-built dyns).
+- [x] 4.1 Update `openspec/specs/language/spec.md`: §3 scoped-overrides paragraph loses its residual [decide], §13.8 marked resolved (nesting = innermost wins; all channels overridable; values snap with stream-handle aliasing), §13.12 note stays open only for `:sealed`. Also rewrite the stale let-vs-with clause in §3 ("`let` binds bare symbols only" predates channel-unification and contradicts the local-sigiled-binding form): post-merge, `(let [$x ...])` shadowing an existing name is legal and means a fresh private stream reaching only text it contains; `with` alone rebinds the existing stream's resolution for code it causes (callees, pre-built dyns).
