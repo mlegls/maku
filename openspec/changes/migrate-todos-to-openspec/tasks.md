@@ -17,6 +17,6 @@
 
 ## 3. TODO.md rewrite and verification
 
-- [ ] 3.1 Rewrite `docs/notes/TODO.md` as an index only: pointer to `openspec/changes/` (+ `openspec list`), pointers to design notes for decisions (including the three new notes), a one-line "likely next rounds" pointer list. Remove all migrated content in this same commit.
-- [ ] 3.2 Verify completeness: diff pre-migration TODO.md against destinations — every deleted line is either moved (notes/proposal) or was completed-narrative; no open item remains only in git history.
-- [ ] 3.3 Run `openspec validate --all` (or per-change validate) and `openspec list`; fix any schema complaints. Commit the rewrite.
+- [x] 3.1 Rewrite `docs/notes/TODO.md` as an index only: pointer to `openspec/changes/` (+ `openspec list`), pointers to design notes for decisions (including the three new notes), a one-line "likely next rounds" pointer list. Remove all migrated content in this same commit.
+- [x] 3.2 Verify completeness: diff pre-migration TODO.md against destinations — every deleted line is either moved (notes/proposal) or was completed-narrative; no open item remains only in git history. (One gap found and fixed: the "channel-free bullets recompute, never table" decision, added to `jit-native-codegen`.)
+- [x] 3.3 Run `openspec validate --all` (or per-change validate) and `openspec list`; fix any schema complaints. Commit the rewrite. (Outcome: `migrate-todos-to-openspec` validates; the 26 stubs fail strict validation because proposal-only stubs have no spec deltas — by design, recorded in design.md Risks; validate each at pick-up.)

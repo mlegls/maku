@@ -68,6 +68,7 @@
 - [Nuance loss during triage] → Migration copies TODO text verbatim into the destination first, then edits for the new home; the pre-migration TODO.md stays in git history; final diff review checks every deleted TODO line has a destination.
 - [Backlog sprawl — 25 stubs with no priority signal] → TODO.md's index keeps a short "likely next rounds" line (pointers only); round reports continue to propose candidates. Accepted trade: OpenSpec list is unordered.
 - [Two sources of truth during a partial migration] → Do the whole migration in one round; TODO.md rewrite is the last step and the commit that lands it removes all migrated content at once.
+- [`openspec validate --all` fails on stubs] → By design: proposal-only stubs have no spec deltas, and the strict validator requires at least one. Validate individual changes once their specs are generated at pick-up; do not add placeholder deltas to silence it.
 - [Stub proposals going stale as design notes evolve] → Stubs cite notes by path instead of restating them, so staleness is bounded to the "why now" framing, which is cheap to refresh at pick-up time.
 
 ## Open Questions
