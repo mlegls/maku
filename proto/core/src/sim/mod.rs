@@ -64,6 +64,9 @@ pub struct Sim {
     collider_scratch: ColliderScratch,
     render_scratch: render::RenderScratch,
     vel_batch: VelBatchScratch,
+    /// Host inputs the loaded card requires: the (from-host :name) sites
+    /// collected by the load-time schema pass, in first-use order.
+    host_manifest: Vec<String>,
 }
 
 /// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
@@ -291,6 +294,7 @@ impl Clone for Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
+            host_manifest: self.host_manifest.clone(),
         }
     }
 }
@@ -338,6 +342,7 @@ impl Sim {
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
+        let schema = collect_card_schema(&card)?;
         install_tick_rules(&card, &mut ctx, &mut world)?;
         install_streams(&card, &mut ctx, &mut world)?;
         let env = Env::empty();
@@ -349,6 +354,7 @@ impl Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
+            host_manifest: schema.host_channels,
         })
     }
 
@@ -391,6 +397,12 @@ impl Sim {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
+                let schema = collect_card_schema(&card)?;
+                for name in schema.host_channels {
+                    if !self.host_manifest.contains(&name) {
+                        self.host_manifest.push(name);
+                    }
+                }
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 install_streams(&card, &mut self.ctx, &mut self.world)?;
                 let actions: Vec<Form> = body_forms
@@ -416,6 +428,12 @@ impl Sim {
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
+                let schema = collect_card_schema(&card)?;
+                for name in schema.host_channels {
+                    if !self.host_manifest.contains(&name) {
+                        self.host_manifest.push(name);
+                    }
+                }
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 install_streams(&card, &mut self.ctx, &mut self.world)?;
                 let env = Env::empty();
@@ -453,6 +471,7 @@ impl Sim {
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
+        let schema = collect_card_schema(card)?;
         install_tick_rules(card, &mut ctx, &mut world)?;
         install_streams(card, &mut ctx, &mut world)?;
         let mut env = Env::empty();
@@ -468,6 +487,7 @@ impl Sim {
             collider_scratch: ColliderScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
+            host_manifest: schema.host_channels,
         })
     }
 
@@ -1400,6 +1420,24 @@ impl Sim {
     /// Current value of a channel (for host UI, e.g. scrub indicators).
     pub fn channel_val(&self, name: &str) -> Option<Val> {
         self.ctx.sig.channel(name)
+    }
+
+    /// Host inputs the loaded card requires — the (from-host :name) sites
+    /// collected by the load-time schema pass.
+    pub fn host_manifest(&self) -> &[String] {
+        &self.host_manifest
+    }
+
+    /// The load-time host-manifest check: every channel the card claims
+    /// with (from-host ...) must be in `provided`. Hosts call this right
+    /// after load, so a missing channel fails before tick 0, never mid-run.
+    pub fn verify_host_channels(&self, provided: &[&str]) -> Result<(), String> {
+        for name in &self.host_manifest {
+            if !provided.iter().any(|p| p == name) {
+                return Err(format!("host does not provide channel {}", name));
+            }
+        }
+        Ok(())
     }
 
     /// DEBUG/tooling read of the stream store.

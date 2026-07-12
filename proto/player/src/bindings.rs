@@ -1,4 +1,4 @@
-//! Key→channel bindings: the host contract as editable data. Buttons
+//! Keyâchannel bindings: the host contract as editable data. Buttons
 //! (hold/tap/toggle), axes (a key pair yielding -1/0/+1), and constants
 //! (channels set directly). Bindings live host-side; the tape records the
 //! resulting channel VALUES, so replays are unaffected by how they were
@@ -195,6 +195,23 @@ impl Bindings {
         }
     }
 
+    /// Every channel these bindings can produce (rows + constants) — the
+    /// host's side of the load-time manifest check.
+    pub fn channel_names(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for b in &self.rows {
+            if !out.iter().any(|n| n == &b.channel) {
+                out.push(b.channel.clone());
+            }
+        }
+        for (n, _) in &self.consts {
+            if !out.iter().any(|o| o == n) {
+                out.push(n.clone());
+            }
+        }
+        out
+    }
+
     /// After the first stepped tick of a frame: taps have fired.
     pub fn consume_taps(&mut self, inputs: &mut Inputs) {
         for b in &mut self.rows {
@@ -304,7 +321,7 @@ impl Bindings {
             // key cell(s) + mode
             match &self.rows[i].kind {
                 Kind::Button(mode) => {
-                    let ktxt = if capturing_key { "press a key…".into() } else { format!("[{:?}]", self.rows[i].key) };
+                    let ktxt = if capturing_key { "press a keyâ¦".into() } else { format!("[{:?}]", self.rows[i].key) };
                     if cell(&ktxt, px + 180.0, y, 130.0, capturing_key) && click {
                         self.capture = Some(Capture::Key(i));
                     }
@@ -314,8 +331,8 @@ impl Bindings {
                     }
                 }
                 Kind::Axis(neg) => {
-                    let ntxt = if capturing_neg { "press a key…".into() } else { format!("[{:?}]", neg) };
-                    let ptxt = if capturing_key { "press a key…".into() } else { format!("[{:?}]", self.rows[i].key) };
+                    let ntxt = if capturing_neg { "press a keyâ¦".into() } else { format!("[{:?}]", neg) };
+                    let ptxt = if capturing_key { "press a keyâ¦".into() } else { format!("[{:?}]", self.rows[i].key) };
                     if cell(&format!("-{}", ntxt), px + 180.0, y, 100.0, capturing_neg) && click {
                         self.capture = Some(Capture::NegKey(i));
                     }

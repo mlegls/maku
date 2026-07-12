@@ -7,6 +7,12 @@
 
 (import "touhou")
 
+;; Per-pilot host axes (the co-op host binds WASD and the arrows here).
+(defchannel $p1-move-x (from-host :p1-move-x 0))
+(defchannel $p1-move-y (from-host :p1-move-y 0))
+(defchannel $p2-move-x (from-host :p2-move-x 0))
+(defchannel $p2-move-y (from-host :p2-move-y 0))
+
 ;; Per-pilot streams: the rigs rebind them to live entity state.
 (def $player-1 c[-2 -3])
 (export! $player-1)

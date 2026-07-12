@@ -24,6 +24,7 @@ use std::rc::Rc;
 
 mod builtins;
 mod card;
+mod schema;
 mod colliders;
 mod coerce;
 mod engine;
@@ -43,6 +44,7 @@ mod world;
 
 pub(crate) use builtins::*;
 pub use card::*;
+pub use schema::*;
 pub use colliders::*;
 pub use coerce::*;
 pub(crate) use engine::{RenderKey, RenderRowFields};

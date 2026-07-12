@@ -350,6 +350,15 @@ async fn main() {
             app.binds.poll_edges();
         }
         app.binds.inject(&mut inputs, app.inst.paused());
+        // this host's side of the load-time manifest check: binding-panel
+        // channels plus the mouse mocks
+        let mut provided = app.binds.channel_names();
+        for m in ["player", "nearest-enemy"] {
+            if !provided.iter().any(|n| n == m) {
+                provided.push(m.to_string());
+            }
+        }
+        app.inst.host_channels = Some(provided);
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !app.inst.paused() {

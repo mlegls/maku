@@ -2125,6 +2125,7 @@
     #[test]
     fn live_evolve_reads_current_channel_and_rejects_off_clock_sampling() {
         const CARD: &str = r#"
+(defchannel $dx (from-host :dx 0))
 (defpattern p []
   (spawn (evolve (cart 0 0) (fn [s c] (cart (+ (:x s) $dx) 0)))
          {:style {:family :gem}}))
@@ -2326,6 +2327,7 @@
     #[test]
     fn aim_sees_expression_frame_ambient() {
         const CARD: &str = r#"
+(defchannel $player (from-host :player c[0 0]))
 (defpattern nested []
   (spawn (in-frame (pose c[0 3]) ((aim $player) (linear p[2 0])))))
 (defpattern flat []
@@ -2455,6 +2457,7 @@
         const CARD: &str = r#"
 (def $player)
 (export! $player)
+(defchannel $move-x (from-host :move-x 0))
 (defpattern c []
   (let [h (spawn (clamp c[-2 -2] c[2 2]
                    (in-frame c[0 -1] (vel c[(* 4 (live $move-x)) 0])))
@@ -3667,6 +3670,7 @@
     #[test]
     fn states_player_control() {
         const CARD: &str = r#"
+(defchannel $jump (from-host :jump 0))
 (defpattern pc []
   (states
     (:ground
@@ -3846,10 +3850,8 @@
     (let [b (first bs)]
       (change-col b :hp (fn [hp] (+ hp $rank))))))
 "#;
-        let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        sim.step().unwrap();
-        let err = sim.step().unwrap_err();
-        assert!(err.contains("host does not provide channel $rank"), "{err}");
+        let err = Sim::load(CARD, Some("p")).err().expect("load-time stream check");
+        assert!(err.contains("unbound stream $rank"), "{err}");
     }
 
     #[test]
@@ -4888,4 +4890,23 @@ fn stale_handles_do_not_target_reused_rows() {
         }
         let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
         assert!((x - 5.0).abs() < 1e-9, "follows the set!: {}", x);
+    }
+
+    /// The load-time schema pass: the host-channel manifest is the set of
+    /// (from-host :name) sites, and hosts verify it before tick 0.
+    #[test]
+    fn host_manifest_collected_and_verified() {
+        const CARD: &str = r#"
+(def $wind)
+(bind! $wind (from-host :wind 0))
+(defpattern p []
+  (spawn (pose c[(from-host :gust 0) 0])))
+"#;
+        let sim = Sim::load(CARD, Some("p")).unwrap();
+        let mut manifest = sim.host_manifest().to_vec();
+        manifest.sort();
+        assert_eq!(manifest, ["gust", "wind"], "manifest = from-host sites");
+        assert!(sim.verify_host_channels(&["wind", "gust", "extra"]).is_ok());
+        let err = sim.verify_host_channels(&["wind"]).unwrap_err();
+        assert!(err.contains("gust"), "missing channel named: {}", err);
     }
