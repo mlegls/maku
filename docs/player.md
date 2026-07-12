@@ -1,7 +1,7 @@
 # The debug player
 
 `proto/player` is the reference host: a sim+render **server** (the
-sclang/scsynth split — design.md §11). Editor clients are thin
+sclang/scsynth split). Editor clients are thin
 send-a-form-to-a-socket shims; `proto/editors/danmaku.nvim` is the reference
 client (see its README for mappings).
 
@@ -32,16 +32,13 @@ format. One form per line (clients strip `;` comments and join lines).
 | `(resize-entities N)` | explicit host-side entity capacity change; recorded on the command tape |
 | `(pause)` / `(resume)` | resume after a rewind **branches** (truncates the future) |
 
-## The session (core::session)
+## Scrubbing and replays
 
-The sim is a deterministic fold over **two tapes**: inputs (one `Inputs` per
-tick — mouse, axes, focus, bomb; replays include the keyboard) and program
-commands (`add`/`swap`, stamped with their tick). Any tick is reachable as
-nearest-snapshot + re-step; program changes re-apply at their recorded ticks,
-so scrubbing across an add/swap boundary is exact. Snapshots are one per
-second, auto-thinned to logarithmic density (recent scrubbing stays
-fine-grained; the tick-0 baseline always survives). The event log is one
-shared append-only structure; snapshots hold only a cursor.
+Everything you do is recorded: inputs (including the keyboard) on one
+tape, live code changes (`add`/`swap`) on another. Scrubbing to any past
+tick is exact — even across a hot-swap — and resuming after a rewind
+branches the timeline (the old future is discarded). The precise
+contract lives in `openspec/specs/session/spec.md`.
 
 ## Controls (this host's contract)
 
