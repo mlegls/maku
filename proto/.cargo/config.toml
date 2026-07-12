@@ -1,0 +1,7 @@
+# The Nix per-user profile puts GCC 14 and an old ld64 (956.x) first in
+# PATH; test binaries they link get broken unwind info on macOS, so any
+# panic aborts the whole harness ("failed to initiate panic, error 5")
+# instead of failing the one test. Drive linking through Apple clang,
+# which uses the Xcode linker.
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/cc"
