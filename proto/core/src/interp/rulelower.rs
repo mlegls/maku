@@ -6,6 +6,18 @@ use std::rc::Rc;
 
 pub(crate) struct CompiledTickForm {
     pub predicate: RowPredicate,
+    pub action: CompiledTickAction,
+}
+
+pub(crate) enum CompiledTickAction {
+    Render(CompiledRender),
+    /// The map body is exactly `(cull e)` over the row param: scan, then
+    /// cull matched rows in row order (the interpreted phase order —
+    /// entities-where completes before any cull applies).
+    Cull,
+}
+
+pub(crate) struct CompiledRender {
     pub needs_pose: bool,
     pub fields: Vec<(Rc<str>, RenderKey, RowVal)>,
     /// Memoized batch schema: rebuilt only when observed column kinds
@@ -131,6 +143,14 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     let [Form::Sym(entity)] = &params[..] else { return None };
     if matches!(entity.as_ref(), "&" | "*" | "=") || HEADS.contains(&entity.as_ref()) { return None; }
 
+    // the cull-rule shape: body is exactly (cull e); anything else about
+    // the body (extra args, a shadowing param named cull) bails the form
+    if let Some(args) = call(body, "cull", env, ctx) {
+        return (entity.as_ref() != "cull"
+            && matches!(args, [Form::Sym(target)] if target == entity))
+            .then(|| CompiledTickForm { predicate, action: CompiledTickAction::Cull });
+    }
+
     let (pose, emit_form) = if let Some(let_args) = call(body, "let", env, ctx) {
         let [Form::Vector(bindings), emit] = let_args else { return None };
         let [Form::Sym(pose), value] = &bindings[..] else { return None };
@@ -157,5 +177,12 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     }
     if !has_shape { return None; }
     let needs_pose = fields.iter().any(|(_, _, value)| is_pose(value));
-    Some(CompiledTickForm { predicate, needs_pose, fields, schema: std::cell::RefCell::new(None) })
+    Some(CompiledTickForm {
+        predicate,
+        action: CompiledTickAction::Render(CompiledRender {
+            needs_pose,
+            fields,
+            schema: std::cell::RefCell::new(None),
+        }),
+    })
 }

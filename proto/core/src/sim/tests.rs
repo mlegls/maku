@@ -1233,6 +1233,74 @@
     }
 
     #[test]
+    fn compiled_cull_rule_culls_matched_rows() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (* (= e.team :enemy) (<= (value-or e.hp 1) 0))))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy :hp 0})
+    (spawn (pose c[1 0]) {:team :enemy :hp 2})
+    (spawn (pose c[2 0]) {:team :player})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some(), "cull rule should compile");
+        sim.step().unwrap();
+        let alive: Vec<usize> = (0..sim.world.entities.len())
+            .filter(|&i| sim.world.entities.is_alive(i))
+            .collect();
+        assert_eq!(alive, vec![1, 2], "only the hp-0 enemy is culled");
+    }
+
+    #[test]
+    fn compiled_cull_rule_matches_interpreted_culls_under_oracle() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (* (= e.kind :point)
+                                  (> e.t (+ (default e.warn 0)
+                                            (default e.active 0.05))))))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:warn 0.01})
+    (spawn (pose c[1 0]) {:active 100})))
+"#;
+        let _guard = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some(), "cull rule should compile");
+        // several ticks: the first row ages past warn+active (0.06s at
+        // the 120Hz default rate) and gets culled while the oracle asserts
+        // predicted rows == interpreted cull actions each tick; the second
+        // row outlives the run
+        for _ in 0..30 {
+            sim.step().unwrap();
+        }
+        assert!(!sim.world.entities.is_alive(0), "aged-out row culled");
+        assert!(sim.world.entities.is_alive(1), "long-lived row survives");
+    }
+
+    #[test]
+    fn cull_rule_deviations_bail_to_interpreter() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (seq (cull e) (cull e)))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(deftick
+  (map (fn [cull] (cull cull))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(deftick
+  (map (fn [e] (cull))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(defpattern p [] (spawn (pose c[0 0]) {:team :player}))
+"#;
+        let sim = Sim::load(CARD, Some("p")).unwrap();
+        for (i, rule) in sim.world.standing_rules.iter().enumerate() {
+            assert!(rule.compiled[0].is_none(), "deviant body {i} must stay interpreted");
+        }
+    }
+
+    #[test]
     fn compiled_render_rule_bails_and_macroexpands_at_registration() {
         const CARD: &str = r#"
 (defmacro point-row [x y] `(emit :render {:shape :point :x ~x :y ~y}))

@@ -1155,6 +1155,9 @@ impl Sim {
             for (form, compiled) in rule.body.iter().zip(rule.compiled.iter()) {
                 let result = (|| -> Result<(), String> {
                     if let Some(compiled) = compiled {
+                        if oracle_enabled() && matches!(compiled.action, CompiledTickAction::Cull) {
+                            return self.oracle_check_compiled_cull(compiled, form, &rule.env);
+                        }
                         let before = self.world.render_rows.len();
                         if self.run_compiled_tick_form(compiled)?.is_none() {
                             self.world.render_rows.truncate(before);
@@ -1192,31 +1195,78 @@ impl Sim {
         Ok(())
     }
 
-    fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
-        let tests = form.predicate.resolve(&self.world);
+    /// Oracle mode for the effectful compiled form: culls must apply
+    /// exactly once, so the compiled scan only PREDICTS its match set and
+    /// the interpreted evaluation stays the sole applier. The prediction is
+    /// asserted against the cull actions the interpreter actually produced
+    /// (set and order) before they execute.
+    fn oracle_check_compiled_cull(
+        &mut self,
+        compiled: &CompiledTickForm,
+        form: &Form,
+        env: &Env,
+    ) -> Result<(), String> {
+        let mut predicted = Vec::new();
+        let bailed = !self.compiled_predicate_scan(&compiled.predicate, &mut predicted);
+        let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
+        if !bailed {
+            let mut culled = Vec::new();
+            collect_cull_rows(&value, &self.world, &mut culled);
+            assert_eq!(culled, predicted,
+                "compiled deftick cull rows mismatch for {:?}", form);
+        }
+        self.exec_tick_value(value)
+    }
+
+    /// Scan alive rows against the resolved predicate, in row-index order.
+    /// Returns false on a fallible-read bail: the whole form must rerun
+    /// interpreted.
+    fn compiled_predicate_scan(&self, predicate: &RowPredicate, rows: &mut Vec<usize>) -> bool {
+        let tests = predicate.resolve(&self.world);
         let bail_at = infallible_suffix_start(&tests);
+        if resolved_tests_match_nothing(&tests, bail_at) {
+            return true;
+        }
+        for row in 0..self.world.entities.len() {
+            if !self.world.entities.is_alive(row) {
+                continue;
+            }
+            let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
+                return false;
+            };
+            if matches {
+                rows.push(row);
+            }
+        }
+        true
+    }
+
+    fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
         // The whole predicate scan runs before any row body, mirroring the
         // interpreted phase order (entities-where completes before map), so
         // a body error cannot preempt a later row's predicate bail.
         let mut rows = std::mem::take(&mut self.render_scratch.match_rows);
         rows.clear();
-        if !resolved_tests_match_nothing(&tests, bail_at) {
-            for row in 0..self.world.entities.len() {
-                if !self.world.entities.is_alive(row) {
-                    continue;
-                }
-                let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
-                    self.render_scratch.match_rows = rows;
-                    return Ok(None);
-                };
-                if matches {
-                    rows.push(row);
-                }
-            }
+        if !self.compiled_predicate_scan(&form.predicate, &mut rows) {
+            self.render_scratch.match_rows = rows;
+            return Ok(None);
         }
+        let render = match &form.action {
+            CompiledTickAction::Cull => {
+                // matches were collected before any cull applies, so
+                // in-scan liveness is unaffected; row order = the
+                // interpreter's entities-where order
+                for &row in &rows {
+                    self.world.cull_at(row);
+                }
+                self.render_scratch.match_rows = rows;
+                return Ok(Some(()));
+            }
+            CompiledTickAction::Render(render) => render,
+        };
         // field names resolve once per pass; entity fields cannot change
         // mid-pass (writes are pending until the next tick boundary)
-        let fields: Vec<(&Rc<str>, RenderKey, ResolvedRowVal)> = form
+        let fields: Vec<(&Rc<str>, RenderKey, ResolvedRowVal)> = render
             .fields
             .iter()
             .map(|(key, slot, value)| (key, *slot, value.resolve(&self.world)))
@@ -1232,7 +1282,7 @@ impl Sim {
                 // path is exact — the frame is a mixed stream by design)
                 const RENDER_BATCH_MIN: usize = 16;
                 if rows.len() >= RENDER_BATCH_MIN {
-                    if let Some(batch) = self.try_render_batch(form, &plan, &rows) {
+                    if let Some(batch) = self.try_render_batch(render, &plan, &rows) {
                         self.world.render_rows.push(RenderItem::Batch(batch));
                         return Ok(Some(()));
                     }
@@ -1242,7 +1292,7 @@ impl Sim {
                 // exactly — evaluation is pure and the batch's schema
                 // checks were staged, so the world is untouched
                 for &row in &rows {
-                    let pose = form.needs_pose
+                    let pose = render.needs_pose
                         .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
                         .transpose()?;
                     let pose = pose.as_ref();
@@ -1278,7 +1328,7 @@ impl Sim {
                 return Ok(Some(()));
             }
             for &row in &rows {
-                let pose = form.needs_pose
+                let pose = render.needs_pose
                     .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
                     .transpose()?;
                 let mut row_fields = RenderRowFields::default();
@@ -1314,7 +1364,7 @@ impl Sim {
     /// and the rerun reproduces interpreted behavior exactly.
     fn try_render_batch(
         &mut self,
-        form: &CompiledTickForm,
+        form: &CompiledRender,
         plan: &CompiledRowPlan,
         rows: &[usize],
     ) -> Option<Rc<crate::model::RenderBatch>> {
@@ -1329,7 +1379,7 @@ impl Sim {
 
     fn fill_pose_rows(
         &self,
-        form: &CompiledTickForm,
+        form: &CompiledRender,
         plan: &CompiledRowPlan,
         rows: &[usize],
         poses: &mut Vec<Pose>,
@@ -1435,7 +1485,7 @@ impl Sim {
 
     fn fill_render_batch(
         &mut self,
-        form: &CompiledTickForm,
+        form: &CompiledRender,
         plan: &CompiledRowPlan,
         rows: &[usize],
         poses: &[Pose],
@@ -1843,6 +1893,30 @@ impl Sim {
 /// skips the RenderRowFields staging (a Val per slot plus an extras vec).
 /// None when the shape isn't a static :point/:dot keyword — the generic
 /// finish_checked path keeps its error semantics for those forms.
+/// Flatten an interpreted cull-rule result into target rows, in production
+/// order. Anything other than cull actions means the compiled recognizer
+/// accepted a form it should not have — a lowering bug, so panic (oracle
+/// context only).
+fn collect_cull_rows(v: &Val, world: &World, out: &mut Vec<usize>) {
+    match v {
+        Val::Arr(items) => {
+            for item in items.iter() {
+                collect_cull_rows(item, world, out);
+            }
+        }
+        Val::Action(action) => match action.as_ref() {
+            ActionV::Cull { target } => {
+                if let Some(row) = world.find(*target) {
+                    out.push(row);
+                }
+            }
+            other => panic!("compiled cull oracle: unexpected action {other:?}"),
+        },
+        Val::Nothing => {}
+        other => panic!("compiled cull oracle: unexpected value {other:?}"),
+    }
+}
+
 struct CompiledRowPlan<'a> {
     x: Option<&'a ResolvedRowVal>,
     y: Option<&'a ResolvedRowVal>,

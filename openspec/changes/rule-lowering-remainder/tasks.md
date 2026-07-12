@@ -28,16 +28,16 @@ Gate for every task: core suite green; lowering-touching tasks also pass the
 
 ## 3. Compiled cull rules
 
-- [ ] 3.1 Factor the `ActionV::Cull` application out of `exec_tick_value`
+- [x] 3.1 Factor the `ActionV::Cull` application out of `exec_tick_value`
       into a helper callable per row.
-- [ ] 3.2 Generalize `CompiledTickForm` to
+- [x] 3.2 Generalize `CompiledTickForm` to
       `{ predicate, action: Render{…} | Cull }`; `lower_tick_form`
       recognizes the `(map (fn [e] (cull e)) (entities-where …))` shape
       (exact body, unshadowed `cull`).
-- [ ] 3.3 Execute compiled cull: shared predicate scan (resolve-once,
+- [x] 3.3 Execute compiled cull: shared predicate scan (resolve-once,
       fallible-read bail → whole-form interp rerun), then the cull helper
       per matched row in row order.
-- [ ] 3.4 Oracle mode for effectful compiled forms: compiled scan predicts
+- [x] 3.4 Oracle mode for effectful compiled forms: compiled scan predicts
       matches without applying; interpreted form runs as the sole applier;
       assert predicted rows == produced `Cull` actions (set and order).
       Tests: hp-cull and beam-eol shapes from the touhou lib compile and
