@@ -15,6 +15,7 @@ The mesh pack (`proto/mesh-touhou`, landed round 22) is a direct port of the old
   - shader effects — glow/additive blending, which likely means the pack emitting material/blend metadata per span rather than plain quads;
   - whatever layering/blend vocabulary the survey justifies.
 - Decide what is pack configuration vs render-schema vocabulary vs engine frame semantics.
+- Web packaging (decided direction 2026-07): a renderer pack on wasm is two-part — the Rust geometry crate compiles INTO the engine wasm module (MeshFrame buffers exposed zero-copy as typed-array views over linear memory; a separate wasm module would need shared-memory gymnastics for nothing), plus a JS pipeline module (shader, blend state, texture upload, draw-per-span). Shader effects like glow/additive live in the JS pipeline half; the Rust half emits per-span material/blend metadata. Open sub-question: make the wasm export surface GENERIC (one engine-owned MeshFrame export + span material tags, packs = geometry crate + JS pipeline + config) vs per-pack bespoke bindings — generic is the frame-boundary-consistent default unless per-instance shader data forces bespoke layouts.
 
 ## Capabilities
 
