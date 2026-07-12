@@ -1,7 +1,6 @@
-# harness-continue condition (~/dev/harness-continue): while armed, the agent
-# auto-continues until stop_when holds. Arm with /continue:on <change>.
+# harness-continue (~/dev/harness-continue): while armed (hc on/off, sticky),
+# the agent auto-continues whenever stop_when is false.
 # Left-to-right is evaluation order — cheap conditions first.
-mode = "manual"
 max_continues = 8
 
 stop_when = "(git-clean && core-tests && openspec-tasks) || plan-flawed"
