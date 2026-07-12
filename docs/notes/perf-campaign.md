@@ -58,6 +58,25 @@ round 22 = input slots + structural interning (capture vectors over
 marker programs) plus the mesh renderer pack (maku-mesh-touhou; player
 extracted to `proto/player`).
 
+## Draw-path A/B: old immediate-mode player vs mesh pack (2026-07)
+
+Measured once, post-round-22 (temporary probe timing the bullet draw
+path per frame — `render()`/`render_frame()` through geometry
+submission — over ticks 0..900 of t03 ex3-fruit-colors, peak 2112
+rows, interleaved runs):
+
+- old player (`draw_circle`/`draw_line` per row): mean ~1.01ms/frame
+  (0.99/1.02/1.02) — matches the design note's ~1µs-per-call estimate
+  (2112 rows × 2 calls).
+- mesh player: mean ~0.69ms/frame (0.70/0.68/0.68) — ~32% faster.
+- Split of the mesh path: `render_frame()` ~0.03ms, `TouhouMesh::build`
+  ~0.03ms, `draw_frame` (u32→u16 HashMap remap + macroquad Vertex
+  conversion + `draw_mesh`) ~0.65ms — the conversion seam is ~95% of
+  the cost; the pack itself is nearly free. The remap HashMap is
+  unnecessary (pack indices are sequential quads — range chunking
+  would do) and is the obvious next lever if the draw path ever
+  matters; at 10k rows the seam as-is extrapolates to ~3ms.
+
 ## Remaining levers (round-21 sample, payoff order)
 
 - Compiled tick passes ~28% of step (predicate scan + batch field
