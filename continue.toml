@@ -1,0 +1,20 @@
+# harness-continue condition (~/dev/harness-continue): while armed, the agent
+# auto-continues until these pass. Arm with /configure-continue on <change>.
+mode = "manual"
+max_continues = 8
+
+[[check]]
+type = "git-clean"
+
+[[check]]
+type = "shell"
+name = "core tests"
+cmd = "cargo test --quiet"
+cwd = "proto"
+timeout = 900
+
+[[check]]
+type = "openspec-tasks"
+
+# Oracle card suites (the release gate for perf/lowering changes) are too
+# heavy to run on every stop; keep them as an explicit task in the change.

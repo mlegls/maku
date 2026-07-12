@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run /Users/mlegls/dev/harness-continue/src/main.ts hook claude",
+            "timeout": 1200
+          }
+        ]
+      }
+    ]
+  }
+}
