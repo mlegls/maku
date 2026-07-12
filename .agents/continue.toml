@@ -1,23 +1,14 @@
 # harness-continue (~/dev/harness-continue): while armed (hc on/off, sticky),
-# the agent auto-continues whenever stop_when is false.
-# Left-to-right is evaluation order — cheap conditions first.
+# the agent auto-continues whenever the stop condition is false. Default:
+#   ((git-clean | tracking-uncertain) & (tests | test-decision) & openspec-tasks) | plan-flawed
+# (tracking-uncertain/test-decision/plan-flawed are built-in llm exceptions)
 max_continues = 8
 
-stop_when = "(git-clean && core-tests && openspec-tasks) || plan-flawed"
-
-[conditions.core-tests]
+[conditions.tests]
 type = "test-suite"
 framework = "cargo"
 cwd = "proto"
 timeout = 900
-
-# Exception: ends the run early (with an explanation) instead of grinding
-# through a plan that turned out to be wrong. Only evaluated when the
-# normal conditions fail, i.e. once per blocked stop.
-[conditions.plan-flawed]
-kind = "exception"
-type = "llm"
-statement = "The armed plan has turned out to be fundamentally flawed or based on a wrong premise, such that continuing to implement it as agreed would be wasted or harmful work (mere difficulty, failing tests, or remaining work do not count)."
 
 # Oracle card suites (the release gate for perf/lowering changes) are too
 # heavy to run on every stop; keep them as an explicit task in the change.
