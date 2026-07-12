@@ -403,6 +403,17 @@ impl Env {
         }
         None
     }
+    /// Every name bound in the chain (shadowed entries included — callers
+    /// treat this as a shadow SET, where duplicates are harmless).
+    pub(crate) fn bound_names(&self) -> Vec<Rc<str>> {
+        let mut out = Vec::new();
+        let mut cur = &self.0;
+        while let Some(n) = cur {
+            out.push(n.name.clone());
+            cur = &n.next.0;
+        }
+        out
+    }
 }
 #[derive(Clone)]
 pub struct SigEnv {
@@ -2547,10 +2558,17 @@ fn sf_deftick(
         return Err("deftick: expected body".into());
     }
     let key: Rc<str> = format!("{:?}", items).into();
+    // macro-expansion output gets the same load-time rewrite card forms
+    // got, so expansion shapes inside macro-generated bodies stay
+    // recognizable to the lowerer (they'd otherwise keep interpreted cost)
+    let mut rewrite = rewrite::RegistrationRewrite::new(
+        &ctx.sig.defs,
+        env.bound_names().iter().map(|name| name.to_string()),
+    );
     let body = items[1..]
         .iter()
-        .map(|form| expand_macros(form, env, ctx, world))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|form| Ok(rewrite.rewrite(expand_macros(form, env, ctx, world)?)))
+        .collect::<Result<Vec<_>, String>>()?;
     let compiled = body
         .iter()
         .map(|form| rulelower::lower_tick_form(form, env, ctx, world).map(Rc::new))
@@ -3958,6 +3976,45 @@ mod tests {
         let form = read_one(src).unwrap();
         let form = expand_macros(&form, &Env::empty(), &mut ctx, &mut world).unwrap();
         evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut world).unwrap()
+    }
+
+    /// Prelude + a card macro whose expansion is the recognized render-rule
+    /// shape, except one field value needs the load-time rewrite
+    /// (`default` → `%value-or`) to classify. Registration must apply that
+    /// rewrite to the macro's output for the form to lower.
+    const RULE_MACRO_CARD: &str = "(defmacro rrule [] `(map (fn [e] (emit :render {:shape :point :x (default (:dx e) 0) :y 0})) (entities-where (fn [e] (= e.kind :point)))))";
+
+    fn deftick_ctx(card_src: &str) -> (Ctx, World) {
+        let expanded = crate::edn::expand_src(card_src).unwrap();
+        let forms = read_all(&expanded).unwrap();
+        let card = load_card(&forms).unwrap();
+        let mut ctx = Ctx::default();
+        ctx.sig.defs = Rc::new(card.defs.clone());
+        ctx.macros = Rc::new(card.macros.clone());
+        (ctx, World::default())
+    }
+
+    #[test]
+    fn deftick_rewrites_macro_expansion_output() {
+        let (mut ctx, mut world) = deftick_ctx(RULE_MACRO_CARD);
+        let form = read_one("(deftick (rrule))").unwrap();
+        evaluate(&form, &Env::empty(), &mut ctx, &mut world).unwrap();
+        let rule = &world.standing_rules[0];
+        assert!(
+            rule.compiled[0].is_some(),
+            "macro-generated body should lower after the registration rewrite"
+        );
+    }
+
+    #[test]
+    fn deftick_rewrite_respects_env_shadows() {
+        let (mut ctx, mut world) = deftick_ctx(RULE_MACRO_CARD);
+        // `default` is rebound in the enclosing env: the rewrite must not
+        // inline the def, so the body keeps the call and stays interpreted
+        let form = read_one("(let [default (fn [x d] d)] (deftick (rrule)))").unwrap();
+        evaluate(&form, &Env::empty(), &mut ctx, &mut world).unwrap();
+        let rule = &world.standing_rules[0];
+        assert!(rule.compiled[0].is_none(), "shadowed rewrite head must suppress inlining");
     }
 
     #[test]

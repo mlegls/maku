@@ -199,6 +199,35 @@ fn rewrite_list(
     }
 }
 
+/// The load-time rewrite, re-runnable at rule registration over
+/// macro-expansion output. Built once per registration from the current
+/// defs (already rewritten to fixpoint at load, so one collection pass
+/// suffices) plus the enclosing environment's bindings as shadows —
+/// runtime bindings shadow defs and builtins exactly as evaluation would
+/// resolve them.
+pub(crate) struct RegistrationRewrite {
+    bound: HashSet<String>,
+    trivial: HashMap<String, TrivialDef>,
+}
+
+impl RegistrationRewrite {
+    pub(crate) fn new(
+        defs: &HashMap<String, Form>,
+        shadows: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut bound: HashSet<String> =
+            defs.keys().filter(|name| is_builtin(name)).cloned().collect();
+        bound.extend(shadows);
+        RegistrationRewrite { bound, trivial: collect_trivial_defs(defs) }
+    }
+
+    pub(crate) fn rewrite(&mut self, form: Form) -> Form {
+        // rewrite_form leaves `bound` as it found it (scoped names are
+        // restored on exit), so sequential calls are independent
+        rewrite_form(form, &mut self.bound, &self.trivial)
+    }
+}
+
 fn rewrite_value_or_shape(form: Form, bound: &HashSet<String>) -> Form {
     let Form::List(items) = &form else {
         return form;

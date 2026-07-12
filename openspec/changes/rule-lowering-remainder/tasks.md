@@ -17,10 +17,10 @@ Gate for every task: core suite green; lowering-touching tasks also pass the
 
 ## 2. Registration-time rewrite of deftick expansion output (rewrite b)
 
-- [ ] 2.1 Make the card's trivial-def table (and builtin-shadow set)
+- [x] 2.1 Make the card's trivial-def table (and builtin-shadow set)
       reachable at rule registration (thread through `Ctx` or the card
       context) instead of existing only inside `rewrite_card`.
-- [ ] 2.2 In `sf_deftick`, run `rewrite_form` over the macro-expanded body
+- [x] 2.2 In `sf_deftick`, run `rewrite_form` over the macro-expanded body
       with the enclosing env's bindings treated as shadows, before
       `lower_tick_form`. Tests: a macro-generated body with a
       default-column read compiles; a body-local shadow of a rewrite head
