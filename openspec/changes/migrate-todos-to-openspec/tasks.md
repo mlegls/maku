@@ -9,11 +9,11 @@
 
 ## 2. Backlog stubs (one `openspec new change` + proposal.md each; commit in a few batched change-sets)
 
-- [ ] 2.1 Language-gap stubs: `states-return-routing`, `scoped-channel-overrides`, `pattern-embedding-adapters`, `entity-view-destructuring`, `channel-unification`, `evolve-followups`, `extraction-3d-embedding`, `blocking-lasers`, `rng-spawn-order-independence` — each proposal written from the actual TODO.md text, citing governing notes by path, recording blocked-on relationships in prose.
-- [ ] 2.2 Compiled-dyn / scale stubs: `compiled-dyn-milestone-b`, `entity-representation-flip`, `f32-hot-columns`, `collision-streaming`, `ir-unification`, `jit-native-codegen`, `group-integrator-dedup`, `spec-store-dedup`.
-- [ ] 2.3 Engine/refactor stubs: `render-schema-per-kind`, `rule-lowering-remainder`, `core-lib-stratification`, `model-split`, `pose-figure-unification`, `gameplay-out-of-core`, `interp-mod-split`.
-- [ ] 2.4 Stdlib/docs stubs: `stdlib-touhou`, `host-api-docs`.
-- [ ] 2.5 During 2.1–2.4, exercise the design's merge/split judgment: fold or split workstreams where the TODO text demands it, and note any deviation from the design table in this file.
+- [x] 2.1 Language-gap stubs: `states-return-routing`, `scoped-channel-overrides`, `pattern-embedding-adapters`, `entity-view-destructuring`, `channel-unification`, `evolve-followups`, `extraction-3d-embedding`, `blocking-lasers`, `rng-spawn-order-independence` — each proposal written from the actual TODO.md text, citing governing notes by path, recording blocked-on relationships in prose.
+- [x] 2.2 Compiled-dyn / scale stubs: `compiled-dyn-milestone-b`, `entity-representation-flip`, `f32-hot-columns`, `collision-streaming`, `ir-unification`, `jit-native-codegen`, `group-integrator-dedup`, `spec-store-dedup`.
+- [x] 2.3 Engine/refactor stubs: `render-schema-per-kind`, `rule-lowering-remainder`, `core-lib-stratification`, `model-split`, `pose-figure-unification`, `gameplay-out-of-core`, `interp-mod-split`.
+- [x] 2.4 Stdlib/docs stubs: `stdlib-touhou`, `host-api-docs`.
+- [x] 2.5 During 2.1–2.4, exercise the design's merge/split judgment: fold or split workstreams where the TODO text demands it, and note any deviation from the design table in this file. (Outcome: table followed as written — all 26 stubs created. Additions beyond the table: the two round-21 micro-levers with no stub of their own were folded in — `fast_pos_pose` cull-time reuse into `compiled-dyn-milestone-b`, per-batch symbol-id table into `rule-lowering-remainder`; web-host mesh adoption folded into `host-api-docs`; likely pick-up-time folds recorded in prose: `spec-store-dedup`/`group-integrator-dedup` into `entity-representation-flip`.)
 
 ## 3. TODO.md rewrite and verification
 

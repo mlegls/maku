@@ -12,6 +12,7 @@ Milestone B (group evaluation of shared programs) is partly landed: round 19 lan
 - AxisSel lane scatter: array-valued dyn meta binds per spawn element (`NumDynRepr::AxisSel`) but each entity still evaluates the full shared array per tick and keeps its lane — recognize the shared program, evaluate once per group, scatter lanes (SS5 array-of-signals/signal-of-array interchange).
 - The bail census's homing-slew nodes need ReadScan + Channel ops to lower.
 - Cheap win: motion readers closing over SoA columns + row index instead of building per-row snapshots (readers are constructed per entity per phase).
+- Candidate lever (needs a rule-effect audit first): cull-time reuse of the collide-phase `fast_pos_pose` (~11% of step, called 2x/row/tick) — exact for Vel chains ONLY if nothing between the phases mutates n2 state or figures.
 
 ## Capabilities
 
