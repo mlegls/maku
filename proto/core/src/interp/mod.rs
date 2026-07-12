@@ -49,6 +49,7 @@ pub use colliders::*;
 pub use coerce::*;
 pub(crate) use engine::{RenderKey, RenderRowFields};
 pub(crate) use lower::*;
+pub(crate) use spawn::axis_select_val;
 pub use r#dyn::*;
 pub use crate::model::{
     ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, RenderFieldKind,
@@ -383,6 +384,11 @@ struct EnvNode {
 impl Env {
     pub fn empty() -> Env {
         Env(None)
+    }
+    /// Structural identity: clones share nodes, so equal identities mean
+    /// the same immutable binding chain (memo keys, never semantics).
+    pub fn identity(&self) -> usize {
+        self.0.as_ref().map_or(0, |rc| Rc::as_ptr(rc) as usize)
     }
     pub fn bind(&self, name: Rc<str>, val: Val) -> Env {
         Env(Some(Rc::new(EnvNode { name, val, next: self.clone() })))

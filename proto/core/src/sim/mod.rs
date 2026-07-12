@@ -878,14 +878,38 @@ impl Sim {
         let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
         let state = MotionState::default();
+        // Shared array-valued meta signals (AxisSel) evaluate once per
+        // (form, env, tau) group per refresh; each row then selects only
+        // its own lane — the SS5 interchange at the Val level. Identity
+        // keys are sound because forms/envs are immutable and clones share
+        // Rcs; tau joins the key across different-birth spawn groups.
+        let mut shared: Option<crate::fxhash::FxHashMap<(usize, usize, u64), Val>> = None;
         for i in 0..self.world.entities.len() {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
             let tau = self.world.entity_tau(i, tick);
             for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
-                let value = eval_dyn_with_tick_rate(dyn_num, tau, &state, &sig, self.world.tick_rate())
-                    .map_err(|e| format!("dyn meta field: {}", e))?;
+                let tick_rate = self.world.tick_rate();
+                let value = match dyn_num.repr() {
+                    NumDynRepr::AxisSel { form, env, path, flat } => {
+                        let key = form_identity(form).map(|f| (f, env.identity(), tau.to_bits()));
+                        let hit = key.and_then(|k| shared.as_ref().and_then(|m| m.get(&k).cloned()));
+                        let v = match hit {
+                            Some(v) => Ok(v),
+                            None => {
+                                let v = eval_sig_at_rate(form, env, &sig, tau, 0.0, None, None, tick_rate);
+                                if let (Some(k), Ok(v)) = (key, &v) {
+                                    shared.get_or_insert_with(Default::default).insert(k, v.clone());
+                                }
+                                v
+                            }
+                        };
+                        v.and_then(|v| axis_select_val(&v, path, *flat).num())
+                    }
+                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, &sig, tick_rate),
+                }
+                .map_err(|e| format!("dyn meta field: {}", e))?;
                 self.world.col_set_sym_at(i, *col, value);
             }
         }
@@ -1858,5 +1882,15 @@ fn truthy_pub(v: &Val) -> bool {
         Val::Num(n) => *n != 0.0,
         Val::Nothing => false,
         _ => false,
+    }
+}
+
+/// Memo identity for a shared signal form: the Rc allocation address of
+/// its payload (clones share it). Scalar forms have no useful identity.
+fn form_identity(f: &Form) -> Option<usize> {
+    match f {
+        Form::List(items) | Form::Vector(items) => Some(items.as_ptr() as usize),
+        Form::Map(kvs) => Some(kvs.as_ptr() as usize),
+        _ => None,
     }
 }

@@ -28,7 +28,7 @@ tests. Perf claims via wall-only interleaved A/B on the scaled fruit rig
       (VelChain / ClosedChain / interpreted) + pooled lane scratch;
       batched fill at collide phase 0 and the cull loop with per-row
       wrapper composition; per-lane oracle. Wall A/B recorded.
-- [ ] 5. AxisSel scatter: per-tick memo in `refresh_dyn_cols` keyed on
+- [x] 5. AxisSel scatter: per-tick memo in `refresh_dyn_cols` keyed on
       (form Rc identity, env identity, tau bits); rows run
       `axis_select_val` only. Tests: shared-array group evaluates once
       (count via a probe or side-effect-free marker), per-row values

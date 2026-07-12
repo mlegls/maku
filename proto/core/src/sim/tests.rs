@@ -3392,6 +3392,33 @@
         }
     }
 
+    /// The once-per-group AxisSel memo keys on tau: two spawn groups
+    /// sharing one signal form but born on different ticks read their own
+    /// sample times, not each other's.
+    #[test]
+    fn dyn_meta_array_memo_keys_on_birth_tick() {
+        const CARD: &str = r#"
+(defpattern ring []
+  (spawn (circle 2 (linear p[1 0])) {:hue m"100*iota(2) + t"}))
+(defpattern p []
+  (seq (ring) (wait (ticks 3)) (ring)))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..5 {
+            sim.step().unwrap();
+        }
+        let dt = 1.0 / DEFAULT_TICK_RATE;
+        // group 1 born at tick 0, group 2 at tick 3; cols refreshed at tick 5
+        let tau1 = sim.world.entity_tau(0, sim.world.tick);
+        let tau2 = sim.world.entity_tau(2, sim.world.tick);
+        assert!((tau1 - tau2 - 3.0 * dt).abs() < 1e-9, "distinct births: {tau1} vs {tau2}");
+        for (i, tau) in [(0, tau1), (1, tau1), (2, tau2), (3, tau2)] {
+            let hue = sim.world.col_get_at(i, "hue").unwrap();
+            let want = 100.0 * (i % 2) as f64 + tau;
+            assert!((hue - want).abs() < 1e-9, "entity {i}: hue {hue}, want {want}");
+        }
+    }
+
     /// A shared array-valued meta SIGNAL binds per element like a static
     /// axis array: each entity's field is one scalar lane per tick.
     #[test]
