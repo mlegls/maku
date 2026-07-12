@@ -101,8 +101,13 @@ through the ambient map (control layer) or the row map (signal time):
   binding, the outer stream never sees it, and the write stays a
   frame-stamped deterministic store write;
 - `bind!` / `export!` inside an extent resolve through the map too
-  (consistency over cleverness) — binding a producer to an override cell is
-  legal, ends with the extent's relevance, and is expected to be rare.
+  (consistency over cleverness) — the override cell is a real store cell, so
+  `bind!` attaches its producer there and the override value is just the
+  initializer (the `def`-then-`bind!` lifecycle on a scoped cell). This adds
+  nothing `let` + aliasing can't express; what matters is what it rules out:
+  attaching to the *base* stream, where rebinding replaces the global
+  producer in place and the mutation would outlive the extent — the exact
+  cross-subtree spookiness `with` exists to prevent.
 
 ### 5. §13.8 residuals, settled
 
