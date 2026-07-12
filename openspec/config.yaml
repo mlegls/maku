@@ -29,9 +29,12 @@ context: |
   - Perf methodology (openspec/specs/perf/spec.md): wall-only
     interleaved A/B runs for deltas; macOS sample is attribution ground
     truth; profiled walls can mask regressions.
-  - Process: commit each coherent change-set immediately; implementation
-    rounds are gated on the user's explicit go-ahead; tutorials teach
-    Maku directly (DMK comparisons only in docs/from-dmk.md).
+  - Process: commit each coherent change-set immediately; rounds are
+    user-initiated, but once agreed, run to completion without
+    intermediate approval requests; tutorials teach Maku directly
+    (DMK comparisons only in docs/from-dmk.md). Write design/status
+    prose like a lab notebook — no status ceremonies or checkmark
+    theater.
 
 rules:
   proposal:
