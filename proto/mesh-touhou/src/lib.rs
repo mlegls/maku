@@ -1,4 +1,27 @@
 //! Graphics-API-agnostic Touhou-style geometry for maku render frames.
+//!
+//! The pack is a HOST (render-output-design: "mesh renderers are hosts"):
+//! an optional consumer of the public `render_frame()` API with no
+//! privileged engine relationship. Frame in, plain f32 buffers out —
+//! `MeshFrame { vertices, indices, spans }` in world units plus a 64px
+//! two-cell RGBA atlas (antialiased disc + ring outline), uploaded once.
+//!
+//! Geometry matches the original immediate-mode player's look:
+//! - Point rows: two quads per dot — a fill quad (disc cell, size
+//!   `dot_radius(family) * scale * 2`, `style_rgb(color)` hue-shifted,
+//!   alpha-clamped) and a white outline quad (ring cell, 0.35·alpha).
+//! - Polyline rows: ribbon quads per segment (4 verts each), sampling
+//!   the disc-center texel; width 6px-equivalent when `:active`, else
+//!   1.5px at 0.45·alpha, via `StyleTable.px_per_unit`.
+//! - `theta` is unused (dots are radially symmetric); unknown schema
+//!   columns are ignored; missing `family`/`color` fall back to
+//!   defaults. Draw order is frame order; batches and rows produce
+//!   identical geometry for equivalent content (tested).
+//!
+//! Steady-state costs: schema column indices cached per `Rc::ptr_eq`
+//! schema identity, hue shifts memoized per (color, 0.5° bucket),
+//! internal buffers reused (the returned `&MeshFrame` borrow lives
+//! until the next `build`).
 
 use maku::model::{Column, RenderBatch, RenderData, RenderItem, RenderSchema};
 use std::collections::HashMap;
