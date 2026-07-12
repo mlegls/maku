@@ -1,5 +1,5 @@
 # harness-continue condition (~/dev/harness-continue): while armed, the agent
-# auto-continues until stop_when holds. Arm with /configure-continue on <change>.
+# auto-continues until stop_when holds. Arm with /continue:on <change>.
 # Left-to-right is evaluation order — cheap conditions first.
 mode = "manual"
 max_continues = 8
