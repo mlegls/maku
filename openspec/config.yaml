@@ -1,0 +1,36 @@
+schema: spec-driven
+
+context: |
+  Maku: a deterministic 2D danmaku (bullet-pattern) language + engine
+  prototype. Rust workspace at proto/ (core, player, mesh-touhou);
+  cards (programs) in cards/; docs/language.md is the authoritative
+  language spec; docs/notes/*.md are the design-decision authority.
+
+  Standing constraints every change must respect:
+  - Bit-exact determinism across lowering tiers: the compiled/lowered
+    form must match the interpreter (same op order, same libm, no
+    fast-math). Replay/scrub and the lowering oracle depend on it.
+  - Oracle gating: MAKU_LOWER_ORACLE=1 runs every lowered program
+    against the interpreter; perf/lowering changes must pass the core
+    unit suite plus the 4 ignored oracle card suites
+    (cargo test --release -- --ignored) before landing.
+  - No sugar in lang: the core surface is a semantic kernel; vocabulary
+    is lib macros over it. Optimization recognizes macro EXPANSION
+    SHAPES (post-expansion AST patterns), never names.
+  - Hot-enum size guard: DynNode must stay <= 96 bytes (test-pinned);
+    new per-variant data goes behind Option<Rc<..>> (one word).
+  - Mixed numeric width is the contract: control plane f64, hot columns
+    f32 (planned) — not blanket f64.
+  - Scale target: ~10k live bullets is the normal state; 100k-1M is the
+    design ceiling, web host included.
+  - Perf methodology (docs/notes/perf-campaign.md): wall-only
+    interleaved A/B runs for deltas; macOS sample is attribution ground
+    truth; profiled walls can mask regressions.
+  - Process: commit each coherent change-set immediately; implementation
+    rounds are gated on the user's explicit go-ahead; tutorials teach
+    Maku directly (DMK comparisons only in docs/from-dmk.md).
+
+rules:
+  proposal:
+    - Cite governing design notes under docs/notes/ by path; do not
+      restate their decision content.
