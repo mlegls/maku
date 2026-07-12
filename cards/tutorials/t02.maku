@@ -28,13 +28,13 @@
 ;; the rest of the timeline a harmless no-op.
 (defpattern ex2-burst []
   (for [vol inf :every (ticks 70)]
-    (let [stars (bullet (circle 6 (linear p[1.5 0])) {:style {:family :star :color :teal :variant :w} :hitbox 0.09})]
+    (let [stars (bullet (circle 6 (linear p[1.5 0])) {:style {:family :star :color :teal :variant :w}})]
       (for [s stars]
         (fork
           (seq
             (wait 1.2)
             ((pose (pos s))
-              (bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w} :hitbox 0.09}))
+              (bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w}}))
             (cull s)))))))
 
 ;; --- queries: the general tool ----------------------------------------

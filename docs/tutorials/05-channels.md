@@ -77,7 +77,7 @@ and other patterns react to it —
 (seq
   (wait-for (> $dummy-hp 0))          ; registered
   (wait-for (<= $dummy-hp 0))         ; destroyed
-  (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))
+  (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w}}))
 ```
 
 The producer expression can close over local handles and streams, so a

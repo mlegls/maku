@@ -112,7 +112,7 @@
 (defpattern fantasy-seal []
   (dotimes [k 6, col [:red :green :yellow :blue] :every (ticks 24)]
     (shot (seal-orb k 4.0) {:style {:family :gglcircle :color col :variant :w}
-            :scale 2 :damage {:hit 900 :graze 700} :hitbox 0.20})))
+            :scale 2 :damage {:hit 900 :graze 700}})))
 
 ;; ============================================================================
 ;; Rate / constructor audit

@@ -49,7 +49,7 @@
    (dotimes [i inf :every period]
      (bullet ((rot (* 0.2 (+ i 1) (+ i 2)))
              (circle arms (linear c[speed 0]))) {:style {:family :gem :variant :w
-                     :color [:yellow :orange :red :pink :purple]} :hitbox 0.09}))))
+                     :color [:yellow :orange :red :pink :purple]}}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Version B -- the honest fold, for when the recurrence does NOT telescope.
@@ -68,7 +68,7 @@
           base      0.4]
      (bullet ((rot base)
              (circle arms (linear c[speed 0]))) {:style {:family :gem :variant :w
-                     :color [:yellow :orange :red :pink :purple]} :hitbox 0.09})
+                     :color [:yellow :orange :red :pink :purple]}})
      (wait period)
      (recur (+ increment 0.4)
             (+ base increment 0.4)))))

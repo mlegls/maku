@@ -28,4 +28,4 @@
   (for [i inf :every (ticks 10)]
     (shot (in-frame (live $player)
              (vel p[9 (slew 240 90
-                           (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :gem :color :blue} :damage 1 :hitbox 0.09})))
+                           (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :gem :color :blue} :damage 1})))

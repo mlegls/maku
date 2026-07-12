@@ -147,7 +147,7 @@ is the tangent plus 90° (`ex5-on-laser`):
   (for [i 44 :every (ticks 8)]
     ((pose (on-laser (nth h 0) m"0.07 * i"))
       ((rot 90)
-        (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09})))))
+        (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w}})))))
 ```
 
 `laser` returns handles like every spawner; the loop walks `u` outward

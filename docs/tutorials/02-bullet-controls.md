@@ -46,7 +46,7 @@ A timeline can also end the bullet's life and start others
     (seq
       (wait 1.2)
       ((pose (pos s))
-        (bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w} :hitbox 0.09}))
+        (bullet (circle 8 (linear p[3 0])) {:style {:family :gem :color :pink :variant :w}}))
       (cull s))))
 ```
 

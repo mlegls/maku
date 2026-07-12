@@ -84,7 +84,7 @@
     (wait 0.8)
     (set! $stage {:section :resume})
     (for [i inf :every (ticks 20)]
-      (bullet ((rot m"25*i") (fan 7 8 (linear p[2 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09}))))
+      (bullet ((rot m"25*i") (fan 7 8 (linear p[2 0]))) {:style {:family :star :color :yellow :variant :w}}))))
 
 ;; A compact whole-stage script: announce, fairy wave, midboss, deannounce.
 ;; A campaign host would run this pattern as one stage in a stage list.
@@ -97,4 +97,4 @@
     (ex3-midboss)
     (event :stage-end)
     (for [i inf :every (ticks 16)]
-      (bullet ((rot m"9*i") (circle 18 (linear p[1.8 0]))) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))
+      (bullet ((rot m"9*i") (circle 18 (linear p[1.8 0]))) {:style {:family :gem :color :green :variant :w}}))))

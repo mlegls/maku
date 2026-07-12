@@ -41,7 +41,7 @@
     (seq
       (wait-for (> $dummy-hp 0))          ; registered
       (wait-for (<= $dummy-hp 0))         ; destroyed
-      (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w} :hitbox 0.09}))))
+      (bullet (circle 24 (linear p[2 0])) {:style {:family :gem :color :yellow :variant :w}}))))
 
 ;; 5. local streams export too: a pattern-level counter published as
 ;; $volleys. bind! producers and set!-driven streams publish the same way —
@@ -60,7 +60,7 @@
         (seq
           (wait (ticks 2))
           ((rot 90)
-            (bullet (fan (* 4 (mod $volleys 4)) 10 (linear p[2 0])) {:style {:family :star :color :orange :variant :w} :hitbox 0.09})))))))
+            (bullet (fan (* 4 (mod $volleys 4)) 10 (linear p[2 0])) {:style {:family :star :color :orange :variant :w}})))))))
 
 ;; 6. the player is card content: an entity riding the $move axes in the
 ;; vel domain, clamped to the field, with a hurtbox collider, lives as a

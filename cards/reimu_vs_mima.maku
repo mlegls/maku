@@ -54,7 +54,7 @@
                                 (angle-of (- (live $nearest-enemy) pos)))])) {:style {:family :amulet :color :red} :damage 1}))
       (when (> $focus-firing 0.5)
         (shot (in-frame $player
-                 ([c[-0.25 0] c[0.25 0]] ((rot 90) (linear c[13 0])))) {:style {:family :gem :color :blue} :damage 1 :hitbox 0.09})))))
+                 ([c[-0.25 0] c[0.25 0]] ((rot 90) (linear c[13 0])))) {:style {:family :gem :color :blue} :damage 1})))))
 
 ;; bombs: raw $bomb button, stock as fold state, cooldown as debounce.
 ;; effect = clear hostile fire + Fantasy Seal (imported seal-orb, on a
@@ -74,7 +74,7 @@
     (shot (seal-orb k 1.2) {:style {:family :gglcircle
                     :color (nth [:red :green :yellow :blue] k)
                     :variant :w}
-            :scale 2 :damage 8 :hitbox 0.20})))
+            :scale 2 :damage 8})))
 
 ;; ============================================================================
 ;; Mima
@@ -91,10 +91,9 @@
         (:nonspell {:hp 60}              ; local hp gate
           (nonspell)
           (finally
-            (event :spell)
             (cull)                       ; field clear at the phase edge
             (invuln (nth boss 0) 1.5)))  ; transition mercy window
-        (:spell2 {:hp 0}
+        (:spell2 {:hp 0 :spell :mima-spell-2}
           (spell-2-with-root boss))))))
 
 ;; non-spell: aimed fans + a lazy ring, until the first health bar breaks

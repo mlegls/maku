@@ -50,7 +50,7 @@
                                       :teal :blue :purple :pink]]
   ((pose c[0 1.5])
     (let [stars (bullet (circle n (vel c[(lerp 0.2 1 t 3 0) 0])) {:style {:family :lstar :color :blue :variant :w}
-                        :facing m"200*t" :hitbox 0.20})]
+                        :facing m"200*t"})]
       (seq
         (wait 0.6)
         (dotimes [j n, col palette :every 0.3]
@@ -58,7 +58,7 @@
             (fn [b]
               (event :sfx "x-fire-burst-1")
               (bullet (+ (pos b) (circle 22 (vel c[(lerp 0.2 1 t 0 4) 0]))) {:style {:family :star :color col :variant :w}
-                      :facing m"300*t" :hitbox 0.09})
+                      :facing m"300*t"})
               (cull b :soft))))))))
 
 ;; ---------------------------------------------------------------------------

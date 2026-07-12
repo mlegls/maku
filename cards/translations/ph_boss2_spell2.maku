@@ -124,7 +124,7 @@
                                 m"rand(4, 8) * randpm1() * t"))) {:style {:family :star :variant :c
                               :color (nth [:blue :teal :green :pink] (iota 28))}
                       :scale 1.5
-                      :cues {:spawn "x-fire-star-3"} :hitbox 0.09}))
+                      :cues {:spawn "x-fire-star-3"}}))
             (wait 1)
             (set! $mode 0)                   ; turrets pause; reflector stops
             (wait 1)

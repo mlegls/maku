@@ -11,9 +11,9 @@
 ;; :opacity :hue, §7) keep their forms. spawn merges meta maps per-key,
 ;; later wins, so every default below is overridable at the call site.
 ;;
-;; Default radii assume the common sprite families (r 0.12 primary).
-;; Bigger/smaller families pass :hitbox — star/gem 0.09, lstar/gglcircle
-;; 0.20 were the classic values.
+;; Bullet/shot radii default from the sprite family via `family-hitbox`
+;; below (the classic values); pass :hitbox to override, and unknown or
+;; computed families take the flat 0.12 primary.
 
 ;; Streams — host inputs claimed by (from-host :name default), derived
 ;; values recomputed once per tick; card code, not engine. defchannel is
@@ -31,12 +31,31 @@
 
 ;; Touhou entity templates accept :hitbox as library sugar for the primary
 ;; collider radius. Raw low-level spawn has no :hitbox behavior.
-(defn primary-hitbox-radius* [metas default]
+;; Bullet/shot radii default from the sprite family (the classic values, as
+;; lib data): explicit :hitbox wins, then the literal :style :family, then
+;; the template's flat default. Resolution is macro-time over literal meta
+;; forms — a computed :style falls through to the flat default.
+(def family-hitbox {:star 0.09 :gem 0.09 :lstar 0.20 :gglcircle 0.20})
+
+(defn family-hitbox* [metas default]
+  (match metas
+    [] default
+    [m & rest] (let [fam (get (get m :style) :family)
+                     next (if (nothing? fam)
+                            default
+                            (let [here (get family-hitbox fam)]
+                              (if (nothing? here) default here)))]
+                 (family-hitbox* rest next))))
+
+(defn explicit-hitbox* [metas default]
   (match metas
     [] default
     [m & rest] (let [here (get m :hitbox)
                      next (if (nothing? here) default here)]
-                 (primary-hitbox-radius* rest next))))
+                 (explicit-hitbox* rest next))))
+
+(defn primary-hitbox-radius* [metas default]
+  (explicit-hitbox* metas (family-hitbox* metas default)))
 
 ;; Touhou shots read a numeric :damage column in the contact rule. The public
 ;; macro API accepts either :damage n or DMK-style :damage {:hit n ...}.
@@ -193,15 +212,13 @@
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
 (defmacro enemy [dyn & metas]
   `(spawn ~dyn
-          (circle-collider {:layer :hurt :r ~(primary-hitbox-radius* metas 0.3)})
+          (circle-collider {:layer :hurt :r ~(explicit-hitbox* metas 0.3)})
           {:render :touhou-sprite
            :team :enemy :hp 1}
           ~@metas))
 (defmacro spawn-enemy [dyn & metas] `(enemy ~dyn ~@metas))
 
-;; a col read that defaults when the column is absent
-(defn col-or [x d] (default x d))
-(defn hp-of [b] (col-or (:hp b) 0))
+(defn hp-of [b] (default (:hp b) 0))
 
 ;; boss: an enemy WITH A PHASE MACHINE — that is the whole difference.
 ;; The macro owns the boss conventions, so every touhou boss gets them
@@ -213,16 +230,20 @@
 ;;     are bound for the machine body
 ;; Meta supplies :hp/:hitbox/:style as usual. Gate phases with
 ;; {:hp n} (below), which reads boss-main's local hp.
+;; `boss-main` and `$spell` are bound convention names for the machine body:
+;; phases' :spell opt writes $spell, and the boss channel publishes it.
 (defmacro boss [chan dyn meta & machine]
   `(let [boss (enemy ~dyn ~meta)]
      (let [boss-main (nth boss 0)]
-       (seq
-         (bind! ~chan {:hp (hp-of boss-main)
-                       :pos (:pos boss-main)})
-         (wait-for (> (hp-of boss-main) 0))
-         ;; the machine fires from wherever the boss is NOW — the anchor
-         ;; is the live entity, so :root moves carry the fire with them
-         (in-frame boss-main (seq ~@machine))))))
+       (let [$spell 0]                 ; 0 = no active spell (masks, §2)
+         (seq
+           (bind! ~chan {:hp (hp-of boss-main)
+                         :pos (:pos boss-main)
+                         :spell $spell})
+           (wait-for (> (hp-of boss-main) 0))
+           ;; the machine fires from wherever the boss is NOW — the anchor
+           ;; is the live entity, so :root moves carry the fire with them
+           (in-frame boss-main (seq ~@machine)))))))
 (defmacro spawn-boss [chan dyn meta & machine] `(boss ~chan ~dyn ~meta ~@machine))
 
 ;; ---------------------------------------------------------------------
@@ -236,11 +257,11 @@
 ;; (:iframes col, seconds), default 0.5s; 120 = tick rate.
 (deftick
   (map (fn [[a b]]
-         (if (<= (col-or (:iframe-until b) 0) (:tick b))
+         (if (<= (default (:iframe-until b) 0) (:tick b))
            (seq
              (when (= (:kind a) :point) (cull a))
              (change-col b :hits (fn [h] (+ (default h 0) 1)))
-             (set-col b :iframe-until (+ (:tick b) (* (col-or (:iframes b) 0.5) 120)))
+             (set-col b :iframe-until (+ (:tick b) (* (default (:iframes b) 0.5) 120)))
              (change-col b :lives (fn [l] (- (default l 0) 1)))
              (event :player-hit (:pos a)))))
        (collisions :damage :player-hurt)))
@@ -248,7 +269,7 @@
 ;; graze: once per bullet ever, latched with an ordinary field on the bullet.
 (deftick
   (map (fn [[a b]]
-         (if (< (col-or (:grazed a) 0) 1)
+         (if (< (default (:grazed a) 0) 1)
            (seq
              (set-col a :grazed 1)
              (change-col b :graze (fn [g] (+ (default g 0) 1)))
@@ -267,7 +288,7 @@
 ;; macro or bind $player itself.
 (defmacro player [dyn & metas]
   `(let [player (spawn ~dyn
-                       (circle-collider {:layer :player-hurt :r ~(primary-hitbox-radius* metas 0.06)})
+                       (circle-collider {:layer :player-hurt :r ~(explicit-hitbox* metas 0.06)})
                        {:render :touhou-sprite
                         :team :player-body
                         :lives 3 :bombs 3 :graze 0 :hits 0}
@@ -296,9 +317,9 @@
   (map (fn [[a b]]
          (seq
            (cull a)
-           (if (> (col-or (:iframe-until b) 0) (:tick b))
+           (if (> (default (:iframe-until b) 0) (:tick b))
              (event :absorbed (:pos b))
-             (let [dmg (col-or (:damage a) 1)]
+             (let [dmg (default (:damage a) 1)]
                (seq
                  (change-col b :hp (fn [hp] (- (default hp 1) dmg)))
                  (event :enemy-hit (:pos b)))))))
@@ -309,7 +330,7 @@
          (seq
            (event :died (:pos e))
            (cull e)))
-       (entities-where (fn [e] (* (= e.team :enemy) (<= (col-or (:hp e) 1) 0))))))
+       (entities-where (fn [e] (* (= e.team :enemy) (<= (default (:hp e) 1) 0))))))
 
 (deftick
   (map (fn [e]
@@ -317,8 +338,8 @@
            (set-col e :game-over-fired 1)
            (event :game-over)))
        (entities-where (fn [e] (* (= e.team :player-body)
-                                  (<= (col-or (:lives e) 1) 0)
-                                  (< (col-or (:game-over-fired e) 0) 1))))))
+                                  (<= (default (:lives e) 1) 0)
+                                  (< (default (:game-over-fired e) 0) 1))))))
 
 ;; ---------------------------------------------------------------------
 ;; (phases (:label opts? body… (finally …)?) …) — the boss-shaped layer
@@ -329,6 +350,11 @@
 ;;   :timeout d → (fork (seq (wait d) (goto)))    [timer arms on arrival]
 ;;   :root pos  → (move-to boss-main 0.9 eoutsine pos)
 ;;                [reposition the local boss entity first]
+;;   :spell n   → entry (set! $spell {:name n :type (:type opts)?}) +
+;;                (event :spell-declared); exit resets $spell to 0 +
+;;                (event :spell-end) via the clause finally — hosts read
+;;                name/type off the boss channel (:spell is 0 between
+;;                spells), events key the banner
 ;; The (finally …) tail is phase sugar for core `(finally body cleanup…)`:
 ;; cancellation-safe cleanup lives in the scheduler, while `states` stays a
 ;; plain FSM. Macro-time plumbing only — same machine underneath, and
@@ -338,6 +364,18 @@
 (defn phase-gate* [opts]
   (let [hp (get opts :hp)]
     (if (nothing? hp) (get opts :until) `(<= (hp-of boss-main) ~hp))))
+
+;; a clause's :spell opt → ([entry declarations] [exit cleanups])
+(defn phase-spell* [opts]
+  (let [spell (get opts :spell)]
+    (if (nothing? spell)
+      [[] []]
+      (let [ty (get opts :type)
+            declare (if (nothing? ty)
+                      `(set! $spell {:name ~spell})
+                      `(set! $spell {:name ~spell :type ~ty}))]
+        [[declare `(event :spell-declared)]
+         [`(set! $spell 0) `(event :spell-end)]]))))
 
 ;; one clause's already-split pieces → a `states` clause
 (defn phase-emit* [label opts body fin]
@@ -354,10 +392,13 @@
         root (get opts :root)
         rooted (if (nothing? root)
                  timed
-                 (concat [`(move-to boss-main 0.9 eoutsine ~root)] timed))]
-    (if (= (count fin) 0)
-      `(~label ~@rooted)
-      `(~label (finally (seq ~@rooted) ~@fin)))))
+                 (concat [`(move-to boss-main 0.9 eoutsine ~root)] timed))
+        spell (phase-spell* opts)
+        entered (concat (nth spell 0) rooted)
+        cleanup (concat fin (nth spell 1))]
+    (if (= (count cleanup) 0)
+      `(~label ~@entered)
+      `(~label (finally (seq ~@entered) ~@cleanup)))))
 
 ;; split the optional (finally …) tail; pass only cleanup forms onward.
 (defn phase-split* [label opts rest]

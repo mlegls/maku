@@ -59,7 +59,7 @@
     (for [i 44 :every (ticks 8)]
       ((pose (on-laser (nth h 0) m"0.07 * i"))
         ((rot 90)
-          (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w} :hitbox 0.09}))))))
+          (bullet (linear p[1.5 0]) {:style {:family :gem :color :green :variant :w}}))))))
 
 ;; 6. slow lasers: :fill is a swept-fraction signal; fill-linear is the
 ;; ordinary source→tip helper. The full path stays telegraphed (dim) while
@@ -91,7 +91,7 @@
                   (let [shots (bullet (map (fn [k]
                                             ((pose (on-laser (nth l 0) (* 0.5 k)))
                                               ((rot 90) (linear p[1 0]))))
-                                          (iota 5)) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})]
+                                          (iota 5)) {:style {:family :star :color :yellow :variant :w}})]
                     (seq
                       (wait 0.9)
                       ;; actions are values: the two explosion patterns sit
@@ -103,5 +103,5 @@
                                          (fan 6 20 (linear p[2.5 0]))]
                                         k) {:style {:family :gem
                                             :color (nth [:teal :pink] k)
-                                            :variant :w} :hitbox 0.09}))
+                                            :variant :w}}))
                           (cull s))))))))))))))

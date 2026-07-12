@@ -1025,8 +1025,8 @@
            (set-col e :lowhp-fired 1)
            (event :low-hp (:pos e))))
        (entities-where (fn [e] (* (= e.team :enemy)
-                                  (<= (col-or (:hp e) 1) 1)
-                                  (< (col-or (:lowhp-fired e) 0) 1))))))
+                                  (<= (default (:hp e) 1) 1)
+                                  (< (default (:lowhp-fired e) 0) 1))))))
 (defpattern gates []
   (seq
     (enemy (pose c[0 2]) {:hp 3 :hitbox 0.3})
@@ -2943,7 +2943,8 @@
         let names: Vec<String> =
             sim.events_vec().iter().map(|e| e.name.to_string()).collect();
         let count = |n: &str| names.iter().filter(|x| x == &n).count();
-        assert_eq!(count("spell"), 1, "non-spell broke into spell-2");
+        assert_eq!(count("spell-declared"), 1, "non-spell broke into spell-2");
+        assert_eq!(count("spell-end"), 1, "the kill ended the spell (phase finally)");
         assert_eq!(count("bomb"), 1, "one bomb consumed");
         assert_eq!(count("died"), 1, "boss down");
         // the piloted rig moved off its start: $player is entity-derived

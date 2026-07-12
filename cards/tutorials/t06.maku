@@ -33,7 +33,7 @@
       (goto (nth [:calm :burst] (rand-int 0 2))))
     (:burst
       (fork (for [i inf :every (ticks 9)]
-              (bullet ((rot m"25*i") (fan 7 6 (linear p[2.6 0]))) {:style {:family :star :color :orange :variant :w} :hitbox 0.09})))
+              (bullet ((rot m"25*i") (fan 7 6 (linear p[2.6 0]))) {:style {:family :star :color :orange :variant :w}})))
       (wait 0.9)
       (goto (nth [:calm :burst] (rand-int 0 2))))))
 
@@ -49,7 +49,7 @@
       (goto :tight))
     (:tight
       (fork (for [i inf :every (ticks 7)]
-              (bullet ((aim $player) (fan 3 4 (linear p[3 0]))) {:style {:family :gem :color :blue} :hitbox 0.09})))
+              (bullet ((aim $player) (fan 3 4 (linear p[3 0]))) {:style {:family :gem :color :blue}})))
       (wait-for (< $focus-firing 0.5))
       (goto :loose))))
 
@@ -65,7 +65,7 @@
       (finally (event :warmup-done)))
     (:main
       (for [i inf :every (ticks 20)]
-        (bullet ((rot m"9*i") (circle 14 (linear p[1.8 0]))) {:style {:family :star :color :yellow :variant :w} :hitbox 0.09})))))
+        (bullet ((rot m"9*i") (circle 14 (linear p[1.8 0]))) {:style {:family :star :color :yellow :variant :w}})))))
 
 ;; 5. the full stack: boss = an enemy WITH a phase machine. The
 ;; macro binds $tutorial-boss as a map-valued host channel, holds the
