@@ -67,6 +67,8 @@ pub struct Sim {
     /// Host inputs the loaded card requires: the (from-host :name) sites
     /// collected by the load-time schema pass, in first-use order.
     host_manifest: Vec<String>,
+    /// Load-time lints from the schema pass (advisory, never errors).
+    load_warnings: Vec<String>,
 }
 
 /// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
@@ -295,6 +297,7 @@ impl Clone for Sim {
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
             host_manifest: self.host_manifest.clone(),
+            load_warnings: self.load_warnings.clone(),
         }
     }
 }
@@ -355,6 +358,7 @@ impl Sim {
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
             host_manifest: schema.host_channels,
+            load_warnings: schema.warnings,
         })
     }
 
@@ -403,6 +407,11 @@ impl Sim {
                         self.host_manifest.push(name);
                     }
                 }
+                for w in schema.warnings {
+                    if !self.load_warnings.contains(&w) {
+                        self.load_warnings.push(w);
+                    }
+                }
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
                 install_streams(&card, &mut self.ctx, &mut self.world)?;
                 let actions: Vec<Form> = body_forms
@@ -432,6 +441,11 @@ impl Sim {
                 for name in schema.host_channels {
                     if !self.host_manifest.contains(&name) {
                         self.host_manifest.push(name);
+                    }
+                }
+                for w in schema.warnings {
+                    if !self.load_warnings.contains(&w) {
+                        self.load_warnings.push(w);
                     }
                 }
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
@@ -488,6 +502,7 @@ impl Sim {
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
             host_manifest: schema.host_channels,
+            load_warnings: schema.warnings,
         })
     }
 
@@ -1426,6 +1441,11 @@ impl Sim {
     /// collected by the load-time schema pass.
     pub fn host_manifest(&self) -> &[String] {
         &self.host_manifest
+    }
+
+    /// Load-time lints from the schema pass (advisory).
+    pub fn load_warnings(&self) -> &[String] {
+        &self.load_warnings
     }
 
     /// The load-time host-manifest check: every channel the card claims

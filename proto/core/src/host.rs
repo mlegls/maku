@@ -1,9 +1,9 @@
 //! The host facade: everything a frontend needs, nothing else.
 //!
 //! `Instance` owns card management (load/expand/menu/selection), the wire
-//! command dispatch, and read accessors for rendering/UI â the host-generic
-//! half of the sclang/scsynth split. A frontend (macroquad, JS, Godotâ¦) is
-//! then only: input devices â `Inputs`, a fixed-timestep loop calling
+//! command dispatch, and read accessors for rendering/UI Ã¢ÂÂ the host-generic
+//! half of the sclang/scsynth split. A frontend (macroquad, JS, GodotÃ¢ÂÂ¦) is
+//! then only: input devices Ã¢ÂÂ `Inputs`, a fixed-timestep loop calling
 //! `advance`, a renderer over `render()`/`recent_events()`/channels, and
 //! whatever transport feeds `command_line`. The session (tapes, snapshots,
 //! scrubbing) sits underneath and stays reachable for advanced hosts.
@@ -23,11 +23,11 @@ pub struct Instance {
     pub session: Session,
     paused: bool,
     status: String,
-    /// Virtual filesystem for hosts without one (wasm): path → card text.
+    /// Virtual filesystem for hosts without one (wasm): path â card text.
     /// When set, loads and import expansion read from here, not the fs.
     pub vfs: Option<std::collections::HashMap<String, String>>,
     /// Channels this host provides (bindings, mocks). When set, loads
-    /// verify the card's (from-host ...) manifest against it — a missing
+    /// verify the card's (from-host ...) manifest against it â a missing
     /// channel fails the load before tick 0 (specs/load-time-schema).
     pub host_channels: Option<Vec<String>>,
 }
@@ -42,7 +42,7 @@ pub struct Timeline {
 
 impl Instance {
     /// `rig`: form source layered into every fresh timeline (the host's
-    /// player contract â e.g. the stock rig card + an invocation).
+    /// player contract Ã¢ÂÂ e.g. the stock rig card + an invocation).
     pub fn new(rig: Option<String>) -> Instance {
         let mut session = Session::default();
         session.rig = rig;
@@ -65,7 +65,7 @@ impl Instance {
     /// menu. Does NOT play.
     pub fn reload_from_disk(&mut self) -> bool {
         if self.card_path.is_empty() {
-            self.status = "no card loaded â send (load \"path\") or (run â¦)".into();
+            self.status = "no card loaded Ã¢ÂÂ send (load \"path\") or (run Ã¢ÂÂ¦)".into();
             return false;
         }
         let expanded = match &self.vfs {
@@ -116,17 +116,22 @@ impl Instance {
                     let provided: Vec<&str> = provided.iter().map(|s| s.as_str()).collect();
                     if let Err(e) = sim.verify_host_channels(&provided) {
                         self.session.stop();
-                        self.status = format!("load error: {} (add a binding row — press B)", e);
+                        self.status = format!("load error: {} (add a binding row â press B)", e);
                         return;
                     }
                 }
+                let lints = sim.load_warnings().join("; ");
                 self.session.start(sim);
                 let name = self
                     .pattern
                     .clone()
                     .or_else(|| self.patterns.first().cloned())
                     .unwrap_or_default();
-                self.status = format!("{} [{}]", self.card_path, name);
+                self.status = if lints.is_empty() {
+                    format!("{} [{}]", self.card_path, name)
+                } else {
+                    format!("{} [{}] — lint: {}", self.card_path, name, lints)
+                };
             }
             Err(e) => {
                 self.session.stop();
@@ -157,7 +162,7 @@ impl Instance {
         self.status = if self.card_src.is_empty() {
             "cleared".into()
         } else {
-            format!("cleared â {} still loaded", self.card_path)
+            format!("cleared Ã¢ÂÂ {} still loaded", self.card_path)
         };
     }
 
@@ -253,9 +258,9 @@ impl Instance {
                     Ok(replay_to) => {
                         let preview: String = src.chars().take(40).collect();
                         self.status = if replay_to > 0 {
-                            format!("run {}â¦ (replayed to tick {})", preview, replay_to)
+                            format!("run {}Ã¢ÂÂ¦ (replayed to tick {})", preview, replay_to)
                         } else {
-                            format!("run {}â¦", preview)
+                            format!("run {}Ã¢ÂÂ¦", preview)
                         };
                     }
                     Err(e) => self.status = format!("run error: {}", e),
@@ -267,12 +272,12 @@ impl Instance {
                 let preview: String = src.chars().take(40).collect();
                 if self.session.sim.is_some() {
                     match self.session.record_add(src) {
-                        Ok(()) => self.status = format!("add {}â¦", preview),
+                        Ok(()) => self.status = format!("add {}Ã¢ÂÂ¦", preview),
                         Err(e) => self.status = format!("add error: {}", e),
                     }
                 } else {
                     match self.session.rerun(&self.card_src, &src) {
-                        Ok(_) => self.status = format!("add (started fresh) {}â¦", preview),
+                        Ok(_) => self.status = format!("add (started fresh) {}Ã¢ÂÂ¦", preview),
                         Err(e) => self.status = format!("add error: {}", e),
                     }
                 }
@@ -282,7 +287,7 @@ impl Instance {
                 let src = forms_src(items);
                 let preview: String = src.chars().take(40).collect();
                 match self.session.record_swap(src) {
-                    Ok(()) => self.status = format!("swap {}â¦", preview),
+                    Ok(()) => self.status = format!("swap {}Ã¢ÂÂ¦", preview),
                     Err(e) => self.status = format!("swap error: {}", e),
                 }
             }
@@ -365,7 +370,7 @@ impl Instance {
     }
 
     /// The running sim's tick rate in Hz (the default rate when no card
-    /// runs) â hosts pace their fixed-timestep loop against this.
+    /// runs) Ã¢ÂÂ hosts pace their fixed-timestep loop against this.
     pub fn tick_rate(&self) -> f64 {
         self.session.sim.as_ref().map(|s| s.world.tick_rate()).unwrap_or(DEFAULT_TICK_RATE)
     }
@@ -388,7 +393,7 @@ impl Instance {
         self.session.sim.as_ref().map(|s| s.cells_snapshot()).unwrap_or_default()
     }
 
-    /// Events no older than `max_age` ticks, newest first â for stateless
+    /// Events no older than `max_age` ticks, newest first Ã¢ÂÂ for stateless
     /// effect flashes (they replay under scrubbing).
     pub fn recent_events(&self, max_age: u64) -> Vec<Event> {
         let Some(sim) = &self.session.sim else { return Vec::new() };
@@ -403,7 +408,7 @@ impl Instance {
         })
     }
 
-    /// World positions of alive entities carrying a column â the same
+    /// World positions of alive entities carrying a column Ã¢ÂÂ the same
     /// tagged-entity query shape derived channels use (`:pilot`, `:boss`,
     /// or any card-declared marker). Position is the collision-pass sample
     /// (current tick).
@@ -496,7 +501,7 @@ pub fn style_rgb(color: &str) -> (u8, u8, u8) {
     }
 }
 
-/// Style color with a hue-shift (degrees) applied, as linear 0â1 RGB.
+/// Style color with a hue-shift (degrees) applied, as linear 0Ã¢ÂÂ1 RGB.
 pub fn style_rgb_hued(color: &str, hue_deg: f64) -> (f32, f32, f32) {
     let (r, g, b) = style_rgb(color);
     let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);

@@ -15,6 +15,9 @@ const BUILTIN_STREAMS: [&str; 1] = ["tick"];
 pub struct CardSchema {
     /// Host inputs the card requires: bare names from (from-host :name) sites.
     pub host_channels: Vec<String>,
+    /// Lints (never errors): e.g. set! on a stream whose top-level producer
+    /// looks always-writing — the write survives only until the next refresh.
+    pub warnings: Vec<String>,
 }
 
 pub fn collect_card_schema(card: &Card) -> Result<CardSchema, String> {
@@ -44,7 +47,27 @@ pub fn collect_card_schema(card: &Card) -> Result<CardSchema, String> {
         }
     }
 
-    let mut cx = Cx { globals: &globals, hosts: Vec::new() };
+    // top-level producers that look ALWAYS-writing (can't yield nothing):
+    // anything but a conditional head. Feeds the set!-on-sealed-stream lint.
+    let mut sealed: HashSet<String> = HashSet::new();
+    for f in &card.stream_forms {
+        if let Form::List(items) = f {
+            if let (Some(Form::Sym(h)), Some(Form::Sym(n)), Some(expr)) =
+                (items.first(), items.get(1), items.get(2))
+            {
+                if &**h == "bind!" && n.starts_with('$') {
+                    let conditional = matches!(expr, Form::List(e)
+                        if matches!(e.first(), Some(Form::Sym(eh))
+                            if matches!(&**eh, "cond" | "if" | "when")));
+                    if !conditional {
+                        sealed.insert(n[1..].to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cx = Cx { globals: &globals, hosts: Vec::new(), sealed: &sealed, warnings: Vec::new() };
     let empty: Vec<String> = Vec::new();
     for (name, init) in &card.streams {
         if let Some(f) = init {
@@ -75,7 +98,7 @@ pub fn collect_card_schema(card: &Card) -> Result<CardSchema, String> {
             cx.walk(f, &scope).map_err(|e| format!("pattern {}: {}", p.name, e))?;
         }
     }
-    Ok(CardSchema { host_channels: cx.hosts })
+    Ok(CardSchema { host_channels: cx.hosts, warnings: cx.warnings })
 }
 
 /// Pre-scan: (export! $x) / (export! $x :as $name) publication names
@@ -118,6 +141,8 @@ impl ExportScan<'_> {
 struct Cx<'a> {
     globals: &'a HashSet<String>,
     hosts: Vec<String>,
+    sealed: &'a HashSet<String>,
+    warnings: Vec<String>,
 }
 
 impl Cx<'_> {
@@ -161,6 +186,23 @@ impl Cx<'_> {
                             self.walk(f, scope)?;
                         }
                         Ok(())
+                    }
+                    Some("set!") => {
+                        if let Some(Form::Sym(n)) = items.get(1) {
+                            if n.starts_with('$')
+                                && !scope.iter().any(|s| s == &**n)
+                                && self.sealed.contains(&n[1..])
+                            {
+                                let w = format!(
+                                    "set! on {}: its producer overwrites at every refresh",
+                                    n
+                                );
+                                if !self.warnings.contains(&w) {
+                                    self.warnings.push(w);
+                                }
+                            }
+                        }
+                        self.walk_children(items, scope)
                     }
                     // (export! $x :as $name): $name declares, $x reads
                     Some("export!") => {
