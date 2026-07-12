@@ -17,4 +17,4 @@ To be finalized at pick-up; likely one capability covering channel scoping seman
 ## Impact
 
 - Channel plumbing in `proto/core/src/sim/channels.rs` and interp evaluation.
-- Governing design: `docs/notes/channel-unification.md` (converged, not yet ratified) reframes channels as scoped sigiled streams — implement this AFTER or AS PART OF `channel-unification` rather than against the current cell machinery.
+- Governing design: `openspec/changes/channel-unification/design.md` (converged, not yet ratified) reframes channels as scoped sigiled streams — implement this AFTER or AS PART OF `channel-unification` rather than against the current cell machinery.

@@ -6,7 +6,7 @@
 
 ## 2. Verbatim moves into backlog change designs
 
-- [ ] 2.1 channel-unification.md → `openspec/changes/channel-unification/design.md`; model-split.md → `model-split/design.md`; builtins-audit.md → `core-lib-stratification/design.md`; docs/types.md → `ir-unification/design.md` (header notes consumers); data-model.md's aspirational parts → `entity-representation-flip/design.md`. Delete the moved sources; update citations in the same commit.
+- [x] 2.1 channel-unification.md → `openspec/changes/channel-unification/design.md`; model-split.md → `model-split/design.md`; builtins-audit.md → `core-lib-stratification/design.md`; docs/types.md → `ir-unification/design.md` (header notes consumers); data-model.md's aspirational parts → `entity-representation-flip/design.md`. Delete the moved sources; update citations in the same commit.
 
 ## 3. Install specs and fill sections
 

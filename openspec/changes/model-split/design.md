@@ -1,3 +1,5 @@
+<!-- Moved verbatim from docs/notes/model-split.md (dissolve-design-notes). -->
+
 # model/ split — moving dyn (and friends) to the semantic model
 
 Status: DIRECTION SETTLED, sequencing recorded here; execution deferred until

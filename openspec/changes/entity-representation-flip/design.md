@@ -1,3 +1,7 @@
+<!-- Moved verbatim from docs/notes/data-model.md (dissolve-design-notes).
+The already-implemented semantics are normative in openspec/specs/language;
+the storage/SoA targets below are this change's design input. -->
+
 # Data model targets
 
 Settled architecture targets for the core data model. Moved verbatim

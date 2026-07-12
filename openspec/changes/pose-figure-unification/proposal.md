@@ -13,7 +13,7 @@ Backlog stub — design/specs/tasks are generated when this is picked up.
 
 ## Capabilities
 
-Value-model unification; semantics per `docs/notes/data-model.md`.
+Value-model unification; semantics per `openspec/changes/entity-representation-flip/design.md`.
 
 ## Impact
 

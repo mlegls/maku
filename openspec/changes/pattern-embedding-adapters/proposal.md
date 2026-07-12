@@ -17,4 +17,4 @@ To be finalized at pick-up.
 ## Impact
 
 - Pattern/card loading in `proto/core/src/interp/card.rs`.
-- The cell half interacts with `docs/notes/channel-unification.md` (cells dissolve into let-bound sigiled streams there); sequence against `channel-unification` to avoid building adapters on deletable kernel surface.
+- The cell half interacts with `openspec/changes/channel-unification/design.md` (cells dissolve into let-bound sigiled streams there); sequence against `channel-unification` to avoid building adapters on deletable kernel surface.

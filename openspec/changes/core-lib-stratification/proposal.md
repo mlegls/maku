@@ -8,7 +8,7 @@ The semantic kernel should keep shrinking before the compiler pass: specials are
 
 ## What Changes
 
-- Continue the kernel-shrink worklist in `docs/notes/builtins-audit.md`: easings and derived array verbs wait on profiling; `map`/`filter` intrinsic-ification and the `channel` merge wait on their flags.
+- Continue the kernel-shrink worklist in `openspec/changes/core-lib-stratification/design.md`: easings and derived array verbs wait on profiling; `map`/`filter` intrinsic-ification and the `channel` merge wait on their flags.
 - Current interpreter categories (math/array/language/geometry builtins vs engine specials) are recorded in the audit note.
 
 ## Capabilities
@@ -18,4 +18,4 @@ Surface-vocabulary stratification; language semantics unchanged.
 ## Impact
 
 - `proto/core/src/interp/builtins/*`, `interp/engine.rs`, `cards/lib/`.
-- Governing principle (no sugar in lang, expansion-shape optimization) and intrinsic criteria: `docs/notes/intrinsics.md`; worklist: `docs/notes/builtins-audit.md`.
+- Governing principle (no sugar in lang, expansion-shape optimization) and intrinsic criteria: `docs/notes/intrinsics.md`; worklist: `openspec/changes/core-lib-stratification/design.md`.

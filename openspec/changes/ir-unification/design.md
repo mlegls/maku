@@ -1,3 +1,7 @@
+<!-- Moved verbatim from docs/types.md (dissolve-design-notes). Target design
+for the typed IR pipeline; also feeds entity-representation-flip and
+pose-figure-unification. -->
+
 # Maku Type System Notes
 
 Status: target design. The interpreter only implements parts of this today.

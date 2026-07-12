@@ -18,4 +18,4 @@ Code-structure refactor; semantics unchanged.
 ## Impact
 
 - Sequenced AFTER the vel/stages re-expression in `evolve-followups` (which is itself deferred TO this split for `vel` — the design note resolves the ordering).
-- Governing: `docs/notes/model-split.md` (direction + sequencing).
+- Governing: `openspec/changes/model-split/design.md` (direction + sequencing).

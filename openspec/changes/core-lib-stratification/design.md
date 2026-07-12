@@ -1,3 +1,5 @@
+<!-- Moved verbatim from docs/notes/builtins-audit.md (dissolve-design-notes). -->
+
 # Special forms / builtins / keywords audit
 
 Method: every name the interpreter dispatches on was enumerated from the

@@ -18,4 +18,4 @@ Representation-internal; behavior oracle-gated.
 
 - Entity spec store, spawn path, motion/pose walkers, sim SoA stores.
 - Natural sequel to round 22; overlaps with `spec-store-dedup` and `group-integrator-dedup` (fold at pick-up if the design wants).
-- Governing: `docs/notes/compiled-dyn-design.md`, `docs/notes/data-model.md` (SoA row-id target), scale-target consequences in the old TODO (now this stub).
+- Governing: `docs/notes/compiled-dyn-design.md`, `openspec/changes/entity-representation-flip/design.md` (SoA row-id target), scale-target consequences in the old TODO (now this stub).

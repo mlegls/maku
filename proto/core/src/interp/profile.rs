@@ -1,6 +1,6 @@
 //! Flat self-time profiler for the interpreter's hot paths.
 //!
-//! The minimal-kernel plan (docs/notes/builtins-audit.md) re-adds builtins
+//! The minimal-kernel plan (openspec/changes/core-lib-stratification/design.md) re-adds builtins
 //! as AST-rewrite intrinsics from the most bottlenecking paths first; this
 //! is the instrument that names those paths. Attribution is by evaluated
 //! head symbol (specials, builtins, and user defns alike — the profiler
