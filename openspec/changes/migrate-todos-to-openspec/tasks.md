@@ -2,10 +2,10 @@
 
 ## 1. Note homes for non-backlog content
 
-- [ ] 1.1 Create `docs/notes/perf-campaign.md`: rig commands (MAKU_WALL_ONLY profile example, scaled fruit case), interleaved-A/B methodology, macOS `sample` ground-truth procedure, verification gates (core tests + MAKU_LOWER_ORACLE suite), current wall table, pointer to git history for round narrative. Move the corresponding TODO.md content verbatim, then edit for the new home. Commit.
-- [ ] 1.2 Create `docs/notes/data-model.md` from TODO.md "Data Model Targets" (verbatim move, then edit). Commit.
-- [ ] 1.3 Create `docs/notes/intrinsics.md` from TODO.md "Intrinsics / Arrays" plus the Standard Library stance bullets that are decisions rather than work. Commit.
-- [ ] 1.4 Fill `openspec/config.yaml` `context:` with standing constraints: bit-exact determinism across lowering tiers, oracle gating, no-sugar-in-lang / optimize-expansion-shapes, DynNode ≤96-byte guard, commit-per-change-set, rounds gated on explicit user go-ahead. Commit.
+- [x] 1.1 Create `docs/notes/perf-campaign.md`: rig commands (MAKU_WALL_ONLY profile example, scaled fruit case), interleaved-A/B methodology, macOS `sample` ground-truth procedure, verification gates (core tests + MAKU_LOWER_ORACLE suite), current wall table, pointer to git history for round narrative. Move the corresponding TODO.md content verbatim, then edit for the new home. Commit.
+- [x] 1.2 Create `docs/notes/data-model.md` from TODO.md "Data Model Targets" (verbatim move, then edit). Commit.
+- [x] 1.3 Create `docs/notes/intrinsics.md` from TODO.md "Intrinsics / Arrays" plus the Standard Library stance bullets that are decisions rather than work. Commit.
+- [x] 1.4 Fill `openspec/config.yaml` `context:` with standing constraints: bit-exact determinism across lowering tiers, oracle gating, no-sugar-in-lang / optimize-expansion-shapes, DynNode ≤96-byte guard, commit-per-change-set, rounds gated on explicit user go-ahead. Commit.
 
 ## 2. Backlog stubs (one `openspec new change` + proposal.md each; commit in a few batched change-sets)
 
