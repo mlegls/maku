@@ -12,5 +12,5 @@
 
 ## 3. Install (archive) and finish the main specs
 
-- [ ] 3.1 Archive this change (`openspec archive seed-capability-specs -y`), installing the three specs into `openspec/specs/`.
-- [ ] 3.2 Replace the skeleton `## Purpose` (TBD) sections of the three installed specs with the purposes recorded in design.md. Validate each installed spec (`openspec validate <name> --type spec`). Commit.
+- [x] 3.1 Archive this change (`openspec archive seed-capability-specs -y`), installing the three specs into `openspec/specs/`.
+- [x] 3.2 Replace the skeleton `## Purpose` (TBD) sections of the three installed specs with the purposes recorded in design.md. Validate each installed spec (`openspec validate <name> --type spec`). Commit.
