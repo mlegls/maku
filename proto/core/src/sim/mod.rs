@@ -660,11 +660,11 @@ impl Sim {
         if oracle_enabled() {
             let readers = self.motion_readers(row);
             let mstate = MotionState::default();
+            let sig = sig.with_overrides(self.world.entities.overrides(row));
             let want = dyn_figure_pose_in(
                 fig,
                 tau,
-                MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, self.world.tick_rate())
-                    .with_overrides(self.world.entities.overrides(row)).pos_only(),
+                MotionEvalCtx::with_tick_rate(&mstate, &sig, &readers, self.world.tick_rate()).pos_only(),
             )
             .ok()?;
             assert_eq!(p, want, "fast pos_only pose diverged from interpreter for row {row}");
@@ -788,11 +788,11 @@ impl Sim {
                     let mstate = MotionState::default();
                     // an interpreted error leaves the row unfilled so the
                     // per-row path surfaces it (fast_pos_pose's stance)
+                    let sig = sig.with_overrides(self.world.entities.overrides(row));
                     let Ok(want) = dyn_figure_pose_in(
                         fig,
                         g.tau[l],
-                        MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, tick_rate)
-                            .with_overrides(self.world.entities.overrides(row)).pos_only(),
+                        MotionEvalCtx::with_tick_rate(&mstate, &sig, &readers, tick_rate).pos_only(),
                     ) else {
                         continue;
                     };
@@ -951,16 +951,22 @@ impl Sim {
                 continue;
             }
             let tau = self.world.entity_tau(i, tick);
+            let mut row_sig = None;
+            let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
             for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
                 let tick_rate = self.world.tick_rate();
                 let value = match dyn_num.repr() {
                     NumDynRepr::AxisSel { form, env, path, flat } => {
-                        let key = form_identity(form).map(|f| (f, env.identity(), tau.to_bits()));
+                        // identity keys don't carry the override view; an
+                        // override row neither reads nor feeds the memo
+                        let key = (sig.overrides.is_none())
+                            .then(|| form_identity(form).map(|f| (f, env.identity(), tau.to_bits())))
+                            .flatten();
                         let hit = key.and_then(|k| shared.as_ref().and_then(|m| m.get(&k).cloned()));
                         let v = match hit {
                             Some(v) => Ok(v),
                             None => {
-                                let v = eval_sig_at_rate(form, env, &sig, tau, 0.0, None, None, tick_rate);
+                                let v = eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate);
                                 if let (Some(k), Ok(v)) = (key, &v) {
                                     shared.get_or_insert_with(Default::default).insert(k, v.clone());
                                 }
@@ -969,7 +975,7 @@ impl Sim {
                         };
                         v.and_then(|v| axis_select_val(&v, path, *flat).num())
                     }
-                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, &sig, tick_rate),
+                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, sig, tick_rate),
                 }
                 .map_err(|e| format!("dyn meta field: {}", e))?;
                 self.world.col_set_sym_at(i, *col, value);
@@ -1113,11 +1119,11 @@ impl Sim {
             let tau = self.world.entity_motion_tau(row, self.world.tick);
             let readers = entity_motion_readers(row, &self.world);
             let state = MotionState::default();
+            let sig = self.ctx.sig.with_overrides(self.world.entities.overrides(row));
             let p = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
-                MotionEvalCtx::with_tick_rate(&state, &self.ctx.sig, &readers, self.world.tick_rate())
-                    .with_overrides(self.world.entities.overrides(row)),
+                MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
             )?;
             let vel = self.world.entity_velocity_from_samples(row, self.world.tick);
             let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
@@ -1647,6 +1653,10 @@ impl Sim {
             }
             self.tasks.extend(new_tasks);
         }
+        // extent views are per-action; nothing outside task stepping (rule
+        // passes, producer refresh) may read through the last task's extent
+        self.ctx.overrides = None;
+        self.ctx.sig.overrides = None;
         if let Some(f) = probe {
             crate::interp::profile::close("phase:control", f);
         }
@@ -1680,9 +1690,12 @@ impl Sim {
                 let mut ignore_dyn = |_, _| {};
                 let mut write_val = |key, value| val_writes.push((key, value));
                 let tick_rate = self.world.tick_rate();
+                // live evolve steps must see the row's scoped overrides
+                let mut row_sig = None;
+                let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
                 let mut motion = MotionStepCtx {
                     state: &mut state,
-                    sig: &sig,
+                    sig,
                     world: Some(&mut self.world),
                     readers: &readers,
                     tick_rate,
@@ -1730,11 +1743,12 @@ impl Sim {
                     // dominant per-row fixed cost on untraced cards
                     let readers = self.motion_readers(i);
                     let state = MotionState::default();
+                    let mut row_sig = None;
+                    let row_sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
                     if let Ok(p) = dyn_figure_pose_in(
                         dyn_figure,
                         tau,
-                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
-                            .with_overrides(self.world.entities.overrides(i)),
+                        MotionEvalCtx::with_tick_rate(&state, row_sig, &readers, self.world.tick_rate()),
                     ) {
                         let cap = (window * self.world.tick_rate()).ceil() as usize + 1;
                         self.world.entities.push_trace_sample(i, p, cap);
@@ -1797,11 +1811,13 @@ impl Sim {
                 match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) => {
                         let state = MotionState::default();
+                        let mut row_sig = None;
+                        let row_sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
                         match dyn_figure_pose_in(
                             dyn_figure,
                             tau,
-                            MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
-                                .with_overrides(self.world.entities.overrides(i)).pos_only(),
+                            MotionEvalCtx::with_tick_rate(&state, row_sig, &readers, self.world.tick_rate())
+                                .pos_only(),
                         ) {
                         Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                         Err(e) => {

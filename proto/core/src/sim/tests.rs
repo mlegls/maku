@@ -5117,6 +5117,53 @@ fn stale_handles_do_not_target_reused_rows() {
         assert!(err.contains("unbound stream $missing"), "{err}");
     }
 
+    /// A live evolve stepping under an extent reads the override, not the
+    /// base — the step pass wraps the row's sig, so "captured for their
+    /// signals' lifetimes" covers Scanned motion too, not just closed reads.
+    #[test]
+    fn scoped_channel_override_reaches_live_evolve_steps() {
+        const CARD: &str = r#"
+(def $x 9)
+(defpattern p []
+  (seq
+    (with {$x 2} (spawn (evolve c[0 0] (fn [s c] (+ s (cart (* $x (:dt c)) 0))))))
+    (wait (ticks 120))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..61 { sim.step().unwrap(); }
+        // 60 steps of +2·dt at 120 Hz = 1.0; the base $x = 9 would give 4.5.
+        let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
+        assert!((x - 1.0).abs() < 1e-6, "live evolve read the base, not the override: {x}");
+    }
+
+    /// bind!/export! inside an extent act on the override cell: the producer
+    /// refreshes the scoped value while the base stream keeps its own
+    /// producer refreshing untouched — and the extent's export publishes the
+    /// override cell.
+    #[test]
+    fn scoped_channel_override_bind_and_base_refresh() {
+        const CARD: &str = r#"
+(def $x 0)
+(bind! $x 9)
+(defpattern p []
+  (seq
+    (with {$x 0}
+      (bind! $x 2)
+      (if (= $x 2) (spawn (pose c[2 0])))
+      (export! $x :as $scoped))
+    (if (= $x 9) (spawn (pose c[9 0])))
+    (wait (ticks 3))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..3 { sim.step().unwrap(); }
+        assert_eq!(live_count(&sim), 2, "extent read its producer, base read its own");
+        // base producer still owns the base stream after the extent
+        assert!(matches!(sim.ctx.sig.stream_val(sim.ctx.sig.stream_id("x").unwrap()), Some(Val::Num(9.0))));
+        // the export published the override cell, refreshed per tick
+        let scoped = sim.ctx.sig.stream_id("scoped").expect("export! inside extent registers");
+        assert!(matches!(sim.ctx.sig.stream_val(scoped), Some(Val::Num(2.0))));
+    }
+
     /// The load-time schema pass: the host-channel manifest is the set of
     /// (from-host :name) sites, and hosts verify it before tick 0.
     #[test]

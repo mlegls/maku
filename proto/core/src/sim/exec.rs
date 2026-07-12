@@ -99,12 +99,12 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
             let tau = world.entity_motion_tau(i, world.tick);
             let state = MotionState::default();
             let readers = crate::interp::entity_motion_readers(i, world);
+            let sig = sig.with_overrides(world.entities.overrides(i));
             if let Ok(p) = dyn_node_pose_u_in(
                 node,
                 tau,
                 0.0,
-                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate())
-                    .with_overrides(world.entities.overrides(i)),
+                MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()),
             ) {
                 return p;
             }
@@ -339,6 +339,7 @@ pub(super) fn step_task(
         let Some((form, env)) = next else { continue };
         ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
         ctx.overrides = ambient_overrides(&task.stack);
+        ctx.sig.overrides = ctx.overrides.clone(); // reads resolve through the extent
         let v = evaluate(&form, &env, ctx, world)?;
         if let Val::Action(a) = v {
             if run_action(&a, task, ctx, world, new_tasks)? {
@@ -368,6 +369,7 @@ fn run_action(
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
             ctx.overrides = ambient_overrides(&task.stack);
+            ctx.sig.overrides = ctx.overrides.clone();
             exec_instant(a, ctx, world)?;
             // forks issued inside the instant (callback timed work) are
             // adopted here, inheriting this task's guards
@@ -430,6 +432,7 @@ fn run_action(
             }
             task.stack.push(TF::Overrides(pairs.into()));
             ctx.overrides = ambient_overrides(&task.stack);
+            ctx.sig.overrides = ctx.overrides.clone();
             run_action(inner, task, ctx, world, new_tasks)
         }
         ActionV::Loop { names, inits, body, env } => {

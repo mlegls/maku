@@ -274,7 +274,6 @@ pub struct MotionEvalCtx<'a> {
     pub sig: &'a SigEnv,
     pub readers: &'a MotionReaders,
     pub tick_rate: f64,
-    pub overrides: Option<&'a FxHashMap<u64, u64>>,
     /// When false the caller provably discards theta, so nodes whose
     /// heading costs extra evaluation (ClosedPt's second sample, Vel's
     /// integrand, RotExpr) may skip it. Frame re-enables it for the
@@ -293,12 +292,7 @@ impl<'a> MotionEvalCtx<'a> {
         readers: &'a MotionReaders,
         tick_rate: f64,
     ) -> MotionEvalCtx<'a> {
-        MotionEvalCtx { state, sig, readers, tick_rate, overrides: None, need_theta: true }
-    }
-
-    pub fn with_overrides(mut self, overrides: Option<&'a FxHashMap<u64, u64>>) -> Self {
-        self.overrides = overrides;
-        self
+        MotionEvalCtx { state, sig, readers, tick_rate, need_theta: true }
     }
 
     pub fn pos_only(mut self) -> Self {
@@ -1110,7 +1104,6 @@ fn fetch_aux(
     state: &MotionState,
     sig: &SigEnv,
     readers: &MotionReaders,
-    overrides: Option<&FxHashMap<u64, u64>>,
     buf: &mut Vec<f64>,
 ) -> bool {
     buf.clear();
@@ -1120,9 +1113,9 @@ fn fetch_aux(
     let mut chan_vals: Vec<(f64, f64)> = Vec::with_capacity(aux.chans.len());
     for (r, kind) in &aux.chans {
         let v = match r {
-            crate::interp::lower::ChanRef::Stream(id) => sig.stream_val_overridden(*id, overrides),
+            crate::interp::lower::ChanRef::Stream(id) => sig.stream_val(*id),
             crate::interp::lower::ChanRef::Named(n) => match sig.stream_id(n) {
-                Some(id) => sig.stream_val_overridden(id, overrides),
+                Some(id) => sig.stream_val(id),
                 None => sig.channel(n),
             },
         };
@@ -1517,24 +1510,10 @@ fn dyn_node_name(d: &DynNode) -> &'static str {
 
 fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_>) -> Result<Pose, String> {
     let state = ctx.state;
-    let mut overridden_sig;
-    let sig = if let Some(overrides) = ctx.overrides {
-        overridden_sig = ctx.sig.clone();
-        let mut cells = ctx.sig.cells.borrow().clone();
-        for (base, scoped) in overrides {
-            if let Some((name, value)) = cells.get(scoped).cloned() {
-                let value = match value {
-                    Val::Stream(source) => ctx.sig.stream_val(source).unwrap_or(Val::Nothing),
-                    value => value,
-                };
-                cells.insert(*base, (name, value));
-            }
-        }
-        overridden_sig.cells = Rc::new(std::cell::RefCell::new(cells));
-        &overridden_sig
-    } else {
-        ctx.sig
-    };
+    // Scoped overrides ride ctx.sig (SigEnv.overrides): every read below —
+    // stream_val, eval_sig, evolve steps, lowered aux — resolves through
+    // them with no threading and no per-node work.
+    let sig = ctx.sig;
     let readers = ctx.readers;
     let tick_rate = ctx.tick_rate;
     match d {
@@ -1659,8 +1638,8 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 let fetched = AUX_A.with(|aa| {
                     AUX_B.with(|ab| {
                         let (mut aa, mut ab) = (aa.borrow_mut(), ab.borrow_mut());
-                        if !fetch_aux(ap, key, state, sig, readers, ctx.overrides, &mut aa)
-                            || !fetch_aux(bp, key, state, sig, readers, ctx.overrides, &mut ab)
+                        if !fetch_aux(ap, key, state, sig, readers, &mut aa)
+                            || !fetch_aux(bp, key, state, sig, readers, &mut ab)
                         {
                             return None;
                         }
@@ -1716,7 +1695,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let (x, y) = sig.channel_pos(channel);
             Ok(Pose::point(x, y))
         }
-        DynNode::LiveStream { id } => match sig.stream_val_overridden(*id, ctx.overrides) {
+        DynNode::LiveStream { id } => match sig.stream_val(*id) {
             Some(Val::Pose(p)) => Ok(Pose::point(p.x, p.y)),
             _ => Ok(Pose::point(0.0, 0.0)),
         },
@@ -1736,7 +1715,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             {
                 let fetched = AUX_A.with(|aa| {
                     let mut aa = aa.borrow_mut();
-                    fetch_aux(prog, key, state, sig, readers, ctx.overrides, &mut aa)
+                    fetch_aux(prog, key, state, sig, readers, &mut aa)
                         .then(|| run_num_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand), &aa))
                 });
                 if let Some(th) = fetched {

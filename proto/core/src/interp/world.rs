@@ -467,8 +467,8 @@ impl EntityStore {
         }
     }
 
-    pub fn overrides(&self, row: usize) -> Option<&FxHashMap<u64, u64>> {
-        self.specs.overrides.get(row).and_then(|m| m.as_deref())
+    pub fn overrides(&self, row: usize) -> Option<&Rc<FxHashMap<u64, u64>>> {
+        self.specs.overrides.get(row).and_then(|m| m.as_ref())
     }
 
     pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {

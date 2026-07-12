@@ -173,11 +173,12 @@ impl Sim {
             let tau = self.world.entity_motion_tau(i, self.world.tick);
             let readers = self.motion_readers(i);
             let state = MotionState::default();
+            let mut row_sig = None;
+            let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
             let pose = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
-                MotionEvalCtx::with_tick_rate(&state, sig, &readers, self.world.tick_rate())
-                    .with_overrides(self.world.entities.overrides(i)),
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, self.world.tick_rate()),
             )
             .ok();
             let trace = self.world.entities.trace_samples(i);

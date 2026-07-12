@@ -439,6 +439,13 @@ pub struct SigEnv {
     /// attachments). A producer yielding `nothing` leaves the last
     /// value — including a `set!` — standing.
     pub producers: Rc<std::cell::RefCell<Vec<(u64, Form, Env)>>>,
+    /// Scoped-override view (`with`): base id → override cell id, applied
+    /// inside `stream_val` so every read path — signal eval, evolve steps,
+    /// lowered aux fetches — resolves through it without threading.
+    /// Transient: recomputed from the task stack per action (control layer)
+    /// and set per row from the spawn-captured map (signal time); never
+    /// snapshotted.
+    pub overrides: Option<Rc<FxHashMap<u64, u64>>>,
 }
 
 impl Default for SigEnv {
@@ -451,6 +458,7 @@ impl Default for SigEnv {
             streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             host_streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             producers: Rc::new(std::cell::RefCell::new(Vec::new())),
+            overrides: None,
         }
     }
 }
@@ -459,16 +467,35 @@ impl SigEnv {
     pub fn channel(&self, name: &str) -> Option<Val> {
         self.channels.get(name).cloned()
     }
-    /// Snap a stream's current value out of the shared store.
+    /// Snap a stream's current value out of the shared store, resolving the
+    /// scoped-override view first. A cell holding a stream handle aliases:
+    /// the read derefs to the source's current value (the `with` handle-value
+    /// form; precedent: bind! producer mirroring).
     pub fn stream_val(&self, id: u64) -> Option<Val> {
-        self.cells.borrow().get(&id).map(|(_, v)| v.clone())
-    }
-    pub fn stream_val_overridden(&self, id: u64, overrides: Option<&FxHashMap<u64, u64>>) -> Option<Val> {
-        let id = overrides.and_then(|m| m.get(&id)).copied().unwrap_or(id);
-        let v = self.stream_val(id)?;
+        let id = self.overrides.as_deref().and_then(|m| m.get(&id)).copied().unwrap_or(id);
+        let v = self.cells.borrow().get(&id).map(|(_, v)| v.clone())?;
         match v {
-            Val::Stream(source) => self.stream_val(source),
+            Val::Stream(source) => self.cells.borrow().get(&source).map(|(_, v)| v.clone()),
             v => Some(v),
+        }
+    }
+    /// A view of this SigEnv with a row's captured override map applied to
+    /// every stream read. Rc bumps only; None clears.
+    pub fn with_overrides(&self, overrides: Option<&Rc<FxHashMap<u64, u64>>>) -> SigEnv {
+        let mut sig = self.clone();
+        sig.overrides = overrides.cloned();
+        sig
+    }
+    /// Row-loop form: borrow self untouched for the common no-override row,
+    /// materialize the wrapped view in `slot` only when the row captured one.
+    pub fn for_row<'a>(
+        &'a self,
+        overrides: Option<&Rc<FxHashMap<u64, u64>>>,
+        slot: &'a mut Option<SigEnv>,
+    ) -> &'a SigEnv {
+        match overrides {
+            None => self,
+            some => slot.insert(self.with_overrides(some)),
         }
     }
     /// Resolve a bare stream name (no sigil): top-level defs, then names
@@ -543,7 +570,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                     return match v {
                         Val::Stream(id) => ctx
                             .sig
-                            .stream_val_overridden(id, ctx.overrides.as_deref())
+                            .stream_val(id)
                             .ok_or_else(|| format!("stream {} has no value", name)),
                         v => Ok(v),
                     };
@@ -551,7 +578,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 if let Some(id) = ctx.sig.stream_id(&name[1..]) {
                     return ctx
                         .sig
-                        .stream_val_overridden(id, ctx.overrides.as_deref())
+                        .stream_val(id)
                         .ok_or_else(|| format!("stream {} has no value", name));
                 }
                 ctx.sig
@@ -1357,7 +1384,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                         if let Some(id) = sid {
                             let cur = ctx
                                 .sig
-                                .stream_val_overridden(id, ctx.overrides.as_deref())
+                                .stream_val(id)
                                 .ok_or_else(|| format!("stream {} has no value", ch))?;
                             return if ctx.scan.is_some() {
                                 Ok(cur)
@@ -1398,13 +1425,13 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 // Nothing = no value yet: fall through to the host map,
                 // then the default
                 if let Some(Val::Stream(id)) = env.lookup(ch) {
-                    if let Some(v) = ctx.sig.stream_val_overridden(id, ctx.overrides.as_deref()) {
+                    if let Some(v) = ctx.sig.stream_val(id) {
                         if !matches!(v, Val::Nothing) {
                             return Ok(v);
                         }
                     }
                 }
-                if let Some(v) = ctx.sig.stream_id(name).and_then(|id| ctx.sig.stream_val_overridden(id, ctx.overrides.as_deref())) {
+                if let Some(v) = ctx.sig.stream_id(name).and_then(|id| ctx.sig.stream_val(id)) {
                     if !matches!(v, Val::Nothing) {
                         return Ok(v);
                     }
@@ -1908,11 +1935,11 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::default();
+    let sig = sig.with_overrides(world.entities.overrides(i));
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate())
-            .with_overrides(world.entities.overrides(i)).pos_only(),
+        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()).pos_only(),
     )?;
     let vel = world.entity_velocity_from_samples(i, world.tick);
     let mut view = vec![
@@ -2615,11 +2642,11 @@ pub(crate) fn entity_pose_at(i: usize, world: &World, sig: &SigEnv) -> Result<Po
     let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::default();
+    let sig = sig.with_overrides(world.entities.overrides(i));
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate())
-            .with_overrides(world.entities.overrides(i)).pos_only(),
+        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()).pos_only(),
     )?;
     Ok(Pose::point(p.x, p.y))
 }

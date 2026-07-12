@@ -145,12 +145,16 @@ impl Sim {
                 let state = MotionState::default();
                 // pos_only: the sampled-pose cache and colliders read x/y
                 // (velocity-from-samples, exit snapshots re-derive heading)
-                dyn_figure_pose_in(
-                    dyn_figure,
-                    tau,
-                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
-                        .with_overrides(self.world.entities.overrides(i)).pos_only(),
-                )?
+                {
+                    let mut row_sig = None;
+                    let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+                    dyn_figure_pose_in(
+                        dyn_figure,
+                        tau,
+                        MotionEvalCtx::with_tick_rate(&state, sig, &readers, self.world.tick_rate())
+                            .pos_only(),
+                    )?
+                }
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));
             pos.push(Some((p.x, p.y)));
