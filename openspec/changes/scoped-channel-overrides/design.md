@@ -122,6 +122,14 @@ through the ambient map (control layer) or the row map (signal time):
   bind! producer mirroring). `(with {$rank (live $other)} ...)` is NOT a
   supported form for now; `live` values are dyn-typed, and blessing them here
   would smuggle a second aliasing spelling.
+- **`with` is a binder, not a producer form** — it does not accept
+  bind!-style per-tick expressions. The three tiers compose from existing
+  machinery: constant for the extent (snap), tracking (handle alias — the
+  analogue of in-frame's signal-valued `FrameSpec::Node`), and computed per
+  tick via `bind!` — either on a local stream that the map then aliases, or
+  directly on the override cell (decision 4). Per-tick refresh semantics
+  (attachment order, `nothing` fallback) stay in one place; an ergonomic
+  `with*` over `with` + `bind!` is lib-macro territory.
 
 ### 6. Load-time schema pass
 
@@ -145,6 +153,11 @@ rather than constructs, so no declaration is added to scope.
 - [bind!/export! inside extents are near-untested territory] → covered by a
   unit test each; semantics are the boring compositional ones (they act on
   the override cell).
+- [A producer bind!ed to an override cell keeps refreshing after the extent's
+  last reader dies; a loop re-executing the `with` attaches a fresh producer
+  per iteration] → harmless per attachment (the cell goes unread) but
+  unbounded under re-execution; test pins the behavior, and producer teardown
+  at extent exit waits for a card that actually hits it.
 
 ## Migration Plan
 
