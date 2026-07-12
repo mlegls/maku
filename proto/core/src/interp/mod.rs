@@ -1413,16 +1413,24 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 let Some(name) = ch.strip_prefix('$') else {
                     return Err("channel: name must start with $".into());
                 };
+                // Nothing = no value yet: fall through to the host map,
+                // then the default
                 if let Some(Val::Stream(id)) = env.lookup(ch) {
                     if let Some(v) = ctx.sig.stream_val(id) {
-                        return Ok(v);
+                        if !matches!(v, Val::Nothing) {
+                            return Ok(v);
+                        }
                     }
                 }
                 if let Some(v) = ctx.sig.stream_id(name).and_then(|id| ctx.sig.stream_val(id)) {
-                    return Ok(v);
+                    if !matches!(v, Val::Nothing) {
+                        return Ok(v);
+                    }
                 }
                 if let Some(v) = ctx.sig.channel(name) {
-                    return Ok(v);
+                    if !matches!(v, Val::Nothing) {
+                        return Ok(v);
+                    }
                 }
                 return match items.get(2) {
                     Some(default) => evaluate(default, env, ctx, world),
@@ -1523,7 +1531,17 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     None => {
                         let id = world.next_id;
                         world.next_id += 1;
-                        let init = ctx.sig.channel(name).unwrap_or(Val::Nothing);
+                        // optional default: the stream's value until the
+                        // host first provides one (and thereafter when the
+                        // host omits it, since absent values leave the
+                        // last standing)
+                        let init = match ctx.sig.channel(name) {
+                            Some(v) => v,
+                            None => match items.get(2) {
+                                Some(d) => evaluate(d, env, ctx, world)?,
+                                None => Val::Nothing,
+                            },
+                        };
                         ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), init));
                         ctx.sig.host_streams.borrow_mut().insert(name.to_string(), id);
                         id
@@ -2801,7 +2819,24 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 };
                 if !matches!(v, Val::Nothing) {
                     if let Some(slot) = ctx.sig.cells.borrow_mut().get_mut(id) {
-                        slot.1 = v;
+                        slot.1 = v.clone();
+                    }
+                    // same-tick availability in the public snapshot for
+                    // already-exported streams (bind-channel! parity)
+                    let exported: Vec<String> = ctx
+                        .sig
+                        .exports
+                        .borrow()
+                        .iter()
+                        .filter(|(_, i)| i == id)
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    if !exported.is_empty() {
+                        let mut m = (*ctx.sig.channels).clone();
+                        for n in exported {
+                            m.insert(n, v.clone());
+                        }
+                        ctx.sig.channels = Rc::new(m);
                     }
                 }
             }

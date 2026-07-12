@@ -15,18 +15,19 @@
 ;; Bigger/smaller families pass :hitbox — star/gem 0.09, lstar/gglcircle
 ;; 0.20 were the classic values.
 
-;; Derived channels — recomputed once per tick from the world; card
-;; code, not engine.
-(defchannel $player (channel $player c[0 -4]))
-(defchannel $move-x (channel $move-x 0))
-(defchannel $move-y (channel $move-y 0))
-(defchannel $focus-firing (channel $focus-firing 0))
-(defchannel $bomb (channel $bomb 0))
-(defchannel $rank (channel $rank 1))
+;; Streams — host inputs claimed by (from-host :name default), derived
+;; values recomputed once per tick; card code, not engine. defchannel is
+;; sugar over def $name + bind! + export!.
+(defchannel $player (from-host :player c[0 -4]))
+(defchannel $move-x (from-host :move-x 0))
+(defchannel $move-y (from-host :move-y 0))
+(defchannel $focus-firing (from-host :focus-firing 0))
+(defchannel $bomb (from-host :bomb 0))
+(defchannel $rank (from-host :rank 1))
 (defchannel $enemies (count-entities {:team :enemy}))
 (defchannel $nearest-enemy
   (let [target (nearest-entity {:team :enemy} $player)]
-    (if (nothing? target) (channel $nearest-enemy c[0 3]) target)))
+    (if (nothing? target) (from-host :nearest-enemy c[0 3]) target)))
 
 ;; Touhou entity templates accept :hitbox as library sugar for the primary
 ;; collider radius. Raw low-level spawn has no :hitbox behavior.
@@ -205,7 +206,8 @@
 ;; boss: an enemy WITH A PHASE MACHINE — that is the whole difference.
 ;; The macro owns the boss conventions, so every touhou boss gets them
 ;; without writing them out:
-;;   - one public map-valued channel is bound for host/UI state
+;;   - the card's boss stream (declare it: (defchannel $name {:hp 0}))
+;;     is rebound to live host/UI state
 ;;   - the machine starts only once the boss is REGISTERED
 ;;   - `boss` (the spawn's handle array) and `boss-main` (its first handle)
 ;;     are bound for the machine body
@@ -215,8 +217,8 @@
   `(let [boss (enemy ~dyn ~meta)]
      (let [boss-main (nth boss 0)]
        (seq
-         (bind-channel! ~chan {:hp (hp-of boss-main)
-                               :pos (:pos boss-main)})
+         (bind! ~chan {:hp (hp-of boss-main)
+                       :pos (:pos boss-main)})
          (wait-for (> (hp-of boss-main) 0))
          ;; the machine fires from wherever the boss is NOW — the anchor
          ;; is the live entity, so :root moves carry the fire with them
@@ -272,7 +274,7 @@
                        ~@metas)]
      (let [player-main (nth player 0)]
        (seq
-         (bind-channel! $player (:pos player-main))))))
+         (bind! $player (:pos player-main))))))
 (defmacro spawn-player [dyn & metas] `(player ~dyn ~@metas))
 
 (defn touhou-player-motion [speed focus_speed]

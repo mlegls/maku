@@ -2686,15 +2686,15 @@
 (import "touhou")
 (defchannel $target-hp 0)
 (defpattern e []
-  (seq
-    (defcell phase 1)
-    (export phase)
-    (let [target (enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
-      (bind-channel! $target-hp (value-or (:hp (nth target 0)) 0)))
-    (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
-    (wait-for (<= $target-hp 1))
-    (set! phase 2)
-    (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})))
+  (let [$phase 1]
+    (seq
+      (export! $phase)
+      (let [target (enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
+        (bind! $target-hp (value-or (:hp (nth target 0)) 0)))
+      (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
+      (wait-for (<= $target-hp 1))
+      (set! $phase 2)
+      (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1}))))
 "#;
         let mut sim = Sim::load(CARD, Some("e")).unwrap();
         for _ in 0..40 {
@@ -4117,14 +4117,14 @@ fn bind_channel_closes_over_handles_and_cells() {
 (import "touhou")
 (defchannel $dummy {:hp 0 :phase :none})
 (defpattern p []
-  (seq
-    (defcell phase :warmup)
+  (let [$phase :warmup]
     (let [e (enemy (pose c[0 2]) {:hp 5})]
       (let [b (nth e 0)]
-        (bind-channel! $dummy {:hp (:hp b) :phase phase})
-        (wait (ticks 2))
-        (set! phase :main)
-        (set-col b :hp 2)))))
+        (seq
+          (bind! $dummy {:hp (:hp b) :phase $phase})
+          (wait (ticks 2))
+          (set! $phase :main)
+          (set-col b :hp 2))))))
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();

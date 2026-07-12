@@ -51,7 +51,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut order = Vec::new();
     let mut defs = HashMap::new();
     let mut macros = HashMap::new();
-    let mut channels: Vec<(Rc<str>, Form)> = Vec::new();
+    let channels: Vec<(Rc<str>, Form)> = Vec::new();
     let mut tick_rules: Vec<Form> = Vec::new();
     let mut streams: Vec<(Rc<str>, Option<Form>)> = Vec::new();
     let mut stream_forms: Vec<Form> = Vec::new();
@@ -168,9 +168,10 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     defs.insert(name, Form::list(projector));
                 }
                 Some(Form::Sym(s)) if &**s == "defchannel" => {
-                    // (defchannel $name expr): a per-tick derived channel.
+                    // (defchannel $name expr) is sugar over the stream
+                    // kernel: def $name + bind! $name expr + export! $name.
                     // Redefinition replaces (imports first, card later —
-                    // ordinary shadowing), order otherwise preserved.
+                    // ordinary shadowing; the producer rebinds in place).
                     let Some(Form::Sym(n)) = items.get(1) else {
                         return Err("defchannel: expected a $channel name".into());
                     };
@@ -180,9 +181,15 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     let Some(expr) = items.get(2) else {
                         return Err(format!("defchannel ${}: expected an expression", name));
                     };
-                    let name: Rc<str> = name.into();
-                    channels.retain(|(k, _)| *k != name);
-                    channels.push((name, expr.clone()));
+                    let bare: Rc<str> = name.into();
+                    streams.retain(|(k, _)| *k != bare);
+                    streams.push((bare, None));
+                    stream_forms.push(Form::list(vec![
+                        Form::sym("bind!"),
+                        Form::Sym(n.clone()),
+                        expr.clone(),
+                    ]));
+                    stream_forms.push(Form::list(vec![Form::sym("export!"), Form::Sym(n.clone())]));
                 }
                 Some(Form::Sym(s)) if &**s == "deftick" => {
                     tick_rules.push(f.clone());
