@@ -17,4 +17,4 @@ To be finalized at pick-up; likely one capability covering channel scoping seman
 ## Impact
 
 - Stream plumbing in `proto/core/src/sim/channels.rs` and interp evaluation.
-- channel-unification has LANDED: channels/cells are unified sigiled streams (`openspec/specs/language/spec.md`; rationale in `openspec/changes/archive/2026-07-12-channel-unification/design.md`). Build `with` against the stream store and producer refresh, honoring the distribution-law semantics in the language spec Reference (ง3).
+- channel-unification has LANDED: channels/cells are unified sigiled streams (`openspec/specs/language/spec.md`; rationale in `openspec/changes/archive/2026-07-12-channel-unification/design.md`). Build `with` against the stream store and producer refresh, honoring the distribution-law semantics in the language spec Reference (ยง3).
