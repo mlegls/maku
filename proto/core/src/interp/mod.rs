@@ -2300,12 +2300,132 @@ pub(crate) fn resolve_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result
     }
 }
 
+/// A short-circuit conjunction whose leading conjuncts compile and whose
+/// tail does not. The compiled prefix filters the scan; the interpreted
+/// tail runs only on survivors. Exact because the interpreter
+/// short-circuits the chain: a prefix-rejected row never evaluates the
+/// tail on either path, so errors, effects, and their order are
+/// identical. `*` product conjunctions get NO such split — the
+/// interpreter evaluates every product conjunct on every row, so skipping
+/// the residual there could hide an error the interpreter would surface.
+struct PrefixPredicate {
+    prefix: RowPredicate,
+    prefix_forms: Vec<Form>,
+    residual: Vec<Form>,
+    param: Rc<str>,
+    env: Env,
+}
+
+fn row_predicate_prefix(q: &Val, ctx: &Ctx) -> Option<PrefixPredicate> {
+    let Val::Fn { params, body, env } = q else { return None };
+    let [Form::Sym(param)] = &params[..] else { return None };
+    if &**param == "&" {
+        return None;
+    }
+    let [body] = &body[..] else { return None };
+    let mut forms: Vec<&Form> = Vec::new();
+    if !sc_and_conjuncts(body, param, env, ctx, &mut forms) {
+        return None;
+    }
+    // split at the first unrecognized conjunct; a fully recognized chain
+    // was already handled by row_predicate, an unrecognized head bails
+    let split = forms.iter().position(|f| row_test(f, param, env, ctx).is_none())?;
+    if split == 0 {
+        return None;
+    }
+    let tests = forms[..split]
+        .iter()
+        .map(|f| row_test(f, param, env, ctx).expect("prefix conjuncts recognized above"))
+        .collect();
+    Some(PrefixPredicate {
+        prefix: RowPredicate { tests },
+        prefix_forms: forms[..split].iter().map(|&f| f.clone()).collect(),
+        residual: forms[split..].iter().map(|&f| f.clone()).collect(),
+        param: param.clone(),
+        env: env.clone(),
+    })
+}
+
+/// Evaluate conjunct forms for one row with the row param bound, in order,
+/// short-circuiting on the first falsy result — exactly the interpreted
+/// chain's evaluation of those conjuncts (they never mention the chain
+/// binder, checked at recognition).
+fn eval_row_conjuncts(
+    forms: &[Form],
+    param: &Rc<str>,
+    env: &Env,
+    row: usize,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<bool, String> {
+    let env = env.bind(param.clone(), Val::EntityView(world.entity_ref(row)));
+    for form in forms {
+        if !truthy(&evaluate(form, &env, ctx, world)?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn resolve_prefix_predicate_query(
+    q: &Val,
+    p: &PrefixPredicate,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<Vec<usize>, String> {
+    let tests = p.prefix.resolve(world);
+    let bail_at = infallible_suffix_start(&tests);
+    let mut prefix_rows = Vec::new();
+    if !resolved_tests_match_nothing(&tests, bail_at) {
+        for i in 0..world.entities.len() {
+            if !world.entities.is_alive(i) {
+                continue;
+            }
+            let Some(matches) = resolved_row_tests_match(&tests, bail_at, i, world) else {
+                // fallible-read bail: the rerun sees the interpreted error
+                // (or lack of one) exactly — no residual has evaluated yet
+                return resolve_predicate_query_fallback(q, ctx, world);
+            };
+            if matches {
+                prefix_rows.push(i);
+            }
+        }
+    }
+    if lower::oracle_enabled() {
+        // the residual may have effects and must evaluate exactly once, so
+        // the full fallback is the sole applier; the prefix conjuncts are
+        // pure by construction, so re-evaluating THEM interpreted is the
+        // safe half of a dual-run
+        let mut interp_rows = Vec::new();
+        for i in 0..world.entities.len() {
+            if world.entities.is_alive(i)
+                && eval_row_conjuncts(&p.prefix_forms, &p.param, &p.env, i, ctx, world)?
+            {
+                interp_rows.push(i);
+            }
+        }
+        assert_eq!(prefix_rows, interp_rows, "prefix predicate mismatch for {:?}", q);
+        return resolve_predicate_query_fallback(q, ctx, world);
+    }
+    let mut out = Vec::new();
+    for &i in &prefix_rows {
+        if eval_row_conjuncts(&p.residual, &p.param, &p.env, i, ctx, world)? {
+            out.push(i);
+        }
+    }
+    Ok(out)
+}
+
 fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
     let Some(predicate) = row_predicate(q, ctx) else {
+        if let Some(prefix) = row_predicate_prefix(q, ctx) {
+            return resolve_prefix_predicate_query(q, &prefix, ctx, world);
+        }
+        // Mixed `*` products deliberately fall back as a whole; a split
+        // there would change the error and effect surface of the residual
+        // (see PrefixPredicate).
         return resolve_predicate_query_fallback(q, ctx, world);
     };
-    // Mixed predicates deliberately fall back as a whole; partial prefiltering
-    // would change the error and effect ordering of the residual expression.
     let tests = predicate.resolve(world);
     let bail_at = infallible_suffix_start(&tests);
     let mut out = Vec::new();
@@ -4036,6 +4156,23 @@ mod tests {
             let reference = row_predicate(&predicate(product), &ctx).unwrap();
             assert_eq!(format!("{folded:?}"), format!("{reference:?}"), "{chain}");
         }
+    }
+
+    #[test]
+    fn row_predicate_prefix_splits_mixed_and_chains_only() {
+        let ctx = Ctx::default();
+        let q = expanded_predicate("(fn [e] (and (= e.team :enemy) (nothing? (:shield e))))");
+        let p = row_predicate_prefix(&q, &ctx).expect("mixed and-chain should split");
+        assert_eq!((p.prefix_forms.len(), p.residual.len()), (1, 1));
+        // product conjunctions must not split (no short-circuit to lean on)
+        let q = predicate("(fn [e] (* (= e.team :enemy) (nothing? (:shield e))))");
+        assert!(row_predicate_prefix(&q, &ctx).is_none());
+        // fully recognized chains are row_predicate's job
+        let q = expanded_predicate("(fn [e] (and (= e.team :enemy) (= e.kind :point)))");
+        assert!(row_predicate_prefix(&q, &ctx).is_none());
+        // a leading unrecognized conjunct leaves nothing to prefilter
+        let q = expanded_predicate("(fn [e] (and (nothing? (:shield e)) (= e.team :enemy)))");
+        assert!(row_predicate_prefix(&q, &ctx).is_none());
     }
 
     #[test]

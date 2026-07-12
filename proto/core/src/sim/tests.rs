@@ -1280,6 +1280,67 @@
         assert!(sim.world.entities.is_alive(1), "long-lived row survives");
     }
 
+    // A mixed and-chain: the team test compiles, the nothing? tail does
+    // not — the query must run as compiled prefix + interpreted residual
+    // (and the rule as a whole must NOT compile).
+    const MIXED_PREDICATE_CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (and (= e.team :enemy) (nothing? (:shield e)))))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy})
+    (spawn (pose c[1 0]) {:team :enemy :shield 1})
+    (spawn (pose c[2 0]) {:team :player})))
+"#;
+
+    #[test]
+    fn mixed_and_predicate_prefilters_with_interpreted_residual() {
+        let _shield = crate::interp::oracle_off_shield();
+        let mut sim = Sim::load(MIXED_PREDICATE_CARD, Some("p")).unwrap();
+        assert!(
+            sim.world.standing_rules[0].compiled[0].is_none(),
+            "mixed predicates must not fully compile the tick form"
+        );
+        sim.step().unwrap();
+        let alive: Vec<usize> = (0..sim.world.entities.len())
+            .filter(|&i| sim.world.entities.is_alive(i))
+            .collect();
+        assert_eq!(alive, vec![1, 2], "only the shieldless enemy is culled");
+    }
+
+    #[test]
+    fn mixed_and_predicate_matches_interpreter_under_oracle() {
+        let _guard = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(MIXED_PREDICATE_CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let alive: Vec<usize> = (0..sim.world.entities.len())
+            .filter(|&i| sim.world.entities.is_alive(i))
+            .collect();
+        assert_eq!(alive, vec![1, 2]);
+    }
+
+    #[test]
+    fn mixed_and_predicate_residual_short_circuits_like_the_interpreter() {
+        let _shield = crate::interp::oracle_off_shield();
+        // `boom` is undefined: evaluating the residual errors. It must
+        // error exactly when the interpreter would evaluate it — on a row
+        // passing the prefix — and stay silent when every row is rejected
+        // by the prefix (the interpreter short-circuits there too).
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (and (= e.team :enemy) (boom e))))))
+(defpattern quiet [] (spawn (pose c[0 0]) {:team :player}))
+(defpattern loud [] (spawn (pose c[1 0]) {:team :enemy}))
+"#;
+        let mut sim = Sim::load(CARD, Some("quiet")).unwrap();
+        sim.step().unwrap(); // prefix rejects every row: residual never runs
+        let mut sim = Sim::load(CARD, Some("loud")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("boom"), "residual error should surface: {err}");
+    }
+
     #[test]
     fn cull_rule_deviations_bail_to_interpreter() {
         const CARD: &str = r#"

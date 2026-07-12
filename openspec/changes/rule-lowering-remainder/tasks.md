@@ -45,12 +45,12 @@ Gate for every task: core suite green; lowering-touching tasks also pass the
 
 ## 4. Partial prefiltering for mixed short-circuit predicates
 
-- [ ] 4.1 In `resolve_predicate_query`, split a recognized-prefix /
+- [x] 4.1 In `resolve_predicate_query`, split a recognized-prefix /
       unrecognized-tail `and`-chain into compiled prefix + interpreted
       residual fn; scan with the prefix, evaluate the residual only on
       survivors (same truthiness and error propagation as the interpreted
       fallback). `*` shapes keep all-or-nothing.
-- [ ] 4.2 Tests: match parity vs fully-interpreted on mixed predicates;
+- [x] 4.2 Tests: match parity vs fully-interpreted on mixed predicates;
       residual error surfaces on the same row with the same message;
       effectful/erroring residual on a prefix-rejected row is provably
       never evaluated interpreted either (short-circuit test); compiled
