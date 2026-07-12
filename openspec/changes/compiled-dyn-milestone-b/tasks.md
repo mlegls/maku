@@ -5,17 +5,17 @@ the 4 ignored oracle card suites under `MAKU_LOWER_ORACLE=1`, mesh
 tests. Perf claims via wall-only interleaved A/B on the scaled fruit rig
 (openspec/specs/perf/spec.md). Commit per coherent change-set.
 
-- [ ] 1. Aux-input IR extension: `AuxTables` (scan site indices, chan
+- [x] 1. Aux-input IR extension: `AuxTables` (scan site indices, chan
       refs) behind `Option<Rc<..>>` on `NumProgram`; `ScanIn`/`ChanX`/
       `ChanY`/`Atan2` ops; aux slice through `run`/`run_num_program_caps`/
       `run_lanes`; aux joins the interning key. Unit tests: op semantics
       vs interpreter, interning with/without aux.
-- [ ] 2. Pose-pair lowering: Num/Pair value classes in the Builder;
+- [x] 2. Pose-pair lowering: Num/Pair value classes in the Builder;
       pair sources (`pos`, pose-valued `(live $s)`, captured `Val::Pose`,
       `cart`), pair ops (`+`/`-`), pair consumers (`angle-of`, `mag`,
       `:x`/`:y`); all-or-nothing bail on any other pair use. Unit tests
       per source/op/consumer against `eval_sig_at_rate`.
-- [ ] 3. Evolve-read lowering + drivers: sited-evolve reads lower to
+- [x] 3. Evolve-read lowering + drivers: sited-evolve reads lower to
       `ScanIn` with lower-time site numbering matching
       `collect_scan_sites`; drivers in `dyn_node_pose_u_in` (ClosedPt/
       Vel/RotExpr arms) fetch scan cells via readers and channels via

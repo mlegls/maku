@@ -11,6 +11,57 @@ pub struct NumProgram {
     /// shared across the programs of one dyn node (a and b index one
     /// vector), so a program may not use every slot below `n_inputs`.
     pub n_inputs: usize,
+    /// Auxiliary inputs (scan-cell and channel/stream reads): the DRIVER
+    /// resolves these into a value slice before the run — through the row's
+    /// motion readers for scan cells and the eval's SigEnv for channels —
+    /// so ops stay total and callback-free (the JIT seam). A missing or
+    /// mistyped value bails the eval at the driver level. None for pure
+    /// programs; aux programs never join batched steps.
+    pub aux: Option<Rc<AuxTables>>,
+    /// The result register. Not necessarily the last op's dst: pair
+    /// lowering can select a component whose sibling ops come after it.
+    pub result: u16,
+}
+
+impl NumProgram {
+    pub fn aux_free(&self) -> bool {
+        self.aux.is_none()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct AuxTables {
+    /// One entry per aux-slice slot, in slot order: what the driver fills.
+    pub slots: Vec<AuxSlot>,
+    /// Channel/stream reads, deduped, with the value kind the program
+    /// consumes (the driver bails on a runtime kind mismatch — the
+    /// interpreter would error there, and the rerun surfaces it).
+    pub chans: Vec<(ChanRef, ChanKind)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AuxSlot {
+    /// A sited-evolve read: the scan-site index relative to the node base.
+    Scan(u32),
+    /// X/first component of `chans[i]` (a Num channel's value sits here).
+    ChanX(u16),
+    /// Y component of a pose-valued `chans[i]`.
+    ChanY(u16),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChanRef {
+    /// An env-captured stream handle (fixed at lower time).
+    Stream(u64),
+    /// A bare stream/channel name, resolved per run through the SigEnv in
+    /// the interpreter's order (streams, then host channels).
+    Named(Rc<str>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChanKind {
+    Num,
+    Pose,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,6 +102,10 @@ pub enum NumOp {
     Ease { dst: u16, kind: EaseKind, x: u16 },
     LerpSmooth { dst: u16, kind: EaseKind, a: u16, b: u16, ctrl: u16, v1: u16, v2: u16 },
     Lssht { dst: u16, c: u16, pv: u16, f1: u16, f2: u16 },
+    /// Driver-filled auxiliary input read (scan cells, channel components).
+    AuxIn { dst: u16, idx: u16 },
+    /// angle-of: y.atan2(x).to_degrees(), matching the geometry builtin.
+    Atan2 { dst: u16, y: u16, x: u16 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -71,6 +126,25 @@ struct Builder<'a> {
     /// differ only in captured values lower to ONE interned program and
     /// batch as lanes. None = classic Const folding (render/dyn-col paths).
     env_slots: Option<EnvSlots<'a>>,
+    /// Aux mode: sited-evolve and live-channel reads become driver-filled
+    /// aux slots. Only signal-eval paths (scan context present at eval)
+    /// enable this; render/dyn-col lowering keeps it off.
+    allow_aux: bool,
+    /// Scan-site counter, mirroring collect_scan_sites' form-order walk so
+    /// each evolve's slot index matches the interpreter's counter.
+    site_counter: u32,
+    aux_slots: Vec<AuxSlot>,
+    aux_chans: Vec<(ChanRef, Option<ChanKind>)>,
+}
+
+/// A lowered subexpression: a number register, a scalarized pose (x, y —
+/// theta never enters programs; no covered consumer reads it), or a
+/// registered channel read whose value kind the first consumer decides.
+#[derive(Clone, Copy)]
+enum Lowered {
+    Num(u16),
+    Pair(u16, u16),
+    Chan(u16),
 }
 
 struct EnvSlots<'a> {
@@ -102,14 +176,20 @@ impl Builder<'_> {
     }
 
     fn lower(&mut self, form: &Form, env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+        let l = self.lower_any(form, env, scope)?;
+        self.as_num(l)
+    }
+
+    fn lower_any(&mut self, form: &Form, env: &Env, scope: LowerScope<'_>) -> Option<Lowered> {
         match form {
             Form::Num(v) => {
                 let dst = self.reg()?;
-                self.push(NumOp::Const { dst, v: *v })
+                self.push(NumOp::Const { dst, v: *v }).map(Lowered::Num)
             }
             Form::Bool(b) => {
                 let dst = self.reg()?;
                 self.push(NumOp::Const { dst, v: if *b { 1.0 } else { 0.0 } })
+                    .map(Lowered::Num)
             }
             Form::Sym(s) => self.lower_sym(s, env, scope),
             Form::List(items) => self.lower_list(items, env, scope),
@@ -117,7 +197,78 @@ impl Builder<'_> {
         }
     }
 
-    fn lower_sym(&mut self, s: &str, env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+    /// Coerce to a number register. A channel read consumed as a number
+    /// fixes the entry's kind to Num (conflicting uses bail).
+    fn as_num(&mut self, l: Lowered) -> Option<u16> {
+        match l {
+            Lowered::Num(r) => Some(r),
+            Lowered::Pair(..) => None,
+            Lowered::Chan(c) => {
+                self.fix_chan_kind(c, ChanKind::Num)?;
+                let idx = self.aux_slot(AuxSlot::ChanX(c))?;
+                let dst = self.reg()?;
+                self.push(NumOp::AuxIn { dst, idx })
+            }
+        }
+    }
+
+    /// Coerce to a scalarized pose. A channel read consumed as a pose
+    /// fixes the entry's kind to Pose.
+    fn as_pair(&mut self, l: Lowered) -> Option<(u16, u16)> {
+        match l {
+            Lowered::Pair(x, y) => Some((x, y)),
+            Lowered::Num(_) => None,
+            Lowered::Chan(c) => {
+                self.fix_chan_kind(c, ChanKind::Pose)?;
+                let xi = self.aux_slot(AuxSlot::ChanX(c))?;
+                let yi = self.aux_slot(AuxSlot::ChanY(c))?;
+                let xd = self.reg()?;
+                let x = self.push(NumOp::AuxIn { dst: xd, idx: xi })?;
+                let yd = self.reg()?;
+                let y = self.push(NumOp::AuxIn { dst: yd, idx: yi })?;
+                Some((x, y))
+            }
+        }
+    }
+
+    fn fix_chan_kind(&mut self, c: u16, kind: ChanKind) -> Option<()> {
+        let slot = &mut self.aux_chans[c as usize].1;
+        match slot {
+            None => {
+                *slot = Some(kind);
+                Some(())
+            }
+            Some(k) if *k == kind => Some(()),
+            Some(_) => None,
+        }
+    }
+
+    /// Index of an aux slot, deduped.
+    fn aux_slot(&mut self, slot: AuxSlot) -> Option<u16> {
+        let idx = match self.aux_slots.iter().position(|s| *s == slot) {
+            Some(i) => i,
+            None => {
+                self.aux_slots.push(slot);
+                self.aux_slots.len() - 1
+            }
+        };
+        u16::try_from(idx).ok()
+    }
+
+    /// Register a channel/stream read, deduped by ref; kind is fixed by
+    /// the first consumer.
+    fn aux_chan(&mut self, r: ChanRef) -> Option<u16> {
+        let idx = match self.aux_chans.iter().position(|(c, _)| *c == r) {
+            Some(i) => i,
+            None => {
+                self.aux_chans.push((r, None));
+                self.aux_chans.len() - 1
+            }
+        };
+        u16::try_from(idx).ok()
+    }
+
+    fn lower_sym(&mut self, s: &str, env: &Env, scope: LowerScope<'_>) -> Option<Lowered> {
         match scope {
             LowerScope::Current => match s {
                 "t" => {
@@ -125,22 +276,31 @@ impl Builder<'_> {
                         return None;
                     }
                     let dst = self.reg()?;
-                    self.push(NumOp::T { dst })
+                    self.push(NumOp::T { dst }).map(Lowered::Num)
                 }
                 "u" => {
                     if env.lookup("u").is_some() {
                         return None;
                     }
                     let dst = self.reg()?;
-                    self.push(NumOp::U { dst })
+                    self.push(NumOp::U { dst }).map(Lowered::Num)
                 }
                 "inf" => {
                     let dst = self.reg()?;
-                    self.push(NumOp::Const { dst, v: f64::INFINITY })
+                    self.push(NumOp::Const { dst, v: f64::INFINITY }).map(Lowered::Num)
                 }
                 "phi" => {
                     let dst = self.reg()?;
-                    self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 })
+                    self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 }).map(Lowered::Num)
+                }
+                // slot-bound pos as a pair; a captured pos shadows (as in
+                // the component-read arm of lower_kw_access)
+                "pos" if self.allow_aux && env.lookup("pos").is_none() => {
+                    let xd = self.reg()?;
+                    let x = self.push(NumOp::PosX { dst: xd })?;
+                    let yd = self.reg()?;
+                    let y = self.push(NumOp::PosY { dst: yd })?;
+                    Some(Lowered::Pair(x, y))
                 }
                 name if name.starts_with('$') => None,
                 name => match env.lookup(name) {
@@ -156,20 +316,32 @@ impl Builder<'_> {
                             let slot = (slots.base + idx) as u16;
                             self.n_inputs = self.n_inputs.max(slot as usize + 1);
                             let dst = self.reg()?;
-                            self.push(NumOp::Input { dst, slot })
+                            self.push(NumOp::Input { dst, slot }).map(Lowered::Num)
                         }
                         None => {
                             let dst = self.reg()?;
-                            self.push(NumOp::Const { dst, v })
+                            self.push(NumOp::Const { dst, v }).map(Lowered::Num)
                         }
                     },
-                    None => self.lower_bare_def(name, env),
+                    // captured pose: fold to a const pair (the env is fixed
+                    // for the program's lifetime; theta never enters pairs).
+                    // A captured `pos` stays ambiguous — pos-providing eval
+                    // sites rebind it over the capture — so it bails, like
+                    // the component-read arm.
+                    Some(Val::Pose(p)) if name != "pos" => {
+                        let xd = self.reg()?;
+                        let x = self.push(NumOp::Const { dst: xd, v: p.x })?;
+                        let yd = self.reg()?;
+                        let y = self.push(NumOp::Const { dst: yd, v: p.y })?;
+                        Some(Lowered::Pair(x, y))
+                    }
+                    None => self.lower_bare_def(name, env).map(Lowered::Num),
                     _ => None,
                 },
             },
             LowerScope::Def { params } => {
                 if let Some(r) = params.get(s) {
-                    return Some(*r);
+                    return Some(Lowered::Num(*r));
                 }
                 match s {
                     "t" => {
@@ -177,31 +349,31 @@ impl Builder<'_> {
                             return None;
                         }
                         let dst = self.reg()?;
-                        self.push(NumOp::T { dst })
+                        self.push(NumOp::T { dst }).map(Lowered::Num)
                     }
                     "u" => {
                         if env.lookup("u").is_some() {
                             return None;
                         }
                         let dst = self.reg()?;
-                        self.push(NumOp::U { dst })
+                        self.push(NumOp::U { dst }).map(Lowered::Num)
                     }
                     "inf" => {
                         let dst = self.reg()?;
-                        self.push(NumOp::Const { dst, v: f64::INFINITY })
+                        self.push(NumOp::Const { dst, v: f64::INFINITY }).map(Lowered::Num)
                     }
                     "phi" => {
                         let dst = self.reg()?;
-                        self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 })
+                        self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 }).map(Lowered::Num)
                     }
                     name if name.starts_with('$') => None,
-                    name => self.lower_bare_def(name, env),
+                    name => self.lower_bare_def(name, env).map(Lowered::Num),
                 }
             }
         }
     }
 
-    fn lower_list(&mut self, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+    fn lower_list(&mut self, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<Lowered> {
         if let Some(Form::Kw(field)) = items.first() {
             return self.lower_kw_access(field, items, env, scope);
         }
@@ -218,7 +390,47 @@ impl Builder<'_> {
             let slot = *slot as u16;
             self.n_inputs = self.n_inputs.max(slot as usize + 1);
             let dst = self.reg()?;
-            return self.push(NumOp::Input { dst, slot });
+            return self.push(NumOp::Input { dst, slot }).map(Lowered::Num);
+        }
+        // `evolve` and `live` are special forms (unshadowable), handled
+        // before the env/defs shadow checks — like the interpreter's head
+        // dispatch. Both lower only in aux mode (signal paths with a scan
+        // context at eval) and at Current scope: def bodies would number
+        // sites the static walk never saw.
+        if name == "evolve" {
+            if !self.allow_aux || !matches!(scope, LowerScope::Current) || items.len() != 3 {
+                return None;
+            }
+            // own index first, then skip the init/step subtrees — exactly
+            // sf_sited_evolve's counter discipline over collect_scan_sites'
+            // form-order numbering. Only stored Num cells run compiled; the
+            // driver bails otherwise (missing cell, non-num state).
+            let index = self.site_counter;
+            self.site_counter = self
+                .site_counter
+                .checked_add(1)?
+                .checked_add(super::motion::form_site_count(&items[1]))?
+                .checked_add(super::motion::form_site_count(&items[2]))?;
+            let idx = self.aux_slot(AuxSlot::Scan(index))?;
+            let dst = self.reg()?;
+            return self.push(NumOp::AuxIn { dst, idx }).map(Lowered::Num);
+        }
+        if name == "live" {
+            if !self.allow_aux || !matches!(scope, LowerScope::Current) || items.len() != 2 {
+                return None;
+            }
+            let Some(Form::Sym(ch)) = items.get(1) else {
+                return None;
+            };
+            let stream = ch.strip_prefix('$')?;
+            // env-captured handles resolve at lower time (the node env is
+            // fixed); everything else resolves per run through the SigEnv,
+            // in the interpreter's order (streams, then host channels)
+            let r = match env.lookup(ch) {
+                Some(Val::Stream(id)) => ChanRef::Stream(id),
+                _ => ChanRef::Named(stream.into()),
+            };
+            return self.aux_chan(r).map(Lowered::Chan);
         }
         if special_or_channel_head(name) {
             return None;
@@ -229,7 +441,7 @@ impl Builder<'_> {
                     return None;
                 }
                 if self.defs.contains_key(name) {
-                    return self.lower_def_call(name, &items[1..], env, scope);
+                    return self.lower_def_call(name, &items[1..], env, scope).map(Lowered::Num);
                 }
             }
             LowerScope::Def { params } => {
@@ -237,7 +449,7 @@ impl Builder<'_> {
                     return None;
                 }
                 if self.defs.contains_key(name) {
-                    return self.lower_def_call(name, &items[1..], env, scope);
+                    return self.lower_def_call(name, &items[1..], env, scope).map(Lowered::Num);
                 }
             }
         }
@@ -248,22 +460,70 @@ impl Builder<'_> {
                 .map(|f| self.lower(f, env, scope))
                 .collect::<Option<Vec<_>>>()?;
             let dst = self.reg()?;
-            return self.push(NumOp::LerpSmooth {
-                dst,
-                kind,
-                a: args[0],
-                b: args[1],
-                ctrl: args[2],
-                v1: args[3],
-                v2: args[4],
-            });
+            return self
+                .push(NumOp::LerpSmooth {
+                    dst,
+                    kind,
+                    a: args[0],
+                    b: args[1],
+                    ctrl: args[2],
+                    v1: args[3],
+                    v2: args[4],
+                })
+                .map(Lowered::Num);
         }
 
         let args = items[1..]
             .iter()
-            .map(|f| self.lower(f, env, scope))
+            .map(|f| self.lower_any(f, env, scope))
             .collect::<Option<Vec<_>>>()?;
-        self.lower_call(name, &args)
+        // pair consumers/operators: pose reads scalarized to (x, y). A
+        // channel arg in pair position commits to Pose; in num position to
+        // Num — a runtime kind mismatch driver-bails and reruns interpreted
+        // (where the interpreter's own error/semantics apply).
+        match name {
+            "angle-of" if args.len() == 1 => {
+                let (x, y) = self.as_pair(args[0])?;
+                let dst = self.reg()?;
+                return self.push(NumOp::Atan2 { dst, y, x }).map(Lowered::Num);
+            }
+            "mag" if args.len() == 1 => {
+                // (x*x + y*y).sqrt(), the geometry builtin's exact ops
+                let (x, y) = self.as_pair(args[0])?;
+                let xd = self.reg()?;
+                let xx = self.push(NumOp::Mul { dst: xd, a: x, b: x })?;
+                let yd = self.reg()?;
+                let yy = self.push(NumOp::Mul { dst: yd, a: y, b: y })?;
+                let sd = self.reg()?;
+                let sum = self.push(NumOp::Add { dst: sd, a: xx, b: yy })?;
+                let dst = self.reg()?;
+                return self.push(NumOp::Sqrt { dst, x: sum }).map(Lowered::Num);
+            }
+            "+" | "-" if args.len() == 2 && args.iter().any(|a| matches!(a, Lowered::Pair(..))) => {
+                // componentwise pose arithmetic (math.rs add2 / `-` pose
+                // arm); theta is unread by every covered pair consumer
+                let (ax, ay) = self.as_pair(args[0])?;
+                let (bx, by) = self.as_pair(args[1])?;
+                let make = |dst: u16, a: u16, b: u16| {
+                    if name == "+" {
+                        NumOp::Add { dst, a, b }
+                    } else {
+                        NumOp::Sub { dst, a, b }
+                    }
+                };
+                let xd = self.reg()?;
+                let x = self.push(make(xd, ax, bx))?;
+                let yd = self.reg()?;
+                let y = self.push(make(yd, ay, by))?;
+                return Some(Lowered::Pair(x, y));
+            }
+            _ => {}
+        }
+        let args = args
+            .into_iter()
+            .map(|a| self.as_num(a))
+            .collect::<Option<Vec<_>>>()?;
+        self.lower_call(name, &args).map(Lowered::Num)
     }
 
     /// Keyword-head application `(:field base)`: `pos` component reads
@@ -272,7 +532,7 @@ impl Builder<'_> {
     /// the node next to its captured env, so captures are stable for the
     /// program's lifetime). Def scope bails: def bodies evaluate in a
     /// fresh env, so neither `pos` nor captures are visible there (F12).
-    fn lower_kw_access(&mut self, field: &str, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<u16> {
+    fn lower_kw_access(&mut self, field: &str, items: &[Form], env: &Env, scope: LowerScope<'_>) -> Option<Lowered> {
         if items.len() != 2 || !matches!(scope, LowerScope::Current) {
             return None;
         }
@@ -282,19 +542,29 @@ impl Builder<'_> {
             if &**base == "pos" && env.lookup("pos").is_none() {
                 let dst = self.reg()?;
                 return match field {
-                    "x" => self.push(NumOp::PosX { dst }),
-                    "y" => self.push(NumOp::PosY { dst }),
+                    "x" => self.push(NumOp::PosX { dst }).map(Lowered::Num),
+                    "y" => self.push(NumOp::PosY { dst }).map(Lowered::Num),
                     _ => None,
                 };
             }
         }
-        match kw_get_val(field, &fold_access_val(&items[1], env)?)? {
-            Val::Num(v) => {
-                let dst = self.reg()?;
-                self.push(NumOp::Const { dst, v })
-            }
-            _ => None,
+        if let Some(v) = fold_access_val(&items[1], env) {
+            return match kw_get_val(field, &v)? {
+                Val::Num(v) => {
+                    let dst = self.reg()?;
+                    self.push(NumOp::Const { dst, v }).map(Lowered::Num)
+                }
+                _ => None,
+            };
         }
+        // component read on a lowered pair (a live channel, pose
+        // arithmetic); :th bails — theta never enters pairs
+        if matches!(field, "x" | "y") {
+            let l = self.lower_any(&items[1], env, scope)?;
+            let (x, y) = self.as_pair(l)?;
+            return Some(Lowered::Num(if field == "x" { x } else { y }));
+        }
+        None
     }
 
     /// Static easing argument for lerpsmooth: a bare easing-builtin name
@@ -511,7 +781,9 @@ fn op_dst(op: NumOp) -> u16 {
         | NumOp::Lerp3 { dst, .. }
         | NumOp::Ease { dst, .. }
         | NumOp::LerpSmooth { dst, .. }
-        | NumOp::Lssht { dst, .. } => dst,
+        | NumOp::Lssht { dst, .. }
+        | NumOp::AuxIn { dst, .. }
+        | NumOp::Atan2 { dst, .. } => dst,
     }
 }
 
@@ -575,36 +847,65 @@ fn special_or_channel_head(name: &str) -> bool {
     matches!(name, "t" | "u" | "inf" | "phi") || name.starts_with('$')
 }
 
-pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
-    // Def inlining needs no cell-scope guard: signal evaluation skips bare
-    // stream reads (signals read streams via (live $name)
-    // only), so a def name can never be shadowed by a cell at runtime.
-    let mut b = Builder { ops: Vec::new(), next: 0, defs, inline_depth: 0, n_inputs: 0, env_slots: None };
-    b.lower(form, env, LowerScope::Current)?;
-    Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs })
+/// Lowering options beyond the classic entry: slot mode and aux mode.
+#[derive(Default)]
+pub struct LowerOpts<'a> {
+    /// Slot mode: numeric env captures become Input slots (numbered
+    /// `base + index` into `names`, deduped by name and SHARED across a
+    /// node's programs — pass the same `names` vec for a and b). Rand
+    /// markers keep their extraction slot ids below `base`.
+    pub env_slots: Option<(&'a mut Vec<std::rc::Rc<str>>, usize)>,
+    /// Aux mode: sited-evolve and live-channel reads lower to driver-filled
+    /// aux slots. Enable only for signal paths whose eval has a scan
+    /// context (Vel integrands, rot exprs).
+    pub allow_aux: bool,
+    /// Scan-site index this form starts at (form b of a pair starts after
+    /// form a's sites, matching collect_scan_sites' numbering).
+    pub site_base: u32,
 }
 
-/// Slot-mode lowering: numeric env captures become Input slots (numbered
-/// `base + index` into `names`, deduped by name and SHARED across a node's
-/// programs — pass the same `names` vec for a and b). Rand markers keep
-/// their extraction slot ids below `base`.
-pub fn lower_num_form_slotted(
+/// Classic entry: Const-folded captures, no aux (tests, option-free sites).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
+    lower_num_form_opts(form, env, defs, LowerOpts::default())
+}
+
+pub fn lower_num_form_opts(
     form: &Form,
     env: &Env,
     defs: &HashMap<String, Form>,
-    names: &mut Vec<std::rc::Rc<str>>,
-    base: usize,
+    opts: LowerOpts<'_>,
 ) -> Option<NumProgram> {
+    // Def inlining needs no cell-scope guard: signal evaluation skips bare
+    // stream reads (signals read streams via (live $name)
+    // only), so a def name can never be shadowed by a cell at runtime.
     let mut b = Builder {
         ops: Vec::new(),
         next: 0,
         defs,
         inline_depth: 0,
         n_inputs: 0,
-        env_slots: Some(EnvSlots { names, base }),
+        env_slots: opts.env_slots.map(|(names, base)| EnvSlots { names, base }),
+        allow_aux: opts.allow_aux,
+        site_counter: opts.site_base,
+        aux_slots: Vec::new(),
+        aux_chans: Vec::new(),
     };
-    b.lower(form, env, LowerScope::Current)?;
-    Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs })
+    let result = b.lower(form, env, LowerScope::Current)?;
+    let aux = if b.aux_slots.is_empty() && b.aux_chans.is_empty() {
+        None
+    } else {
+        // a registered channel no consumer coerced can't happen (Chan
+        // values only leave lower_any through as_num/as_pair), but stay
+        // total: bail rather than emit an untyped entry
+        let chans = b
+            .aux_chans
+            .into_iter()
+            .map(|(r, kind)| kind.map(|k| (r, k)))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Rc::new(AuxTables { slots: b.aux_slots, chans }))
+    };
+    Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs, aux, result })
 }
 
 pub fn program_uses_pos(prog: &NumProgram) -> bool {
@@ -626,9 +927,10 @@ pub fn intern_program(prog: NumProgram) -> Rc<NumProgram> {
 }
 
 fn program_key(prog: &NumProgram) -> Vec<u64> {
-    let mut k = Vec::with_capacity(prog.ops.len() * 2 + 2);
+    let mut k = Vec::with_capacity(prog.ops.len() * 2 + 3);
     k.push(prog.n_regs as u64);
     k.push(prog.n_inputs as u64);
+    k.push(prog.result as u64);
     let reg2 = |a: u16, b: u16| ((a as u64) << 16) | b as u64;
     let reg3 = |a: u16, b: u16, c: u16| ((a as u64) << 32) | ((b as u64) << 16) | c as u64;
     for op in &prog.ops {
@@ -689,6 +991,44 @@ fn program_key(prog: &NumProgram) -> Vec<u64> {
                 k.push(39 << 32 | reg3(dst, c, pv));
                 k.push(reg2(f1, f2));
             }
+            NumOp::AuxIn { dst, idx } => k.push(40 << 32 | reg2(dst, idx)),
+            NumOp::Atan2 { dst, y, x } => k.push(41 << 32 | reg3(dst, y, x)),
+        }
+    }
+    // aux tables join the key: programs differing only in what the driver
+    // feeds them must not unify
+    if let Some(aux) = prog.aux.as_deref() {
+        k.push(u64::MAX); // marker separating ops from aux words
+        for slot in &aux.slots {
+            match slot {
+                AuxSlot::Scan(i) => k.push(1 << 32 | *i as u64),
+                AuxSlot::ChanX(c) => k.push(2 << 32 | *c as u64),
+                AuxSlot::ChanY(c) => k.push(3 << 32 | *c as u64),
+            }
+        }
+        for (r, kind) in &aux.chans {
+            let kd = match kind {
+                ChanKind::Num => 0u64,
+                ChanKind::Pose => 1,
+            };
+            match r {
+                ChanRef::Stream(id) => {
+                    k.push(4 << 32 | kd);
+                    k.push(*id);
+                }
+                ChanRef::Named(n) => {
+                    k.push(5 << 32 | kd);
+                    k.push(n.len() as u64);
+                    // exact name bytes, 8 per word
+                    for chunk in n.as_bytes().chunks(8) {
+                        let mut w = 0u64;
+                        for (i, b) in chunk.iter().enumerate() {
+                            w |= (*b as u64) << (i * 8);
+                        }
+                        k.push(w);
+                    }
+                }
+            }
         }
     }
     k
@@ -701,24 +1041,44 @@ thread_local! {
 /// Cap-free convenience (tests, cap-free call sites).
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn run_num_program(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>) -> f64 {
-    run_num_program_caps(prog, t, u, pos, &[])
+    run_num_program_caps(prog, t, u, pos, &[], &[])
 }
 
-pub fn run_num_program_caps(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, caps: &[f64]) -> f64 {
+pub fn run_num_program_caps(
+    prog: &NumProgram,
+    t: f64,
+    u: f64,
+    pos: Option<(f64, f64)>,
+    caps: &[f64],
+    aux: &[f64],
+) -> f64 {
     REGS.with(|regs| {
         let mut regs = regs.borrow_mut();
-        run(prog, t, u, pos, caps, &mut regs)
+        run(prog, t, u, pos, caps, aux, &mut regs)
     })
 }
 
-pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, caps: &[f64], regs: &mut Vec<f64>) -> f64 {
+pub fn run(
+    prog: &NumProgram,
+    t: f64,
+    u: f64,
+    pos: Option<(f64, f64)>,
+    caps: &[f64],
+    aux: &[f64],
+    regs: &mut Vec<f64>,
+) -> f64 {
     debug_assert!(caps.len() >= prog.n_inputs);
+    debug_assert!(aux.len() >= prog.aux.as_deref().map_or(0, |a| a.slots.len()));
     regs.clear();
     regs.resize(prog.n_regs, 0.0);
     for op in &prog.ops {
         match *op {
             NumOp::Const { dst, v } => regs[dst as usize] = v,
             NumOp::Input { dst, slot } => regs[dst as usize] = caps[slot as usize],
+            NumOp::AuxIn { dst, idx } => regs[dst as usize] = aux[idx as usize],
+            NumOp::Atan2 { dst, y, x } => {
+                regs[dst as usize] = regs[y as usize].atan2(regs[x as usize]).to_degrees()
+            }
             NumOp::T { dst } => regs[dst as usize] = t,
             NumOp::U { dst } => regs[dst as usize] = u,
             NumOp::PosX { dst } => regs[dst as usize] = pos.map(|p| p.0).unwrap_or(0.0),
@@ -777,7 +1137,10 @@ pub fn run(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>, caps: &[f
             }
         }
     }
-    prog.ops.last().map(|op| regs[op_dst(*op) as usize]).unwrap_or(0.0)
+    if prog.ops.is_empty() {
+        return 0.0;
+    }
+    regs[prog.result as usize]
 }
 
 /// Lane-batched program run over per-lane (t, pos) inputs (u is one shared
@@ -803,6 +1166,7 @@ pub fn run_lanes(
 ) {
     let n = tau.len();
     debug_assert_eq!(pos.len(), n);
+    debug_assert!(prog.aux.is_none(), "aux programs never batch as lanes");
     let stride = prog.n_inputs;
     debug_assert!(stride == 0 || caps.len() >= stride * n);
     regs.clear();
@@ -988,14 +1352,19 @@ pub fn run_lanes(
                     d[l] = m.ln() / c;
                 }
             }
+            NumOp::AuxIn { .. } => unreachable!("aux programs never batch as lanes"),
+            NumOp::Atan2 { y, x, .. } => {
+                for l in 0..n {
+                    d[l] = at(y, l).atan2(at(x, l)).to_degrees();
+                }
+            }
         }
     }
-    match prog.ops.last() {
-        Some(op) => {
-            let base = op_dst(*op) as usize * n;
-            out.extend_from_slice(&regs[base..base + n]);
-        }
-        None => out.extend(std::iter::repeat(0.0).take(n)),
+    if prog.ops.is_empty() {
+        out.extend(std::iter::repeat(0.0).take(n));
+    } else {
+        let base = prog.result as usize * n;
+        out.extend_from_slice(&regs[base..base + n]);
     }
 }
 
@@ -1265,5 +1634,83 @@ mod tests {
     fn defn_arity_mismatch_bails() {
         let defs = defs(&[("half", "(fn [x] (/ x 2))")]);
         assert!(lower_num_form(&read("(half t 1)"), &Env::empty(), &defs).is_none());
+    }
+
+    fn lower_aux(src: &str, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
+        lower_num_form_opts(&read(src), env, defs, LowerOpts { allow_aux: true, ..LowerOpts::default() })
+    }
+
+    #[test]
+    fn lowers_live_channel_pair_math() {
+        // the homing census shape's channel half: a pose-valued live read
+        // consumed through pose subtraction and angle-of
+        let prog = lower_aux("(angle-of (- (live $tgt) pos))", &Env::empty(), &no_defs()).unwrap();
+        let aux = prog.aux.as_deref().unwrap();
+        assert_eq!(aux.chans, vec![(ChanRef::Named("tgt".into()), ChanKind::Pose)]);
+        assert_eq!(aux.slots, vec![AuxSlot::ChanX(0), AuxSlot::ChanY(0)]);
+        let got = run_num_program_caps(&prog, 0.0, 0.0, Some((1.0, 1.0)), &[], &[3.0, 4.0]);
+        assert_eq!(got, (4.0f64 - 1.0).atan2(3.0 - 1.0).to_degrees());
+
+        let prog = lower_aux("(mag (live $tgt))", &Env::empty(), &no_defs()).unwrap();
+        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 5.0);
+        let prog = lower_aux("(:y (live $tgt))", &Env::empty(), &no_defs()).unwrap();
+        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 4.0);
+        // theta never enters pairs
+        assert!(lower_aux("(:th (live $tgt))", &Env::empty(), &no_defs()).is_none());
+        // pair addition and a captured pose as a pair source
+        let env = Env::empty().bind("off".into(), Val::Pose(Pose::point(1.0, 2.0)));
+        let prog = lower_aux("(:x (+ (live $tgt) off))", &env, &no_defs()).unwrap();
+        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 4.0);
+    }
+
+    #[test]
+    fn channel_kinds_and_resolution() {
+        // num-consumed channel
+        let prog = lower_aux("(* 2 (live $rank))", &Env::empty(), &no_defs()).unwrap();
+        let aux = prog.aux.as_deref().unwrap();
+        assert_eq!(aux.chans, vec![(ChanRef::Named("rank".into()), ChanKind::Num)]);
+        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[5.0]), 10.0);
+        // one channel consumed as both kinds bails
+        assert!(lower_aux("(+ (mag (live $p)) (live $p))", &Env::empty(), &no_defs()).is_none());
+        // env-captured stream handle resolves at lower time
+        let env = Env::empty().bind("$s".into(), Val::Stream(7));
+        let prog = lower_aux("(live $s)", &env, &no_defs()).unwrap();
+        assert_eq!(prog.aux.as_deref().unwrap().chans, vec![(ChanRef::Stream(7), ChanKind::Num)]);
+        // aux off (classic paths): live and evolve bail
+        assert!(lower_num_form(&read("(live $rank)"), &Env::empty(), &no_defs()).is_none());
+        assert!(lower_num_form(&read("(evolve 1 (fn [s c] s))"), &Env::empty(), &no_defs()).is_none());
+    }
+
+    #[test]
+    fn evolve_reads_number_sites_like_the_static_walk() {
+        // own index first, then the init/step subtrees are skipped: the
+        // nested init evolve takes site 1, so the sibling takes site 2
+        let src = "(+ (evolve (evolve 1 (fn [s c] s)) (fn [s c] s)) (evolve 0 (fn [s c] s)))";
+        let prog = lower_aux(src, &Env::empty(), &no_defs()).unwrap();
+        let aux = prog.aux.as_deref().unwrap();
+        assert_eq!(aux.slots, vec![AuxSlot::Scan(0), AuxSlot::Scan(2)]);
+        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[90.0, 0.5]), 90.5);
+        // form b of a pair starts after form a's sites
+        let prog = lower_num_form_opts(
+            &read("(evolve 0 (fn [s c] s))"),
+            &Env::empty(),
+            &no_defs(),
+            LowerOpts { allow_aux: true, site_base: 5, ..LowerOpts::default() },
+        )
+        .unwrap();
+        assert_eq!(prog.aux.as_deref().unwrap().slots, vec![AuxSlot::Scan(5)]);
+        // def-inlined bodies never number sites (invisible to the walk)
+        let defs = defs(&[("hold", "(fn [x] (evolve x (fn [s c] s)))")]);
+        assert!(lower_aux("(hold 1)", &Env::empty(), &defs).is_none());
+    }
+
+    #[test]
+    fn aux_tables_join_the_interning_key() {
+        let mk = |src: &str| intern_program(lower_aux(src, &Env::empty(), &no_defs()).unwrap());
+        let a1 = mk("(mag (live $a))");
+        let a2 = mk("(mag (live $a))");
+        let b = mk("(mag (live $b))");
+        assert!(Rc::ptr_eq(&a1, &a2), "identical aux programs intern to one Rc");
+        assert!(!Rc::ptr_eq(&a1, &b), "channel names join the key");
     }
 }

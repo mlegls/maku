@@ -422,6 +422,7 @@ pub(crate) fn compile_sig(
     env: &Env,
     sig: &SigEnv,
     allow_pos: bool,
+    allow_aux: bool,
 ) -> (Option<Rc<RandCell>>, Option<Vec<Rc<NumProgram>>>) {
     let has_rand = forms.iter().any(|f| super::spawn::form_has_rand(f));
     let mut sites = Vec::new();
@@ -432,8 +433,17 @@ pub(crate) fn compile_sig(
     };
     let mut names: Vec<Rc<str>> = Vec::new();
     let mut programs = Vec::with_capacity(marked.len());
+    let mut site_base = 0u32;
     for m in &marked {
-        let lowered = lower_num_form_slotted(m, env, &sig.defs, &mut names, sites.len())
+        let opts = LowerOpts {
+            env_slots: Some((&mut names, sites.len())),
+            allow_aux,
+            site_base,
+        };
+        // scan-site numbering runs across a node's forms (one shared
+        // counter per eval), so form b starts after form a's sites
+        site_base += form_site_count(m);
+        let lowered = lower_num_form_opts(m, env, &sig.defs, opts)
             .filter(|p| allow_pos || !program_uses_pos(p));
         let Some(mut p) = lowered else {
             return (has_rand.then(|| Rc::new(RandCell::Bail)), None);
@@ -1020,9 +1030,11 @@ fn eval_num_program_pair(
     u: f64,
     pos: Option<(f64, f64)>,
     caps: &[f64],
+    aux_a: &[f64],
+    aux_b: &[f64],
 ) -> (f64, f64) {
-    let av = run_num_program_caps(a, tau, u, pos, caps);
-    let bv = run_num_program_caps(b, tau, u, pos, caps);
+    let av = run_num_program_caps(a, tau, u, pos, caps, aux_a);
+    let bv = run_num_program_caps(b, tau, u, pos, caps, aux_b);
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         (av * c, av * s)
@@ -1037,21 +1049,107 @@ fn lower_program_pair(
     env: &Env,
     sig: &SigEnv,
     allow_pos: bool,
+    allow_aux: bool,
 ) -> Option<(Rc<NumProgram>, Rc<NumProgram>)> {
-    let ap = lower_num_form(a, env, &sig.defs)?;
-    let bp = lower_num_form(b, env, &sig.defs)?;
+    let ap = lower_num_form_opts(
+        a,
+        env,
+        &sig.defs,
+        LowerOpts { allow_aux, ..LowerOpts::default() },
+    )?;
+    let bp = lower_num_form_opts(
+        b,
+        env,
+        &sig.defs,
+        LowerOpts { allow_aux, site_base: form_site_count(a), ..LowerOpts::default() },
+    )?;
     if !allow_pos && (program_uses_pos(&ap) || program_uses_pos(&bp)) {
         return None;
     }
     Some((intern_program(ap), intern_program(bp)))
 }
 
-fn lower_single_program(form: &Form, env: &Env, sig: &SigEnv, allow_pos: bool) -> Option<Rc<NumProgram>> {
-    let prog = lower_num_form(form, env, &sig.defs)?;
+fn lower_single_program(
+    form: &Form,
+    env: &Env,
+    sig: &SigEnv,
+    allow_pos: bool,
+    allow_aux: bool,
+) -> Option<Rc<NumProgram>> {
+    let prog = lower_num_form_opts(
+        form,
+        env,
+        &sig.defs,
+        LowerOpts { allow_aux, ..LowerOpts::default() },
+    )?;
     if !allow_pos && program_uses_pos(&prog) {
         return None;
     }
     Some(intern_program(prog))
+}
+
+/// Fill a program's aux slice: scan cells through the row's readers (and
+/// the legacy state map), channels/streams through the eval's SigEnv — the
+/// same sources the interpreter reads. False = a value is missing or
+/// mistyped (evolve state that isn't a Num, a channel whose runtime kind
+/// differs from the consumed kind, an unprovided channel): the caller
+/// reruns interpreted, which reproduces the interpreter's own result or
+/// error exactly.
+fn fetch_aux(
+    prog: &NumProgram,
+    node_ptr: usize,
+    state: &MotionState,
+    sig: &SigEnv,
+    readers: &MotionReaders,
+    buf: &mut Vec<f64>,
+) -> bool {
+    buf.clear();
+    let Some(aux) = prog.aux.as_deref() else {
+        return true;
+    };
+    let mut chan_vals: Vec<(f64, f64)> = Vec::with_capacity(aux.chans.len());
+    for (r, kind) in &aux.chans {
+        let v = match r {
+            crate::interp::lower::ChanRef::Stream(id) => sig.stream_val(*id),
+            crate::interp::lower::ChanRef::Named(n) => match sig.stream_id(n) {
+                Some(id) => sig.stream_val(id),
+                None => sig.channel(n),
+            },
+        };
+        match (kind, v) {
+            (crate::interp::lower::ChanKind::Num, Some(Val::Num(x))) => chan_vals.push((x, 0.0)),
+            (crate::interp::lower::ChanKind::Pose, Some(Val::Pose(p))) => chan_vals.push((p.x, p.y)),
+            _ => return false,
+        }
+    }
+    let MotionStateKey::Node(base) = state_key_for_node(node_ptr, readers) else {
+        unreachable!("node keys are always stable")
+    };
+    for slot in &aux.slots {
+        let v = match slot {
+            crate::interp::lower::AuxSlot::Scan(index) => {
+                let site = MotionStateKey::ScanSite { base, index: *index };
+                let cell = readers.vals(site).or_else(|| match state.get(&site) {
+                    Some(Cell::V(c)) => Some(c.clone()),
+                    _ => None,
+                });
+                match cell {
+                    Some(EvolveCell { state: Val::Num(v), .. }) => v,
+                    _ => return false,
+                }
+            }
+            crate::interp::lower::AuxSlot::ChanX(c) => chan_vals[*c as usize].0,
+            crate::interp::lower::AuxSlot::ChanY(c) => chan_vals[*c as usize].1,
+        };
+        buf.push(v);
+    }
+    true
+}
+
+thread_local! {
+    /// Aux scratch for the pair-eval driver (a, then b — sequential runs).
+    static AUX_A: std::cell::RefCell<Vec<f64>> = const { std::cell::RefCell::new(Vec::new()) };
+    static AUX_B: std::cell::RefCell<Vec<f64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// One row's batchable motion step (milestone B): a point figure whose pose
@@ -1101,8 +1199,14 @@ pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlan
             DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
             DynNode::Vel { a, b, polar, env, programs, rand } => {
                 let (ap, bp) = programs
-                    .get_or_init(|| lower_program_pair(a, b, env, sig, true))
+                    .get_or_init(|| lower_program_pair(a, b, env, sig, true, true))
                     .as_ref()?;
+                // aux programs never batch: the step must run the
+                // interpreted scan advance, and channel fetches are
+                // per-row driver work
+                if !ap.aux_free() || !bp.aux_free() {
+                    return None;
+                }
                 return Some(VelStepPlanRef { vel: node, ap, bp, polar: *polar, caps: caps_of(rand) });
             }
             _ => return None,
@@ -1381,10 +1485,10 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
         DynNode::ClosedPt { a, b, polar, env, programs, rand } => {
             let key = d as *const DynNode as usize;
             if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_program_pair(a, b, env, sig, false))
+                .get_or_init(|| lower_program_pair(a, b, env, sig, false, false))
                 .as_ref()
             {
-                let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None, caps_of(rand));
+                let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None, caps_of(rand), &[], &[]);
                 if !ctx.need_theta {
                     if oracle_enabled() {
                         let (a, b) = &oracle_forms(a, b, caps_of(rand));
@@ -1406,7 +1510,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     return Ok(Pose::point(x, y));
                 }
                 let eps = 1.0 / tick_rate;
-                let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None, caps_of(rand));
+                let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None, caps_of(rand), &[], &[]);
                 if oracle_enabled() {
                     let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let (ix, iy) = eval_pt_at_rate(
@@ -1485,28 +1589,52 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 return Ok(Pose::point(x, y));
             }
             if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_program_pair(a, b, env, sig, true))
+                .get_or_init(|| lower_program_pair(a, b, env, sig, true, true))
                 .as_ref()
             {
-                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, u, Some((x, y)), caps_of(rand));
-                if oracle_enabled() {
-                    let (a, b) = &oracle_forms(a, b, caps_of(rand));
-                    let (ivx, ivy) = eval_pt_at_rate(
-                        a,
-                        b,
-                        *polar,
-                        env,
-                        sig,
-                        tau,
-                        u,
-                        Some(read_scan_in(state, key, readers.clone())),
-                        Some((x, y)),
-                        tick_rate,
-                    )?;
-                    assert_num_close("vel/a", a, vx, ivx);
-                    assert_num_close("vel/b", b, vy, ivy);
+                // aux values (scan cells, channels) fetch per eval; a
+                // missing/mistyped value bails to the interpreted path
+                let fetched = AUX_A.with(|aa| {
+                    AUX_B.with(|ab| {
+                        let (mut aa, mut ab) = (aa.borrow_mut(), ab.borrow_mut());
+                        if !fetch_aux(ap, key, state, sig, readers, &mut aa)
+                            || !fetch_aux(bp, key, state, sig, readers, &mut ab)
+                        {
+                            return None;
+                        }
+                        Some(eval_num_program_pair(
+                            ap,
+                            bp,
+                            *polar,
+                            tau,
+                            u,
+                            Some((x, y)),
+                            caps_of(rand),
+                            &aa,
+                            &ab,
+                        ))
+                    })
+                });
+                if let Some((vx, vy)) = fetched {
+                    if oracle_enabled() {
+                        let (a, b) = &oracle_forms(a, b, caps_of(rand));
+                        let (ivx, ivy) = eval_pt_at_rate(
+                            a,
+                            b,
+                            *polar,
+                            env,
+                            sig,
+                            tau,
+                            u,
+                            Some(read_scan_in(state, key, readers.clone())),
+                            Some((x, y)),
+                            tick_rate,
+                        )?;
+                        assert_num_close("vel/a", a, vx, ivx);
+                        assert_num_close("vel/b", b, vy, ivy);
+                    }
+                    return Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()));
                 }
-                return Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()));
             }
             let (vx, vy) = eval_pt_at_rate(
                 a,
@@ -1541,26 +1669,32 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             }
             let key = d as *const DynNode as usize;
             if let Some(prog) = program
-                .get_or_init(|| lower_single_program(form, env, sig, true))
+                .get_or_init(|| lower_single_program(form, env, sig, true, true))
                 .as_ref()
             {
-                let th = run_num_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand));
-                if oracle_enabled() {
-                    let form = &oracle_form(form, caps_of(rand));
-                    let ith = eval_sig_at_rate(
-                        form,
-                        env,
-                        sig,
-                        tau,
-                        u,
-                        Some(read_scan_in(state, key, readers.clone())),
-                        Some((0.0, 0.0)),
-                        tick_rate,
-                    )?
-                    .num()?;
-                    assert_num_close("rot-expr", form, th, ith);
+                let fetched = AUX_A.with(|aa| {
+                    let mut aa = aa.borrow_mut();
+                    fetch_aux(prog, key, state, sig, readers, &mut aa)
+                        .then(|| run_num_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand), &aa))
+                });
+                if let Some(th) = fetched {
+                    if oracle_enabled() {
+                        let form = &oracle_form(form, caps_of(rand));
+                        let ith = eval_sig_at_rate(
+                            form,
+                            env,
+                            sig,
+                            tau,
+                            u,
+                            Some(read_scan_in(state, key, readers.clone())),
+                            Some((0.0, 0.0)),
+                            tick_rate,
+                        )?
+                        .num()?;
+                        assert_num_close("rot-expr", form, th, ith);
+                    }
+                    return Ok(Pose::oriented(0.0, 0.0, th));
                 }
-                return Ok(Pose::oriented(0.0, 0.0, th));
             }
             let th = eval_sig_at_rate(
                 form,
@@ -1735,12 +1869,16 @@ pub fn step_motion_in(
                 })
                 .unwrap_or([0.0, 0.0]);
             // scan-free integrands (lowered programs) have no sites to
-            // advance, so the step is just the compiled velocity sample
+            // advance, so the step is just the compiled velocity sample.
+            // Aux programs (scan/channel reads) take the interpreted path:
+            // their sited evolves must ADVANCE here.
             let (vx, vy) = if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_program_pair(a, b, env, sig, true))
+                .get_or_init(|| lower_program_pair(a, b, env, sig, true, true))
                 .as_ref()
+                .filter(|(ap, bp)| ap.aux_free() && bp.aux_free())
             {
-                let (vx, vy) = eval_num_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)), caps_of(rand));
+                let (vx, vy) =
+                    eval_num_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)), caps_of(rand), &[], &[]);
                 if oracle_enabled() {
                     let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let ((ivx, ivy), _) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
@@ -1773,10 +1911,12 @@ pub fn step_motion_in(
             Ok(())
         }
         DynNode::RotExpr { form, env, program, rand: _ } => {
-            // a lowered program is scan-free: nothing to advance
+            // a lowered AUX-FREE program is scan-free: nothing to advance.
+            // Aux programs still carry sited evolves that must advance.
             if program
-                .get_or_init(|| lower_single_program(form, env, ctx.sig, true))
-                .is_some()
+                .get_or_init(|| lower_single_program(form, env, ctx.sig, true, true))
+                .as_ref()
+                .is_some_and(|p| p.aux_free())
             {
                 return Ok(());
             }

@@ -1181,7 +1181,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 let a = expand_macros(&items[1], env, ctx, world)?;
                 let b = expand_macros(&items[2], env, ctx, world)?;
                 // pose eval lowers with allow_pos=false (dyn_node_pose_u_in)
-                let (rand, progs) = motion::compile_sig(&[&a, &b], env, &ctx.sig, false);
+                let (rand, progs) = motion::compile_sig(&[&a, &b], env, &ctx.sig, false, false);
                 let programs = std::cell::OnceCell::new();
                 if let Some(p) = progs {
                     let _ = programs.set(Some((p[0].clone(), p[1].clone())));
@@ -1367,7 +1367,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             "stages" => return sf_stages(items, env, ctx, world),
             "rot" if items.len() == 2 && contains_unbound_axis(&items[1], env) => {
                 let form = expand_macros(&items[1], env, ctx, world)?;
-                let (rand, progs) = motion::compile_sig(&[&form], env, &ctx.sig, true);
+                let (rand, progs) = motion::compile_sig(&[&form], env, &ctx.sig, true, true);
                 let program = std::cell::OnceCell::new();
                 if let Some(p) = progs {
                     let _ = program.set(Some(p[0].clone()));
@@ -3399,7 +3399,7 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     }
     let a = expand_macros(&comps[0], env, ctx, world)?;
     let b = expand_macros(&comps[1], env, ctx, world)?;
-    let (rand, progs) = motion::compile_sig(&[&a, &b], env, &ctx.sig, true);
+    let (rand, progs) = motion::compile_sig(&[&a, &b], env, &ctx.sig, true, true);
     let programs = std::cell::OnceCell::new();
     if let Some(p) = progs {
         let _ = programs.set(Some((p[0].clone(), p[1].clone())));
@@ -4165,6 +4165,57 @@ mod tests {
         let p = dyn_pose(&d, 1.0, &st, &sig).unwrap();
         assert!((p.x - 4.0).abs() < 1e-6, "integrated x: {}", p.x);
         assert!(is_scanned(d.node()));
+    }
+
+    #[test]
+    fn homing_vel_channel_read_compiles() {
+        // the census shape's channel half: heading toward a live channel.
+        // The b component lowers to an aux program (ChanX/ChanY + Atan2);
+        // the driver feeds it the SigEnv's channel value per eval.
+        let Val::DynPose(d) = ev("(vel (polar 2 (angle-of (- (live $tgt) pos))))") else { panic!() };
+        let DynNode::Vel { programs, .. } = &**d.node() else { panic!() };
+        let (ap, bp) = programs.get().unwrap().as_ref().unwrap();
+        assert!(ap.aux_free() && !bp.aux_free(), "channel read lowered as aux");
+
+        let mut sig = SigEnv::default();
+        let mut channels = HashMap::new();
+        channels.insert("tgt".to_string(), Val::Pose(Pose::point(10.0, 0.0)));
+        sig.channels = Rc::new(channels);
+        let mut st = MotionState::default();
+        let dt = 1.0 / DEFAULT_TICK_RATE;
+        for k in 0..120 {
+            step_motion(d.node(), k as f64 * dt, dt, &mut st, &sig).unwrap();
+        }
+        let p = dyn_pose(&d, 1.0, &st, &sig).unwrap();
+        assert!((p.x - 2.0).abs() < 1e-6, "homed toward +x at speed 2: {:?}", p);
+        assert!(p.angle_or(90.0).abs() < 15.0, "heading tracks the target: {:?}", p);
+        // a missing channel bails to the interpreter, which errors — parity
+        let empty = SigEnv::default();
+        assert!(dyn_pose(&d, 1.0, &st, &empty).is_err());
+    }
+
+    #[test]
+    fn evolve_read_compiles_in_vel_integrand() {
+        // a sited evolve read: the compiled eval reads the advanced cell
+        // through the aux slice while the step keeps the interpreted advance
+        let Val::DynPose(d) =
+            ev("(vel (cart (evolve 30 (fn [s c] (+ s (* 60 (:dt c))))) 0))") else { panic!() };
+        let DynNode::Vel { programs, .. } = &**d.node() else { panic!() };
+        let (ap, _) = programs.get().unwrap().as_ref().unwrap();
+        assert!(!ap.aux_free(), "evolve read lowered as aux");
+
+        let sig = SigEnv::default();
+        let mut st = MotionState::default();
+        let dt = 1.0 / DEFAULT_TICK_RATE;
+        for k in 0..120 {
+            step_motion(d.node(), k as f64 * dt, dt, &mut st, &sig).unwrap();
+        }
+        // velocity ramps 30 → ~90 over the second, so x lands mid-range
+        let p = dyn_pose(&d, 1.0, &st, &sig).unwrap();
+        assert!(p.x > 45.0 && p.x < 75.0, "integrated the ramping evolve: {}", p.x);
+        // the heading eval reads the advanced state compiled: velocity is
+        // (v, 0), so theta is 0 exactly
+        assert!(p.angle_or(1.0).abs() < 1e-9, "compiled heading over aux state: {:?}", p);
     }
 
     #[test]
