@@ -5,7 +5,6 @@ The compiled-dyn lowering architecture: how per-entity hot loops lower
 to flat NumPrograms behind a narrow executor boundary, and the seams a
 JIT/native tier drops into. Requirements are the invariants; the Design
 section carries the tier plan, milestone state, and platform notes.
-
 ## Requirements
 ### Requirement: The executor boundary is lanes plus scratch
 Batch call sites SHALL hand executors a compiled program, input lanes, and scratch storage — never reaching into op internals — and compiled ops SHALL be total and callback-free. This boundary is the seam a JIT/native tier drops into behind the same signature.
@@ -42,6 +41,27 @@ The IR-interpreter executor tier SHALL remain supported on every host as the uni
 - **WHEN** a host cannot run native codegen
 - **THEN** every card still runs correctly on the IR interpreter tier with identical semantics
 
+### Requirement: Auxiliary inputs are driver-filled lanes
+Scan-cell reads and channel/stream reads SHALL enter compiled programs as program-declared input tables whose values the driver resolves and passes in before the run — through the row's motion readers for scan cells and through the same SigEnv snapshot the interpreter would read for channels. Compiled ops SHALL remain total and callback-free; a missing or mistyped auxiliary value SHALL bail that evaluation at the driver level and rerun interpreted.
+
+#### Scenario: Homing-slew integrand
+- **WHEN** a motion signal contains a sited evolve read and a live channel read (the homing-slew shape)
+- **THEN** it lowers to a program with scan/channel input tables, the driver fills the aux lanes at each run, and the result is bit-identical to the interpreted evaluation
+
+#### Scenario: Missing scan cell
+- **WHEN** a compiled program with a scan input evaluates before the site's first advance has stored a cell
+- **THEN** the driver bails that evaluation and reruns it interpreted, with no error path inside the program
+
+### Requirement: Group evaluation preserves scalar parity
+Batched or shared evaluation of one program across a group — lane-batched pose fills, and once-per-group evaluation of shared array-valued signals with per-row lane scatter — SHALL produce results bit-identical to evaluating each row through the per-row path, and the lowering oracle SHALL check this per lane when enabled.
+
+#### Scenario: ClosedPt pose fill as lanes
+- **WHEN** rows whose figure is constant wrappers over one compiled closed-point node need pos-only poses for a phase
+- **THEN** grouped rows run as lanes of one program-pair run followed by per-row wrapper composition, equal to each row's individual evaluation
+
+#### Scenario: Array-valued spawn meta
+- **WHEN** entities of one spawn group carry an axis-selected shared signal
+- **THEN** the shared expression evaluates once per group per tick and each row selects its own lane, equal to per-row evaluation and selection
 
 ## Design
 
@@ -138,11 +158,11 @@ kernel runs, fixed merge order for all cross-lane combining) are recorded
 in render-output-design.md "Parallelism"; scheduling itself (rayon/SIMD/
 single-threaded wasm) lives in the driver loops per host.
 
-Non-blockers: evolve/live/stages coverage (classification excludes them;
-per-row interpretation is fine indefinitely), ReadScan/Channel op
-coverage for homing-slew (IR extension, slots in whenever), and the
-model/ split (orthogonal; if it lands first, `Dyn<E>` with E = kernel
-handle is its natural instantiation).
+Non-blockers: evolve/live/stages coverage (classification excludes
+stages; sited-evolve READS and live-channel reads lower as aux inputs
+since the milestone-B remainder, per-row interpretation covers the
+rest indefinitely), and the model/ split (orthogonal; if it lands
+first, `Dyn<E>` with E = kernel handle is its natural instantiation).
 
 Sequencing: the planned perf rounds (collider batching, render-row
 batching) build item 4; then IR unification + input slots/interning as
@@ -382,14 +402,22 @@ notes: DynNode carries the slot data as one word (`Option<Rc<RandCell>>`
 pose-chain walks; a size-guard test pins ≤96); lowering bails keep the
 per-entity substitution path bit-exactly; the batch oracle re-runs each
 LANE's own node (clones share programs but not state keys or caps).
-Still open under B: ClosedPt group pose evaluation (the pose fill for
-closed shapes still runs per row), AxisSel lane scatter, the
-entity-representation flip (spec id + capture vector replacing per-row
-node clones — the 1M-row layout), and — per the milestone-A bail census
-— ReadScan + Channel ops for the homing-slew integrands. Related
-group-level lever recorded in TODO.md: integrator-state dedup per
-(program, captures, birth) — ring lanes carry bit-identical folds, the
-per-bullet angle lives in the wrapper frame.
+The B remainder LANDED (2026-07-12-compiled-dyn-milestone-b, design.md
+there has the as-built notes): ClosedPt group pose evaluation (batched
+pos-only fill at collide/cull, class-cache gated), AxisSel lane scatter
+(once-per-group memo in refresh_dyn_cols), and the homing-slew census
+shape via auxiliary inputs — scan-cell and channel/stream reads as
+DRIVER-FILLED input tables (AuxIn/Atan2 ops, pose-pair scalarization;
+the "Auxiliary inputs are driver-filled lanes" requirement above), with
+the evolve ADVANCE still interpreted (milestone C) so aux programs never
+join batched steps. Same round: trace readers built only for traced
+rows, and cull reuses the collide-phase pose for Vel-chain rows
+(audit-gated, oracle-asserted). Round wall on the scaled fruit rig:
+−7.9%. Still open under B: the entity-representation flip (spec id +
+capture vector replacing per-row node clones — the 1M-row layout).
+Related group-level lever recorded in TODO.md: integrator-state dedup
+per (program, captures, birth) — ring lanes carry bit-identical folds,
+the per-bullet angle lives in the wrapper frame.
 
 ### C — beyond figure signals
 
