@@ -47,7 +47,7 @@ tests. Perf claims via wall-only interleaved A/B on the scaled fruit rig
       the collide sampled pose for Vel-chain rows (figure-root ptr
       validated; oracle re-derives and asserts per reused row). Fruit
       wall 2372 -> 2185 ms (-7.9% net for the round).
-- [ ] 8. Final gates + bookkeeping: full suites green; aggregate wall
+- [x] 8. Final gates + bookkeeping: full suites green; aggregate wall
       delta recorded; design.md "Implementation notes (as built)"
       appended (deviations, audit outcomes); lowering spec Design
       milestone-state paragraph updated via the archive delta.

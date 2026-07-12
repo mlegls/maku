@@ -256,3 +256,49 @@ format changes. Rollback is per-commit revert.
 
 None blocking. D6 and D7 carry their own audit outcomes; either lands or
 is dropped with rationale recorded in this file at archive time.
+
+## Implementation notes (as built)
+
+- **Aux inputs (D1–D3)**: `NumProgram` gained `aux: Option<Rc<AuxTables>>`
+  (slots + typed chan refs) and an explicit `result` register — the pair
+  work exposed a latent assumption that the result is the last op's dst,
+  which pair component selection breaks. New ops are `AuxIn` (one op for
+  scan cells and channel components; the driver lays out the aux slice
+  per the slots table) and `Atan2`; `mag` composes existing ops. Channel
+  kind (Num/Pose) is fixed by the first consumer at lower time; a
+  conflict bails the form. `run_lanes` never takes aux (aux programs
+  never batch), only the scalar runner does.
+- **Evolve reads**: only Current-scope, num-state evolves lower (def
+  bodies would number sites the static walk can't see; pose-state
+  evolves — `smooth` — driver-bail). The census slew shape compiles on
+  the eval side; the STEP keeps the interpreted advance, so the step
+  arms and `vel_step_plan` require aux-free programs. ClosedPt compiles
+  with aux OFF: its sites never advance, so a ScanIn would bail forever.
+- **ClosedPt batch fill (D4)**: landed with a cross-tick classification
+  cache (figure-root ptr → RowClass) and a 16-tick rediscovery gate for
+  cards with no closed rows; cull re-lanes only the tick's candidates.
+  Cost on the (closed-free) scaled fruit rig: ~+1.1% before the other
+  items, of which ~0.3% is binary-layout noise — recorded as the price
+  of the pose-fill kernel seam. Corpus closed-pt eval volume is ~8ms
+  today, so this is JIT prep, not a wall win.
+- **AxisSel (D5)**: as designed — a per-refresh memo keyed on
+  (form Rc identity, env identity, tau bits); no IR change.
+- **Readers (D6)**: the audit found the real cost was the trace loop
+  constructing readers for every alive row before checking
+  `trace_window` (3.1M constructions per 2000 fruit ticks). Moving
+  construction inside the traced branch cut it to 8k; snapshot pooling
+  was unnecessary at the residual volume.
+- **Cull reuse (D7)**: audit PASSED — field writes and remat are
+  PendingWrites drained at the next step's start, and rule kills only
+  clear the alive flag, so nothing between collide and cull mutates n2
+  state or figures. Landed as class-cache-gated reuse of the collide
+  sampled pose for Vel-chain rows (figure-root validated, oracle
+  re-derives and asserts per reused row). No dirty-mark machinery was
+  needed.
+- **Round wall total** (scaled fruit rig, wall-only interleaved A/B vs
+  the pre-round baseline): 2372 → 2185 ms median, **−7.9%**.
+- Known pre-existing (not this round): the full unit suite under
+  MAKU_LOWER_ORACLE=1 fails in `compiled_render_rule_emits_column_batch`
+  (batching disabled under oracle), and the parallel test harness
+  aborts intermittently on macOS ("failed to initiate panic, error 5"),
+  both reproduced at the pre-round commit.
