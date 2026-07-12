@@ -4718,3 +4718,172 @@ fn stale_handles_do_not_target_reused_rows() {
         // without live, the channel read snaps at spawn (the boundary)
         assert!((x(1) - 0.25).abs() < 0.02, "bare read stays snapped: {}", x(1));
     }
+
+    // -----------------------------------------------------------------
+    // Streams as sigiled bindings (channel/cell unification).
+
+    /// A local sigiled let is a fresh private stream; sigiled params
+    /// receive the HANDLE, so two instances share it explicitly.
+    #[test]
+    fn stream_shared_by_handle_passing() {
+        const CARD: &str = r#"
+(defpattern turret [$ammo 0]
+  (loop [i 0]
+    (if (< i 10)
+      (seq (set! $ammo (- $ammo 1)) (wait (ticks 1)) (recur (+ i 1))))))
+(defpattern p []
+  (let [$shared 6]
+    (par (turret $shared)
+         (turret $shared)
+         (seq (wait-for (<= $shared 0)) (spawn (pose c[0 0]))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..2 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 0, "6 ammo at 2/tick lasts past tick 2");
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 1, "shared stream drained at 2/tick");
+    }
+
+    /// A sigiled param with a defaulted argument gets a fresh PRIVATE
+    /// stream per instance — writes in one instance stay invisible to
+    /// the other.
+    #[test]
+    fn stream_default_param_is_private() {
+        const CARD: &str = r#"
+(defpattern turret [$ammo 2 who 0]
+  (seq (set! $ammo (- $ammo 1))
+       (wait (ticks 2))
+       (if (= $ammo 1) (spawn (pose c[0 0]) {:who who}))))
+(defpattern p []
+  (par (turret) (turret)))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 2, "each instance kept its own ammo");
+    }
+
+    /// (def $x) + (bind! $x expr): the producer refreshes per tick, and a
+    /// producer yielding nothing leaves the last set! standing.
+    #[test]
+    fn stream_producer_nothing_leaves_set_standing() {
+        const CARD: &str = r#"
+(def $d 0)
+(bind! $d (cond (< $tick 20) 7))
+(defpattern p []
+  (seq (set! $d 42)
+       (wait (ticks 1))
+       (wait-for (= $d 42))
+       (spawn (pose c[0 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        // a set! is visible until the next refresh, where the
+        // always-writing producer overwrites it — the gate, checked one
+        // tick later, never opens
+        for _ in 0..8 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 0, "producer overwrites the set! at refresh");
+        // once the producer yields nothing, the set! stands
+        const CARD2: &str = r#"
+(def $d 0)
+(bind! $d (cond (< $tick 3) 7))
+(defpattern p []
+  (seq (wait (ticks 5))
+       (set! $d 42)
+       (wait-for (= $d 42))
+       (spawn (pose c[0 0]))))
+"#;
+        let mut sim2 = Sim::load(CARD2, Some("p")).unwrap();
+        for _ in 0..8 {
+            sim2.step().unwrap();
+        }
+        assert_eq!(live_count(&sim2), 1, "set! stands once the producer yields nothing");
+    }
+
+    /// (export! $x :as $name): publishes under the public name; a second
+    /// export of the same name from a different stream is an error.
+    #[test]
+    fn stream_export_rename_and_collision() {
+        const CARD: &str = r#"
+(defpattern q [$vol 0 tag 0]
+  (seq (if (= tag 1) (export! $vol :as $p1-vol) (export! $vol :as $p2-vol))
+       (wait (ticks 60))))
+(defpattern p []
+  (let [$a 3]
+    (let [$b 4]
+      (par (q $a 1) (q $b 2)
+           (seq (wait-for (= (+ $p1-vol $p2-vol) 7)) (spawn (pose c[0 0])))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..3 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 1, "renamed exports both published");
+
+        const COLLIDE: &str = r#"
+(defpattern q [$vol 0]
+  (seq (export! $vol) (wait (ticks 60))))
+(defpattern p []
+  (let [$a 3]
+    (let [$b 4]
+      (par (q $a) (q $b)))))
+"#;
+        let mut sim = Sim::load(COLLIDE, Some("p")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("already taken"), "collision is an error: {}", err);
+    }
+
+    /// (from-host :name) claims a host-input stream; a host value absent
+    /// this tick leaves the last value standing.
+    #[test]
+    fn from_host_stream_reads_inputs_and_holds() {
+        const CARD: &str = r#"
+(def $wind)
+(bind! $wind (from-host :wind))
+(defpattern p []
+  (seq (wait-for (> $wind 2)) (spawn (pose c[0 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let mut inputs = Inputs::default();
+        inputs.set_num("wind", 1.0);
+        sim.step_with(&inputs).unwrap();
+        assert_eq!(live_count(&sim), 0);
+        inputs.set_num("wind", 3.0);
+        sim.step_with(&inputs).unwrap();
+        // gate read 3.0 this tick; spawn lands on the next step
+        sim.step_with(&Inputs::default()).unwrap();
+        assert_eq!(live_count(&sim), 1, "host value arrived through the stream");
+        // absent host value on later ticks: the last value stands (no error)
+        sim.step_with(&Inputs::default()).unwrap();
+    }
+
+    /// (live $x) on a local stream anchors a tracking frame identically
+    /// to a global stream: the spawned entity follows the stream's pose.
+    #[test]
+    fn live_local_stream_tracks() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [$pt c[1 0]]
+    (seq (spawn (live $pt))
+         (wait (ticks 3))
+         (set! $pt c[5 0])
+         (wait (ticks 3)))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..2 {
+            sim.step().unwrap();
+        }
+        let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
+        assert!((x - 1.0).abs() < 1e-9, "tracks initial value: {}", x);
+        for _ in 0..4 {
+            sim.step().unwrap();
+        }
+        let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
+        assert!((x - 5.0).abs() < 1e-9, "follows the set!: {}", x);
+    }

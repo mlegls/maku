@@ -510,6 +510,9 @@ pub enum DynNode {
     ConstFrame { pose: Pose, rot: (f64, f64), child: Rc<DynNode> },
     /// A live injected channel as a pose (class (b): pointwise, no state).
     Live { channel: Rc<str> },
+    /// A live stream BY HANDLE (class (b)): local and global streams frame
+    /// identically — the node carries the store id, not a name.
+    LiveStream { id: u64 },
     /// Position clamp (playfield walls). Output-clamps the child pose; for
     /// integrated children (vel under const frames) the integrator STATE is
     /// clamped after each step — pushing a wall doesn't bank phantom
@@ -737,6 +740,7 @@ fn seed_dyn_node_ids_with_ptr(
         DynNode::Const(_)
         | DynNode::Linear { .. }
         | DynNode::Live { .. }
+        | DynNode::LiveStream { .. }
         | DynNode::Vel { .. }
         | DynNode::ClosedPt { .. }
         | DynNode::FnPose(_)
@@ -796,6 +800,7 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
         DynNode::Const(_)
         | DynNode::Linear { .. }
         | DynNode::Live { .. }
+        | DynNode::LiveStream { .. }
         | DynNode::FnPose(_) => {}
     }
 }
@@ -1355,7 +1360,7 @@ fn dyn_node_name(d: &DynNode) -> &'static str {
         DynNode::Translate { .. } => "dyn:translate",
         DynNode::Path { .. } => "dyn:path",
         DynNode::Frame(..) | DynNode::ConstFrame { .. } => "dyn:frame",
-        DynNode::Live { .. } => "dyn:live",
+        DynNode::Live { .. } | DynNode::LiveStream { .. } => "dyn:live",
         DynNode::Clamp { .. } => "dyn:clamp",
         DynNode::RotExpr { .. } => "dyn:rot-expr",
         DynNode::FnPose(_) => "dyn:fn-pose",
@@ -1524,6 +1529,10 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let (x, y) = sig.channel_pos(channel);
             Ok(Pose::point(x, y))
         }
+        DynNode::LiveStream { id } => match sig.stream_val(*id) {
+            Some(Val::Pose(p)) => Ok(Pose::point(p.x, p.y)),
+            _ => Ok(Pose::point(0.0, 0.0)),
+        },
         DynNode::Clamp { lo, hi, child } => {
             let p = dyn_node_pose_u_in(child, tau, 0.0, ctx)?;
             Ok(Pose { x: p.x.clamp(lo.0, hi.0), y: p.y.clamp(lo.1, hi.1), theta: p.theta })

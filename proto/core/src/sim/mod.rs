@@ -241,6 +241,35 @@ fn install_tick_rules(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(
     Ok(())
 }
 
+/// Install top-level `(def $name ...)` streams and run top-level
+/// bind!/export! forms, in card order — producers attach before any pattern
+/// executes ("defs in order, then bound producers"). Re-install (swap/add)
+/// keeps stream identity: an existing name keeps its id and value; a
+/// rebound producer replaces in place.
+fn install_streams(card: &Card, ctx: &mut Ctx, world: &mut World) -> Result<(), String> {
+    for (name, init) in &card.streams {
+        if ctx.sig.streams.borrow().contains_key(&**name) {
+            continue;
+        }
+        let v = match init {
+            Some(f) => evaluate(f, &Env::empty(), ctx, world)
+                .map_err(|e| format!("def ${}: {}", name, e))?,
+            None => Val::Nothing,
+        };
+        let id = world.next_id;
+        world.next_id += 1;
+        ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), v));
+        ctx.sig.streams.borrow_mut().insert(name.to_string(), id);
+    }
+    for form in &card.stream_forms {
+        let v = evaluate(form, &Env::empty(), ctx, world)?;
+        if let Val::Action(a) = v {
+            crate::interp::exec_instant(&a, ctx, world)?;
+        }
+    }
+    Ok(())
+}
+
 /// Snapshot = clone: everything is Rc-shared immutable or plain data, except
 /// control cells, which are mutable and must deep-copy (a scrubbed-back sim
 /// must not see future cell writes). This is what makes scrubbing "restore
@@ -254,6 +283,12 @@ impl Clone for Sim {
             Rc::new(std::cell::RefCell::new(self.ctx.sig.exports.borrow().clone()));
         ctx.sig.bound_channels =
             Rc::new(std::cell::RefCell::new(self.ctx.sig.bound_channels.borrow().clone()));
+        ctx.sig.streams =
+            Rc::new(std::cell::RefCell::new(self.ctx.sig.streams.borrow().clone()));
+        ctx.sig.host_streams =
+            Rc::new(std::cell::RefCell::new(self.ctx.sig.host_streams.borrow().clone()));
+        ctx.sig.producers =
+            Rc::new(std::cell::RefCell::new(self.ctx.sig.producers.borrow().clone()));
         Sim {
             world: self.world.clone(),
             tasks: self.tasks.clone(),
@@ -310,6 +345,7 @@ impl Sim {
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
         install_tick_rules(&card, &mut ctx, &mut world)?;
+        install_streams(&card, &mut ctx, &mut world)?;
         let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
         Ok(Sim {
@@ -357,12 +393,18 @@ impl Sim {
                     card.channels.retain(|(k, _)| *k != name);
                     card.channels.push((name, expr));
                 }
+                for (name, init) in sent.streams {
+                    card.streams.retain(|(k, _)| *k != name);
+                    card.streams.push((name, init));
+                }
+                card.stream_forms.extend(sent.stream_forms);
                 card.tick_rules.extend(sent.tick_rules);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
+                install_streams(&card, &mut self.ctx, &mut self.world)?;
                 let actions: Vec<Form> = body_forms
                     .iter()
                     .filter(|form| !head_in(form, &DEF_HEADS))
@@ -388,6 +430,7 @@ impl Sim {
                 self.ctx.macros = Rc::new(card.macros.clone());
                 self.card_channels = card.channels.clone();
                 install_tick_rules(&card, &mut self.ctx, &mut self.world)?;
+                install_streams(&card, &mut self.ctx, &mut self.world)?;
                 let env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
                 (body_forms.into(), env)
             }
@@ -424,6 +467,7 @@ impl Sim {
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
         install_tick_rules(card, &mut ctx, &mut world)?;
+        install_streams(card, &mut ctx, &mut world)?;
         let mut env = Env::empty().bind(CELLS_KEY.into(), fresh_cell_scope());
         for (pname, default) in &pat.params {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;

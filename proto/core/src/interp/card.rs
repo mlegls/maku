@@ -38,6 +38,12 @@ pub struct Card {
     /// (deftick body...) — evaluated when the card is installed, registering
     /// per-tick rules into World data.
     pub tick_rules: Vec<Form>,
+    /// (def $name init?) — top-level stream declarations, in card order.
+    /// Bare names (no sigil); ids allocate at install.
+    pub streams: Vec<(Rc<str>, Option<Form>)>,
+    /// Top-level (bind! ...) / (export! ...) forms, run at install in
+    /// card order — producers attach before any pattern executes.
+    pub stream_forms: Vec<Form>,
 }
 
 pub fn load_card(forms: &[Form]) -> Result<Card, String> {
@@ -47,6 +53,8 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut macros = HashMap::new();
     let mut channels: Vec<(Rc<str>, Form)> = Vec::new();
     let mut tick_rules: Vec<Form> = Vec::new();
+    let mut streams: Vec<(Rc<str>, Option<Form>)> = Vec::new();
+    let mut stream_forms: Vec<Form> = Vec::new();
     for f in forms {
         if let Form::List(items) = f {
             match items.first() {
@@ -96,8 +104,19 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 }
                 Some(Form::Sym(s)) if &**s == "def" => {
                     if let Some(Form::Sym(n)) = items.get(1) {
-                        defs.insert(n.to_string(), items[2].clone());
+                        if let Some(bare) = n.strip_prefix('$') {
+                            // (def $name init?) — a top-level stream.
+                            // Redefinition replaces (import shadowing).
+                            let bare: Rc<str> = bare.into();
+                            streams.retain(|(k, _)| *k != bare);
+                            streams.push((bare, items.get(2).cloned()));
+                        } else {
+                            defs.insert(n.to_string(), items[2].clone());
+                        }
                     }
+                }
+                Some(Form::Sym(s)) if &**s == "bind!" || &**s == "export!" => {
+                    stream_forms.push(f.clone());
                 }
                 Some(Form::Sym(s)) if &**s == "defn" => {
                     // (defn name [params] body...) → def name (fn [params] body...)
@@ -172,7 +191,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
             }
         }
     }
-    let mut card = Card { patterns, order, defs, macros, channels, tick_rules };
+    let mut card = Card { patterns, order, defs, macros, channels, tick_rules, streams, stream_forms };
     rewrite_card(&mut card);
     Ok(card)
 }

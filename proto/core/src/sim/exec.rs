@@ -377,7 +377,11 @@ fn run_action(
                 Ok(true)
             }
         }
-        ActionV::DefVar { .. } | ActionV::SetVar { .. } => {
+        ActionV::DefVar { .. }
+        | ActionV::SetVar { .. }
+        | ActionV::SetStream { .. }
+        | ActionV::BindStream { .. }
+        | ActionV::ExportStream { .. } => {
             exec_instant(a, ctx, world)?;
             Ok(false)
         }
@@ -560,10 +564,18 @@ fn run_action(
             };
             let mut env = Env::empty().bind(CELLS_KEY.into(), cells);
             for (i, (pname, default)) in params.iter().enumerate() {
-                let v = match args.get(i) {
+                let mut v = match args.get(i) {
                     Some(v) => v.clone(),
                     None => evaluate(default, &env, ctx, world)?,
                 };
+                // sigiled param with a defaulted (or plain-value) argument:
+                // a fresh private stream initialized to it
+                if pname.starts_with('$') && !matches!(v, Val::Stream(_)) {
+                    let id = world.next_id;
+                    world.next_id += 1;
+                    ctx.sig.cells.borrow_mut().insert(id, (pname[1..].to_string(), v));
+                    v = Val::Stream(id);
+                }
                 env = env.bind(pname.clone(), v);
             }
             task.stack.push(TF::Seq { items: body.clone(), idx: 0, env });

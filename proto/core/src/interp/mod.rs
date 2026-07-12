@@ -147,6 +147,11 @@ pub enum Val {
     /// mutation across snapshots is replay-safe because ids allocate from
     /// the deterministic world counter (re-stepping converges).
     Cells(Rc<std::cell::RefCell<HashMap<String, u64>>>),
+    /// A stream handle: `$name` in binding position constructs one, sigiled
+    /// parameters and closure capture pass it, reference position snaps it.
+    /// The id keys the shared `sig.cells` store; ids allocate from the
+    /// deterministic world counter, so handles are replay-safe.
+    Stream(u64),
     Nothing,
 }
 
@@ -164,6 +169,31 @@ pub(crate) fn cell_scope(env: &Env) -> Option<Rc<std::cell::RefCell<HashMap<Stri
 
 pub(crate) fn fresh_cell_scope() -> Val {
     Val::Cells(Rc::new(std::cell::RefCell::new(HashMap::new())))
+}
+
+/// Resolve a form in STREAM position (set!/bind!/export! targets, sigiled
+/// pattern arguments): yields the handle, never a snapped value.
+pub(crate) fn resolve_stream(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Result<u64, String> {
+    if let Form::Sym(name) = form {
+        if let Some(bare) = name.strip_prefix('$') {
+            if let Some(Val::Stream(id)) = env.lookup(name) {
+                return Ok(id);
+            }
+            if let Some(id) = ctx.sig.stream_id(bare) {
+                return Ok(id);
+            }
+            return Err(format!("{}: no stream in scope", name));
+        }
+    }
+    match evaluate(form, env, ctx, world)? {
+        Val::Stream(id) => Ok(id),
+        v => Err(format!("expected a stream, got {:?}", v)),
+    }
 }
 
 impl Val {
@@ -328,6 +358,13 @@ pub enum ActionV {
     WaitFor { pred: Form, env: Env },
     DefVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, init: Val },
     SetVar { scope: Rc<std::cell::RefCell<HashMap<String, u64>>>, name: Rc<str>, val: Val },
+    /// `(set! $x v)` on a stream handle: overwrite the store slot.
+    SetStream { id: u64, name: Rc<str>, val: Val },
+    /// `(bind! $x expr)`: attach a per-tick refresh producer to the stream.
+    BindStream { id: u64, expr: Form, env: Env },
+    /// `(export! $x [:as $name])`: publish a stream under a public name.
+    /// Registering an already-taken name for a different stream is an error.
+    ExportStream { id: u64, name: Rc<str> },
     Fork(Rc<ActionV>),
     Par(Vec<Rc<ActionV>>),
     Event { name: Symbol, pos: Option<(f64, f64)> },
@@ -406,6 +443,17 @@ pub struct SigEnv {
     pub exports: Rc<std::cell::RefCell<Vec<(String, u64)>>>,
     /// Instance-scoped derived channels registered by (bind-channel! ...).
     pub bound_channels: Rc<std::cell::RefCell<Vec<(Rc<str>, Form, Env)>>>,
+    /// Top-level `(def $name ...)` streams: bare name → stream id.
+    pub streams: Rc<std::cell::RefCell<HashMap<String, u64>>>,
+    /// Host-input streams claimed by `(from-host :name)`: host name → id.
+    /// Refresh copies the host's per-tick value into the claimed stream;
+    /// a host value absent this tick leaves the last value standing.
+    pub host_streams: Rc<std::cell::RefCell<HashMap<String, u64>>>,
+    /// Per-tick refresh producers attached by `(bind! $x expr)`, in
+    /// attachment order (top-level binds in card order, then runtime
+    /// attachments). A producer yielding `nothing` leaves the last
+    /// value — including a `set!` — standing.
+    pub producers: Rc<std::cell::RefCell<Vec<(u64, Form, Env)>>>,
 }
 
 impl Default for SigEnv {
@@ -416,6 +464,9 @@ impl Default for SigEnv {
             cells: Rc::new(std::cell::RefCell::new(HashMap::new())),
             exports: Rc::new(std::cell::RefCell::new(Vec::new())),
             bound_channels: Rc::new(std::cell::RefCell::new(Vec::new())),
+            streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
+            host_streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
+            producers: Rc::new(std::cell::RefCell::new(Vec::new())),
         }
     }
 }
@@ -423,6 +474,18 @@ impl Default for SigEnv {
 impl SigEnv {
     pub fn channel(&self, name: &str) -> Option<Val> {
         self.channels.get(name).cloned()
+    }
+    /// Snap a stream's current value out of the shared store.
+    pub fn stream_val(&self, id: u64) -> Option<Val> {
+        self.cells.borrow().get(&id).map(|(_, v)| v.clone())
+    }
+    /// Resolve a bare stream name (no sigil): top-level defs, then names
+    /// published by (export! ...).
+    pub fn stream_id(&self, name: &str) -> Option<u64> {
+        if let Some(id) = self.streams.borrow().get(name).copied() {
+            return Some(id);
+        }
+        self.exports.borrow().iter().find(|(n, _)| n == name).map(|(_, id)| *id)
     }
     pub fn channel_pos(&self, name: &str) -> (f64, f64) {
         match self.channels.get(name) {
@@ -486,10 +549,28 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
         Form::Sym(s) => match &**s {
             "inf" => Ok(Val::Num(f64::INFINITY)),
             "phi" => Ok(Val::Num(1.618_033_988_749_895)),
-            name if name.starts_with('$') => ctx
-                .sig
-                .channel(&name[1..])
-                .ok_or_else(|| format!("host does not provide channel {}", name)),
+            name if name.starts_with('$') => {
+                // lexically bound stream (sigiled let / param / closure
+                // capture): reference position snaps the current value
+                if let Some(v) = env.lookup(name) {
+                    return match v {
+                        Val::Stream(id) => ctx
+                            .sig
+                            .stream_val(id)
+                            .ok_or_else(|| format!("stream {} has no value", name)),
+                        v => Ok(v),
+                    };
+                }
+                if let Some(id) = ctx.sig.stream_id(&name[1..]) {
+                    return ctx
+                        .sig
+                        .stream_val(id)
+                        .ok_or_else(|| format!("stream {} has no value", name));
+                }
+                ctx.sig
+                    .channel(&name[1..])
+                    .ok_or_else(|| format!("host does not provide channel {}", name))
+            }
             name => {
                 if let Some(v) = env.lookup(name) {
                     return Ok(v);
@@ -1272,10 +1353,32 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 };
             }
             "live" => {
-                // in a scan context: the channel's current value (class b/d);
+                // in a scan context: the stream's current value (class b/d);
                 // at control level: a live pose signal usable as a frame
                 if let Some(Form::Sym(ch)) = items.get(1) {
                     if let Some(name) = ch.strip_prefix('$') {
+                        // stream (local, def'd, or exported): live by HANDLE,
+                        // so local and global streams frame identically
+                        let sid = match env.lookup(ch) {
+                            Some(Val::Stream(id)) => Some(id),
+                            _ => ctx.sig.stream_id(name),
+                        };
+                        if let Some(id) = sid {
+                            let cur = ctx
+                                .sig
+                                .stream_val(id)
+                                .ok_or_else(|| format!("stream {} has no value", ch))?;
+                            return if ctx.scan.is_some() {
+                                Ok(cur)
+                            } else {
+                                match cur {
+                                    Val::Pose(_) => Ok(Val::DynPose(DynPose::pose_node(
+                                        Rc::new(DynNode::LiveStream { id }),
+                                    ))),
+                                    v => Ok(v),
+                                }
+                            };
+                        }
                         let cur = ctx
                             .sig
                             .channel(name)
@@ -1310,6 +1413,14 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 let Some(name) = ch.strip_prefix('$') else {
                     return Err("channel: name must start with $".into());
                 };
+                if let Some(Val::Stream(id)) = env.lookup(ch) {
+                    if let Some(v) = ctx.sig.stream_val(id) {
+                        return Ok(v);
+                    }
+                }
+                if let Some(v) = ctx.sig.stream_id(name).and_then(|id| ctx.sig.stream_val(id)) {
+                    return Ok(v);
+                }
                 if let Some(v) = ctx.sig.channel(name) {
                     return Ok(v);
                 }
@@ -1358,8 +1469,67 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     return Err("set!: expected name".into());
                 };
                 let val = evaluate(&items[2], env, ctx, world)?;
+                if name.starts_with('$') {
+                    let id = resolve_stream(&items[1], env, ctx, world)?;
+                    return Ok(Val::Action(Rc::new(ActionV::SetStream {
+                        id,
+                        name: Rc::from(&name[1..]),
+                        val,
+                    })));
+                }
                 let scope = cell_scope(env).ok_or("set!: no cell scope")?;
                 return Ok(Val::Action(Rc::new(ActionV::SetVar { scope, name: name.clone(), val })));
+            }
+            "bind!" => {
+                let Some(target) = items.get(1) else {
+                    return Err("bind!: expected a stream".into());
+                };
+                let Some(expr) = items.get(2) else {
+                    return Err("bind!: expected a producer expression".into());
+                };
+                let id = resolve_stream(target, env, ctx, world)?;
+                return Ok(Val::Action(Rc::new(ActionV::BindStream {
+                    id,
+                    expr: expr.clone(),
+                    env: env.clone(),
+                })));
+            }
+            "export!" => {
+                let Some(target) = items.get(1) else {
+                    return Err("export!: expected a stream".into());
+                };
+                let id = resolve_stream(target, env, ctx, world)?;
+                let public: Rc<str> = match (items.get(2), items.get(3)) {
+                    (None, _) => match target {
+                        Form::Sym(n) if n.starts_with('$') => Rc::from(&n[1..]),
+                        _ => return Err("export!: anonymous stream needs :as $name".into()),
+                    },
+                    (Some(Form::Kw(k)), Some(Form::Sym(n)))
+                        if &**k == "as" && n.starts_with('$') =>
+                    {
+                        Rc::from(&n[1..])
+                    }
+                    _ => return Err("export!: expected (export! $x) or (export! $x :as $name)".into()),
+                };
+                return Ok(Val::Action(Rc::new(ActionV::ExportStream { id, name: public })));
+            }
+            "from-host" => {
+                let Some(Form::Kw(name)) = items.get(1) else {
+                    return Err("from-host: expected a :name keyword".into());
+                };
+                let existing = ctx.sig.host_streams.borrow().get(&**name).copied();
+                let id = match existing {
+                    Some(id) => id,
+                    None => {
+                        let id = world.next_id;
+                        world.next_id += 1;
+                        let init = ctx.sig.channel(name).unwrap_or(Val::Nothing);
+                        ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), init));
+                        ctx.sig.host_streams.borrow_mut().insert(name.to_string(), id);
+                        id
+                    }
+                };
+                return Ok(Val::Stream(id));
             }
             "wait-for" => {
                 return Ok(Val::Action(Rc::new(ActionV::WaitFor {
@@ -1436,11 +1606,21 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 let form = val_to_form(&expansion)?;
                 return evaluate(&form, env, ctx, world);
             }
-            let args = items[1..]
-                .iter()
-                .map(|f| evaluate(f, env, ctx, world))
-                .collect::<Result<Vec<_>, _>>()?;
             if let Some(pat) = ctx.patterns.clone().get(&**name) {
+                // sigiled params take the STREAM, not its snap
+                let mut args = Vec::with_capacity(items.len() - 1);
+                for (i, f) in items[1..].iter().enumerate() {
+                    let sigiled = pat
+                        .params
+                        .get(i)
+                        .map(|(p, _)| p.starts_with('$'))
+                        .unwrap_or(false);
+                    args.push(if sigiled {
+                        Val::Stream(resolve_stream(f, env, ctx, world)?)
+                    } else {
+                        evaluate(f, env, ctx, world)?
+                    });
+                }
                 return Ok(Val::Action(Rc::new(ActionV::CallPattern {
                     params: pat.params.clone(),
                     body: pat.body.clone(),
@@ -1449,6 +1629,10 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                     fresh_cells: true,
                 })));
             }
+            let args = items[1..]
+                .iter()
+                .map(|f| evaluate(f, env, ctx, world))
+                .collect::<Result<Vec<_>, _>>()?;
             return builtin_with_eval_ctx(name, &args, ctx, world);
         }
     }
@@ -2588,6 +2772,61 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), val.clone()));
             Ok(Val::Nothing)
         }
+        ActionV::SetStream { id, name, val } => {
+            ctx.sig.cells.borrow_mut().insert(*id, (name.to_string(), val.clone()));
+            Ok(Val::Nothing)
+        }
+        ActionV::BindStream { id, expr, env } => {
+            {
+                // one producer per stream: rebinding replaces (hot-swap,
+                // card re-install), keeping the original attachment slot
+                let mut prods = ctx.sig.producers.borrow_mut();
+                match prods.iter_mut().find(|(pid, _, _)| pid == id) {
+                    Some(slot) => {
+                        slot.1 = expr.clone();
+                        slot.2 = env.clone();
+                    }
+                    None => prods.push((*id, expr.clone(), env.clone())),
+                }
+            }
+            // same-tick availability: run the producer once at attach.
+            // LENIENT: at card install no refresh has run yet ($tick, host
+            // channels absent) — real errors surface at the next refresh.
+            if let Ok(v) = evaluate(expr, env, ctx, world) {
+                // a stream-valued producer (bind! to from-host or another
+                // stream) MIRRORS it: deref to the source's current value
+                let v = match v {
+                    Val::Stream(src) => ctx.sig.stream_val(src).unwrap_or(Val::Nothing),
+                    v => v,
+                };
+                if !matches!(v, Val::Nothing) {
+                    if let Some(slot) = ctx.sig.cells.borrow_mut().get_mut(id) {
+                        slot.1 = v;
+                    }
+                }
+            }
+            Ok(Val::Nothing)
+        }
+        ActionV::ExportStream { id, name } => {
+            {
+                let mut ex = ctx.sig.exports.borrow_mut();
+                match ex.iter().find(|(n, _)| n == &**name) {
+                    Some((_, prior)) if *prior != *id => {
+                        return Err(format!("export!: name ${} already taken", name));
+                    }
+                    Some(_) => {}
+                    None => ex.push((name.to_string(), *id)),
+                }
+            }
+            // same-tick availability in the public snapshot
+            let v = ctx.sig.stream_val(*id);
+            if let Some(v) = v {
+                let mut m = (*ctx.sig.channels).clone();
+                m.insert(name.to_string(), v);
+                ctx.sig.channels = Rc::new(m);
+            }
+            Ok(Val::Nothing)
+        }
         ActionV::CullHostile => {
             let targets = world
                 .entities
@@ -3148,6 +3387,20 @@ fn sf_let(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     for c in binds.chunks(2) {
         let v = evaluate(&c[1], &e, ctx, world)?;
         match &c[0] {
+            // sigiled binding = a fresh private stream initialized to the
+            // value; the name binds the HANDLE (reads snap, sigiled params
+            // and set!/bind!/live take the stream itself)
+            Form::Sym(name) if name.starts_with('$') => {
+                if matches!(v, Val::Action(_)) {
+                    return Err(format!("let: stream {} init must be a value", name));
+                }
+                let id = world.next_id;
+                world.next_id += 1;
+                ctx.sig.cells.borrow_mut().insert(id, (name[1..].to_string(), v));
+                let h = Val::Stream(id);
+                e = e.bind(name.clone(), h.clone());
+                deferred.push((name.clone(), h));
+            }
             Form::Sym(name) => {
                 if matches!(v, Val::Action(_)) {
                     any_action = true;

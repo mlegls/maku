@@ -27,7 +27,7 @@ fn node_name(node: &DynNode) -> &'static str {
         DynNode::Path { .. } => "path",
         DynNode::Frame(..) => "frame",
         DynNode::ConstFrame { .. } => "const-frame",
-        DynNode::Live { .. } => "live",
+        DynNode::Live { .. } | DynNode::LiveStream { .. } => "live",
         DynNode::Clamp { .. } => "clamp",
         DynNode::RotExpr { .. } => "rot-expr",
         DynNode::FnPose(_) => "fn-pose",
