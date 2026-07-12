@@ -17,5 +17,5 @@
 ## 4. Deletions and reference flips
 
 - [x] 4.1 Delete docs/notes/ entirely, docs/language.md, docs/types.md, docs/design.md. Update every reference repo-wide (openspec stubs, openspec/config.yaml, proto source comments, docs/, cards/, README) to the new spec/change-design paths — grep for `docs/notes`, `language.md`, `types.md`, `design.md`; no dangling citation may survive the commit.
-- [ ] 4.2 Completeness gate: for each deleted file, check its section headers have destinations (spec section, change design, crate docs) or are completed-narrative/stale analysis; note exceptions here.
-- [ ] 4.3 Drop "decided/settled/DONE round N" date-tag prose from moved content where lifecycle now carries it. Final `openspec validate --all --specs` green; update MEMORY.md memories that reference notes paths.
+- [x] 4.2 Completeness gate: verified per-file. All notes moved verbatim or distilled; gap found and fixed: intrinsics candidate-verb list + image-processing ideas restored into core-lib-stratification/design.md. Deliberate git-history-only: docs/design.md essay body, mesh-renderer-spec work-order narrative, TODO.md index.
+- [x] 4.3 Drop "decided/settled/DONE round N" date-tag prose from moved content where lifecycle now carries it. Final `openspec validate --all --specs` green; update MEMORY.md memories that reference notes paths.
