@@ -2,14 +2,14 @@
 
 ## 1. Core mechanism
 
-- [ ] 1.1 `(with {$chan v ...} body...)` surface: parse to `ActionV::With { binds, inner }` with override values evaluated at form evaluation (snap); free `$name` in the map stays a load error via the schema pass (interp/schema.rs learns the form's shape; `with` references, it does not declare).
-- [ ] 1.2 exec.rs extent: `TF::Overrides` pushed at execution with fresh override cells allocated from the world counter, `ambient_overrides()` fold (base-id-keyed, innermost wins), ctx carries the composed map during body/callee evaluation. Forks inherit the stack like frames.
-- [ ] 1.3 Control-layer resolution through the map: bare `$x` snap reads, `(set! $x v)` (writes the override cell), `bind!`/`export!` (act on the override cell), stream-handle override values deref at read.
+- [x] 1.1 `(with {$chan v ...} body...)` surface: parse to `ActionV::With { binds, inner }` with override values evaluated at form evaluation (snap); free `$name` in the map stays a load error via the schema pass (interp/schema.rs learns the form's shape; `with` references, it does not declare).
+- [x] 1.2 exec.rs extent: `TF::Overrides` pushed at execution with fresh override cells allocated from the world counter, `ambient_overrides()` fold (base-id-keyed, innermost wins), ctx carries the composed map during body/callee evaluation. Forks inherit the stack like frames.
+- [x] 1.3 Control-layer resolution through the map: bare `$x` snap reads, `(set! $x v)` (writes the override cell), `bind!`/`export!` (act on the override cell), stream-handle override values deref at read.
 
 ## 2. Spawn capture and signal reads
 
-- [ ] 2.1 Spawns under a non-empty ambient map store `Option<Rc<FxHashMap<u64, u64>>>` on their rows (one word, None default; DynNode untouched — 96-byte guard holds); `MotionEvalCtx` gains `overrides` and `DynNode::LiveStream`/`DynNode::Live` reads resolve through it.
-- [ ] 2.2 Lowered-tier reads (`ChanRef::Stream`) resolve through the row map identically — interp and lowered agree bit-exactly under the oracle.
+- [x] 2.1 Spawns under a non-empty ambient map store `Option<Rc<FxHashMap<u64, u64>>>` on their rows (one word, None default; DynNode untouched — 96-byte guard holds); `MotionEvalCtx` gains `overrides` and `DynNode::LiveStream`/`DynNode::Live` reads resolve through it.
+- [x] 2.2 Lowered-tier reads (`ChanRef::Stream`) resolve through the row map identically — interp and lowered agree bit-exactly under the oracle.
 
 ## 3. Tests and gates
 

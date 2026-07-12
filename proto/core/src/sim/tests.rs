@@ -5054,6 +5054,69 @@ fn stale_handles_do_not_target_reused_rows() {
         assert!((x - 5.0).abs() < 1e-9, "follows the set!: {}", x);
     }
 
+    #[test]
+    fn scoped_channel_override_extent_shadowing_and_callee() {
+        const CARD: &str = r#"
+(def $x 9)
+(defpattern check [] (if (= $x 2) (spawn (pose c[2 0]))))
+(defpattern p []
+  (seq
+    (with {$x 1}
+      (set! $x 3)
+      (if (= $x 3) (spawn (pose c[3 0])))
+      (with {$x 2} (check))
+      (if (= $x 3) (spawn (pose c[3 0]))))
+    (if (= $x 9) (spawn (pose c[9 0])))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..3 { sim.step().unwrap(); }
+        assert_eq!(live_count(&sim), 4);
+        assert!(matches!(sim.ctx.sig.stream_val(sim.ctx.sig.stream_id("x").unwrap()), Some(Val::Num(9.0))));
+    }
+
+    #[test]
+    fn scoped_channel_override_aliases_and_captures_live_reads() {
+        const CARD: &str = r#"
+(def $x c[9 0])
+(def $source c[1 0])
+(defpattern p []
+  (seq
+    (with {$x $source} (spawn (live $x)))
+    (set! $source c[5 0])
+    (wait (ticks 3))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..3 { sim.step().unwrap(); }
+        let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
+        assert!(sim.world.entities.overrides(0).is_some(), "spawn did not capture overrides");
+        assert_eq!(x, 5.0);
+        let Some(Val::Pose(base)) = sim.ctx.sig.stream_val(sim.ctx.sig.stream_id("x").unwrap()) else { panic!("missing base") };
+        assert_eq!((base.x, base.y), (9.0, 0.0));
+    }
+
+    /// Card-level lowered live-stream coverage; run this test with
+    /// MAKU_LOWER_ORACLE=1 to assert interpreted/lowered parity.
+    #[test]
+    fn scoped_channel_override_lowered_live_card() {
+        const CARD: &str = r#"
+(def $rank 9)
+(defpattern p []
+  (with {$rank 0.5}
+    (spawn (cart m"live($rank) + t" 0))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 { sim.step().unwrap(); }
+        let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
+        assert!(x > 0.5 && x < 0.6, "override reached lowered read: {x}");
+    }
+
+    #[test]
+    fn scoped_channel_override_free_key_is_schema_error() {
+        let err = Sim::load("(defpattern p [] (with {$missing 1} (seq)))", Some("p"))
+            .err().expect("free with key must fail");
+        assert!(err.contains("unbound stream $missing"), "{err}");
+    }
+
     /// The load-time schema pass: the host-channel manifest is the set of
     /// (from-host :name) sites, and hosts verify it before tick 0.
     #[test]
