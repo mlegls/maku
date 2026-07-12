@@ -55,7 +55,8 @@ interpreted. Gaps, in dependency order:
    (`run_lanes`), collider materialization and render row eval still
    walk per row — their batching rounds build the seam the JIT drops
    into.
-5. **Determinism across tiers**: kernels call shared extern math shims
+5. **Determinism across tiers** (normative surface:
+   `openspec/specs/determinism/spec.md`): kernels call shared extern math shims
    (sin/cos/pow/rem_euclid — no platform libm, no fast-math, GPU tiers
    included); oracle extends to a three-way interpreter ↔ IR-loop ↔ JIT
    check. REVISED 2026-07 (scale target, TODO.md): the contract is same

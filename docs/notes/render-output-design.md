@@ -40,6 +40,9 @@ attribute buffers, wasm typed arrays).
 
 ## Semantics (settled here)
 
+Normative surface: `openspec/specs/render-rows/spec.md` (this note keeps
+the rationale, host API shapes, and implementation deltas).
+
 1. **The render output of a tick is an ordered frame.** Draw order is
    emission order: standing-rule registration order, and within one rule's
    pass, entity row order. This is exactly today's observable order;

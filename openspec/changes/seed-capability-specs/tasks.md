@@ -8,7 +8,7 @@
 
 ## 2. Cross-references
 
-- [ ] 2.1 Add "Normative surface: `openspec/specs/<name>/spec.md`" pointers to the headers of `docs/notes/evolve-design.md`, `docs/notes/render-output-design.md`, and the determinism/oracle sections of `docs/notes/compiled-dyn-design.md` and `docs/notes/perf-campaign.md`. Commit.
+- [x] 2.1 Add "Normative surface: `openspec/specs/<name>/spec.md`" pointers to the headers of `docs/notes/evolve-design.md`, `docs/notes/render-output-design.md`, and the determinism/oracle sections of `docs/notes/compiled-dyn-design.md` and `docs/notes/perf-campaign.md`. Commit.
 
 ## 3. Install (archive) and finish the main specs
 

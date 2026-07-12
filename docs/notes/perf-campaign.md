@@ -34,6 +34,8 @@ perf workstreams are tracked as OpenSpec changes under
 
 ## Verification gates (every round)
 
+Normative surface: `openspec/specs/determinism/spec.md`.
+
 1. `cargo test --release --manifest-path proto/core/Cargo.toml` — full
    core unit suite green.
 2. `MAKU_LOWER_ORACLE=1 cargo test --release --manifest-path

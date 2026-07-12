@@ -1,5 +1,8 @@
 # evolve — design (settled 2026-07)
 
+Normative surface: `openspec/specs/evolve-semantics/spec.md` (this note
+keeps the rationale and implementation sequencing).
+
 The kernel's one stateful signal constructor. Everything else in the dyn
 family is either a plain function of time or lib code over `evolve`.
 
