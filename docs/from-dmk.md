@@ -6,7 +6,7 @@ DMK's semantics — much of the vocabulary corresponds directly, expressed
 through a different composition model (s-expressions, signals, and array
 broadcasting rather than repeater state machines). The tables below map
 DMK constructs to their equivalents here, in the order the tutorials
-introduce them; `docs/language.md` covers the underlying model, and
+introduce them; `openspec/specs/language/spec.md` covers the underlying model, and
 `cards/translations/` contains full ports of DMK scripts with per-line
 decode notes.
 

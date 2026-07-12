@@ -19,4 +19,4 @@ Lib-only; no core changes.
 ## Impact
 
 - `cards/lib/touhou.maku` and card call sites.
-- Stance: `docs/notes/intrinsics.md` (stdlib section). Spellcard templates benefit from `states-return-routing`.
+- Stance: `openspec/specs/language/spec.md` (stdlib section). Spellcard templates benefit from `states-return-routing`.

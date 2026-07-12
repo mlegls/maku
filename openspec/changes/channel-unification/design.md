@@ -4,8 +4,8 @@ Picking up the channel-unification change is the ratification decision. -->
 # channel/cell unification — streams as sigiled bindings
 
 Status: DESIGN CONVERGED (2026-07 discussion), not yet implemented or
-ratified in language.md. Supersedes the cell/channel split of
-language.md §channels/§control-cells if adopted. Sequencing: after the
+ratified in openspec/specs/language/spec.md. Supersedes the cell/channel split of
+openspec/specs/language/spec.md §channels/§control-cells if adopted. Sequencing: after the
 current compiled-dyn/live-evolve work; composes with the model/ split
 (openspec/changes/model-split/design.md), where "live input" becomes one model concept.
 

@@ -30,7 +30,7 @@
 ;; DMK semantics: every 8 frames, fire a 5-arm ring of gems (one color per arm),
 ;; each flying straight outward at speed 4; the ring's base angle advances by
 ;; `increment` each shot, and `increment` grows by 0.4 each shot. This is
-;; language.md SS1's central claim in its hardest form: a sequential accumulator
+;; openspec/specs/language/spec.md SS1's central claim in its hardest form: a sequential accumulator
 ;; threaded across an infinite repeater.
 
 ;; ---------------------------------------------------------------------------

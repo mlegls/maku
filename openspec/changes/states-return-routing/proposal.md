@@ -17,5 +17,5 @@ To be finalized at pick-up; likely one capability covering `states` control-flow
 
 ## Impact
 
-- `proto/core/src/interp/` states machinery; `docs/language.md` states section.
+- `proto/core/src/interp/` states machinery; `openspec/specs/language/spec.md` states section.
 - Related: `stages` re-expression over `states` is tracked in `evolve-followups` — that round may want this landed first.

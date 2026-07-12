@@ -24,5 +24,5 @@ To be finalized at pick-up; likely a `render-styling` capability, plus MODIFIED 
 ## Impact
 
 - `proto/mesh-touhou`, `proto/player`, possibly web host; schema vocabulary in `cards/lib/touhou.maku`.
-- Architecture constraint (decided): mesh renderers are hosts — styling stays pack/host policy; the engine's obligation ends at the typed frame (`docs/notes/render-output-design.md`). Palette tables moving behind host/profile config is tracked in `gameplay-out-of-core`; per-kind schemas and a mesh/sprite-batch kind in `render-schema-per-kind` — this change should sequence with those rather than duplicate them.
-- Current pack behavior/geometry rules: `docs/notes/mesh-renderer-spec.md`.
+- Architecture constraint (decided): mesh renderers are hosts — styling stays pack/host policy; the engine's obligation ends at the typed frame (`openspec/specs/render-rows/spec.md`). Palette tables moving behind host/profile config is tracked in `gameplay-out-of-core`; per-kind schemas and a mesh/sprite-batch kind in `render-schema-per-kind` — this change should sequence with those rather than duplicate them.
+- Current pack behavior/geometry rules: `proto/mesh-touhou/src/lib.rs (crate docs)`.

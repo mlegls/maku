@@ -21,4 +21,4 @@ Lowering-internal; oracle-gated.
 ## Impact
 
 - `proto/core/src/interp/{rulelower,rewrite}.rs`, `sim/exec.rs`.
-- Governing: `docs/notes/compiled-dyn-design.md`; walls in `docs/notes/perf-campaign.md`.
+- Governing: `openspec/specs/lowering/spec.md`; walls in `openspec/specs/perf/spec.md`.

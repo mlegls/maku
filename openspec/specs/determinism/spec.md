@@ -4,12 +4,12 @@
 Why replays, the lowering oracle, and cross-tier equivalence are
 trustworthy: one contract governing op order, math shims, RNG stream
 order, and fallback behavior. Rationale:
-`docs/notes/compiled-dyn-design.md`, `docs/notes/perf-campaign.md`.
+`openspec/specs/lowering/spec.md`, `openspec/specs/perf/spec.md`.
 
 ## Requirements
 ### Requirement: Lowered execution is bit-exact against the interpreter
 Every lowered/compiled evaluation tier (IR interpreter loops today; JIT/native and wasm kernels later) MUST produce bit-identical results to the reference interpreter: same operations, same operation order, shared math shims (no platform libm variance, no fast-math), and the same numeric width per storage class.
-*Why:* replay/scrub, the lowering oracle, and cross-host reproducibility all assume one answer per program. Rationale and gap list: `docs/notes/compiled-dyn-design.md`.
+*Why:* replay/scrub, the lowering oracle, and cross-host reproducibility all assume one answer per program. Rationale and gap list: `openspec/specs/lowering/spec.md`.
 
 #### Scenario: Oracle dual-run
 - **WHEN** the simulation runs with `MAKU_LOWER_ORACLE=1`
@@ -21,7 +21,7 @@ Every lowered/compiled evaluation tier (IR interpreter loops today; JIT/native a
 
 ### Requirement: Changes to lowering or hot paths pass the oracle gates
 A change touching lowering, motion/render/collision hot paths, or numeric evaluation MUST pass the full core unit suite and the ignored oracle card suites (`MAKU_LOWER_ORACLE=1 cargo test --release -- --ignored`) before landing, verified first-hand.
-*Why:* the card corpus is the semantic oracle; unit tests alone have missed order-of-evaluation regressions. Process detail: `docs/notes/perf-campaign.md`.
+*Why:* the card corpus is the semantic oracle; unit tests alone have missed order-of-evaluation regressions. Process detail: `openspec/specs/perf/spec.md`.
 
 #### Scenario: Landing a perf round
 - **WHEN** a perf/lowering change-set is ready to commit
@@ -44,7 +44,7 @@ Random draws MUST consume the single sequential splitmix stream in the order def
 
 ### Requirement: Compiled-path failures fall back to interpretation exactly
 When a compiled pass cannot complete (unlowerable form, runtime kind surprise, schema violation), the driver MUST discard the compiled attempt without world effects and re-run the pass interpreted, reproducing the interpreted behavior, error, and error site exactly.
-*Why:* all-or-nothing at the driver level keeps kernels total and error-free — the JIT totality contract. See `docs/notes/compiled-dyn-design.md`.
+*Why:* all-or-nothing at the driver level keeps kernels total and error-free — the JIT totality contract. See `openspec/specs/lowering/spec.md`.
 
 #### Scenario: Batch abort
 - **WHEN** a batch render fill hits a field whose kind contradicts the schema mid-pass
@@ -52,7 +52,7 @@ When a compiled pass cannot complete (unlowerable form, runtime kind surprise, s
 
 ### Requirement: Cross-lane combining uses a fixed merge order
 Kernels MUST NOT read across lanes or touch world state during a run, and all cross-lane combining (frame item order, collision index build, channel accumulation) MUST occur in a fixed merge order independent of thread schedule, so any legal schedule — including single-threaded wasm — produces bit-identical output.
-*Why:* parallelism is a backend/driver property, not an IR marking; invariants recorded in `docs/notes/render-output-design.md` "Parallelism".
+*Why:* parallelism is a backend/driver property, not an IR marking; invariants recorded in `openspec/specs/render-rows/spec.md` "Parallelism".
 
 #### Scenario: Thread-count invariance
 - **WHEN** the same tick's batch work executes on one thread or many

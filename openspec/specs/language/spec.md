@@ -104,7 +104,7 @@ history as docs/design.md):
   incrementally, so evaluation is incremental — per-frame stepping is
   online evaluation of that function.
 
-Kernel-vs-lib criteria (formerly docs/notes/intrinsics.md):
+Kernel-vs-lib criteria (formerly openspec/specs/language/spec.md):
 
 - Make an operation intrinsic only when it is hard to implement well in
   lib and generically powerful; everything else starts as lib code over
@@ -120,7 +120,7 @@ Kernel-vs-lib criteria (formerly docs/notes/intrinsics.md):
 ## Reference
 
 The full internal language spec follows, moved verbatim from
-docs/language.md. It includes design narrative and open **[decide]**
+openspec/specs/language/spec.md. It includes design narrative and open **[decide]**
 sections; the Requirements above are the current-truth anchor where they
 overlap, and future language changes update both in the same change.
 
@@ -129,7 +129,7 @@ overlap, and future language changes update both in the same change.
 
 A language design for an engine-agnostic bullet-hell system, derived from an audit of Danmokou's (BDSL) semantics, SuperCollider's signal model, and array-language composition. Companion to *Engine-Agnostic Danmaku Core: Design Notes* (architecture/runtime doc); this document specifies the language itself.
 
-Status: consolidated after the DMK translation exercise (`cards/translations/`), a first implementation pass (`proto/` — a Rust interpreter + player whose conformance suite runs the entire translation corpus verbatim, production boss card included), and a gameplay/host sprint (`cards/` — collision/colliders, columns/triggers, scope cancellation, the piloted-rig host contract, imports; `cards/reimu_vs_mima.maku` is the everything-at-once playable witness). Findings F1–F20 and the adopted conventions are folded in here; NOTES.md/SCANNED.md remain as the working record. The prototype's session layer additionally realizes design.md §11's tooling (input + command tapes, snapshots, scrubbing, live eval/swap/layer from the editor). Sections marked **[decide]** are open decisions.
+Status: consolidated after the DMK translation exercise (`cards/translations/`), a first implementation pass (`proto/` — a Rust interpreter + player whose conformance suite runs the entire translation corpus verbatim, production boss card included), and a gameplay/host sprint (`cards/` — collision/colliders, columns/triggers, scope cancellation, the piloted-rig host contract, imports; `cards/reimu_vs_mima.maku` is the everything-at-once playable witness). Findings F1–F20 and the adopted conventions are folded in here; NOTES.md/SCANNED.md remain as the working record. The prototype's session layer additionally realizes the founding design essay (git history: docs/design.md) §11's tooling (input + command tapes, snapshots, scrubbing, live eval/swap/layer from the editor). Sections marked **[decide]** are open decisions.
 
 ---
 
@@ -151,7 +151,7 @@ The translation exercise (every WebDemo script, a production boss spell card, an
 
 **[spec]** Small, closed runtime universe; source syntax may be richer, but typed/load-time lowering assigns every live field to a fixed representation before the card runs.
 
-See [types.md](types.md) for the target inference/elaboration pipeline. In
+See openspec/changes/ir-unification/design.md (formerly docs/types.md) for the target inference/elaboration pipeline. In
 short: semantic types are assigned before representation classification, so
 `Dyn<T>`, collider/render schema checks, and homogeneous vector/matrix
 recognition are not properties of the parser or the SoA runtime layout.
@@ -301,7 +301,7 @@ Rate inference is shape inference; hoisting is automatic. The REPL uses inferred
   spawn pose slot. Calling that value directly is still ordinary function
   application; the dyn coercion happens only at dyn-typed boundaries.
 - `(evolve init step)` is the one stateful dyn constructor (see
-  `docs/notes/evolve-design.md`): it returns a dyn whose value at tick n of its
+  `openspec/specs/evolve-semantics/spec.md`): it returns a dyn whose value at tick n of its
   epoch is the n-fold application of `step`, a `(fn [s ctx] ...)`, to `init`.
   `init` is deferred: it evaluates at epoch START (first advance), so a remat
   that restarts the slot's epoch re-runs it against the current world —
@@ -617,4 +617,4 @@ Settled since the first draft (see cards/translations/NOTES.md for the record): 
 | Typed trees over dynamic tags | DMK v9→v11 negative lesson (GCXU removal) |
 | Collider layers/matrix; contact callbacks | physics-engine layer/mask contact systems, danmaku-specialized |
 | `until` scope cancellation | Trio cancel scopes; DMK phase tokens |
-| Session tapes/snapshots/command tape | design.md §11; deterministic-replay folklore (Bret Victor) |
+| Session tapes/snapshots/command tape | founding essay (git history) §11; deterministic-replay folklore (Bret Victor) |

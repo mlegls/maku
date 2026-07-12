@@ -3,12 +3,12 @@
 ## Purpose
 The tick's render output as an ordered frame of rows and column
 batches: ordering, row-expansion equivalence, schema accretion,
-absence. Rationale: `docs/notes/render-output-design.md`.
+absence. Rationale: `openspec/specs/render-rows/spec.md`.
 
 ## Requirements
 ### Requirement: The tick's render output is an ordered frame
 The render output of a tick MUST be an ordered frame whose draw order is emission order: standing-rule registration order, and within one rule's pass, entity row order. Batching MUST NOT change the observable order — a batch occupies one position in the stream and expanding it in place reproduces the row sequence exactly.
-*Why:* settled before JIT work so optimization has fixed semantics. Rationale: `docs/notes/render-output-design.md`.
+*Why:* settled before JIT work so optimization has fixed semantics. Rationale: `openspec/specs/render-rows/spec.md`.
 
 #### Scenario: Batch-vs-row order
 - **WHEN** a rule's pass is emitted as a column batch instead of rows

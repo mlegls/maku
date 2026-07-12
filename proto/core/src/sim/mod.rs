@@ -917,7 +917,7 @@ impl Sim {
     }
 
     /// One compiled point-rule pass as a column batch (SoA render output,
-    /// docs/notes/render-output-design.md). None aborts to the per-row
+    /// openspec/specs/render-rows/spec.md). None aborts to the per-row
     /// path on any error or per-row kind surprise; evaluation is pure and
     /// schema checks are staged, so an abort leaves the world untouched
     /// and the rerun reproduces interpreted behavior exactly.

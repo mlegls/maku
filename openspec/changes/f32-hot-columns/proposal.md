@@ -19,4 +19,4 @@ Numeric-width contract change; determinism spec restated over f32 widths.
 
 - Gate: run the card corpus with f32 columns against the f64 interpreter via MAKU_LOWER_ORACLE and read the measured drift — the oracle is the precision meter, not a guess.
 - Related: f32 narrowing inside the mesh pack (`proto/mesh-touhou`) is a small independent slice.
-- Governing: scale-target decision (this stub + `docs/notes/perf-campaign.md`), `docs/notes/compiled-dyn-design.md` determinism contract.
+- Governing: scale-target decision (this stub + `openspec/specs/perf/spec.md`), `openspec/specs/lowering/spec.md` determinism contract.

@@ -18,4 +18,4 @@ Lowering-internal; oracle-gated equivalence.
 ## Impact
 
 - `proto/core/src/interp/{lower,rulelower,specs,renderers}.rs` and executors in `sim/`.
-- Blocks `jit-native-codegen`. Governing: `docs/notes/compiled-dyn-design.md` "JIT readiness" (gap list + sequencing).
+- Blocks `jit-native-codegen`. Governing: `openspec/specs/lowering/spec.md` "JIT readiness" (gap list + sequencing).

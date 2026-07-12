@@ -21,4 +21,4 @@ Lowering-internal; likely no user-facing spec changes (oracle-gated equivalence)
 ## Impact
 
 - `proto/core/src/interp/{lower,motion,spawn}.rs`, `proto/core/src/sim/mod.rs`.
-- Governing design + status: `docs/notes/compiled-dyn-design.md` ("JIT readiness" gap list). Methodology: `docs/notes/perf-campaign.md`.
+- Governing design + status: `openspec/specs/lowering/spec.md` ("JIT readiness" gap list). Methodology: `openspec/specs/perf/spec.md`.

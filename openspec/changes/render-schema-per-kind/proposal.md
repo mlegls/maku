@@ -20,4 +20,4 @@ Render-row schema semantics (user-facing at the schema-merge boundary).
 
 - `proto/core/src/sim/render.rs`, `proto/core/src/model/renderers.rs`, mesh pack consumers.
 - Known trade (decided): rule-emitted rows are tick-cadence snapshots; frame-time re-evaluation/interpolation is a host concern.
-- The schema pass half belongs to the shared load-time schema collection decided in `channel-unification`. Governing: `docs/notes/render-output-design.md`, `openspec/changes/entity-representation-flip/design.md`.
+- The schema pass half belongs to the shared load-time schema collection decided in `channel-unification`. Governing: `openspec/specs/render-rows/spec.md`, `openspec/changes/entity-representation-flip/design.md`.

@@ -1,6 +1,6 @@
 //! Control-layer interpreter + prototype signal representation.
 //!
-//! Per language.md §2: Actions are inert data; the scheduler (sim.rs) walks
+//! Per openspec/specs/language/spec.md §2: Actions are inert data; the scheduler (sim.rs) walks
 //! them with an explicit stack. Expressions evaluate instantly and purely;
 //! only Action leaves interact with time or the world. Seq bodies are LAZY.
 //!
@@ -452,7 +452,7 @@ pub struct Ctx {
     /// and per-tick context data.
     pub projector_scope: Option<ProjectorScope>,
     /// True while evaluating a signal slot (eval_sig_at_rate). Signals read
-    /// cells only via `(live name)` (language.md §control-cells: plain reads
+    /// cells only via `(live name)` (openspec/specs/language/spec.md §control-cells: plain reads
     /// belong to the control layer; snap-by-default applies to cells exactly
     /// as to channels), so bare symbols skip the cell scope here — which also
     /// makes def resolution static and inlinable for the signal lowerer.
@@ -1384,12 +1384,12 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
             }
             "evolve" => {
                 // (evolve init step): the stateful signal constructor
-                // (docs/notes/evolve-design.md). The result is a dyn value:
+                // (openspec/specs/evolve-semantics/spec.md). The result is a dyn value:
                 // apply it to a time to sample, or put it in a pose/figure
                 // slot. Under an active scan context the SITE, not the
                 // construction, is the evolve's identity, and the form
                 // evaluates to the settled state value
-                // (docs/notes/evolve-design.md, sited evolves).
+                // (openspec/specs/evolve-semantics/spec.md, sited evolves).
                 if items.len() != 3 {
                     return Err("evolve: expected (evolve init step)".into());
                 }

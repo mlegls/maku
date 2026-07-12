@@ -141,7 +141,7 @@ impl Sim {
 
     /// The tick's render output in draw order: compiled point-rule passes
     /// as column batches, everything else as rows (see
-    /// docs/notes/render-output-design.md). Batches are Rc-shared with the
+    /// openspec/specs/render-rows/spec.md). Batches are Rc-shared with the
     /// sim; hosts read columns in place and may key precomputed layouts on
     /// `Rc::ptr_eq` of `batch.schema`.
     pub fn render_frame(&mut self) -> Vec<RenderItem> {

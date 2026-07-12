@@ -6,7 +6,7 @@ use std::rc::Rc;
 pub struct Pose {
     pub x: f64,
     pub y: f64,
-    /// Degrees, canonical (language.md §11). `None` means the pose only
+    /// Degrees, canonical (openspec/specs/language/spec.md §11). `None` means the pose only
     /// specifies a point; consumers that need facing derive it from context.
     pub theta: Option<f64>,
 }

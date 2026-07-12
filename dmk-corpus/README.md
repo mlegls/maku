@@ -5,9 +5,9 @@ Copyright (c) Bagoum, MIT-licensed (see `Assets/Danmokou.LICENSE.md` upstream);
 vendored here unmodified as reference/test material for the translation exercise. The WebDemo
 scripts (`0NN_*.bdsl`) are the author's graded feature demos — each isolates one
 mechanism. The two boss scripts are full production spell-card fights. Each entry
-below names the language.md claim it stress-tests.
+below names the openspec/specs/language/spec.md claim it stress-tests.
 
-| Script | DMK features | language.md claim under test |
+| Script | DMK features | openspec/specs/language/spec.md claim under test |
 |---|---|---|
 | `020_gsrepeat.bdsl` | `gsrepeat times/circle`, `rvelocity` | §1/§5: repeater = map over `!n`; §4 `rvelocity` = `integrate` (Scanned by construction — is that acceptable for a straight-line bullet, or does it want the Closed `linear` form?) |
 | `030_gcrepeat.bdsl` | `gcrepeat wait(...)` | §3 clocks: wait-between-shots dissolves into birth-time columns |

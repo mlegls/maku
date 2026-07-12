@@ -1,4 +1,4 @@
-//! EDN reader for the pattern language (language.md §11).
+//! EDN reader for the pattern language (openspec/specs/language/spec.md §11).
 //!
 //! Emits canonical trees: reader shorthands desugar at read time —
 //! `c[x y]` → `(cart x y)`, `p[r θ]` → `(polar r θ)`, `m"…"` → the parsed
@@ -361,7 +361,7 @@ fn is_symbol_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || matches!(c, b'_' | b'$')
 }
 
-/// The math macro: parse-only infix (language.md §11). Emits the same
+/// The math macro: parse-only infix (openspec/specs/language/spec.md §11). Emits the same
 /// canonical trees as hand-written s-exprs.
 pub mod math {
     use super::Form;

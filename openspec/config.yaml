@@ -3,8 +3,11 @@ schema: spec-driven
 context: |
   Maku: a deterministic 2D danmaku (bullet-pattern) language + engine
   prototype. Rust workspace at proto/ (core, player, mesh-touhou);
-  cards (programs) in cards/; docs/language.md is the authoritative
-  language spec; docs/notes/*.md are the design-decision authority.
+  cards (programs) in cards/. Decision homes: openspec/specs/ capability
+  specs are the settled-truth authority (language semantics live in
+  specs/language, lowering invariants in specs/lowering, etc.); target
+  designs live as design.md inside their backlog change; docs/ is
+  user-facing only.
 
   Standing constraints every change must respect:
   - Bit-exact determinism across lowering tiers: the compiled/lowered
@@ -23,7 +26,7 @@ context: |
     f32 (planned) — not blanket f64.
   - Scale target: ~10k live bullets is the normal state; 100k-1M is the
     design ceiling, web host included.
-  - Perf methodology (docs/notes/perf-campaign.md): wall-only
+  - Perf methodology (openspec/specs/perf/spec.md): wall-only
     interleaved A/B runs for deltas; macOS sample is attribution ground
     truth; profiled walls can mask regressions.
   - Process: commit each coherent change-set immediately; implementation
@@ -32,5 +35,6 @@ context: |
 
 rules:
   proposal:
-    - Cite governing design notes under docs/notes/ by path; do not
-      restate their decision content.
+    - Cite governing capability specs (openspec/specs/<name>/spec.md) or
+      the owning change's design.md by path; do not restate their
+      decision content.

@@ -97,7 +97,7 @@ Time-varying values:
 - `Dyn<T>`: value of type `T` over a slot-bound axis. The axis is not a free
   type parameter: `t`, `u`, tunnel `s`, and ancestor clocks are bound by the
   expecting slot, and named signal expressions rebind at the referencing slot
-  as described in `language.md` section 3. A `Dyn<T>` value cannot be floated
+  as described in `openspec/specs/language/spec.md` section 3. A `Dyn<T>` value cannot be floated
   out with an unbound hidden axis.
 - `Fn<Num, Pose>` values can coerce to pose dyns at dyn-typed boundaries. The
   function is called as `(f t)` during dyn evaluation and must return a pose.

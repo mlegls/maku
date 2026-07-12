@@ -3,12 +3,12 @@
 ## Purpose
 The kernel's one stateful signal constructor and the dyn ≅ t->T
 equivalence: fold semantics, epochs, closed-vs-live sampling, sited
-evolves. Rationale: `docs/notes/evolve-design.md`.
+evolves. Rationale: `openspec/specs/evolve-semantics/spec.md`.
 
 ## Requirements
 ### Requirement: Dyns are callable and functions are dyns
 Dyn values MUST be callable in application position â `(d 3.5)` samples at epoch-local t = 3.5, and curve dyns take the curve parameter as a second argument `(d t u)`. A plain `(fn [t] ...)` MUST be accepted anywhere a dyn is expected.
-*Why:* dyn<T> â t -> T; application-as-sampling replaces a `sample` builtin. Rationale: `docs/notes/evolve-design.md`.
+*Why:* dyn<T> â t -> T; application-as-sampling replaces a `sample` builtin. Rationale: `openspec/specs/evolve-semantics/spec.md`.
 
 #### Scenario: Sampling by application
 - **WHEN** a dyn value is applied to a number
@@ -43,7 +43,7 @@ Liveness MUST be classified syntactically at construction, rooted at the step fn
 
 ### Requirement: Remat resets per-slot epochs
 Rematting a slot MUST reset that slot's evolve state to a fresh `init` evaluation (seeing the post-remat world) and restart its epoch-local t/tick; slots untouched by the remat MUST keep both their state and their epoch clock.
-*Why:* per-slot epochs are the remat contract; this is how handle-preserving continuity (`(evolve (:pos e) ...)`) is expressed. See `docs/notes/evolve-design.md` and `docs/language.md`.
+*Why:* per-slot epochs are the remat contract; this is how handle-preserving continuity (`(evolve (:pos e) ...)`) is expressed. See `openspec/specs/evolve-semantics/spec.md` and `openspec/specs/language/spec.md`.
 
 #### Scenario: Partial remat
 - **WHEN** `(remat h spec-map)` replaces one slot of an entity with two evolve-bearing slots

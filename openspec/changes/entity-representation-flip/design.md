@@ -7,7 +7,7 @@ the storage/SoA targets below are this change's design input. -->
 Settled architecture targets for the core data model. Moved verbatim
 from the old `docs/notes/TODO.md` "Data Model Targets" section
 (2026-07); these are decisions/constraints, not open work items. The
-spec in `docs/language.md` is authoritative where they overlap.
+spec in `openspec/specs/language/spec.md` is authoritative where they overlap.
 
 - Core semantic shape:
   ```text

@@ -17,4 +17,4 @@ Representation-internal; oracle-gated.
 ## Impact
 
 - Vel batch machinery in `proto/core/src/sim/mod.rs` + motion state.
-- Natural companion to `entity-representation-flip` (fold at pick-up if the design wants). Governing: scale-target consequences, `docs/notes/compiled-dyn-design.md`.
+- Natural companion to `entity-representation-flip` (fold at pick-up if the design wants). Governing: scale-target consequences, `openspec/specs/lowering/spec.md`.

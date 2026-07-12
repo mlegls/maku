@@ -53,7 +53,7 @@ going forward).
 
 # compiled dyn — implementation design
 
-Status: stance REVISED 2026-07 (docs/notes/TODO.md "Compile dyn evaluation
+Status: stance REVISED 2026-07 (the pre-migration TODO, git history: "Compile dyn evaluation
 to a flat program"): load-time lowering to the NumProgram IR now, with a
 JIT/native-codegen tier as the planned destination — codegen compiles the
 same IR per distinct program behind the same (program, input lanes,
@@ -281,7 +281,7 @@ Landed. Deviations/notes vs the plan below:
   interpreter's def-scope rules (params → slot t/u → defs → builtins;
   never caller captures/pos/channels; depth-capped). Sound because
   signal slots now enforce live-only cell reads (Ctx.signal_scope,
-  language.md control-cells) — without that pin, every pattern env's
+  openspec/specs/language/spec.md control-cells) — without that pin, every pattern env's
   cell scope disabled inlining (measured: 100% of corpus lowerings).
 - Measured after inlining: corpus coverage UNCHANGED (the corpus' defs
   don't sit on the hot bail paths). The actual remaining interpreted

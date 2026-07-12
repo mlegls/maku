@@ -18,4 +18,4 @@ Surface-vocabulary stratification; language semantics unchanged.
 ## Impact
 
 - `proto/core/src/interp/builtins/*`, `interp/engine.rs`, `cards/lib/`.
-- Governing principle (no sugar in lang, expansion-shape optimization) and intrinsic criteria: `docs/notes/intrinsics.md`; worklist: `openspec/changes/core-lib-stratification/design.md`.
+- Governing principle (no sugar in lang, expansion-shape optimization) and intrinsic criteria: `openspec/specs/language/spec.md`; worklist: `openspec/changes/core-lib-stratification/design.md`.

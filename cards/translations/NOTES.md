@@ -1,9 +1,9 @@
 # Translation exercise: conventions and findings
 
-Companion to `dmk-corpus/README.md`. **Consolidated into language.md** — the
+Companion to `dmk-corpus/README.md`. **Consolidated into openspec/specs/language/spec.md** — the
 conventions and findings below are folded into the spec as of the consolidation
 pass; this file remains as the working record of how each decision was reached
-(with source citations). Where this file and language.md disagree, language.md
+(with source citations). Where this file and openspec/specs/language/spec.md disagree, openspec/specs/language/spec.md
 wins.
 
 ## EDN conventions
@@ -331,7 +331,7 @@ Image of DMK's `bindArrow` + `frv2(rxy(-a*aixd, b*aiyd))` idiom. More of these
 will accumulate (§1: keep the vocabulary); they are library, not core.
 
 **Array builtins**: `(iota n)` = `[0 1 … n−1]` (APL `!n`, already the notation
-language.md §5 uses for `circle`'s θ column); `(range a b step)` for the general
+openspec/specs/language/spec.md §5 uses for `circle`'s θ column); `(range a b step)` for the general
 case; `(without x xs)` = xs minus elements equal to x. Usable inside `m""` as
 `iota(6)`.
 
@@ -402,7 +402,7 @@ expressed in whatever frame it lexically appears in — add *inside* a rotation
 frame and you have DMK's rotational `rx,ry`; add *outside* the `in-frame`
 wrapper and you have nonrotational `nx,ny` (the world-frame gravity case).
 V2RV2's rotational/nonrotational split is not an operator or data structure;
-it is *where the `+` sits in the tree*. Pending language.md §4 amendment.
+it is *where the `+` sits in the tree*. Pending openspec/specs/language/spec.md §4 amendment.
 
 **Action-level `in-frame` is a distribution law, not new semantics (adopted).**
 `(in-frame f (par a b)) ≡ (par (in-frame f a) (in-frame f b))` (same for
@@ -480,7 +480,7 @@ become body+wait = 140). Under §8's structured trees, sequential is the default
 and the concurrency needs explicit `(fork ...)` into the enclosing scope — an
 inversion of DMK's defaults (DMK: fork by default, `waitchild` to sequence). The
 explicit form is better for cards (concurrency visible in the tree), but `fork` is
-new §8 vocabulary that language.md doesn't have yet.
+new §8 vocabulary that openspec/specs/language/spec.md doesn't have yet.
 
 **F9 — leading-axis meta broadcast.** 080 spawns a 7×9 product (arms × sub-chevron)
 but colors by *arm*: a 7-vector in `:color` must zip against the leading axis of
@@ -505,7 +505,7 @@ lifecycle.
 **F12 — slot-bound time formalized.** See the convention entry: `t`/`u` are
 bound by signal-typed slots (BDSL's movement-function model as a typing rule).
 Corpus forcing case: 060's `polar(2*t, lr*20*t)` mixes slot-bound `t` with
-lexically captured `lr`. Pending language.md §3/§11 amendment.
+lexically captured `lr`. Pending openspec/specs/language/spec.md §3/§11 amendment.
 
 **F13 — `spawn` returns Bullet handles (adopted).** The control layer may hold
 them; `manip` accepts a handle where it accepts a query (a handle is a
@@ -554,14 +554,14 @@ the spawn — would not be applied yet (the frame wraps the let's *result*).
 Rule: a `let` whose bindings include action values becomes an action; its
 bindings execute when the scheduler reaches it, inside the ambient frame, and
 their results (spawn handles) bind. Pure lets are unaffected. Pending
-language.md §4/§6 amendment.
+openspec/specs/language/spec.md §4/§6 amendment.
 
 **F18 (from the prototype) — ambient frames do not cross `fn` boundaries.**
 110's manip callback spawns at `(+ (pos b) …)` — world coordinates; if
 the lexically enclosing anchor frame leaked into the callback, the explosion
 would be double-anchored. Rule: lexical distribution stops at lambdas, the
 same way it stops at embedded patterns (the adapter/caller decides). Verified
-by test (`handles_and_manip`). Pending language.md §4 amendment.
+by test (`handles_and_manip`). Pending openspec/specs/language/spec.md §4 amendment.
 
 **F19 (from the prototype) — difficulty must thread explicitly; pure loops
 fold inline.** Two catches from running Spell 2: (a) `guide-rig` referenced
@@ -663,4 +663,4 @@ total/(times−1); DMK float suffixes `s` (×120, seconds→frames) and `f` (÷1
   a per-bullet column) is the `stages` exit handoff verbatim. New stock:
   `(smooth k sig)` one-pole follower (SC Lag). Channels are role-relative:
   `player` / `nearest-enemy` are one mechanism pointed both ways.
-- Remaining: the language.md consolidation pass.
+- Remaining: the openspec/specs/language/spec.md consolidation pass.

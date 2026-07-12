@@ -11,12 +11,11 @@ replays, rewind, and live code-swap are exact by construction.
 
 | path | contents |
 |---|---|
-| `docs/language.md` | **the language spec** (authoritative) |
-| `docs/design.md` | architecture/runtime design notes |
+| `openspec/specs/language/spec.md` | **the language spec** (authoritative) |
 | `docs/player.md` | the debug player: wire protocol, session/scrubbing, controls |
 | `docs/tutorials/` | learn the language from scratch — runnable companions in `cards/tutorials/` |
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
-| `docs/notes/` | implementation notes, prototype-vs-spec gaps |
+| `openspec/` | specs (settled contracts + design), changes (all open work — `openspec list`) |
 | `proto/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
 | `proto/js/maku/` | publishable browser package wrapping the wasm host |
 | `cards/` | playable cards — start with `reimu_vs_mima.maku` |
