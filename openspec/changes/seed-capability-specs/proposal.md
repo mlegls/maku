@@ -12,7 +12,8 @@ Backlog stub — design/specs/tasks are generated when this is picked up.
   - `determinism`: bit-exact replay across lowering tiers, oracle gating, RNG stream contract (from `docs/notes/compiled-dyn-design.md` and `docs/notes/perf-campaign.md`).
   - `evolve-semantics`: remat/change-col contract, per-slot epochs, closed-vs-live sampling (from `docs/notes/evolve-design.md`, `docs/language.md`).
   - `render-rows`: schema merge-by-key rules, batch/row equivalence, tick-cadence snapshot trade (from `docs/notes/render-output-design.md`).
-- Do NOT bulk-convert design rationale: notes stay the home for why/alternatives/sequencing (decided 2026-07). Specs hold only normative current behavior.
+- Justification MAY live in the spec files (verified against openspec 1.6.0 archive/parse behavior): `## Purpose` and custom `##` sections outside `## Requirements` are preserved verbatim by the archive merge and ignored by the parser; short `*Why:*` lines inside requirement blocks survive too, but MODIFIED deltas replace whole blocks and only scenario loss is machine-checked — so anything longer than a sentence or two goes in `## Rationale`/`## Purpose` or stays a design-note citation.
+- Do NOT bulk-convert long-form design rationale: notes stay the home for alternatives/sequencing/narrative (decided 2026-07).
 - Further capabilities accrete via ordinary change deltas, not another seeding pass.
 
 ## Capabilities
