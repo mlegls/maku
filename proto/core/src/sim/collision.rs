@@ -149,7 +149,7 @@ impl Sim {
                     dyn_figure,
                     tau,
                     MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
-                        .pos_only(),
+                        .with_overrides(self.world.entities.overrides(i)).pos_only(),
                 )?
             };
             self.world.entities.set_sampled_pose(i, tick, Some(p));

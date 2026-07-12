@@ -650,6 +650,7 @@ impl Sim {
     /// to `dyn_figure_pose_in` with pos_only (same ops, same order); the
     /// oracle asserts exactly that.
     pub(crate) fn fast_pos_pose(&self, row: usize, tau: f64, sig: &SigEnv) -> Option<Pose> {
+        if self.world.entities.overrides(row).is_some() { return None; }
         let fig = self.world.entities.dyn_figure(row)?;
         let ptr = vel_chain_ptr(fig)?;
         let schema = self.world.entities.motion_schema(row)?;
@@ -663,7 +664,7 @@ impl Sim {
                 fig,
                 tau,
                 MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, self.world.tick_rate())
-                    .pos_only(),
+                    .with_overrides(self.world.entities.overrides(row)).pos_only(),
             )
             .ok()?;
             assert_eq!(p, want, "fast pos_only pose diverged from interpreter for row {row}");
@@ -790,7 +791,8 @@ impl Sim {
                     let Ok(want) = dyn_figure_pose_in(
                         fig,
                         g.tau[l],
-                        MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, tick_rate).pos_only(),
+                        MotionEvalCtx::with_tick_rate(&mstate, sig, &readers, tick_rate)
+                            .with_overrides(self.world.entities.overrides(row)).pos_only(),
                     ) else {
                         continue;
                     };
@@ -866,6 +868,7 @@ impl Sim {
         row: usize,
         sig: &SigEnv,
     ) -> Option<(VelStepPlanRef<'a>, usize)> {
+        if self.world.entities.overrides(row).is_some() { return None; }
         let plan = vel_step_plan(dyn_figure, sig)?;
         let schema = self.world.entities.motion_schema(row)?;
         let slot = vel_chain_n2_slot(schema, Rc::as_ptr(plan.vel) as usize)?;
@@ -1033,6 +1036,7 @@ impl Sim {
         Ctx {
             sig,
             ambient: Pose::IDENTITY,
+            overrides: None,
             scan: None,
             patterns: Rc::new(std::collections::HashMap::new()),
             macros: Rc::new(std::collections::HashMap::new()),
@@ -1112,7 +1116,8 @@ impl Sim {
             let p = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
-                MotionEvalCtx::with_tick_rate(&state, &self.ctx.sig, &readers, self.world.tick_rate()),
+                MotionEvalCtx::with_tick_rate(&state, &self.ctx.sig, &readers, self.world.tick_rate())
+                    .with_overrides(self.world.entities.overrides(row)),
             )?;
             let vel = self.world.entity_velocity_from_samples(row, self.world.tick);
             let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
@@ -1728,7 +1733,8 @@ impl Sim {
                     if let Ok(p) = dyn_figure_pose_in(
                         dyn_figure,
                         tau,
-                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
+                            .with_overrides(self.world.entities.overrides(i)),
                     ) {
                         let cap = (window * self.world.tick_rate()).ceil() as usize + 1;
                         self.world.entities.push_trace_sample(i, p, cap);
@@ -1795,7 +1801,7 @@ impl Sim {
                             dyn_figure,
                             tau,
                             MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate())
-                                .pos_only(),
+                                .with_overrides(self.world.entities.overrides(i)).pos_only(),
                         ) {
                         Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                         Err(e) => {

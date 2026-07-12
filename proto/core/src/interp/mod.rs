@@ -18,6 +18,7 @@
 //!    way it stops at embedded patterns).
 
 use crate::edn::Form;
+use crate::fxhash::FxHashMap;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;
@@ -281,6 +282,7 @@ pub enum ActionV {
     Loop { names: Vec<Rc<str>>, inits: Vec<Val>, body: Rc<[Form]>, env: Env },
     Recur(Vec<Val>),
     InFrame { frame: FrameSpec, inner: Rc<ActionV> },
+    With { binds: Vec<(u64, Rc<str>, Val)>, inner: Rc<ActionV> },
     /// Bindings whose values are actions execute at scheduler reach-time
     /// (inside the ambient frame); their results (e.g. spawn handles) bind.
     Let { binds: Vec<(Rc<str>, Val)>, body: Rc<[Form]>, env: Env },
@@ -461,6 +463,14 @@ impl SigEnv {
     pub fn stream_val(&self, id: u64) -> Option<Val> {
         self.cells.borrow().get(&id).map(|(_, v)| v.clone())
     }
+    pub fn stream_val_overridden(&self, id: u64, overrides: Option<&FxHashMap<u64, u64>>) -> Option<Val> {
+        let id = overrides.and_then(|m| m.get(&id)).copied().unwrap_or(id);
+        let v = self.stream_val(id)?;
+        match v {
+            Val::Stream(source) => self.stream_val(source),
+            v => Some(v),
+        }
+    }
     /// Resolve a bare stream name (no sigil): top-level defs, then names
     /// published by (export! ...).
     pub fn stream_id(&self, name: &str) -> Option<u64> {
@@ -481,6 +491,7 @@ impl SigEnv {
 pub struct Ctx {
     pub sig: SigEnv,
     pub ambient: Pose,
+    pub overrides: Option<Rc<FxHashMap<u64, u64>>>,
     /// Some(...) while evaluating inside a scan (stateful sites active).
     pub scan: Option<ScanShared>,
     /// Card patterns, callable by name: (bowap 6.0) resolves here when the
@@ -503,6 +514,7 @@ impl Default for Ctx {
         Ctx {
             sig: SigEnv::default(),
             ambient: Pose::IDENTITY,
+            overrides: None,
             scan: None,
             patterns: Rc::new(HashMap::new()),
             macros: Rc::new(HashMap::new()),
@@ -531,7 +543,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                     return match v {
                         Val::Stream(id) => ctx
                             .sig
-                            .stream_val(id)
+                            .stream_val_overridden(id, ctx.overrides.as_deref())
                             .ok_or_else(|| format!("stream {} has no value", name)),
                         v => Ok(v),
                     };
@@ -539,7 +551,7 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 if let Some(id) = ctx.sig.stream_id(&name[1..]) {
                     return ctx
                         .sig
-                        .stream_val(id)
+                        .stream_val_overridden(id, ctx.overrides.as_deref())
                         .ok_or_else(|| format!("stream {} has no value", name));
                 }
                 ctx.sig
@@ -912,6 +924,32 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 return Ok(Val::Nothing);
             }
             "let" => return sf_let(items, env, ctx, world),
+            "with" => {
+                if items.len() < 3 {
+                    return Err("with: expected (with {$stream value ...} body...)".into());
+                }
+                let Form::Map(kvs) = &items[1] else {
+                    return Err("with: expected a binding map".into());
+                };
+                let mut binds = Vec::with_capacity(kvs.len());
+                for (target, value) in kvs.iter() {
+                    let Form::Sym(name) = target else {
+                        return Err("with: binding keys must be $streams".into());
+                    };
+                    if !name.starts_with('$') {
+                        return Err("with: binding keys must be $streams".into());
+                    }
+                    let id = resolve_stream(target, env, ctx, world)?;
+                    let value = match value {
+                        Form::Sym(source) if source.starts_with('$') =>
+                            Val::Stream(resolve_stream(value, env, ctx, world)?),
+                        value => evaluate(value, env, ctx, world)?,
+                    };
+                    binds.push((id, Rc::from(&name[1..]), value));
+                }
+                let inner = Rc::new(ActionV::Seq { items: items[2..].to_vec().into(), env: env.clone() });
+                return Ok(Val::Action(Rc::new(ActionV::With { binds, inner })));
+            }
             "fn" => {
                 let Some(Form::Vector(ps)) = items.get(1) else {
                     return Err("fn: expected param vector".into());
@@ -1319,7 +1357,7 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                         if let Some(id) = sid {
                             let cur = ctx
                                 .sig
-                                .stream_val(id)
+                                .stream_val_overridden(id, ctx.overrides.as_deref())
                                 .ok_or_else(|| format!("stream {} has no value", ch))?;
                             return if ctx.scan.is_some() {
                                 Ok(cur)
@@ -1360,13 +1398,13 @@ fn evaluate_list_inner(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut Wor
                 // Nothing = no value yet: fall through to the host map,
                 // then the default
                 if let Some(Val::Stream(id)) = env.lookup(ch) {
-                    if let Some(v) = ctx.sig.stream_val(id) {
+                    if let Some(v) = ctx.sig.stream_val_overridden(id, ctx.overrides.as_deref()) {
                         if !matches!(v, Val::Nothing) {
                             return Ok(v);
                         }
                     }
                 }
-                if let Some(v) = ctx.sig.stream_id(name).and_then(|id| ctx.sig.stream_val(id)) {
+                if let Some(v) = ctx.sig.stream_id(name).and_then(|id| ctx.sig.stream_val_overridden(id, ctx.overrides.as_deref())) {
                     if !matches!(v, Val::Nothing) {
                         return Ok(v);
                     }
@@ -1873,7 +1911,8 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()).pos_only(),
+        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate())
+            .with_overrides(world.entities.overrides(i)).pos_only(),
     )?;
     let vel = world.entity_velocity_from_samples(i, world.tick);
     let mut view = vec![
@@ -2579,7 +2618,8 @@ pub(crate) fn entity_pose_at(i: usize, world: &World, sig: &SigEnv) -> Result<Po
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()).pos_only(),
+        MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate())
+            .with_overrides(world.entities.overrides(i)).pos_only(),
     )?;
     Ok(Pose::point(p.x, p.y))
 }
@@ -2873,20 +2913,22 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::Nothing)
         }
         ActionV::SetStream { id, name, val } => {
-            ctx.sig.cells.borrow_mut().insert(*id, (name.to_string(), val.clone()));
+            let id = ctx.overrides.as_deref().and_then(|m| m.get(id)).copied().unwrap_or(*id);
+            ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), val.clone()));
             Ok(Val::Nothing)
         }
         ActionV::BindStream { id, expr, env } => {
+            let id = ctx.overrides.as_deref().and_then(|m| m.get(id)).copied().unwrap_or(*id);
             {
                 // one producer per stream: rebinding replaces (hot-swap,
                 // card re-install), keeping the original attachment slot
                 let mut prods = ctx.sig.producers.borrow_mut();
-                match prods.iter_mut().find(|(pid, _, _)| pid == id) {
+                match prods.iter_mut().find(|(pid, _, _)| *pid == id) {
                     Some(slot) => {
                         slot.1 = expr.clone();
                         slot.2 = env.clone();
                     }
-                    None => prods.push((*id, expr.clone(), env.clone())),
+                    None => prods.push((id, expr.clone(), env.clone())),
                 }
             }
             // same-tick availability: run the producer once at attach.
@@ -2900,7 +2942,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     v => v,
                 };
                 if !matches!(v, Val::Nothing) {
-                    if let Some(slot) = ctx.sig.cells.borrow_mut().get_mut(id) {
+                    if let Some(slot) = ctx.sig.cells.borrow_mut().get_mut(&id) {
                         slot.1 = v.clone();
                     }
                     // same-tick availability in the public snapshot for
@@ -2910,7 +2952,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                         .exports
                         .borrow()
                         .iter()
-                        .filter(|(_, i)| i == id)
+                        .filter(|(_, i)| *i == id)
                         .map(|(n, _)| n.clone())
                         .collect();
                     if !exported.is_empty() {
@@ -2925,18 +2967,19 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             Ok(Val::Nothing)
         }
         ActionV::ExportStream { id, name } => {
+            let id = ctx.overrides.as_deref().and_then(|m| m.get(id)).copied().unwrap_or(*id);
             {
                 let mut ex = ctx.sig.exports.borrow_mut();
                 match ex.iter().find(|(n, _)| n == &**name) {
-                    Some((_, prior)) if *prior != *id => {
+                    Some((_, prior)) if *prior != id => {
                         return Err(format!("export!: name ${} already taken", name));
                     }
                     Some(_) => {}
-                    None => ex.push((name.to_string(), *id)),
+                    None => ex.push((name.to_string(), id)),
                 }
             }
             // same-tick availability in the public snapshot
-            let v = ctx.sig.stream_val(*id);
+            let v = ctx.sig.stream_val(id);
             if let Some(v) = v {
                 let mut m = (*ctx.sig.channels).clone();
                 m.insert(name.to_string(), v);
@@ -2973,6 +3016,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                     spec.cache_policy.clone(),
                     spec.dyn_cols.clone(),
                     spec.collider_projector.clone(),
+                    ctx.overrides.clone(),
                 )?;
                 for (field, value) in &spec.sym_fields {
                     world.sym_field_set_at(row, *field, *value);

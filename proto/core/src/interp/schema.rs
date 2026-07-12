@@ -187,6 +187,21 @@ impl Cx<'_> {
                         }
                         Ok(())
                     }
+                    // with references existing streams; its map introduces
+                    // no names into the body scope.
+                    Some("with") => {
+                        let Some(Form::Map(binds)) = items.get(1) else {
+                            return self.walk_children(items, scope);
+                        };
+                        for (target, value) in binds.iter() {
+                            self.walk(target, scope)?;
+                            self.walk(value, scope)?;
+                        }
+                        for body in items.iter().skip(2) {
+                            self.walk(body, scope)?;
+                        }
+                        Ok(())
+                    }
                     Some("set!") => {
                         if let Some(Form::Sym(n)) = items.get(1) {
                             if n.starts_with('$')

@@ -172,6 +172,7 @@ struct EntitySpecStore {
     dyn_cols: Vec<Rc<[(ColName, DynNum)]>>,
     collider_projector: Vec<ColliderProjector>,
     motion_schema: Vec<Rc<MotionStateSchema>>,
+    overrides: Vec<Option<Rc<FxHashMap<u64, u64>>>>,
 }
 
 impl EntitySpecStore {
@@ -182,6 +183,7 @@ impl EntitySpecStore {
             dyn_cols: Vec::with_capacity(max),
             collider_projector: Vec::with_capacity(max),
             motion_schema: Vec::with_capacity(max),
+            overrides: Vec::with_capacity(max),
         }
     }
 
@@ -192,12 +194,14 @@ impl EntitySpecStore {
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         motion_schema: Rc<MotionStateSchema>,
+        overrides: Option<Rc<FxHashMap<u64, u64>>>,
     ) {
         self.dyn_figure.push(dyn_figure);
         self.cache_policy.push(cache_policy);
         self.dyn_cols.push(dyn_cols);
         self.collider_projector.push(collider_projector);
         self.motion_schema.push(motion_schema);
+        self.overrides.push(overrides);
     }
 
     fn set(
@@ -208,12 +212,14 @@ impl EntitySpecStore {
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         motion_schema: Rc<MotionStateSchema>,
+        overrides: Option<Rc<FxHashMap<u64, u64>>>,
     ) {
         self.dyn_figure[row] = dyn_figure;
         self.cache_policy[row] = cache_policy;
         self.dyn_cols[row] = dyn_cols;
         self.collider_projector[row] = collider_projector;
         self.motion_schema[row] = motion_schema;
+        self.overrides[row] = overrides;
     }
 
     fn truncate(&mut self, len: usize) {
@@ -222,6 +228,7 @@ impl EntitySpecStore {
         self.dyn_cols.truncate(len);
         self.collider_projector.truncate(len);
         self.motion_schema.truncate(len);
+        self.overrides.truncate(len);
     }
 
     fn reserve_rows(&mut self, max: usize) {
@@ -239,6 +246,9 @@ impl EntitySpecStore {
         }
         if self.motion_schema.capacity() < max {
             self.motion_schema.reserve_exact(max - self.motion_schema.capacity());
+        }
+        if self.overrides.capacity() < max {
+            self.overrides.reserve_exact(max - self.overrides.capacity());
         }
     }
 }
@@ -455,6 +465,10 @@ impl EntityStore {
         if let Some(slot) = self.specs.dyn_figure.get_mut(row) {
             *slot = dyn_figure;
         }
+    }
+
+    pub fn overrides(&self, row: usize) -> Option<&FxHashMap<u64, u64>> {
+        self.specs.overrides.get(row).and_then(|m| m.as_deref())
     }
 
     pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {
@@ -740,6 +754,7 @@ impl EntityStore {
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         motion_schema: Rc<MotionStateSchema>,
+        overrides: Option<Rc<FxHashMap<u64, u64>>>,
     ) -> usize {
         let i = self.free.swap_remove(slot);
         self.specs.set(
@@ -749,6 +764,7 @@ impl EntityStore {
             dyn_cols,
             collider_projector,
             motion_schema,
+            overrides,
         );
         self.generation[i] = self.generation[i].wrapping_add(1);
         self.alive[i] = true;
@@ -771,6 +787,7 @@ impl EntityStore {
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         motion_schema: Rc<MotionStateSchema>,
+        overrides: Option<Rc<FxHashMap<u64, u64>>>,
     ) -> Result<usize, String> {
         if self.len() >= self.max {
             return Err(format!("spawn: entity capacity {} exhausted", self.max));
@@ -782,6 +799,7 @@ impl EntityStore {
             dyn_cols,
             collider_projector,
             motion_schema,
+            overrides,
         );
         self.generation.push(0);
         self.alive.push(true);
@@ -1245,6 +1263,7 @@ impl World {
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
+        overrides: Option<Rc<FxHashMap<u64, u64>>>,
     ) -> Result<usize, String> {
         let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
         let scanned = is_scanned_figure(&dyn_figure);
@@ -1260,6 +1279,7 @@ impl World {
                 dyn_cols,
                 collider_projector,
                 motion_schema,
+                overrides,
             ))
         } else {
             self.entities.push_row(
@@ -1270,6 +1290,7 @@ impl World {
                 dyn_cols,
                 collider_projector,
                 motion_schema,
+                overrides,
             )
         }
     }

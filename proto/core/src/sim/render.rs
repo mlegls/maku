@@ -176,7 +176,8 @@ impl Sim {
             let pose = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
-                MotionEvalCtx::with_tick_rate(&state, sig, &readers, self.world.tick_rate()),
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, self.world.tick_rate())
+                    .with_overrides(self.world.entities.overrides(i)),
             )
             .ok();
             let trace = self.world.entities.trace_samples(i);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::fxhash::FxHashMap;
 
 #[derive(Clone)]
 pub(super) enum TF {
@@ -14,6 +15,7 @@ pub(super) enum TF {
         idx: usize,
     },
     Frame(FrameSpec),
+    Overrides(Rc<[(u64, u64)]>),
     /// A running `states` machine: the trampoline over ordered states.
     /// stage: 0 = enter cur (arm the goto guard, push the body), 1 = body
     /// exited (completed/cancelled) → bump generation, 2 = route (goto
@@ -53,6 +55,18 @@ pub(super) fn new_task(stack: Vec<TF>) -> Task {
 }
 
 
+fn ambient_overrides(stack: &[TF]) -> Option<Rc<FxHashMap<u64, u64>>> {
+    let mut map = FxHashMap::default();
+    for tf in stack {
+        if let TF::Overrides(pairs) = tf {
+            for (base, scoped) in pairs.iter() {
+                map.insert(*base, *scoped);
+            }
+        }
+    }
+    (!map.is_empty()).then(|| Rc::new(map))
+}
+
 fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
     let mut p = Pose::IDENTITY;
     for tf in stack {
@@ -89,7 +103,8 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
                 node,
                 tau,
                 0.0,
-                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate()),
+                MotionEvalCtx::with_tick_rate(&state, sig, &readers, world.tick_rate())
+                    .with_overrides(world.entities.overrides(i)),
             ) {
                 return p;
             }
@@ -206,7 +221,7 @@ pub(super) fn step_task(
                 task.stack.pop(); // body done: scope closes
                 continue;
             }
-            TF::Frame(_) => {
+            TF::Frame(_) | TF::Overrides(_) => {
                 task.stack.pop();
                 continue;
             }
@@ -323,6 +338,7 @@ pub(super) fn step_task(
         };
         let Some((form, env)) = next else { continue };
         ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
+        ctx.overrides = ambient_overrides(&task.stack);
         let v = evaluate(&form, &env, ctx, world)?;
         if let Val::Action(a) = v {
             if run_action(&a, task, ctx, world, new_tasks)? {
@@ -351,6 +367,7 @@ fn run_action(
         | ActionV::Manipulate { .. }
         | ActionV::Spawn { .. } => {
             ctx.ambient = ambient(&task.stack, world, &ctx.sig.clone());
+            ctx.overrides = ambient_overrides(&task.stack);
             exec_instant(a, ctx, world)?;
             // forks issued inside the instant (callback timed work) are
             // adopted here, inheriting this task's guards
@@ -403,6 +420,18 @@ fn run_action(
             task.stack.push(TF::Frame(frame.clone()));
             run_action(inner, task, ctx, world, new_tasks)
         }
+        ActionV::With { binds, inner } => {
+            let mut pairs = Vec::with_capacity(binds.len());
+            for (base, name, value) in binds {
+                let id = world.next_id;
+                world.next_id += 1;
+                ctx.sig.cells.borrow_mut().insert(id, (name.to_string(), value.clone()));
+                pairs.push((*base, id));
+            }
+            task.stack.push(TF::Overrides(pairs.into()));
+            ctx.overrides = ambient_overrides(&task.stack);
+            run_action(inner, task, ctx, world, new_tasks)
+        }
         ActionV::Loop { names, inits, body, env } => {
             task.stack.push(TF::Loop {
                 names: names.clone(),
@@ -431,6 +460,7 @@ fn run_action(
                 .iter()
                 .filter_map(|tf| match tf {
                     TF::Frame(f) => Some(TF::Frame(f.clone())),
+                    TF::Overrides(m) => Some(TF::Overrides(m.clone())),
                     _ => None,
                 })
                 .collect();
@@ -447,6 +477,7 @@ fn run_action(
                     .iter()
                     .filter_map(|tf| match tf {
                         TF::Frame(f) => Some(TF::Frame(f.clone())),
+                        TF::Overrides(m) => Some(TF::Overrides(m.clone())),
                         _ => None,
                     })
                     .collect();
@@ -486,6 +517,7 @@ fn run_action(
                     .iter()
                     .filter_map(|tf| match tf {
                         TF::Frame(f) => Some(TF::Frame(f.clone())),
+                        TF::Overrides(m) => Some(TF::Overrides(m.clone())),
                         _ => None,
                     })
                     .collect();
