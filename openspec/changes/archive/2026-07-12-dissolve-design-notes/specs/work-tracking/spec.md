@@ -1,10 +1,6 @@
 # work-tracking delta
 
-## RENAMED Requirements
-- FROM: `### Requirement: Decisions live in design notes, not the backlog`
-- TO: `### Requirement: Decisions live in capability specs and change designs`
-
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Decisions live in capability specs and change designs
 Settled decisions SHALL live in `openspec/specs/` capability specs: requirements for the normative surface, `## Design`/`## Rationale`/`## Reference` sections for the load-bearing why and detailed prose. The rationale trail of a decision SHALL live in the design.md of the change that made it (archived with the change). Target designs for unimplemented work SHALL live as design.md inside the corresponding backlog change. There SHALL be no standalone design-notes directory.
@@ -16,6 +12,8 @@ Settled decisions SHALL live in `openspec/specs/` capability specs: requirements
 #### Scenario: Converged but unratified design
 - **WHEN** a design has converged but is not yet ratified or implemented
 - **THEN** it lives as its backlog change's design.md, and picking up the change is the ratification decision
+
+## MODIFIED Requirements
 
 ### Requirement: Open work lives as OpenSpec changes
 Every open work item SHALL be tracked as an OpenSpec change under `openspec/changes/`, containing at minimum a `proposal.md` (a backlog stub). Design, specs, and tasks artifacts SHALL be generated when the work is picked up; a stub MAY carry a design.md early when a converged target design exists for it.
@@ -40,3 +38,7 @@ Measurement methodology, the perf rig commands, verification gates, and standing
 ### Requirement: TODO.md is an index only
 **Reason**: `docs/notes/` (including TODO.md) is deleted; `openspec list` and `openspec/changes/` are the index, and capability specs are the decision record.
 **Migration**: consult `openspec list` for open work and `openspec/specs/` for decisions.
+
+### Requirement: Decisions live in design notes, not the backlog
+**Reason**: superseded — there is no design-notes directory anymore; decisions live in capability specs and change designs (see the ADDED requirement of that name).
+**Migration**: cite `openspec/specs/<capability>/spec.md` or the owning change's design.md instead of a note path.
