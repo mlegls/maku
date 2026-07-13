@@ -990,6 +990,9 @@ pub struct World {
     /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
     pub symbols: SymbolTable,
+    /// Non-reused scope for source-to-plan memoization. Clones get a fresh
+    /// scope because their append-only symbol/field layouts may diverge.
+    pub(crate) filter_cache_identity: Rc<()>,
     /// Ephemeral host-facing render output emitted by tick/render rules for
     /// the current tick, in draw order: interpreted rows one at a time,
     /// compiled point-rule passes as column batches.
@@ -1018,6 +1021,7 @@ impl Clone for World {
             rng: self.rng,
             fields: self.fields.clone(),
             symbols: self.symbols.clone(),
+            filter_cache_identity: Rc::new(()),
             render_rows: self.render_rows.clone(),
             render_schema: self.render_schema.clone(),
             declared_render_schemas: self.declared_render_schemas.clone(),
@@ -1132,6 +1136,7 @@ impl World {
             rng: 0x9e37_79b9_7f4a_7c15,
             fields: WorldFields::default(),
             symbols: SymbolTable::default(),
+            filter_cache_identity: Rc::new(()),
             render_rows: Vec::new(),
             render_schema: FxHashMap::default(),
             declared_render_schemas: FxHashMap::default(),

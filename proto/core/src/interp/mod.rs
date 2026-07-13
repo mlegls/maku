@@ -23,8 +23,9 @@ use crate::sim::kernel::{
     KernelInputSource, KernelLanes, KernelOutputBinding, KernelOutputTarget, KernelPlan,
     KernelOutputs, KernelScratch, MaskLane, MergePolicy,
 };
-use crate::fxhash::FxHashMap;
+use crate::fxhash::{FxHashMap, FxHasher};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -410,7 +411,33 @@ impl Env {
         self.0.as_ref().map_or(0, |rc| Rc::as_ptr(rc) as usize)
     }
     pub fn bind(&self, name: Rc<str>, val: Val) -> Env {
-        Env(Some(Rc::new(EnvNode { name, val, next: self.clone() })))
+        Env(Some(Rc::new(EnvNode {
+            name,
+            val,
+            next: self.clone(),
+        })))
+    }
+    fn shadow_hash(&self) -> u64 {
+        let mut state = FxHasher::default();
+        let mut current = &self.0;
+        while let Some(node) = current {
+            node.name.hash(&mut state);
+            current = &node.next.0;
+        }
+        state.finish()
+    }
+    fn same_shadow_chain(&self, other: &Env) -> bool {
+        let (mut left, mut right) = (&self.0, &other.0);
+        loop {
+            match (left, right) {
+                (Some(left_node), Some(right_node)) if left_node.name == right_node.name => {
+                    left = &left_node.next.0;
+                    right = &right_node.next.0;
+                }
+                (None, None) => return true,
+                _ => return false,
+            }
+        }
     }
     pub fn lookup(&self, name: &str) -> Option<Val> {
         let mut cur = &self.0;
@@ -463,6 +490,11 @@ pub struct SigEnv {
     /// and set per row from the spawn-captured map (signal time); never
     /// snapshotted.
     pub overrides: Option<Rc<FxHashMap<u64, u64>>>,
+    /// Structurally keyed typed predicate plans. `SigEnv` clones share this
+    /// load/session cache; the immutable environment's shadow set and the
+    /// canonical form tree identify equivalent query lowering requests.
+    pub(crate) filter_plans:
+        Rc<std::cell::RefCell<FxHashMap<FilterPlanCacheKey, Vec<CachedFilterPlan>>>>,
 }
 
 impl Default for SigEnv {
@@ -475,6 +507,7 @@ impl Default for SigEnv {
             streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             host_streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             producers: Rc::new(std::cell::RefCell::new(Vec::new())),
+            filter_plans: Rc::new(std::cell::RefCell::new(FxHashMap::default())),
             overrides: None,
         }
     }
@@ -2170,6 +2203,382 @@ pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
 pub(crate) struct FilterPlan {
     pub predicate: KernelPlan,
     pub short_circuit_prefix: usize,
+    artifact: Rc<CpuFilterArtifact>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FilterPlanCacheKey {
+    source: u64,
+    shadows: u64,
+    world: usize,
+    defs: usize,
+    prefix: bool,
+}
+
+pub(crate) struct CachedFilterPlan {
+    params: Rc<[Form]>,
+    source: Form,
+    env: Env,
+    _world: Rc<()>,
+    _defs: Rc<HashMap<String, Form>>,
+    plan: Rc<FilterPlan>,
+}
+
+fn hash_filter_source(form: &Form, state: &mut FxHasher) {
+    match form {
+        Form::Num(value) => {
+            0u8.hash(state);
+            value.to_bits().hash(state);
+        }
+        Form::Str(value) => {
+            1u8.hash(state);
+            value.hash(state);
+        }
+        Form::Sym(value) => {
+            2u8.hash(state);
+            value.hash(state);
+        }
+        Form::Kw(value) => {
+            3u8.hash(state);
+            value.hash(state);
+        }
+        Form::Bool(value) => {
+            4u8.hash(state);
+            value.hash(state);
+        }
+        Form::List(items) | Form::Vector(items) => {
+            (if matches!(form, Form::List(_)) { 5u8 } else { 6u8 }).hash(state);
+            items.len().hash(state);
+            for item in items.iter() {
+                hash_filter_source(item, state);
+            }
+        }
+        Form::Map(items) => {
+            7u8.hash(state);
+            items.len().hash(state);
+            for (key, value) in items.iter() {
+                hash_filter_source(key, state);
+                hash_filter_source(value, state);
+            }
+        }
+    }
+}
+
+fn filter_source_identity(params: &[Form], body: &Form) -> u64 {
+    let mut state = FxHasher::default();
+    params.len().hash(&mut state);
+    for param in params {
+        hash_filter_source(param, &mut state);
+    }
+    hash_filter_source(body, &mut state);
+    state.finish()
+}
+
+fn filter_plan_cache_parts<'a>(
+    query: &'a Val,
+    world: &World,
+    defs: usize,
+    prefix: bool,
+) -> Option<(FilterPlanCacheKey, &'a Rc<[Form]>, &'a Form, &'a Env)> {
+    let Val::Fn { params, body, env } = query else {
+        return None;
+    };
+    let [body] = &body[..] else {
+        return None;
+    };
+    Some((
+        FilterPlanCacheKey {
+            source: filter_source_identity(params, body),
+            shadows: env.shadow_hash(),
+            world: Rc::as_ptr(&world.filter_cache_identity) as usize,
+            defs,
+            prefix,
+        },
+        params,
+        body,
+        env,
+    ))
+}
+
+fn cached_filter_plan(
+    query: &Val,
+    ctx: &Ctx,
+    world: &World,
+    prefix: bool,
+) -> Option<Rc<FilterPlan>> {
+    let (key, params, body, env) = filter_plan_cache_parts(
+        query,
+        world,
+        Rc::as_ptr(&ctx.sig.defs) as usize,
+        prefix,
+    )?;
+    let plan = ctx.sig
+        .filter_plans
+        .borrow()
+        .get(&key)
+        .and_then(|bucket| {
+            bucket
+                .iter()
+                .find(|cached| {
+                    cached.params.as_ref() == params.as_ref()
+                        && cached.source == *body
+                        && cached.env.same_shadow_chain(env)
+                })
+        })
+        .map(|cached| cached.plan.clone());
+    plan
+}
+
+fn cache_filter_plan(
+    query: &Val,
+    ctx: &Ctx,
+    world: &World,
+    prefix: bool,
+    plan: &Rc<FilterPlan>,
+) {
+    let Some((key, params, body, env)) = filter_plan_cache_parts(
+        query,
+        world,
+        Rc::as_ptr(&ctx.sig.defs) as usize,
+        prefix,
+    ) else {
+        return;
+    };
+    let mut plans = ctx.sig.filter_plans.borrow_mut();
+    let bucket = plans.entry(key).or_default();
+    if let Some(cached) = bucket
+        .iter_mut()
+        .find(|cached| {
+            cached.params.as_ref() == params.as_ref()
+                && cached.source == *body
+                && cached.env.same_shadow_chain(env)
+        })
+    {
+        cached.plan = plan.clone();
+        return;
+    }
+    bucket.push(CachedFilterPlan {
+        params: params.clone(),
+        source: body.clone(),
+        env: env.clone(),
+        _world: world.filter_cache_identity.clone(),
+        _defs: ctx.sig.defs.clone(),
+        plan: plan.clone(),
+    });
+}
+
+#[derive(Clone, Debug)]
+struct CpuFilterArtifact {
+    tests: Vec<CpuFilterTest>,
+    short_circuit_prefix: usize,
+}
+
+#[derive(Clone, Debug)]
+enum CpuFilterTest {
+    Kind(CpuRowKind),
+    SymEq { slot: usize, value: Symbol },
+    Never,
+    NumCmp {
+        op: CmpOp,
+        lhs: CpuFilterNum,
+        rhs: CpuFilterNum,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CpuRowKind {
+    Pather,
+    Point,
+    Curve,
+    Other,
+}
+
+impl CpuRowKind {
+    fn parse(name: &str) -> Self {
+        match name {
+            "pather" => Self::Pather,
+            "point" => Self::Point,
+            "curve" => Self::Curve,
+            _ => Self::Other,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum CpuFilterNum {
+    Lit(f64),
+    Tau,
+    Tick,
+    ColOr(FieldSlots, Box<CpuFilterNum>),
+    Add(Box<CpuFilterNum>, Box<CpuFilterNum>),
+    Sub(Box<CpuFilterNum>, Box<CpuFilterNum>),
+    Mul(Box<CpuFilterNum>, Box<CpuFilterNum>),
+}
+
+fn lower_cpu_filter_num(value: &RowNum, world: &World) -> CpuFilterNum {
+    match value {
+        RowNum::Lit(value) => CpuFilterNum::Lit(*value),
+        RowNum::Tau => CpuFilterNum::Tau,
+        RowNum::Tick => CpuFilterNum::Tick,
+        RowNum::ColOr(name, default) => CpuFilterNum::ColOr(
+            world.field_slots(name),
+            Box::new(lower_cpu_filter_num(default, world)),
+        ),
+        RowNum::Add(left, right) => CpuFilterNum::Add(
+            Box::new(lower_cpu_filter_num(left, world)),
+            Box::new(lower_cpu_filter_num(right, world)),
+        ),
+        RowNum::Sub(left, right) => CpuFilterNum::Sub(
+            Box::new(lower_cpu_filter_num(left, world)),
+            Box::new(lower_cpu_filter_num(right, world)),
+        ),
+        RowNum::Mul(left, right) => CpuFilterNum::Mul(
+            Box::new(lower_cpu_filter_num(left, world)),
+            Box::new(lower_cpu_filter_num(right, world)),
+        ),
+    }
+}
+
+impl CpuFilterArtifact {
+    fn lower(predicate: &RowPredicate, world: &World, short_circuit_prefix: usize) -> Self {
+        let tests = predicate
+            .tests
+            .iter()
+            .map(|test| match test {
+                RowTest::KwEq { field, value } => {
+                    if field.as_ref() == "kind" {
+                        return CpuFilterTest::Kind(CpuRowKind::parse(value));
+                    }
+                    match (world.field_slots(field).sym, world.symbols.lookup(value)) {
+                        (Some(slot), Some(value)) => CpuFilterTest::SymEq { slot, value },
+                        _ => CpuFilterTest::Never,
+                    }
+                }
+                RowTest::NumCmp { op, lhs, rhs } => CpuFilterTest::NumCmp {
+                    op: *op,
+                    lhs: lower_cpu_filter_num(lhs, world),
+                    rhs: lower_cpu_filter_num(rhs, world),
+                },
+            })
+            .collect();
+        Self {
+            tests,
+            short_circuit_prefix,
+        }
+    }
+
+    fn execute(&self, world: &World, rows: &mut Vec<usize>) -> bool {
+        rows.clear();
+        if self.short_circuit_prefix == 0
+            && self
+                .tests
+                .iter()
+                .any(|test| matches!(test, CpuFilterTest::Never))
+        {
+            return true;
+        }
+        for row in 0..world.entities.len() {
+            if !world.entities.is_alive(row) {
+                continue;
+            }
+            match cpu_filter_tests_match(
+                &self.tests,
+                self.short_circuit_prefix,
+                row,
+                world,
+            ) {
+                Some(true) => rows.push(row),
+                Some(false) => {}
+                None => {
+                    rows.clear();
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+fn cpu_filter_num(value: &CpuFilterNum, row: usize, world: &World) -> Option<f64> {
+    Some(match value {
+        CpuFilterNum::Lit(value) => *value,
+        CpuFilterNum::Tau => world.entity_tau(row, world.tick),
+        CpuFilterNum::Tick => world.tick as f64,
+        CpuFilterNum::ColOr(slots, default) => {
+            if world.sym_field_at_slot(row, slots.sym).is_some() {
+                return None;
+            }
+            match world.col_at_slot(row, slots.num) {
+                Some(value) => value,
+                None => cpu_filter_num(default, row, world)?,
+            }
+        }
+        CpuFilterNum::Add(left, right)
+        | CpuFilterNum::Sub(left, right)
+        | CpuFilterNum::Mul(left, right) => {
+            let (left, right) = (
+                cpu_filter_num(left, row, world),
+                cpu_filter_num(right, row, world),
+            );
+            let (left, right) = (left?, right?);
+            match value {
+                CpuFilterNum::Add(_, _) => left + right,
+                CpuFilterNum::Sub(_, _) => left - right,
+                CpuFilterNum::Mul(_, _) => left * right,
+                _ => unreachable!(),
+            }
+        }
+    })
+}
+
+fn cpu_filter_tests_match(
+    tests: &[CpuFilterTest],
+    short_circuit_prefix: usize,
+    row: usize,
+    world: &World,
+) -> Option<bool> {
+    let mut all_pass = true;
+    for (index, test) in tests.iter().enumerate() {
+        let passes = match test {
+            CpuFilterTest::Kind(value) => {
+                world.entities.dyn_figure(row).is_some_and(|figure| {
+                    let kind = match figure.repr() {
+                        FigureDynRepr::Pose(_) if world.entities.is_traced(row) => {
+                            CpuRowKind::Pather
+                        }
+                        FigureDynRepr::Pose(_) => CpuRowKind::Point,
+                        FigureDynRepr::Curve { .. } => CpuRowKind::Curve,
+                    };
+                    kind == *value
+                })
+            }
+            CpuFilterTest::SymEq { slot, value } => {
+                world.sym_field_at_slot(row, Some(*slot)) == Some(*value)
+            }
+            CpuFilterTest::Never => false,
+            CpuFilterTest::NumCmp { op, lhs, rhs } => {
+                let (left, right) = (
+                    cpu_filter_num(lhs, row, world),
+                    cpu_filter_num(rhs, row, world),
+                );
+                let (left, right) = (left?, right?);
+                match op {
+                    CmpOp::Lt => left < right,
+                    CmpOp::Le => left <= right,
+                    CmpOp::Gt => left > right,
+                    CmpOp::Ge => left >= right,
+                    CmpOp::Eq => (left - right).abs() < 1e-9,
+                }
+            }
+        };
+        if !passes {
+            all_pass = false;
+        }
+        if !all_pass && index + 1 >= short_circuit_prefix {
+            break;
+        }
+    }
+    Some(all_pass)
 }
 
 #[derive(Default)]
@@ -2477,18 +2886,70 @@ impl RowPredicate {
             FallbackPolicy::WholePlanInterpreted,
             MergePolicy::CanonicalRowOrder,
         ).ok()?;
+        let artifact =
+            Rc::new(CpuFilterArtifact::lower(self, world, short_circuit_prefix));
         Some(FilterPlan {
             predicate,
             short_circuit_prefix,
+            artifact,
         })
     }
+}
+
+#[derive(Default)]
+struct FilterExecScratch {
+    inputs: KernelLanes,
+    kernel: KernelScratch,
+    outputs: KernelOutputs,
+}
+
+thread_local! {
+    static FILTER_EXEC_SCRATCH: std::cell::RefCell<FilterExecScratch> =
+        std::cell::RefCell::new(FilterExecScratch::default());
+}
+
+/// Execute the cached row-fused backend artifact when the typed program uses
+/// the row-filter subset. Oracle mode also executes the generic op-major
+/// backend and compares its complete pre-effect match set.
+pub(crate) fn execute_filter_plan(
+    plan: &FilterPlan,
+    world: &World,
+    rows: &mut Vec<usize>,
+) -> bool {
+    let kernel = &plan.predicate;
+    if kernel.domain() != IterationDomain::EntityRows
+        || kernel.fallback() != FallbackPolicy::WholePlanInterpreted
+        || kernel.merge() != MergePolicy::CanonicalRowOrder
+    {
+        rows.clear();
+        return false;
+    }
+    let artifact = &plan.artifact;
+    let accepted = artifact.execute(world, rows);
+    if lower::oracle_enabled() {
+        let mut expected = Vec::new();
+        let generic_accepted = execute_filter_plan_generic(plan, world, &mut expected);
+        assert_eq!(
+            accepted,
+            generic_accepted,
+            "fused filter fallback decision disagrees with generic kernel"
+        );
+        if accepted {
+            assert_eq!(
+                *rows,
+                expected,
+                "fused filter rows disagree with generic kernel"
+            );
+        }
+    }
+    accepted
 }
 
 /// Gather every declared typed lane before executing the callback-free
 /// predicate kernel. A numeric field containing a symbol abandons the plan
 /// before execution, allowing the caller to rerun the entire semantic query
 /// or rule with no partial matches or effects.
-pub(crate) fn execute_filter_plan(
+fn execute_filter_plan_generic(
     plan: &FilterPlan,
     world: &World,
     rows: &mut Vec<usize>,
@@ -2501,95 +2962,102 @@ pub(crate) fn execute_filter_plan(
     {
         return false;
     }
-    let candidates = (0..world.entities.len())
-        .filter(|&row| world.entities.is_alive(row))
-        .collect::<Vec<_>>();
-    if candidates.is_empty() {
+    rows.extend((0..world.entities.len()).filter(|&row| world.entities.is_alive(row)));
+    if rows.is_empty() {
         return true;
     }
 
-    let layout = kernel.program().inputs();
-    let lanes = candidates.len();
-    let mut inputs = KernelLanes {
-        lanes,
-        f32s: vec![0.0; usize::from(layout.f32s) * lanes],
-        f64s: vec![0.0; usize::from(layout.f64s) * lanes],
-        u32s: vec![0; usize::from(layout.u32s) * lanes],
-        u64s: vec![0; usize::from(layout.u64s) * lanes],
-        symbols: vec![0; usize::from(layout.symbols) * lanes],
-        handles: vec![0; usize::from(layout.handles) * lanes],
-        masks: vec![MaskLane::FALSE; usize::from(layout.masks) * lanes],
-    };
-    for binding in &kernel.bindings().inputs {
-        let start = usize::from(binding.input.index()) * lanes;
-        match (binding.input, binding.source) {
-            (KernelInputRef::F64(_), KernelInputSource::Direct { column }) => {
-                for (lane, &row) in candidates.iter().enumerate() {
-                    inputs.f64s[start + lane] =
-                        world.col_at_slot(row, Some(column as usize)).unwrap_or(0.0);
+    FILTER_EXEC_SCRATCH.with(|cell| {
+        let mut scratch = cell.borrow_mut();
+        let FilterExecScratch {
+            inputs,
+            kernel: kernel_scratch,
+            outputs,
+        } = &mut *scratch;
+        let layout = kernel.program().inputs();
+        let lanes = rows.len();
+        inputs.lanes = lanes;
+        inputs.f32s.resize(usize::from(layout.f32s) * lanes, 0.0);
+        inputs.f64s.resize(usize::from(layout.f64s) * lanes, 0.0);
+        inputs.u32s.resize(usize::from(layout.u32s) * lanes, 0);
+        inputs.u64s.resize(usize::from(layout.u64s) * lanes, 0);
+        inputs.symbols.resize(usize::from(layout.symbols) * lanes, 0);
+        inputs.handles.resize(usize::from(layout.handles) * lanes, 0);
+        inputs
+            .masks
+            .resize(usize::from(layout.masks) * lanes, MaskLane::FALSE);
+        for binding in &kernel.bindings().inputs {
+            let start = usize::from(binding.input.index()) * lanes;
+            match (binding.input, binding.source) {
+                (KernelInputRef::F64(_), KernelInputSource::Direct { column }) => {
+                    for (lane, &row) in rows.iter().enumerate() {
+                        inputs.f64s[start + lane] =
+                            world.col_at_slot(row, Some(column as usize)).unwrap_or(0.0);
+                    }
                 }
-            }
-            (KernelInputRef::F64(_), KernelInputSource::Tick) => {
-                inputs.f64s[start..start + lanes].fill(world.tick as f64);
-            }
-            (KernelInputRef::F64(_), KernelInputSource::Axis) => {
-                for (lane, &row) in candidates.iter().enumerate() {
-                    inputs.f64s[start + lane] = world.entity_tau(row, world.tick);
+                (KernelInputRef::F64(_), KernelInputSource::Tick) => {
+                    inputs.f64s[start..start + lanes].fill(world.tick as f64);
                 }
-            }
-            (KernelInputRef::U32(_), KernelInputSource::Direct { .. }) => {
-                for (lane, &row) in candidates.iter().enumerate() {
-                    inputs.u32s[start + lane] =
-                        world.entities.dyn_figure(row).map_or(3, |figure| match figure.repr() {
-                            FigureDynRepr::Pose(_) if world.entities.is_traced(row) => 0,
-                            FigureDynRepr::Pose(_) => 1,
-                            FigureDynRepr::Curve { .. } => 2,
-                        });
+                (KernelInputRef::F64(_), KernelInputSource::Axis) => {
+                    for (lane, &row) in rows.iter().enumerate() {
+                        inputs.f64s[start + lane] = world.entity_tau(row, world.tick);
+                    }
                 }
-            }
-            (KernelInputRef::Symbol(_), KernelInputSource::Direct { column }) => {
-                for (lane, &row) in candidates.iter().enumerate() {
-                    inputs.symbols[start + lane] = world
-                        .sym_field_at_slot(row, Some(column as usize))
-                        .map_or(0, |value| value.0);
+                (KernelInputRef::U32(_), KernelInputSource::Direct { .. }) => {
+                    for (lane, &row) in rows.iter().enumerate() {
+                        inputs.u32s[start + lane] =
+                            world.entities.dyn_figure(row).map_or(3, |figure| match figure.repr() {
+                                FigureDynRepr::Pose(_) if world.entities.is_traced(row) => 0,
+                                FigureDynRepr::Pose(_) => 1,
+                                FigureDynRepr::Curve { .. } => 2,
+                            });
+                    }
                 }
-            }
-            (KernelInputRef::Symbol(_), KernelInputSource::State { slot }) => {
-                if candidates.iter().any(|&row| {
-                    world.sym_field_at_slot(row, Some(slot as usize)).is_some()
-                }) {
-                    return false;
+                (KernelInputRef::Symbol(_), KernelInputSource::Direct { column }) => {
+                    for (lane, &row) in rows.iter().enumerate() {
+                        inputs.symbols[start + lane] = world
+                            .sym_field_at_slot(row, Some(column as usize))
+                            .map_or(0, |value| value.0);
+                    }
                 }
-            }
-            (KernelInputRef::Mask(_), KernelInputSource::State { slot }) => {
-                for (lane, &row) in candidates.iter().enumerate() {
-                    inputs.masks[start + lane] = MaskLane::new(
-                        world.col_at_slot(row, Some(slot as usize)).is_some(),
-                    );
+                (KernelInputRef::Symbol(_), KernelInputSource::State { slot }) => {
+                    if rows.iter().any(|&row| {
+                        world.sym_field_at_slot(row, Some(slot as usize)).is_some()
+                    }) {
+                        return false;
+                    }
                 }
-            }
-            (KernelInputRef::Mask(_), KernelInputSource::Channel { channel }) => {
-                for (lane, &row) in candidates.iter().enumerate() {
-                    inputs.masks[start + lane] = MaskLane::new(
-                        world.sym_field_at_slot(row, Some(channel as usize)).is_some(),
-                    );
+                (KernelInputRef::Mask(_), KernelInputSource::State { slot }) => {
+                    for (lane, &row) in rows.iter().enumerate() {
+                        inputs.masks[start + lane] = MaskLane::new(
+                            world.col_at_slot(row, Some(slot as usize)).is_some(),
+                        );
+                    }
                 }
+                (KernelInputRef::Mask(_), KernelInputSource::Channel { channel }) => {
+                    for (lane, &row) in rows.iter().enumerate() {
+                        inputs.masks[start + lane] = MaskLane::new(
+                            world.sym_field_at_slot(row, Some(channel as usize)).is_some(),
+                        );
+                    }
+                }
+                _ => return false,
             }
-            _ => return false,
         }
-    }
 
-    let mut scratch = KernelScratch::default();
-    let mut outputs = KernelOutputs::default();
-    if kernel::execute(kernel, &inputs, &mut scratch, &mut outputs).is_err() {
-        return false;
-    }
-    for (lane, &row) in candidates.iter().enumerate() {
-        if outputs.masks.get(lane).is_some_and(|mask| mask.get()) {
-            rows.push(row);
+        if kernel::execute(kernel, inputs, kernel_scratch, outputs).is_err()
+            || outputs.masks.len() != lanes
+        {
+            return false;
         }
-    }
-    true
+        let mut lane = 0;
+        rows.retain(|_| {
+            let keep = outputs.masks[lane].get();
+            lane += 1;
+            keep
+        });
+        true
+    })
 }
 
 fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
@@ -2705,8 +3173,14 @@ fn resolve_prefix_predicate_query(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Vec<usize>, String> {
-    let Some(plan) = p.prefix.lower(world) else {
-        return resolve_predicate_query_fallback(q, ctx, world);
+    let plan = if let Some(plan) = cached_filter_plan(q, ctx, world, true) {
+        plan
+    } else {
+        let Some(plan) = p.prefix.lower(world).map(Rc::new) else {
+            return resolve_predicate_query_fallback(q, ctx, world);
+        };
+        cache_filter_plan(q, ctx, world, true, &plan);
+        plan
     };
     let mut prefix_rows = Vec::new();
     if !execute_filter_plan(&plan, world, &mut prefix_rows) {
@@ -2740,18 +3214,25 @@ fn resolve_prefix_predicate_query(
 }
 
 fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
-    let Some(predicate) = row_predicate(q, ctx) else {
-        if let Some(prefix) = row_predicate_prefix(q, ctx) {
-            return resolve_prefix_predicate_query(q, &prefix, ctx, world);
-        }
-        // Mixed `*` products deliberately fall back as a whole; a split
-        // there would change the error and effect surface of the residual
-        // (see PrefixPredicate).
-        return resolve_predicate_query_fallback(q, ctx, world);
+    let plan = if let Some(plan) = cached_filter_plan(q, ctx, world, false) {
+        plan
+    } else {
+        let Some(predicate) = row_predicate(q, ctx) else {
+            if let Some(prefix) = row_predicate_prefix(q, ctx) {
+                return resolve_prefix_predicate_query(q, &prefix, ctx, world);
+            }
+            // Mixed `*` products deliberately fall back as a whole; a split
+            // there would change the error and effect surface of the residual
+            // (see PrefixPredicate).
+            return resolve_predicate_query_fallback(q, ctx, world);
+        };
+        let Some(plan) = predicate.lower(world).map(Rc::new) else {
+            return resolve_predicate_query_fallback(q, ctx, world);
+        };
+        cache_filter_plan(q, ctx, world, false, &plan);
+        plan
     };
-    let Some(plan) = predicate.lower(world) else {
-        return resolve_predicate_query_fallback(q, ctx, world);
-    };
+
     let mut out = Vec::new();
     if !execute_filter_plan(&plan, world, &mut out) {
         return resolve_predicate_query_fallback(q, ctx, world);
@@ -4484,6 +4965,56 @@ mod tests {
             op,
             KernelOp::MaskBinary { op: MaskBinaryOp::And, .. }
         )));
+    }
+
+    #[test]
+    fn filter_plan_cache_checks_collisions_and_world_scope() {
+        let ctx = Ctx::default();
+        let query_a = predicate("(fn [e] (= e.team :enemy))");
+        let query_b = predicate("(fn [e] (= e.team :player))");
+        let mut world = World::default();
+        let plan_a = Rc::new(
+            row_predicate(&query_a, &ctx)
+                .and_then(|predicate| predicate.lower(&mut world))
+                .expect("predicate should lower"),
+        );
+
+        let defs = Rc::as_ptr(&ctx.sig.defs) as usize;
+        let (key_b, _, _, _) =
+            filter_plan_cache_parts(&query_b, &world, defs, false).unwrap();
+        let (_, params_a, body_a, env_a) =
+            filter_plan_cache_parts(&query_a, &world, defs, false).unwrap();
+        ctx.sig
+            .filter_plans
+            .borrow_mut()
+            .entry(key_b)
+            .or_default()
+            .push(CachedFilterPlan {
+                params: params_a.clone(),
+                source: body_a.clone(),
+                env: env_a.clone(),
+                _world: world.filter_cache_identity.clone(),
+                _defs: ctx.sig.defs.clone(),
+                plan: plan_a.clone(),
+            });
+        assert!(
+            cached_filter_plan(&query_b, &ctx, &world, false).is_none(),
+            "a hash-bucket collision must not reuse another predicate"
+        );
+
+        cache_filter_plan(&query_a, &ctx, &world, false, &plan_a);
+        let cached = cached_filter_plan(&query_a, &ctx, &world, false).unwrap();
+        assert!(Rc::ptr_eq(&cached, &plan_a));
+        let wrong_param = predicate("(fn [x] (= e.team :enemy))");
+        assert!(
+            cached_filter_plan(&wrong_param, &ctx, &world, false).is_none(),
+            "function parameters are part of predicate recognition"
+        );
+        let cloned_world = world.clone();
+        assert!(
+            cached_filter_plan(&query_a, &ctx, &cloned_world, false).is_none(),
+            "a cloned world has independently evolving field slots"
+        );
     }
 
     /// Evaluate a predicate fn source with the REAL prelude macros
