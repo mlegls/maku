@@ -59,7 +59,7 @@ pub use signatures::*;
 pub use schema::*;
 pub use colliders::*;
 pub use coerce::*;
-pub(crate) use engine::{RenderKey, RenderRowFields};
+pub(crate) use engine::RenderKey;
 pub(crate) use lower::*;
 pub(crate) use spawn::axis_select_val;
 pub use r#dyn::*;
@@ -2918,17 +2918,6 @@ pub(crate) fn entity_field_sym_at(i: usize, sym: Option<Symbol>, world: &World) 
     world.col_get_sym_at(i, sym).map(Val::Num).unwrap_or(Val::Nothing)
 }
 
-/// `entity_field_sym_at` over pre-resolved store slots — the per-row read
-/// of a compiled rule pass. Same store order: sym field first, then the
-/// numeric column, else Nothing.
-pub(crate) fn entity_field_at_slots(i: usize, slots: FieldSlots, world: &World) -> Val {
-    if let Some(value) = world.sym_field_at_slot(i, slots.sym) {
-        if let Some(resolved) = world.symbols.resolve_rc(value) {
-            return Val::Kw(resolved.clone());
-        }
-    }
-    world.col_at_slot(i, slots.num).map(Val::Num).unwrap_or(Val::Nothing)
-}
 
 fn entity_col_value(v: Val, col: &str, world: &World) -> Result<Val, String> {
     let idxs = entity_index_value(v, world)?;

@@ -1272,6 +1272,65 @@
     }
 
     #[test]
+    fn compiled_render_uses_typed_multi_output_projection_plan() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (render {:kind :sprites :shape :point
+                    :x (:x p) :theta (:th p)
+                    :family e.family :alpha (value-or e.opacity 1)})))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(defpattern p [] (spawn (pose c[1 2]) {:render :sprite :family :orb}))
+"#;
+        let sim = Sim::load(CARD, Some("p")).unwrap();
+        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
+        let CompiledTickAction::Render(render) = &compiled.action else {
+            panic!("expected render projection")
+        };
+        let plan = &render.plan.projection;
+        assert_eq!(plan.domain, kernel::IterationDomain::RenderRows);
+        assert_eq!(plan.fallback, kernel::FallbackPolicy::WholePlanInterpreted);
+        assert_eq!(plan.merge, kernel::MergePolicy::DriverOwned);
+        assert!(plan.program.outputs.len() > render.fields.len());
+        assert!(plan.program.outputs.iter().any(|output| output.ty == KernelType::F64));
+        assert!(plan.program.outputs.iter().any(|output| output.ty == KernelType::Symbol));
+        assert!(plan.program.outputs.iter().any(|output| output.ty == KernelType::Mask));
+        assert!(plan.bindings.pose.iter().any(|binding| {
+            binding.component == kernel::PoseComponent::HasTheta
+                && binding.ty == KernelType::Mask
+        }));
+    }
+
+    #[test]
+    fn masked_update_plan_queues_fixed_values_in_row_order() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (change-col e :mark (fn [_] 7)))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy})
+    (spawn (pose c[1 0]) {:team :friend})
+    (spawn (pose c[2 0]) {:team :enemy})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
+        let CompiledTickAction::Update { plan, kind, .. } = &compiled.action else {
+            panic!("expected masked update plan")
+        };
+        assert!(matches!(kind, UpdateValueKind::Num));
+        assert_eq!(plan.value.domain, kernel::IterationDomain::EntityRows);
+        assert_eq!(plan.value.merge, kernel::MergePolicy::CanonicalRowOrder);
+        sim.step().unwrap();
+        assert_eq!(sim.world.pending_writes.len(), 2);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "mark"), Some(7.0));
+        assert_eq!(sim.world.col_get_at(1, "mark"), None);
+        assert_eq!(sim.world.col_get_at(2, "mark"), Some(7.0));
+    }
+
+    #[test]
     fn compiled_cull_rule_culls_matched_rows() {
         const CARD: &str = r#"
 (deftick

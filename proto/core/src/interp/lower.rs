@@ -48,13 +48,6 @@ pub struct KernelOutput {
     pub ty: KernelType,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PoseRegisters {
-    pub x: u16,
-    pub y: u16,
-    pub theta: u16,
-    pub has_theta: u16,
-}
 
 #[derive(Debug)]
 pub struct KernelProgram {
@@ -159,6 +152,8 @@ pub enum KernelOp {
     SelectF64 { dst: u16, mask: u16, yes: u16, no: u16 },
     SelectU32 { dst: u16, mask: u16, yes: u16, no: u16 },
     SelectU64 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectSymbol { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectHandle { dst: u16, mask: u16, yes: u16, no: u16 },
     SelectMask { dst: u16, mask: u16, yes: u16, no: u16 },
     F32ToF64 { dst: u16, x: u16 },
     F64ToF32 { dst: u16, x: u16 },
@@ -864,6 +859,8 @@ fn op_dst(op: KernelOp) -> u16 {
         | KernelOp::SelectF64 { dst, .. }
         | KernelOp::SelectU32 { dst, .. }
         | KernelOp::SelectU64 { dst, .. }
+        | KernelOp::SelectSymbol { dst, .. }
+        | KernelOp::SelectHandle { dst, .. }
         | KernelOp::SelectMask { dst, .. }
         | KernelOp::F32ToF64 { dst, .. }
         | KernelOp::F64ToF32 { dst, .. }
@@ -1161,6 +1158,14 @@ fn program_key(prog: &KernelProgram) -> Vec<u64> {
             }
             KernelOp::SelectU64 { dst, mask, yes, no } => {
                 k.push(63 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::SelectSymbol { dst, mask, yes, no } => {
+                k.push(69 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::SelectHandle { dst, mask, yes, no } => {
+                k.push(70 << 32 | reg3(dst, mask, yes));
                 k.push(no as u64);
             }
             KernelOp::SelectMask { dst, mask, yes, no } => {

@@ -49,6 +49,8 @@ pub struct DirectInputBinding {
 pub struct IndirectInputBinding {
     pub input: u16,
     pub handle_input: u16,
+    /// Optional mask input receiving `false` for a stale/missing handle.
+    pub presence_input: Option<u16>,
     pub column: u16,
     pub ty: KernelType,
     pub stale: StaleHandlePolicy,
@@ -80,6 +82,21 @@ pub struct TickAxisBinding {
     pub source: TickAxisSource,
     pub ty: KernelType,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoseComponent {
+    X,
+    Y,
+    Theta,
+    HasTheta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoseInputBinding {
+    pub input: u16,
+    pub component: PoseComponent,
+    pub ty: KernelType,
+}
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StateBinding {
@@ -108,6 +125,7 @@ pub struct KernelBindings {
     pub captures: Vec<CaptureBinding>,
     pub channels: Vec<ChannelBinding>,
     pub tick_axis: Vec<TickAxisBinding>,
+    pub pose: Vec<PoseInputBinding>,
     pub state: Vec<StateBinding>,
     pub outputs: Vec<OutputBinding>,
     pub presence: Vec<PresenceBinding>,
@@ -248,6 +266,7 @@ pub enum KernelExecError {
     InputType { input: usize, expected: KernelType, actual: KernelType },
     InvalidRegister(u16),
     InvalidInput(u16),
+    StaleHandle { lane: usize },
     TypeMismatch { register: u16, expected: KernelType, actual: KernelType },
 }
 
@@ -376,6 +395,8 @@ fn execute_lane(
             KernelOp::SelectF64 { dst, mask, yes, no } => (dst, KernelValue::F64(if mask_at(registers, mask)? { f64_at(registers, yes)? } else { f64_at(registers, no)? })),
             KernelOp::SelectU32 { dst, mask, yes, no } => (dst, KernelValue::U32(if mask_at(registers, mask)? { u32_at(registers, yes)? } else { u32_at(registers, no)? })),
             KernelOp::SelectU64 { dst, mask, yes, no } => (dst, KernelValue::U64(if mask_at(registers, mask)? { u64_at(registers, yes)? } else { u64_at(registers, no)? })),
+            KernelOp::SelectSymbol { dst, mask, yes, no } => (dst, KernelValue::Symbol(if mask_at(registers, mask)? { symbol_at(registers, yes)? } else { symbol_at(registers, no)? })),
+            KernelOp::SelectHandle { dst, mask, yes, no } => (dst, KernelValue::Handle(if mask_at(registers, mask)? { handle_at(registers, yes)? } else { handle_at(registers, no)? })),
             KernelOp::SelectMask { dst, mask, yes, no } => (dst, KernelValue::Mask(if mask_at(registers, mask)? { mask_at(registers, yes)? } else { mask_at(registers, no)? })),
             KernelOp::F32ToF64 { dst, x } => (dst, KernelValue::F64(f32_at(registers, x)? as f64)),
             KernelOp::F64ToF32 { dst, x } => (dst, KernelValue::F32(f64_at(registers, x)? as f32)),
@@ -444,6 +465,46 @@ fn ease(kind: EaseKind, value: f64) -> f64 {
     }
 }
 
+/// Stage a declared indirect gather without exposing world access to the
+/// program. Drivers validate generations and pass `None` for stale handles;
+/// the binding decides whether that means an absent fixed-width value or a
+/// whole-plan abort. Values and masks are appended only after every lane has
+/// validated, preserving all-or-nothing fallback.
+pub fn gather_indirect(
+    binding: IndirectInputBinding,
+    gathered: &[Option<KernelValue>],
+    values: &mut Vec<KernelValue>,
+    presence: &mut Vec<KernelValue>,
+) -> Result<(), KernelExecError> {
+    let mut staged_values = Vec::with_capacity(gathered.len());
+    let mut staged_presence = Vec::with_capacity(gathered.len());
+    for (lane, value) in gathered.iter().copied().enumerate() {
+        match value {
+            Some(value) if value.ty() == binding.ty => {
+                staged_values.push(value);
+                staged_presence.push(KernelValue::Mask(true));
+            }
+            Some(value) => {
+                return Err(KernelExecError::InputType {
+                    input: binding.input as usize,
+                    expected: binding.ty,
+                    actual: value.ty(),
+                });
+            }
+            None if binding.stale == StaleHandlePolicy::Missing => {
+                staged_values.push(KernelValue::zero(binding.ty));
+                staged_presence.push(KernelValue::Mask(false));
+            }
+            None => return Err(KernelExecError::StaleHandle { lane }),
+        }
+    }
+    values.extend(staged_values);
+    if binding.presence_input.is_some() {
+        presence.extend(staged_presence);
+    }
+    Ok(())
+}
+
 pub fn execute(
     plan: &KernelPlan,
     inputs: &KernelLanes,
@@ -500,4 +561,196 @@ pub fn execute(
     }
     outputs.lanes = inputs.lanes;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interp::{intern_program, KernelInput, KernelOutput};
+
+    fn plan(program: KernelProgram) -> KernelPlan {
+        KernelPlan::new(Rc::new(program), IterationDomain::EntityRows)
+    }
+
+    #[test]
+    fn typed_integer_mask_selection_and_multiple_outputs() {
+        let program = KernelProgram {
+            ops: vec![
+                KernelOp::Load { dst: 0, input: 0 },
+                KernelOp::ConstU32 { dst: 1, v: 7 },
+                KernelOp::U32Eq { dst: 2, a: 0, b: 1 },
+                KernelOp::Const { dst: 3, v: 10.0 },
+                KernelOp::Const { dst: 4, v: -1.0 },
+                KernelOp::SelectF64 { dst: 5, mask: 2, yes: 3, no: 4 },
+            ],
+            register_types: vec![
+                KernelType::U32,
+                KernelType::U32,
+                KernelType::Mask,
+                KernelType::F64,
+                KernelType::F64,
+                KernelType::F64,
+            ],
+            inputs: vec![KernelInput {
+                source: KernelInputSource::Direct(0),
+                ty: KernelType::U32,
+            }],
+            outputs: vec![
+                KernelOutput { register: 2, ty: KernelType::Mask },
+                KernelOutput { register: 5, ty: KernelType::F64 },
+            ],
+            n_inputs: 0,
+            aux: None,
+        };
+        let inputs = KernelLanes {
+            lanes: 2,
+            values: vec![KernelValue::U32(7), KernelValue::U32(3)],
+        };
+        let mut scratch = KernelScratch::default();
+        let mut outputs = KernelOutputs::default();
+        execute(&plan(program), &inputs, &mut scratch, &mut outputs).unwrap();
+        assert_eq!(outputs.values, vec![
+            KernelValue::Mask(true),
+            KernelValue::Mask(false),
+            KernelValue::F64(10.0),
+            KernelValue::F64(-1.0),
+        ]);
+    }
+
+    #[test]
+    fn optional_pose_orientation_keeps_presence_lane() {
+        let program = KernelProgram {
+            ops: vec![
+                KernelOp::Load { dst: 0, input: 0 },
+                KernelOp::Load { dst: 1, input: 1 },
+                KernelOp::Const { dst: 2, v: 0.0 },
+                KernelOp::SelectF64 { dst: 3, mask: 1, yes: 0, no: 2 },
+            ],
+            register_types: vec![
+                KernelType::F64,
+                KernelType::Mask,
+                KernelType::F64,
+                KernelType::F64,
+            ],
+            inputs: vec![
+                KernelInput { source: KernelInputSource::State(0), ty: KernelType::F64 },
+                KernelInput { source: KernelInputSource::State(1), ty: KernelType::Mask },
+            ],
+            outputs: vec![
+                KernelOutput { register: 3, ty: KernelType::F64 },
+                KernelOutput { register: 1, ty: KernelType::Mask },
+            ],
+            n_inputs: 0,
+            aux: None,
+        };
+        let inputs = KernelLanes {
+            lanes: 2,
+            values: vec![
+                KernelValue::F64(45.0),
+                KernelValue::F64(0.0),
+                KernelValue::Mask(true),
+                KernelValue::Mask(false),
+            ],
+        };
+        let mut scratch = KernelScratch::default();
+        let mut outputs = KernelOutputs::default();
+        execute(&plan(program), &inputs, &mut scratch, &mut outputs).unwrap();
+        assert_eq!(outputs.output(0, 0), Some(KernelValue::F64(45.0)));
+        assert_eq!(outputs.output(0, 1), Some(KernelValue::F64(0.0)));
+        assert_eq!(outputs.output(1, 0), Some(KernelValue::Mask(true)));
+        assert_eq!(outputs.output(1, 1), Some(KernelValue::Mask(false)));
+    }
+
+    #[test]
+    fn driver_abort_leaves_previous_outputs_untouched() {
+        let program = KernelProgram {
+            ops: vec![KernelOp::Load { dst: 0, input: 0 }],
+            register_types: vec![KernelType::U32],
+            inputs: vec![KernelInput {
+                source: KernelInputSource::Direct(0),
+                ty: KernelType::U32,
+            }],
+            outputs: vec![KernelOutput { register: 0, ty: KernelType::U32 }],
+            n_inputs: 0,
+            aux: None,
+        };
+        let plan = plan(program);
+        let mut scratch = KernelScratch::default();
+        let mut outputs = KernelOutputs {
+            lanes: 1,
+            values: vec![KernelValue::U32(99)],
+        };
+        let bad = KernelLanes {
+            lanes: 1,
+            values: vec![KernelValue::F64(7.0)],
+        };
+        assert!(matches!(
+            execute(&plan, &bad, &mut scratch, &mut outputs),
+            Err(KernelExecError::InputType { .. })
+        ));
+        assert_eq!(outputs.values, vec![KernelValue::U32(99)]);
+
+        let mut unsupported = plan;
+        unsupported.supported = false;
+        assert_eq!(
+            execute(&unsupported, &bad, &mut scratch, &mut outputs),
+            Err(KernelExecError::UnsupportedPlan)
+        );
+        assert_eq!(outputs.values, vec![KernelValue::U32(99)]);
+    }
+
+    #[test]
+    fn stale_handle_gather_obeys_declared_policy() {
+        let binding = IndirectInputBinding {
+            input: 1,
+            handle_input: 0,
+            presence_input: Some(2),
+            column: 4,
+            ty: KernelType::F64,
+            stale: StaleHandlePolicy::Missing,
+        };
+        let mut values = Vec::new();
+        let mut presence = Vec::new();
+        gather_indirect(
+            binding,
+            &[Some(KernelValue::F64(3.0)), None],
+            &mut values,
+            &mut presence,
+        )
+        .unwrap();
+        assert_eq!(values, vec![KernelValue::F64(3.0), KernelValue::F64(0.0)]);
+        assert_eq!(presence, vec![KernelValue::Mask(true), KernelValue::Mask(false)]);
+
+        let abort = IndirectInputBinding {
+            stale: StaleHandlePolicy::AbortPlan,
+            ..binding
+        };
+        let mut untouched = vec![KernelValue::F64(8.0)];
+        assert_eq!(
+            gather_indirect(abort, &[None], &mut untouched, &mut Vec::new()),
+            Err(KernelExecError::StaleHandle { lane: 0 })
+        );
+        assert_eq!(untouched, vec![KernelValue::F64(8.0)]);
+    }
+
+    #[test]
+    fn width_is_part_of_interned_program_identity() {
+        let make = |ty, op| KernelProgram {
+            ops: vec![op],
+            register_types: vec![ty],
+            inputs: Vec::new(),
+            outputs: vec![KernelOutput { register: 0, ty }],
+            n_inputs: 0,
+            aux: None,
+        };
+        let f32_program = intern_program(make(
+            KernelType::F32,
+            KernelOp::ConstF32 { dst: 0, v: 1.0 },
+        ));
+        let f64_program = intern_program(make(
+            KernelType::F64,
+            KernelOp::Const { dst: 0, v: 1.0 },
+        ));
+        assert!(!Rc::ptr_eq(&f32_program, &f64_program));
+    }
 }
