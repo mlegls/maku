@@ -414,22 +414,47 @@ impl Clone for Sim {
 impl Sim {
     /// Load a card FILE (resolving imports) and instantiate a pattern.
     pub fn load_file(path: &std::path::Path, pattern: Option<&str>) -> Result<Sim, String> {
-        let src = crate::edn::expand_card(path)?;
-        Sim::load(&src, pattern)
+        let expanded = crate::edn::expand_card_traced(path)?;
+        Self::load_expanded_with_check_mode(&expanded, pattern, CheckMode::Enforced)
+            .map(|(sim, _)| sim)
     }
 
     /// Load a card source and instantiate `pattern` (or the first defpattern).
-    /// Imports are expanded (bare names hit the library, paths the cwd);
-    /// already-expanded sources pass through untouched.
+    ///
+    /// Only statically proven frontend violations are enforced. Dynamic or
+    /// checker-uncovered forms retain the interpreter's existing runtime checks.
     pub fn load(src: &str, pattern: Option<&str>) -> Result<Sim, String> {
-        let src = crate::edn::expand_src(src)?;
-        let forms = read_all(&src).map_err(|e| e.to_string())?;
+        Self::load_with_check_mode(src, pattern, CheckMode::Enforced).map(|(sim, _)| sim)
+    }
+
+    /// Load while returning the complete frontend report. Diagnostic mode
+    /// reports proven violations without turning them into load errors.
+    pub fn load_with_check_mode(
+        src: &str,
+        pattern: Option<&str>,
+        mode: CheckMode,
+    ) -> Result<(Sim, CheckReport), String> {
+        let expanded = crate::edn::expand_src_traced(src)?;
+        Self::load_expanded_with_check_mode(&expanded, pattern, mode)
+    }
+
+    fn load_expanded_with_check_mode(
+        expanded: &crate::edn::ExpandedSource,
+        pattern: Option<&str>,
+        mode: CheckMode,
+    ) -> Result<(Sim, CheckReport), String> {
+        let forms = read_all(&expanded.text).map_err(|error| error.to_string())?;
+        let provenance = ProvenanceMap::from_expanded(expanded, &forms);
         let card = load_card(&forms)?;
+        let schema = collect_card_schema(&card)?;
+        let report = check_forms(&forms, &card, &schema, &provenance);
+        report.enforce(mode).map_err(|error| error.to_string())?;
         let name = match pattern {
-            Some(n) => n.to_string(),
+            Some(name) => name.to_string(),
             None => card.order.first().cloned().ok_or("card has no defpattern")?,
         };
-        Sim::from_pattern(&card, &name)
+        let sim = Sim::from_pattern(&card, &name)?;
+        Ok((sim, report))
     }
 
     /// Run arbitrary action-valued forms as an anonymous pattern, with the
