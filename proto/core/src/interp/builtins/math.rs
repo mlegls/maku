@@ -1,14 +1,5 @@
 use super::*;
 
-const NAMES: &[&str] = &[
-    "+", "-", "*", "/", "mod", "pow", "=", "<", ">", "<=", ">=", "min", "max",
-    "abs", "floor", "ceil", "round", "sqrt", "quot", "ticks", "not", "sin", "cos",
-    "sine", "lssht", "lerp", "lerp3", "lerpsmooth", "einsine", "eoutsine", "eiosine",
-];
-
-pub(crate) fn is_builtin(name: &str) -> bool {
-    NAMES.contains(&name)
-}
 
 pub(crate) fn builtin(name: &str, args: &[Val], tick_rate: f64) -> Result<Option<Val>, String> {
     let r = match name {

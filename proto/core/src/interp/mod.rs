@@ -30,6 +30,9 @@ use std::rc::Rc;
 
 mod builtins;
 mod card;
+mod checker;
+mod provenance;
+mod signatures;
 mod schema;
 mod colliders;
 mod coerce;
@@ -50,6 +53,9 @@ mod world;
 
 pub(crate) use builtins::*;
 pub use card::*;
+pub use checker::*;
+pub use provenance::*;
+pub use signatures::*;
 pub use schema::*;
 pub use colliders::*;
 pub use coerce::*;

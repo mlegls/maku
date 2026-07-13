@@ -1,12 +1,5 @@
 use super::*;
 
-const NAMES: &[&str] = &[
-    "forms", "get", "form-type", "form-name", "nothing?", "num?", "seq?",
-];
-
-pub(crate) fn is_builtin(name: &str) -> bool {
-    NAMES.contains(&name)
-}
 
 pub(crate) fn builtin(name: &str, args: &[Val]) -> Result<Option<Val>, String> {
     let r = match name {

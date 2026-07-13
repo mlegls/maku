@@ -7,26 +7,8 @@
 
 use super::*;
 
-const NAMES: &[&str] = &[
-    "matches",
-    "manip",
-    "remat",
-    "change-col",
-    "cull",
-    "pos",
-    "on-curve",
-    "count-entities",
-    "sum-entities",
-    "entities-where",
-    "collisions",
-    "curve-samples",
-    "emit",
-    "entity-col",
-    "nearest-entity",
-];
-
 pub(crate) fn is_special(name: &str) -> bool {
-    NAMES.contains(&name)
+    super::signatures::engine_signature(name).is_some()
 }
 
 pub(crate) fn special(

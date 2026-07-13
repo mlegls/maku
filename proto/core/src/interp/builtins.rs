@@ -13,10 +13,7 @@ mod language;
 mod math;
 
 pub(crate) fn is_builtin(name: &str) -> bool {
-    math::is_builtin(name)
-        || geometry::is_builtin(name)
-        || array::is_builtin(name)
-        || language::is_builtin(name)
+    super::signatures::builtin_signature(name).is_some()
 }
 
 pub(crate) fn mask(b: bool) -> Val {
