@@ -8,6 +8,252 @@ use super::*;
 use crate::edn::Form;
 use std::rc::Rc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum FixedInput {
+    Tick,
+    Axis,
+    Slot(u16),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FixedKernel {
+    pub(crate) program: Rc<KernelProgram>,
+    pub(crate) inputs: Vec<FixedInput>,
+}
+
+pub(crate) enum FixedScalar<'a> {
+    Const(f64),
+    Form(&'a Form, &'a Env),
+}
+
+#[derive(Default)]
+struct FixedKernelBuilder {
+    ops: Vec<KernelOp>,
+    f64s: u16,
+    masks: u16,
+    inputs: Vec<FixedInput>,
+}
+
+impl FixedKernelBuilder {
+    fn f64_reg(&mut self) -> Option<u16> {
+        let dst = self.f64s;
+        self.f64s = self.f64s.checked_add(1)?;
+        Some(dst)
+    }
+
+    fn mask_reg(&mut self) -> Option<u16> {
+        let dst = self.masks;
+        self.masks = self.masks.checked_add(1)?;
+        Some(dst)
+    }
+
+    fn input(&mut self, source: FixedInput) -> Option<u16> {
+        if let Some(index) = self.inputs.iter().position(|existing| *existing == source) {
+            return u16::try_from(index).ok();
+        }
+        let index = u16::try_from(self.inputs.len()).ok()?;
+        self.inputs.push(source);
+        Some(index)
+    }
+
+    fn constant(&mut self, value: f64) -> Option<u16> {
+        let dst = self.f64_reg()?;
+        self.ops.push(KernelOp::ConstF64 {
+            dst,
+            bits: value.to_bits(),
+        });
+        Some(dst)
+    }
+
+    fn load(&mut self, source: FixedInput) -> Option<u16> {
+        let input = self.input(source)?;
+        let dst = self.f64_reg()?;
+        self.ops.push(KernelOp::LoadF64 { dst, input });
+        Some(dst)
+    }
+
+    fn unary(&mut self, op: FloatUnaryOp, x: u16) -> Option<u16> {
+        let dst = self.f64_reg()?;
+        self.ops.push(KernelOp::F64Unary { op, dst, x });
+        Some(dst)
+    }
+
+    fn binary(&mut self, op: FloatBinaryOp, a: u16, b: u16) -> Option<u16> {
+        let dst = self.f64_reg()?;
+        self.ops.push(KernelOp::F64Binary { op, dst, a, b });
+        Some(dst)
+    }
+
+    fn compare(&mut self, op: FloatCompareOp, a: u16, b: u16) -> Option<u16> {
+        let mask = self.mask_reg()?;
+        self.ops.push(KernelOp::F64Compare {
+            op,
+            dst: mask,
+            a,
+            b,
+        });
+        let yes = self.constant(1.0)?;
+        let no = self.constant(0.0)?;
+        let dst = self.f64_reg()?;
+        self.ops.push(KernelOp::SelectF64 {
+            dst,
+            mask,
+            yes,
+            no,
+        });
+        Some(dst)
+    }
+
+    fn append_program(&mut self, program: &NumProgram) -> Option<u16> {
+        if !program.aux_free() {
+            return None;
+        }
+        let mut registers = vec![None; program.n_regs];
+        let get = |registers: &[Option<u16>], index: u16| registers.get(usize::from(index)).copied().flatten();
+        for op in program.ops.iter().copied() {
+            let (legacy_dst, value) = match op {
+                NumOp::Const { dst, v } => (dst, self.constant(v)?),
+                NumOp::Input { dst, slot } => (dst, self.load(FixedInput::Slot(slot))?),
+                NumOp::T { dst } => (dst, self.load(FixedInput::Tick)?),
+                NumOp::U { dst } => (dst, self.load(FixedInput::Axis)?),
+                NumOp::Add { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Add, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Sub { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Sub, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Mul { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Mul, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Div { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Div, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Pow { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Pow, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Min { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Min, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Max { dst, a, b } => (
+                    dst,
+                    self.binary(FloatBinaryOp::Max, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Neg { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::Neg, get(&registers, x)?)?,
+                ),
+                NumOp::Abs { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::Abs, get(&registers, x)?)?,
+                ),
+                NumOp::Floor { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::Floor, get(&registers, x)?)?,
+                ),
+                NumOp::Ceil { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::Ceil, get(&registers, x)?)?,
+                ),
+                NumOp::Round { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::Round, get(&registers, x)?)?,
+                ),
+                NumOp::Sin { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::SinDegrees, get(&registers, x)?)?,
+                ),
+                NumOp::Cos { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::CosDegrees, get(&registers, x)?)?,
+                ),
+                NumOp::Sqrt { dst, x } => (
+                    dst,
+                    self.unary(FloatUnaryOp::Sqrt, get(&registers, x)?)?,
+                ),
+                NumOp::Eq { dst, a, b } => {
+                    let delta =
+                        self.binary(FloatBinaryOp::Sub, get(&registers, a)?, get(&registers, b)?)?;
+                    let delta = self.unary(FloatUnaryOp::Abs, delta)?;
+                    let epsilon = self.constant(1e-9)?;
+                    (dst, self.compare(FloatCompareOp::Lt, delta, epsilon)?)
+                }
+                NumOp::Lt { dst, a, b } => (
+                    dst,
+                    self.compare(FloatCompareOp::Lt, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Gt { dst, a, b } => (
+                    dst,
+                    self.compare(FloatCompareOp::Gt, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Lte { dst, a, b } => (
+                    dst,
+                    self.compare(FloatCompareOp::Lte, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Gte { dst, a, b } => (
+                    dst,
+                    self.compare(FloatCompareOp::Gte, get(&registers, a)?, get(&registers, b)?)?,
+                ),
+                NumOp::Not { dst, x } => {
+                    let zero = self.constant(0.0)?;
+                    (dst, self.compare(FloatCompareOp::Eq, get(&registers, x)?, zero)?)
+                }
+                NumOp::PosX { .. }
+                | NumOp::PosY { .. }
+                | NumOp::Mod { .. }
+                | NumOp::Quot { .. }
+                | NumOp::Sine { .. }
+                | NumOp::Lerp { .. }
+                | NumOp::Lerp3 { .. }
+                | NumOp::Ease { .. }
+                | NumOp::LerpSmooth { .. }
+                | NumOp::Lssht { .. }
+                | NumOp::AuxIn { .. }
+                | NumOp::Atan2 { .. } => return None,
+            };
+            *registers.get_mut(usize::from(legacy_dst))? = Some(value);
+        }
+        registers.get(usize::from(program.result)).copied().flatten()
+    }
+}
+
+pub(crate) fn lower_fixed_scalars(
+    scalars: &[FixedScalar<'_>],
+    defs: &std::collections::HashMap<String, Form>,
+) -> Option<FixedKernel> {
+    let mut builder = FixedKernelBuilder::default();
+    let mut outputs = Vec::with_capacity(scalars.len());
+    for scalar in scalars {
+        let output = match scalar {
+            FixedScalar::Const(value) => builder.constant(*value)?,
+            FixedScalar::Form(form, env) => {
+                let program = lower_num_form(form, env, defs)?;
+                builder.append_program(&program)?
+            }
+        };
+        outputs.push(KernelRegister::F64(output));
+    }
+    let inputs = KernelLayout {
+        f64s: u16::try_from(builder.inputs.len()).ok()?,
+        ..KernelLayout::default()
+    };
+    let registers = KernelLayout {
+        f64s: builder.f64s,
+        masks: builder.masks,
+        ..KernelLayout::default()
+    };
+    let program = KernelProgram::new(inputs, registers, outputs, builder.ops).ok()?;
+    Some(FixedKernel {
+        program: intern_kernel_program(program),
+        inputs: builder.inputs,
+    })
+}
+
 pub trait DynKind {
     type Repr: Clone + std::fmt::Debug;
 }

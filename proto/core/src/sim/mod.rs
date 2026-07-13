@@ -62,7 +62,8 @@ pub struct Sim {
     pub world: World,
     tasks: Vec<Task>,
     ctx: Ctx,
-    collider_scratch: ColliderScratch,
+    collider_scratch: collision::ColliderScratch,
+    dyn_field_scratch: slots::DynFieldScratch,
     render_scratch: render::RenderScratch,
     vel_batch: VelBatchScratch,
     closed_pose: ClosedPoseScratch,
@@ -290,49 +291,6 @@ impl ClosedPoseScratch {
     }
 }
 
-#[derive(Clone, Default)]
-struct ColliderScratch {
-    rows: Vec<ColliderData>,
-    ranges: Vec<std::ops::Range<usize>>,
-    defs: Vec<DynCollider>,
-    /// Per-pass memo of collider EntityCol name → store slots, keyed by the
-    /// name's Rc address (specs stay alive for the whole pass). Cleared at
-    /// pass start and after any non-direct materialization, which holds
-    /// `&mut World` and could intern new columns.
-    field_slots: Vec<(*const u8, FieldSlots)>,
-    /// Per-pass memo of projector Rc address → all-Circle fast plan (None =
-    /// unclassifiable, take the general path). Same lifetime and staleness
-    /// rules as `field_slots` — the plans hold resolved store slots. Keyed
-    /// map, not a scan: distinct projectors scale with live spawn groups.
-    plans: crate::fxhash::FxHashMap<usize, Option<std::rc::Rc<collision::FastColliderPlan>>>,
-}
-
-impl ColliderScratch {
-    fn clear_for_entities(&mut self, len: usize) {
-        self.rows.clear();
-        self.ranges.clear();
-        self.defs.clear();
-        self.field_slots.clear();
-        self.plans.clear();
-        if self.ranges.capacity() < len {
-            self.ranges.reserve_exact(len - self.ranges.capacity());
-        }
-    }
-
-    fn push_empty(&mut self) {
-        let at = self.rows.len();
-        self.ranges.push(at..at);
-    }
-
-    fn begin_row(&self) -> usize {
-        self.rows.len()
-    }
-
-    fn finish_row(&mut self, start: usize) {
-        self.ranges.push(start..self.rows.len());
-    }
-
-}
 
 /// The Vel integrator's n2 slot in a wrapper-chain-over-Vel row's schema.
 /// Such a tree has exactly one stateful node, so the common case is the
@@ -412,7 +370,8 @@ impl Clone for Sim {
             world: self.world.clone(),
             tasks: self.tasks.clone(),
             ctx,
-            collider_scratch: ColliderScratch::default(),
+            collider_scratch: collision::ColliderScratch::default(),
+            dyn_field_scratch: slots::DynFieldScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
             closed_pose: ClosedPoseScratch::default(),
@@ -503,7 +462,8 @@ impl Sim {
             world,
             tasks: vec![task],
             ctx,
-            collider_scratch: ColliderScratch::default(),
+            collider_scratch: collision::ColliderScratch::default(),
+            dyn_field_scratch: slots::DynFieldScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
             closed_pose: ClosedPoseScratch::default(),
@@ -674,7 +634,8 @@ impl Sim {
             world,
             tasks: vec![task],
             ctx,
-            collider_scratch: ColliderScratch::default(),
+            collider_scratch: collision::ColliderScratch::default(),
+            dyn_field_scratch: slots::DynFieldScratch::default(),
             render_scratch: render::RenderScratch::default(),
             vel_batch: VelBatchScratch::default(),
             closed_pose: ClosedPoseScratch::default(),
@@ -999,51 +960,8 @@ impl Sim {
     }
 
     fn refresh_dyn_cols(&mut self) -> Result<(), String> {
-        let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
-        let state = MotionState::default();
-        // Shared array-valued meta signals (AxisSel) evaluate once per
-        // (form, env, tau) group per refresh; each row then selects only
-        // its own lane — the SS5 interchange at the Val level. Identity
-        // keys are sound because forms/envs are immutable and clones share
-        // Rcs; tau joins the key across different-birth spawn groups.
-        let mut shared: Option<crate::fxhash::FxHashMap<(usize, usize, u64), Val>> = None;
-        for i in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(i) {
-                continue;
-            }
-            let tau = self.world.entity_tau(i, tick);
-            let mut row_sig = None;
-            let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
-            for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
-                let tick_rate = self.world.tick_rate();
-                let value = match dyn_num.repr() {
-                    NumDynRepr::AxisSel { form, env, path, flat } => {
-                        // identity keys don't carry the override view; an
-                        // override row neither reads nor feeds the memo
-                        let key = (sig.overrides.is_none())
-                            .then(|| form_identity(form).map(|f| (f, env.identity(), tau.to_bits())))
-                            .flatten();
-                        let hit = key.and_then(|k| shared.as_ref().and_then(|m| m.get(&k).cloned()));
-                        let v = match hit {
-                            Some(v) => Ok(v),
-                            None => {
-                                let v = eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate);
-                                if let (Some(k), Ok(v)) = (key, &v) {
-                                    shared.get_or_insert_with(Default::default).insert(k, v.clone());
-                                }
-                                v
-                            }
-                        };
-                        v.and_then(|v| axis_select_val(&v, path, *flat).num())
-                    }
-                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, sig, tick_rate),
-                }
-                .map_err(|e| format!("dyn meta field: {}", e))?;
-                self.world.col_set_sym_at(i, *col, value);
-            }
-        }
-        Ok(())
+        slots::refresh_dyn_field_columns(&mut self.world, &sig, &mut self.dyn_field_scratch)
     }
 
     fn exec_tick_value(&mut self, v: Val) -> Result<(), String> {

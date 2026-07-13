@@ -1,4 +1,326 @@
 use super::*;
+use super::kernel::{
+    self, FallbackPolicy, IterationDomain, KernelBindings, KernelInputBinding, KernelInputRef,
+    KernelInputSource, KernelLanes, KernelOutputBinding, KernelOutputTarget, KernelOutputs,
+    KernelPlan, KernelScratch, MergePolicy,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct DynFieldPlanKey {
+    program: u64,
+    inputs: Vec<FixedInput>,
+    output: ColName,
+}
+
+struct DynFieldPlan {
+    key: DynFieldPlanKey,
+    kernel: KernelPlan,
+    inputs: Vec<FixedInput>,
+    output: ColName,
+}
+
+struct DynFieldGroup {
+    plan: Rc<DynFieldPlan>,
+    rows: Vec<usize>,
+    tau: Vec<f64>,
+}
+struct DynSourcePlans {
+    source: std::rc::Weak<[(ColName, DynNum)]>,
+    plans: Vec<Option<Rc<DynFieldPlan>>>,
+}
+
+
+#[derive(Default)]
+pub(super) struct DynFieldScratch {
+    plans: crate::fxhash::FxHashMap<DynFieldPlanKey, Rc<DynFieldPlan>>,
+    groups: Vec<DynFieldGroup>,
+    index: crate::fxhash::FxHashMap<DynFieldPlanKey, usize>,
+    pool: Vec<DynFieldGroup>,
+    sources: crate::fxhash::FxHashMap<usize, DynSourcePlans>,
+    lanes: KernelLanes,
+    outputs: KernelOutputs,
+    exec: KernelScratch,
+}
+
+impl DynFieldScratch {
+    fn begin_pass(&mut self) {
+        self.index.clear();
+        self.pool.extend(self.groups.drain(..).map(|mut group| {
+            group.rows.clear();
+            group.tau.clear();
+            group
+        }));
+    }
+
+    fn plan(&mut self, fixed: FixedKernel, output: ColName) -> Option<Rc<DynFieldPlan>> {
+        let key = DynFieldPlanKey {
+            program: fixed.program.id().0,
+            inputs: fixed.inputs.clone(),
+            output,
+        };
+        if let Some(plan) = self.plans.get(&key) {
+            return Some(plan.clone());
+        }
+        let output_column = u16::try_from(output.0).ok()?;
+        let inputs = fixed
+            .inputs
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, source)| {
+                let source = match source {
+                    FixedInput::Tick => KernelInputSource::Tick,
+                    FixedInput::Axis => KernelInputSource::Axis,
+                    FixedInput::Slot(slot) => KernelInputSource::Capture { slot },
+                };
+                Some(KernelInputBinding {
+                    input: KernelInputRef::F64(u16::try_from(index).ok()?),
+                    source,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let bindings = KernelBindings {
+            inputs,
+            outputs: vec![KernelOutputBinding {
+                output: 0,
+                target: KernelOutputTarget::Column {
+                    column: output_column,
+                },
+            }],
+        };
+        let kernel = KernelPlan::new(
+            fixed.program,
+            IterationDomain::DynFieldRows,
+            bindings,
+            FallbackPolicy::WholePlanInterpreted,
+            MergePolicy::Direct,
+        )
+        .ok()?;
+        let plan = Rc::new(DynFieldPlan {
+            key: key.clone(),
+            kernel,
+            inputs: fixed.inputs,
+            output,
+        });
+        self.plans.insert(key, plan.clone());
+        Some(plan)
+    }
+
+    fn push(&mut self, plan: Rc<DynFieldPlan>, row: usize, tau: f64) {
+        let index = match self.index.get(&plan.key).copied() {
+            Some(index) => index,
+            None => {
+                let mut group = self.pool.pop().unwrap_or_else(|| DynFieldGroup {
+                    plan: plan.clone(),
+                    rows: Vec::new(),
+                    tau: Vec::new(),
+                });
+                group.plan = plan.clone();
+                let index = self.groups.len();
+                self.groups.push(group);
+                self.index.insert(plan.key.clone(), index);
+                index
+            }
+        };
+        let group = &mut self.groups[index];
+        group.rows.push(row);
+        group.tau.push(tau);
+    }
+}
+
+fn semantic_dyn_field(
+    world: &World,
+    sig: &SigEnv,
+    row: usize,
+    dyn_num: &DynNum,
+    tau: f64,
+    shared: &mut Option<crate::fxhash::FxHashMap<(usize, usize, u64), Val>>,
+) -> Result<f64, String> {
+    let state = MotionState::default();
+    let tick_rate = world.tick_rate();
+    let mut row_sig = None;
+    let row_sig = sig.for_row(world.entities.overrides(row), &mut row_sig);
+    match dyn_num.repr() {
+        NumDynRepr::AxisSel {
+            form,
+            env,
+            path,
+            flat,
+        } => {
+            let key = (row_sig.overrides.is_none())
+                .then(|| form_identity(form).map(|form| (form, env.identity(), tau.to_bits())))
+                .flatten();
+            let hit = key.and_then(|key| shared.as_ref().and_then(|values| values.get(&key).cloned()));
+            let value = match hit {
+                Some(value) => Ok(value),
+                None => {
+                    let value =
+                        eval_sig_at_rate(form, env, row_sig, tau, 0.0, None, None, tick_rate);
+                    if let (Some(key), Ok(value)) = (key, &value) {
+                        shared.get_or_insert_with(Default::default).insert(key, value.clone());
+                    }
+                    value
+                }
+            };
+            value.and_then(|value| axis_select_val(&value, path, *flat).num())
+        }
+        _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, row_sig, tick_rate),
+    }
+    .map_err(|error| format!("dyn meta field: {}", error))
+}
+
+pub(super) fn refresh_dyn_field_columns(
+    world: &mut World,
+    sig: &SigEnv,
+    scratch: &mut DynFieldScratch,
+) -> Result<(), String> {
+    scratch.begin_pass();
+    let tick = world.tick;
+    let oracle = oracle_enabled();
+    let mut shared = None;
+    let mut writes = Vec::new();
+
+    for row in 0..world.entities.len() {
+        if !world.entities.is_alive(row) {
+            continue;
+        }
+        let tau = world.entity_tau(row, tick);
+        let dyn_cols = world.entities.dyn_cols(row);
+        if dyn_cols.is_empty() {
+            continue;
+        }
+        let source = Rc::as_ptr(&dyn_cols) as *const () as usize;
+        let cached = scratch
+            .sources
+            .get(&source)
+            .and_then(|cached| cached.source.upgrade())
+            .is_some_and(|cached| Rc::ptr_eq(&cached, &dyn_cols));
+        if !cached {
+            let plans = dyn_cols
+                .iter()
+                .map(|(output, dyn_num)| {
+                    let scalar = match dyn_num.repr() {
+                        NumDynRepr::Const(value) => FixedScalar::Const(*value),
+                        NumDynRepr::Expr { form, env } => FixedScalar::Form(form, env),
+                        NumDynRepr::AxisSel { .. } => return None,
+                    };
+                    let fixed = lower_fixed_scalars(&[scalar], &sig.defs)?;
+                    scratch.plan(fixed, *output)
+                })
+                .collect();
+            scratch.sources.insert(
+                source,
+                DynSourcePlans {
+                    source: Rc::downgrade(&dyn_cols),
+                    plans,
+                },
+            );
+        }
+        for (index, (output, dyn_num)) in dyn_cols.iter().enumerate() {
+            match scratch
+                .sources
+                .get(&source)
+                .and_then(|cached| cached.plans.get(index))
+                .and_then(Clone::clone)
+            {
+                Some(plan) => scratch.push(plan, row, tau),
+                None => writes.push((
+                    row,
+                    *output,
+                    semantic_dyn_field(world, sig, row, dyn_num, tau, &mut shared)?,
+                )),
+            }
+        }
+    }
+
+    for group in &mut scratch.groups {
+        scratch.lanes.lanes = group.rows.len();
+        scratch.lanes.f32s.clear();
+        scratch.lanes.f64s.clear();
+        scratch.lanes.u32s.clear();
+        scratch.lanes.u64s.clear();
+        scratch.lanes.symbols.clear();
+        scratch.lanes.handles.clear();
+        scratch.lanes.masks.clear();
+        for input in group.plan.inputs.iter().copied() {
+            match input {
+                FixedInput::Tick => scratch.lanes.f64s.extend_from_slice(&group.tau),
+                FixedInput::Axis => scratch
+                    .lanes
+                    .f64s
+                    .extend(std::iter::repeat_n(0.0, group.rows.len())),
+                FixedInput::Slot(_) => {
+                    return Err("dyn meta field: unexpected capture binding".into());
+                }
+            }
+        }
+        let executed = kernel::execute(
+            &group.plan.kernel,
+            &scratch.lanes,
+            &mut scratch.exec,
+            &mut scratch.outputs,
+        )
+        .is_ok();
+        if !executed {
+            let mut fallback = Vec::with_capacity(group.rows.len());
+            for (&row, &tau) in group.rows.iter().zip(&group.tau) {
+                let dyn_cols = world.entities.dyn_cols(row);
+                let dyn_num = dyn_cols
+                    .iter()
+                    .find_map(|(column, value)| (*column == group.plan.output).then_some(value))
+                    .ok_or("dyn meta field: missing fallback column")?;
+                fallback.push(semantic_dyn_field(
+                    world,
+                    sig,
+                    row,
+                    dyn_num,
+                    tau,
+                    &mut shared,
+                )?);
+            }
+            writes.extend(
+                group
+                    .rows
+                    .iter()
+                    .copied()
+                    .zip(fallback)
+                    .map(|(row, value)| (row, group.plan.output, value)),
+            );
+            continue;
+        }
+        if oracle {
+            for (lane, (&row, &tau)) in group.rows.iter().zip(&group.tau).enumerate() {
+                let dyn_cols = world.entities.dyn_cols(row);
+                let dyn_num = dyn_cols
+                    .iter()
+                    .find_map(|(column, value)| (*column == group.plan.output).then_some(value))
+                    .ok_or("dyn meta field: missing oracle column")?;
+                let expected =
+                    semantic_dyn_field(world, sig, row, dyn_num, tau, &mut shared)?;
+                let actual = scratch.outputs.f64s[lane];
+                assert_eq!(
+                    actual.to_bits(),
+                    expected.to_bits(),
+                    "dyn field projection mismatch for row {row}, column {}",
+                    group.plan.output.0
+                );
+            }
+        }
+        writes.extend(
+            group
+                .rows
+                .iter()
+                .copied()
+                .zip(scratch.outputs.f64s.iter().copied())
+                .map(|(row, value)| (row, group.plan.output, value)),
+        );
+    }
+
+    for (row, column, value) in writes {
+        world.col_set_sym_at(row, column, value);
+    }
+    Ok(())
+}
 
 const CURVE_R: f64 = 0.08; // compatibility curve half-width for collision
 
@@ -61,7 +383,7 @@ fn sample_curve_projection(
     Some(pts)
 }
 
-fn bind_projector_scope(
+pub(super) fn bind_projector_scope(
     env: &Env,
     scope: Option<&ProjectorScope>,
     e_view: Option<&Val>,
@@ -233,7 +555,7 @@ pub fn eval_collider_slot(
     }
 }
 
-fn circle_collider_data(
+pub(super) fn circle_collider_data(
     dyn_figure: &DynFigure,
     layer: Symbol,
     radius: f64,
@@ -264,7 +586,7 @@ fn circle_collider_data(
     }
 }
 
-fn capsule_chain_collider_data(
+pub(super) fn capsule_chain_collider_data(
     dyn_figure: &DynFigure,
     layer: Symbol,
     radius: f64,
@@ -304,86 +626,3 @@ fn capsule_chain_collider_data(
     }
 }
 
-/// Materialize a direct projector (`ColliderProjector::is_direct`) without
-/// the defs round-trip: slots are Const/EntityCol, so each shape's numbers
-/// come straight from the spec (or an entity-row read) and the collider
-/// data is built in place — no evaluator, no `DynCollider`, no `&mut World`.
-pub(super) fn materialize_direct_colliders(
-    dyn_figure: &DynFigure,
-    projector: &ColliderProjector,
-    tau: f64,
-    sig: &SigEnv,
-    scale: f64,
-    pose: Pose,
-    world: &World,
-    row: Option<usize>,
-    trace: &[Pose],
-    traced: bool,
-    out: &mut Vec<ColliderData>,
-    slot_cache: &mut Vec<(*const u8, FieldSlots)>,
-    tick_rate: f64,
-) -> Result<(), String> {
-    let mut num = |n: &ProjectorNum| -> Result<f64, String> {
-        match n {
-            ProjectorNum::Const(n) => Ok(*n),
-            // EntityCol is never a special view field (scope filter), so the
-            // read skips entity_field_at's special-name match and goes
-            // straight through resolved store slots — same Val, same errors.
-            // Names resolve once per pass, keyed by the name's Rc address
-            // (the spec outlives the pass, so the key cannot be reused).
-            ProjectorNum::EntityCol(col) => {
-                let row = row.ok_or("collider: entity field read outside an entity context")?;
-                let key = Rc::as_ptr(col) as *const u8;
-                let slots = match slot_cache.iter().find(|(k, _)| *k == key) {
-                    Some((_, slots)) => *slots,
-                    None => {
-                        let slots = world.field_slots(col);
-                        slot_cache.push((key, slots));
-                        slots
-                    }
-                };
-                entity_field_at_slots(row, slots, world).num()
-            }
-            ProjectorNum::Expr(_) => Err("collider: expression slot on the direct path".into()),
-        }
-    };
-    for value in projector.projectors.iter() {
-        match &value.expr {
-            ColliderProjectorExpr::Stable(slots) => {
-                out.extend(slots.iter().map(|slot| {
-                    eval_collider_slot(dyn_figure, slot, tau, sig, scale, pose, trace, traced, tick_rate)
-                }));
-            }
-            ColliderProjectorExpr::Circle(spec) => {
-                let radius = num(&spec.radius)?;
-                out.push(circle_collider_data(
-                    dyn_figure, spec.layer, radius, scale, pose, trace, traced,
-                ));
-            }
-            ColliderProjectorExpr::CapsuleChain(spec) => {
-                // slot numbers evaluate in the same order as
-                // materialize_capsule_chain_projector: sample set, u-max,
-                // width, radius — first error wins identically
-                let sample_set = match &spec.sample_set {
-                    ProjectorSampleSet::Values(samples) => SampleSet::Values(samples.clone()),
-                    ProjectorSampleSet::Step(resolution) => SampleSet::Step {
-                        resolution: num(resolution)?,
-                    },
-                };
-                let slot = CapsuleChainSlot {
-                    sample_set,
-                    u_max: spec.u_max.as_ref().map(&mut num).transpose()?.unwrap_or(10.0),
-                    width: num(&spec.width)?,
-                };
-                let radius = num(&spec.radius)?;
-                out.push(capsule_chain_collider_data(
-                    dyn_figure, spec.layer, radius, &slot, tau, sig, scale, trace, traced, tick_rate,
-                ));
-            }
-            ColliderProjectorExpr::Callable { .. } | ColliderProjectorExpr::Cond { .. } => {
-                return Err("collider: non-direct projector on the direct path".into());
-            }
-        }
-    }
-    Ok(())
-}
