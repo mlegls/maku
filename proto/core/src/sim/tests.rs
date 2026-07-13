@@ -594,6 +594,14 @@
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         sim.step().unwrap();
+        let projector = sim.world.entities.collider_projector(0).unwrap();
+        let ColliderProjectorExpr::Circle(spec) = &projector.projectors[0].expr else {
+            panic!("expected lowered circle projector");
+        };
+        assert!(
+            spec.radius.projection.is_some(),
+            "entity-field radius should carry a typed collider projection plan"
+        );
         let a = sim.world.symbols.intern("a");
         // radii 2+2 span the 3-unit gap; radius 1 at x=9 reaches nothing
         assert_eq!(&*sim.world.collision_index.query(a, a), &[(0, 1), (1, 0)]);
@@ -610,6 +618,37 @@
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         let err = sim.step().unwrap_err();
         assert!(err.contains("expected number"), "got: {err}");
+    }
+
+    #[test]
+    fn entity_col_collider_missing_field_uses_semantic_error() {
+        const CARD: &str = r#"
+(defcollider :pose hb [e ctx]
+  (circle-collider {:layer :a :r e.hitbox}))
+(defpattern t []
+  (spawn (pose c[0 0]) hb))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number"), "got: {err}");
+    }
+
+    #[test]
+    fn collider_plan_rejects_before_partial_geometry_merge() {
+        const CARD: &str = r#"
+(defcollider :pose hb [e ctx]
+  [(circle-collider {:layer :a :r e.first})
+   (circle-collider {:layer :b :r e.missing})])
+(defpattern t []
+  (spawn (pose c[0 0]) hb {:first 1}))
+"#;
+        let mut sim = Sim::load(CARD, Some("t")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number"), "got: {err}");
+        assert!(
+            sim.collider_scratch.rows.is_empty(),
+            "rejected plan must not expose partial collider geometry"
+        );
     }
 
     #[test]
@@ -1525,6 +1564,46 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         let err = sim.step().unwrap_err();
         assert!(err.contains("expected number, got Kw(\"full\")"), "{err}");
+    }
+
+    #[test]
+    fn mistyped_predicate_input_abandons_the_whole_cull_before_execution() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (<= (value-or (:hp e) 1) 0)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:hp 0})
+    (spawn (pose c[1 0]) {:hp :full})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number, got Kw(\"full\")"), "{err}");
+        assert!(
+            (0..sim.world.entities.len()).all(|row| sim.world.entities.is_alive(row)),
+            "typed gathering must abandon the whole plan before any cull"
+        );
+    }
+
+    #[test]
+    fn compiled_filter_preserves_numeric_equality_and_oracle_actions() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (= (+ (value-or (:hp e) 0) 0) 0)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:hp 0.0000000005})
+    (spawn (pose c[1 0]) {:hp 0.000000002})))
+"#;
+        let _guard = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        sim.step().unwrap();
+        assert!(!sim.world.entities.is_alive(0), "value inside equality threshold should match");
+        assert!(sim.world.entities.is_alive(1), "value outside equality threshold should not match");
     }
 
     #[test]
@@ -3529,6 +3608,11 @@
         for _ in 0..60 {
             sim.step().unwrap();
         }
+        let dyn_cols = sim.world.entities.dyn_cols(0);
+        assert!(
+            dyn_cols[0].1.lowered_field_program(&sim.ctx.sig).is_some(),
+            "fixed-width DynNum should lower to a typed field program"
+        );
         let grow = sim.world.col_get_at(0, "grow").unwrap();
         assert!((grow - 1.0).abs() < 0.02, "grow at 0.5s = 1: {}", grow);
     }

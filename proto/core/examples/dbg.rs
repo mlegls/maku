@@ -90,10 +90,10 @@ fn census(sim: &Sim, label: &str) {
                     E::Stable(_) => ("stable", ""),
                     E::Circle(spec) => (
                         "circle",
-                        match &spec.radius {
-                            maku::interp::ProjectorNum::Const(_) => ":const",
-                            maku::interp::ProjectorNum::EntityCol(_) => ":col",
-                            maku::interp::ProjectorNum::Expr(_) => ":expr",
+                        match (&spec.radius.source, spec.radius.projection.is_some()) {
+                            (maku::interp::ProjectorScalarSource::Value(_), _) => ":const",
+                            (maku::interp::ProjectorScalarSource::Form(_), true) => ":field-plan",
+                            (maku::interp::ProjectorScalarSource::Form(_), false) => ":expr",
                         },
                     ),
                     E::CapsuleChain(_) => ("capsule", ""),

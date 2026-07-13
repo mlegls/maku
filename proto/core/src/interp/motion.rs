@@ -400,7 +400,7 @@ pub struct ExtractedSig {
     /// One program per form, structurally INTERNED; every program's
     /// `n_inputs` is bumped to the node's full capture width so all of a
     /// node's programs read one capture vector (rand draws ++ env values).
-    pub programs: Vec<Rc<NumProgram>>,
+    pub programs: Vec<Rc<KernelProgram>>,
 }
 
 /// Construction-time compile of a node's signal forms: rand-site extraction
@@ -423,7 +423,7 @@ pub(crate) fn compile_sig(
     sig: &SigEnv,
     allow_pos: bool,
     allow_aux: bool,
-) -> (Option<Rc<RandCell>>, Option<Vec<Rc<NumProgram>>>) {
+) -> (Option<Rc<RandCell>>, Option<Vec<Rc<KernelProgram>>>) {
     let has_rand = forms.iter().any(|f| super::spawn::form_has_rand(f));
     let mut sites = Vec::new();
     let marked: Vec<Form> = if has_rand {
@@ -453,10 +453,19 @@ pub(crate) fn compile_sig(
     }
     // late bump: an env slot discovered while lowering `b` widens `a` too
     let width = sites.len() + names.len();
-    let programs: Vec<Rc<NumProgram>> = programs
+    let programs: Vec<Rc<KernelProgram>> = programs
         .into_iter()
         .map(|mut p| {
             p.n_inputs = width;
+            p.inputs.retain(|input| !matches!(input.source, KernelInputSource::Capture(_)));
+            let mut captures = (0..width)
+                .map(|slot| KernelInput {
+                    source: KernelInputSource::Capture(slot as u16),
+                    ty: KernelType::F64,
+                })
+                .collect::<Vec<_>>();
+            captures.append(&mut p.inputs);
+            p.inputs = captures;
             intern_program(p)
         })
         .collect();
@@ -496,7 +505,7 @@ pub enum DynNode {
         b: Form,
         polar: bool,
         env: Env,
-        programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+        programs: OnceCell<Option<(Rc<KernelProgram>, Rc<KernelProgram>)>>,
         rand: Option<Rc<RandCell>>,
     },
     /// Integrated velocity (Scanned): components over slot-bound t.
@@ -505,7 +514,7 @@ pub enum DynNode {
         b: Form,
         polar: bool,
         env: Env,
-        programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+        programs: OnceCell<Option<(Rc<KernelProgram>, Rc<KernelProgram>)>>,
         rand: Option<Rc<RandCell>>,
     },
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
@@ -529,7 +538,7 @@ pub enum DynNode {
     /// distance, you slide and turn back instantly.
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
-    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<NumProgram>>>, rand: Option<Rc<RandCell>> },
+    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<KernelProgram>>>, rand: Option<Rc<RandCell>> },
     /// A user function adapted to a stateless pose dyn by calling it as (f t).
     FnPose(Val),
     /// A closed evolve used in a pose slot: the fold is replayed from epoch
@@ -877,7 +886,7 @@ impl DynEval for f64 {
     ) -> Result<f64, String> {
         match d.repr() {
             NumDynRepr::Const(n) => Ok(*n),
-            NumDynRepr::Expr { form, env } => eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate)?.num(),
+            NumDynRepr::Expr { form, env, .. } => eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate)?.num(),
             NumDynRepr::AxisSel { form, env, path, flat } => {
                 let v = eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate)?;
                 super::spawn::axis_select_val(&v, path, *flat).num()
@@ -1026,8 +1035,8 @@ pub(crate) fn eval_pt_at_rate(
 }
 
 fn eval_num_program_pair(
-    a: &NumProgram,
-    b: &NumProgram,
+    a: &KernelProgram,
+    b: &KernelProgram,
     polar: bool,
     tau: f64,
     u: f64,
@@ -1036,8 +1045,8 @@ fn eval_num_program_pair(
     aux_a: &[f64],
     aux_b: &[f64],
 ) -> (f64, f64) {
-    let av = run_num_program_caps(a, tau, u, pos, caps, aux_a);
-    let bv = run_num_program_caps(b, tau, u, pos, caps, aux_b);
+    let av = run_kernel_program_caps(a, tau, u, pos, caps, aux_a);
+    let bv = run_kernel_program_caps(b, tau, u, pos, caps, aux_b);
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         (av * c, av * s)
@@ -1053,7 +1062,7 @@ fn lower_program_pair(
     sig: &SigEnv,
     allow_pos: bool,
     allow_aux: bool,
-) -> Option<(Rc<NumProgram>, Rc<NumProgram>)> {
+) -> Option<(Rc<KernelProgram>, Rc<KernelProgram>)> {
     let ap = lower_num_form_opts(
         a,
         env,
@@ -1078,7 +1087,7 @@ fn lower_single_program(
     sig: &SigEnv,
     allow_pos: bool,
     allow_aux: bool,
-) -> Option<Rc<NumProgram>> {
+) -> Option<Rc<KernelProgram>> {
     let prog = lower_num_form_opts(
         form,
         env,
@@ -1099,7 +1108,7 @@ fn lower_single_program(
 /// reruns interpreted, which reproduces the interpreter's own result or
 /// error exactly.
 fn fetch_aux(
-    prog: &NumProgram,
+    prog: &KernelProgram,
     node_ptr: usize,
     state: &MotionState,
     sig: &SigEnv,
@@ -1165,8 +1174,8 @@ pub struct VelStepPlan {
     /// The Vel node itself: its address keys the n2 state slot, and the
     /// oracle re-runs its integrand through the interpreter.
     pub vel: Rc<DynNode>,
-    pub ap: Rc<NumProgram>,
-    pub bp: Rc<NumProgram>,
+    pub ap: Rc<KernelProgram>,
+    pub bp: Rc<KernelProgram>,
     pub polar: bool,
 }
 
@@ -1175,8 +1184,8 @@ pub struct VelStepPlan {
 /// (rand draws), one lane's slice of the group's caps at stride n_inputs.
 pub struct VelStepPlanRef<'a> {
     pub vel: &'a Rc<DynNode>,
-    pub ap: &'a Rc<NumProgram>,
-    pub bp: &'a Rc<NumProgram>,
+    pub ap: &'a Rc<KernelProgram>,
+    pub bp: &'a Rc<KernelProgram>,
     pub polar: bool,
     pub caps: &'a [f64],
 }
@@ -1226,8 +1235,8 @@ pub struct ClosedChainRef<'a> {
     /// The figure's root pose node: wrapper composition (and the oracle)
     /// walk from here.
     pub root: &'a Rc<DynNode>,
-    pub ap: &'a Rc<NumProgram>,
-    pub bp: &'a Rc<NumProgram>,
+    pub ap: &'a Rc<KernelProgram>,
+    pub bp: &'a Rc<KernelProgram>,
     pub polar: bool,
     pub caps: &'a [f64],
 }
@@ -1716,7 +1725,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 let fetched = AUX_A.with(|aa| {
                     let mut aa = aa.borrow_mut();
                     fetch_aux(prog, key, state, sig, readers, &mut aa)
-                        .then(|| run_num_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand), &aa))
+                        .then(|| run_kernel_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand), &aa))
                 });
                 if let Some(th) = fetched {
                     if oracle_enabled() {

@@ -1,11 +1,12 @@
 use super::engine::RenderKey;
 use super::world::FieldSlots;
-use super::{evaluate, row_predicate, Ctx, Env, RowPredicate, World};
+use super::{evaluate, row_predicate, Ctx, Env, World};
 use crate::edn::Form;
+use crate::sim::kernel::FilterPlan;
 use std::rc::Rc;
 
 pub(crate) struct CompiledTickForm {
-    pub predicate: RowPredicate,
+    pub filter: FilterPlan,
     pub action: CompiledTickAction,
 }
 
@@ -136,7 +137,7 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     let [predform] = query_args else { return None };
     let pred_args = call(predform, "fn", env, ctx)?;
     if pred_args.len() < 2 || !matches!(&pred_args[0], Form::Vector(_)) { return None; }
-    let predicate = row_predicate(&evaluate(predform, env, ctx, world).ok()?, ctx)?;
+    let filter = row_predicate(&evaluate(predform, env, ctx, world).ok()?, ctx)?.lower(world)?;
 
     let fn_args = call(fnform, "fn", env, ctx)?;
     let [Form::Vector(params), body] = fn_args else { return None };
@@ -148,7 +149,7 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     if let Some(args) = call(body, "cull", env, ctx) {
         return (entity.as_ref() != "cull"
             && matches!(args, [Form::Sym(target)] if target == entity))
-            .then(|| CompiledTickForm { predicate, action: CompiledTickAction::Cull });
+            .then(|| CompiledTickForm { filter, action: CompiledTickAction::Cull });
     }
 
     let (pose, emit_form) = if let Some(let_args) = call(body, "let", env, ctx) {
@@ -178,7 +179,7 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     if !has_shape { return None; }
     let needs_pose = fields.iter().any(|(_, _, value)| is_pose(value));
     Some(CompiledTickForm {
-        predicate,
+        filter,
         action: CompiledTickAction::Render(CompiledRender {
             needs_pose,
             fields,

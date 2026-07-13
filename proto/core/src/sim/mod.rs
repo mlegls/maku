@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 mod channels;
 mod collision;
+pub mod kernel;
 mod exec;
 mod render;
 mod slots;
@@ -180,7 +181,7 @@ impl VelBatchScratch {
 /// (milestone B): grouped by interned program-pair address, one
 /// lane-batched run per component per phase (collide fill, cull), then
 /// per-row wrapper composition — the same value the per-row pos_only walk
-/// produces, lane-bit-identical by `run_lanes` construction and
+/// produces, lane-bit-identical by `run_kernel_lanes` construction and
 /// oracle-checked per lane.
 #[derive(Default)]
 struct ClosedPoseScratch {
@@ -230,8 +231,8 @@ fn classify_row(fig: &DynFigure, sig: &SigEnv) -> RowClass {
 }
 
 struct ClosedPoseGroup {
-    ap: Rc<NumProgram>,
-    bp: Rc<NumProgram>,
+    ap: Rc<KernelProgram>,
+    bp: Rc<KernelProgram>,
     polar: bool,
     rows: Vec<usize>,
     tau: Vec<f64>,
@@ -294,16 +295,6 @@ struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynCollider>,
-    /// Per-pass memo of collider EntityCol name → store slots, keyed by the
-    /// name's Rc address (specs stay alive for the whole pass). Cleared at
-    /// pass start and after any non-direct materialization, which holds
-    /// `&mut World` and could intern new columns.
-    field_slots: Vec<(*const u8, FieldSlots)>,
-    /// Per-pass memo of projector Rc address → all-Circle fast plan (None =
-    /// unclassifiable, take the general path). Same lifetime and staleness
-    /// rules as `field_slots` — the plans hold resolved store slots. Keyed
-    /// map, not a scan: distinct projectors scale with live spawn groups.
-    plans: crate::fxhash::FxHashMap<usize, Option<std::rc::Rc<collision::FastColliderPlan>>>,
 }
 
 impl ColliderScratch {
@@ -311,8 +302,6 @@ impl ColliderScratch {
         self.rows.clear();
         self.ranges.clear();
         self.defs.clear();
-        self.field_slots.clear();
-        self.plans.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }
@@ -803,8 +792,8 @@ impl Sim {
             s.zero_pos.resize(g.rows.len(), [0.0; 2]);
             g.va.clear();
             g.vb.clear();
-            run_lanes(&g.ap, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
-            run_lanes(&g.bp, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
+            run_kernel_lanes(&g.ap, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
+            run_kernel_lanes(&g.bp, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (x, y) = if g.polar {
                     let (sn, cs) = g.vb[l].to_radians().sin_cos();
@@ -925,8 +914,8 @@ impl Sim {
         let mut regs = std::mem::take(&mut self.vel_batch.regs);
         for g in &mut groups {
             let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
-            run_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
-            run_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
+            run_kernel_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
+            run_kernel_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (av, bv) = (g.va[l], g.vb[l]);
                 let (vx, vy) = if g.plan.polar {
@@ -973,51 +962,8 @@ impl Sim {
     }
 
     fn refresh_dyn_cols(&mut self) -> Result<(), String> {
-        let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
-        let state = MotionState::default();
-        // Shared array-valued meta signals (AxisSel) evaluate once per
-        // (form, env, tau) group per refresh; each row then selects only
-        // its own lane — the SS5 interchange at the Val level. Identity
-        // keys are sound because forms/envs are immutable and clones share
-        // Rcs; tau joins the key across different-birth spawn groups.
-        let mut shared: Option<crate::fxhash::FxHashMap<(usize, usize, u64), Val>> = None;
-        for i in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(i) {
-                continue;
-            }
-            let tau = self.world.entity_tau(i, tick);
-            let mut row_sig = None;
-            let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
-            for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
-                let tick_rate = self.world.tick_rate();
-                let value = match dyn_num.repr() {
-                    NumDynRepr::AxisSel { form, env, path, flat } => {
-                        // identity keys don't carry the override view; an
-                        // override row neither reads nor feeds the memo
-                        let key = (sig.overrides.is_none())
-                            .then(|| form_identity(form).map(|f| (f, env.identity(), tau.to_bits())))
-                            .flatten();
-                        let hit = key.and_then(|k| shared.as_ref().and_then(|m| m.get(&k).cloned()));
-                        let v = match hit {
-                            Some(v) => Ok(v),
-                            None => {
-                                let v = eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate);
-                                if let (Some(k), Ok(v)) = (key, &v) {
-                                    shared.get_or_insert_with(Default::default).insert(k, v.clone());
-                                }
-                                v
-                            }
-                        };
-                        v.and_then(|v| axis_select_val(&v, path, *flat).num())
-                    }
-                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, sig, tick_rate),
-                }
-                .map_err(|e| format!("dyn meta field: {}", e))?;
-                self.world.col_set_sym_at(i, *col, value);
-            }
-        }
-        Ok(())
+        slots::refresh_dyn_field_columns(&mut self.world, &sig)
     }
 
     fn exec_tick_value(&mut self, v: Val) -> Result<(), String> {
@@ -1254,7 +1200,7 @@ impl Sim {
         env: &Env,
     ) -> Result<(), String> {
         let mut predicted = Vec::new();
-        let bailed = !self.compiled_predicate_scan(&compiled.predicate, &mut predicted);
+        let bailed = !self.compiled_predicate_scan(&compiled.filter, &mut predicted);
         let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
         if !bailed {
             let mut culled = Vec::new();
@@ -1265,27 +1211,15 @@ impl Sim {
         self.exec_tick_value(value)
     }
 
-    /// Scan alive rows against the resolved predicate, in row-index order.
-    /// Returns false on a fallible-read bail: the whole form must rerun
-    /// interpreted.
-    fn compiled_predicate_scan(&self, predicate: &RowPredicate, rows: &mut Vec<usize>) -> bool {
-        let tests = predicate.resolve(&self.world);
-        let bail_at = infallible_suffix_start(&tests);
-        if resolved_tests_match_nothing(&tests, bail_at) {
-            return true;
-        }
-        for row in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(row) {
-                continue;
-            }
-            let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
-                return false;
-            };
-            if matches {
-                rows.push(row);
-            }
-        }
-        true
+    /// Gather and execute the typed filter plan in row-index order.
+    /// Returns false when gathering finds a mistyped input or the kernel
+    /// rejects the plan; callers rerun the whole form interpreted.
+    fn compiled_predicate_scan(
+        &self,
+        filter: &kernel::FilterPlan,
+        rows: &mut Vec<usize>,
+    ) -> bool {
+        execute_filter_plan(filter, &self.world, rows)
     }
 
     fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
@@ -1294,7 +1228,7 @@ impl Sim {
         // a body error cannot preempt a later row's predicate bail.
         let mut rows = std::mem::take(&mut self.render_scratch.match_rows);
         rows.clear();
-        if !self.compiled_predicate_scan(&form.predicate, &mut rows) {
+        if !self.compiled_predicate_scan(&form.filter, &mut rows) {
             self.render_scratch.match_rows = rows;
             return Ok(None);
         }

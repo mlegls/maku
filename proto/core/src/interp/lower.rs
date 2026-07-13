@@ -2,30 +2,84 @@ use super::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-#[derive(Debug)]
-pub struct NumProgram {
-    pub ops: Vec<NumOp>,
-    pub n_regs: usize,
-    /// Capture-slot count: `Input { slot }` ops read a per-entity capture
-    /// vector (rand draws today; spawn-env values later). Slot numbering is
-    /// shared across the programs of one dyn node (a and b index one
-    /// vector), so a program may not use every slot below `n_inputs`.
-    pub n_inputs: usize,
-    /// Auxiliary inputs (scan-cell and channel/stream reads): the DRIVER
-    /// resolves these into a value slice before the run — through the row's
-    /// motion readers for scan cells and the eval's SigEnv for channels —
-    /// so ops stay total and callback-free (the JIT seam). A missing or
-    /// mistyped value bails the eval at the driver level. None for pure
-    /// programs; aux programs never join batched steps.
-    pub aux: Option<Rc<AuxTables>>,
-    /// The result register. Not necessarily the last op's dst: pair
-    /// lowering can select a component whose sibling ops come after it.
-    pub result: u16,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelType {
+    F32,
+    F64,
+    U32,
+    U64,
+    Symbol,
+    Handle,
+    Mask,
 }
 
-impl NumProgram {
+impl KernelType {
+    pub const fn width(self) -> u8 {
+        match self {
+            KernelType::F32 | KernelType::U32 | KernelType::Symbol | KernelType::Mask => 32,
+            KernelType::F64 | KernelType::U64 | KernelType::Handle => 64,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelInputSource {
+    Capture(u16),
+    Tick,
+    Axis,
+    PositionX,
+    PositionY,
+    Aux(u16),
+    Direct(u16),
+    Indirect { handle: u16, column: u16 },
+    Channel(u16),
+    State(u16),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KernelInput {
+    pub source: KernelInputSource,
+    pub ty: KernelType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KernelOutput {
+    pub register: u16,
+    pub ty: KernelType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoseRegisters {
+    pub x: u16,
+    pub y: u16,
+    pub theta: u16,
+    pub has_theta: u16,
+}
+
+#[derive(Debug)]
+pub struct KernelProgram {
+    pub ops: Vec<KernelOp>,
+    pub register_types: Vec<KernelType>,
+    pub inputs: Vec<KernelInput>,
+    pub outputs: Vec<KernelOutput>,
+    /// Capture-slot count. Kept separately because capture vectors are
+    /// densely packed by motion drivers while `inputs` also declares
+    /// tick/axis/position/aux sources.
+    pub n_inputs: usize,
+    pub aux: Option<Rc<AuxTables>>,
+}
+
+impl KernelProgram {
     pub fn aux_free(&self) -> bool {
         self.aux.is_none()
+    }
+
+    pub fn n_regs(&self) -> usize {
+        self.register_types.len()
+    }
+
+    pub fn result(&self) -> u16 {
+        self.outputs.first().map_or(0, |output| output.register)
     }
 }
 
@@ -65,8 +119,14 @@ pub enum ChanKind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum NumOp {
+pub enum KernelOp {
     Const { dst: u16, v: f64 },
+    ConstF32 { dst: u16, v: f32 },
+    ConstU32 { dst: u16, v: u32 },
+    ConstU64 { dst: u16, v: u64 },
+    ConstMask { dst: u16, v: bool },
+    /// Declared typed input read. Domain plans fill input lanes before run.
+    Load { dst: u16, input: u16 },
     /// Per-entity capture-vector read (`(%capture slot)` marker forms).
     Input { dst: u16, slot: u16 },
     T { dst: u16 },
@@ -77,11 +137,33 @@ pub enum NumOp {
     Sub { dst: u16, a: u16, b: u16 },
     Mul { dst: u16, a: u16, b: u16 },
     Div { dst: u16, a: u16, b: u16 },
+    F32Add { dst: u16, a: u16, b: u16 },
+    F32Sub { dst: u16, a: u16, b: u16 },
+    F32Mul { dst: u16, a: u16, b: u16 },
+    F32Div { dst: u16, a: u16, b: u16 },
     Eq { dst: u16, a: u16, b: u16 },
     Lt { dst: u16, a: u16, b: u16 },
     Gt { dst: u16, a: u16, b: u16 },
     Lte { dst: u16, a: u16, b: u16 },
     Gte { dst: u16, a: u16, b: u16 },
+    U32Eq { dst: u16, a: u16, b: u16 },
+    U32Lt { dst: u16, a: u16, b: u16 },
+    U64Eq { dst: u16, a: u16, b: u16 },
+    U64Lt { dst: u16, a: u16, b: u16 },
+    SymbolEq { dst: u16, a: u16, b: u16 },
+    HandleEq { dst: u16, a: u16, b: u16 },
+    MaskAnd { dst: u16, a: u16, b: u16 },
+    MaskOr { dst: u16, a: u16, b: u16 },
+    MaskNot { dst: u16, x: u16 },
+    SelectF32 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectF64 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectU32 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectU64 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectMask { dst: u16, mask: u16, yes: u16, no: u16 },
+    F32ToF64 { dst: u16, x: u16 },
+    F64ToF32 { dst: u16, x: u16 },
+    U32ToF64 { dst: u16, x: u16 },
+    U64ToF64 { dst: u16, x: u16 },
     Neg { dst: u16, x: u16 },
     Not { dst: u16, x: u16 },
     Abs { dst: u16, x: u16 },
@@ -102,9 +184,7 @@ pub enum NumOp {
     Ease { dst: u16, kind: EaseKind, x: u16 },
     LerpSmooth { dst: u16, kind: EaseKind, a: u16, b: u16, ctrl: u16, v1: u16, v2: u16 },
     Lssht { dst: u16, c: u16, pv: u16, f1: u16, f2: u16 },
-    /// Driver-filled auxiliary input read (scan cells, channel components).
     AuxIn { dst: u16, idx: u16 },
-    /// angle-of: y.atan2(x).to_degrees(), matching the geometry builtin.
     Atan2 { dst: u16, y: u16, x: u16 },
 }
 
@@ -116,7 +196,7 @@ pub enum EaseKind {
 }
 
 struct Builder<'a> {
-    ops: Vec<NumOp>,
+    ops: Vec<KernelOp>,
     next: u16,
     defs: &'a HashMap<String, Form>,
     inline_depth: usize,
@@ -169,7 +249,7 @@ impl Builder<'_> {
         Some(r)
     }
 
-    fn push(&mut self, op: NumOp) -> Option<u16> {
+    fn push(&mut self, op: KernelOp) -> Option<u16> {
         let dst = op_dst(op);
         self.ops.push(op);
         Some(dst)
@@ -184,11 +264,11 @@ impl Builder<'_> {
         match form {
             Form::Num(v) => {
                 let dst = self.reg()?;
-                self.push(NumOp::Const { dst, v: *v }).map(Lowered::Num)
+                self.push(KernelOp::Const { dst, v: *v }).map(Lowered::Num)
             }
             Form::Bool(b) => {
                 let dst = self.reg()?;
-                self.push(NumOp::Const { dst, v: if *b { 1.0 } else { 0.0 } })
+                self.push(KernelOp::Const { dst, v: if *b { 1.0 } else { 0.0 } })
                     .map(Lowered::Num)
             }
             Form::Sym(s) => self.lower_sym(s, env, scope),
@@ -207,7 +287,7 @@ impl Builder<'_> {
                 self.fix_chan_kind(c, ChanKind::Num)?;
                 let idx = self.aux_slot(AuxSlot::ChanX(c))?;
                 let dst = self.reg()?;
-                self.push(NumOp::AuxIn { dst, idx })
+                self.push(KernelOp::AuxIn { dst, idx })
             }
         }
     }
@@ -223,9 +303,9 @@ impl Builder<'_> {
                 let xi = self.aux_slot(AuxSlot::ChanX(c))?;
                 let yi = self.aux_slot(AuxSlot::ChanY(c))?;
                 let xd = self.reg()?;
-                let x = self.push(NumOp::AuxIn { dst: xd, idx: xi })?;
+                let x = self.push(KernelOp::AuxIn { dst: xd, idx: xi })?;
                 let yd = self.reg()?;
-                let y = self.push(NumOp::AuxIn { dst: yd, idx: yi })?;
+                let y = self.push(KernelOp::AuxIn { dst: yd, idx: yi })?;
                 Some((x, y))
             }
         }
@@ -276,30 +356,30 @@ impl Builder<'_> {
                         return None;
                     }
                     let dst = self.reg()?;
-                    self.push(NumOp::T { dst }).map(Lowered::Num)
+                    self.push(KernelOp::T { dst }).map(Lowered::Num)
                 }
                 "u" => {
                     if env.lookup("u").is_some() {
                         return None;
                     }
                     let dst = self.reg()?;
-                    self.push(NumOp::U { dst }).map(Lowered::Num)
+                    self.push(KernelOp::U { dst }).map(Lowered::Num)
                 }
                 "inf" => {
                     let dst = self.reg()?;
-                    self.push(NumOp::Const { dst, v: f64::INFINITY }).map(Lowered::Num)
+                    self.push(KernelOp::Const { dst, v: f64::INFINITY }).map(Lowered::Num)
                 }
                 "phi" => {
                     let dst = self.reg()?;
-                    self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 }).map(Lowered::Num)
+                    self.push(KernelOp::Const { dst, v: 1.618_033_988_749_895 }).map(Lowered::Num)
                 }
                 // slot-bound pos as a pair; a captured pos shadows (as in
                 // the component-read arm of lower_kw_access)
                 "pos" if self.allow_aux && env.lookup("pos").is_none() => {
                     let xd = self.reg()?;
-                    let x = self.push(NumOp::PosX { dst: xd })?;
+                    let x = self.push(KernelOp::PosX { dst: xd })?;
                     let yd = self.reg()?;
-                    let y = self.push(NumOp::PosY { dst: yd })?;
+                    let y = self.push(KernelOp::PosY { dst: yd })?;
                     Some(Lowered::Pair(x, y))
                 }
                 name if name.starts_with('$') => None,
@@ -316,11 +396,11 @@ impl Builder<'_> {
                             let slot = (slots.base + idx) as u16;
                             self.n_inputs = self.n_inputs.max(slot as usize + 1);
                             let dst = self.reg()?;
-                            self.push(NumOp::Input { dst, slot }).map(Lowered::Num)
+                            self.push(KernelOp::Input { dst, slot }).map(Lowered::Num)
                         }
                         None => {
                             let dst = self.reg()?;
-                            self.push(NumOp::Const { dst, v }).map(Lowered::Num)
+                            self.push(KernelOp::Const { dst, v }).map(Lowered::Num)
                         }
                     },
                     // captured pose: fold to a const pair (the env is fixed
@@ -330,9 +410,9 @@ impl Builder<'_> {
                     // the component-read arm.
                     Some(Val::Pose(p)) if name != "pos" => {
                         let xd = self.reg()?;
-                        let x = self.push(NumOp::Const { dst: xd, v: p.x })?;
+                        let x = self.push(KernelOp::Const { dst: xd, v: p.x })?;
                         let yd = self.reg()?;
-                        let y = self.push(NumOp::Const { dst: yd, v: p.y })?;
+                        let y = self.push(KernelOp::Const { dst: yd, v: p.y })?;
                         Some(Lowered::Pair(x, y))
                     }
                     None => self.lower_bare_def(name, env).map(Lowered::Num),
@@ -349,22 +429,22 @@ impl Builder<'_> {
                             return None;
                         }
                         let dst = self.reg()?;
-                        self.push(NumOp::T { dst }).map(Lowered::Num)
+                        self.push(KernelOp::T { dst }).map(Lowered::Num)
                     }
                     "u" => {
                         if env.lookup("u").is_some() {
                             return None;
                         }
                         let dst = self.reg()?;
-                        self.push(NumOp::U { dst }).map(Lowered::Num)
+                        self.push(KernelOp::U { dst }).map(Lowered::Num)
                     }
                     "inf" => {
                         let dst = self.reg()?;
-                        self.push(NumOp::Const { dst, v: f64::INFINITY }).map(Lowered::Num)
+                        self.push(KernelOp::Const { dst, v: f64::INFINITY }).map(Lowered::Num)
                     }
                     "phi" => {
                         let dst = self.reg()?;
-                        self.push(NumOp::Const { dst, v: 1.618_033_988_749_895 }).map(Lowered::Num)
+                        self.push(KernelOp::Const { dst, v: 1.618_033_988_749_895 }).map(Lowered::Num)
                     }
                     name if name.starts_with('$') => None,
                     name => self.lower_bare_def(name, env).map(Lowered::Num),
@@ -390,7 +470,7 @@ impl Builder<'_> {
             let slot = *slot as u16;
             self.n_inputs = self.n_inputs.max(slot as usize + 1);
             let dst = self.reg()?;
-            return self.push(NumOp::Input { dst, slot }).map(Lowered::Num);
+            return self.push(KernelOp::Input { dst, slot }).map(Lowered::Num);
         }
         // `evolve` and `live` are special forms (unshadowable), handled
         // before the env/defs shadow checks — like the interpreter's head
@@ -413,7 +493,7 @@ impl Builder<'_> {
                 .checked_add(super::motion::form_site_count(&items[2]))?;
             let idx = self.aux_slot(AuxSlot::Scan(index))?;
             let dst = self.reg()?;
-            return self.push(NumOp::AuxIn { dst, idx }).map(Lowered::Num);
+            return self.push(KernelOp::AuxIn { dst, idx }).map(Lowered::Num);
         }
         if name == "live" {
             if !self.allow_aux || !matches!(scope, LowerScope::Current) || items.len() != 2 {
@@ -461,7 +541,7 @@ impl Builder<'_> {
                 .collect::<Option<Vec<_>>>()?;
             let dst = self.reg()?;
             return self
-                .push(NumOp::LerpSmooth {
+                .push(KernelOp::LerpSmooth {
                     dst,
                     kind,
                     a: args[0],
@@ -485,19 +565,19 @@ impl Builder<'_> {
             "angle-of" if args.len() == 1 => {
                 let (x, y) = self.as_pair(args[0])?;
                 let dst = self.reg()?;
-                return self.push(NumOp::Atan2 { dst, y, x }).map(Lowered::Num);
+                return self.push(KernelOp::Atan2 { dst, y, x }).map(Lowered::Num);
             }
             "mag" if args.len() == 1 => {
                 // (x*x + y*y).sqrt(), the geometry builtin's exact ops
                 let (x, y) = self.as_pair(args[0])?;
                 let xd = self.reg()?;
-                let xx = self.push(NumOp::Mul { dst: xd, a: x, b: x })?;
+                let xx = self.push(KernelOp::Mul { dst: xd, a: x, b: x })?;
                 let yd = self.reg()?;
-                let yy = self.push(NumOp::Mul { dst: yd, a: y, b: y })?;
+                let yy = self.push(KernelOp::Mul { dst: yd, a: y, b: y })?;
                 let sd = self.reg()?;
-                let sum = self.push(NumOp::Add { dst: sd, a: xx, b: yy })?;
+                let sum = self.push(KernelOp::Add { dst: sd, a: xx, b: yy })?;
                 let dst = self.reg()?;
-                return self.push(NumOp::Sqrt { dst, x: sum }).map(Lowered::Num);
+                return self.push(KernelOp::Sqrt { dst, x: sum }).map(Lowered::Num);
             }
             "+" | "-" if args.len() == 2 && args.iter().any(|a| matches!(a, Lowered::Pair(..))) => {
                 // componentwise pose arithmetic (math.rs add2 / `-` pose
@@ -506,9 +586,9 @@ impl Builder<'_> {
                 let (bx, by) = self.as_pair(args[1])?;
                 let make = |dst: u16, a: u16, b: u16| {
                     if name == "+" {
-                        NumOp::Add { dst, a, b }
+                        KernelOp::Add { dst, a, b }
                     } else {
-                        NumOp::Sub { dst, a, b }
+                        KernelOp::Sub { dst, a, b }
                     }
                 };
                 let xd = self.reg()?;
@@ -542,8 +622,8 @@ impl Builder<'_> {
             if &**base == "pos" && env.lookup("pos").is_none() {
                 let dst = self.reg()?;
                 return match field {
-                    "x" => self.push(NumOp::PosX { dst }).map(Lowered::Num),
-                    "y" => self.push(NumOp::PosY { dst }).map(Lowered::Num),
+                    "x" => self.push(KernelOp::PosX { dst }).map(Lowered::Num),
+                    "y" => self.push(KernelOp::PosY { dst }).map(Lowered::Num),
                     _ => None,
                 };
             }
@@ -552,7 +632,7 @@ impl Builder<'_> {
             return match kw_get_val(field, &v)? {
                 Val::Num(v) => {
                     let dst = self.reg()?;
-                    self.push(NumOp::Const { dst, v }).map(Lowered::Num)
+                    self.push(KernelOp::Const { dst, v }).map(Lowered::Num)
                 }
                 _ => None,
             };
@@ -645,24 +725,24 @@ impl Builder<'_> {
 
     fn lower_call(&mut self, name: &str, args: &[u16]) -> Option<u16> {
         match name {
-            "+" => self.lower_fold(args, 0.0, |dst, a, b| NumOp::Add { dst, a, b }),
-            "*" => self.lower_fold(args, 1.0, |dst, a, b| NumOp::Mul { dst, a, b }),
-            "-" => self.lower_fold(args, 0.0, |dst, a, b| NumOp::Sub { dst, a, b }),
-            "/" => self.lower_fold(args, 1.0, |dst, a, b| NumOp::Div { dst, a, b }),
+            "+" => self.lower_fold(args, 0.0, |dst, a, b| KernelOp::Add { dst, a, b }),
+            "*" => self.lower_fold(args, 1.0, |dst, a, b| KernelOp::Mul { dst, a, b }),
+            "-" => self.lower_fold(args, 0.0, |dst, a, b| KernelOp::Sub { dst, a, b }),
+            "/" => self.lower_fold(args, 1.0, |dst, a, b| KernelOp::Div { dst, a, b }),
             "=" | "<" | ">" | "<=" | ">=" | "min" | "max" | "mod" | "pow" | "quot" if args.len() == 2 => {
                 let dst = self.reg()?;
                 let (a, b) = (args[0], args[1]);
                 let op = match name {
-                    "=" => NumOp::Eq { dst, a, b },
-                    "<" => NumOp::Lt { dst, a, b },
-                    ">" => NumOp::Gt { dst, a, b },
-                    "<=" => NumOp::Lte { dst, a, b },
-                    ">=" => NumOp::Gte { dst, a, b },
-                    "min" => NumOp::Min { dst, a, b },
-                    "max" => NumOp::Max { dst, a, b },
-                    "mod" => NumOp::Mod { dst, a, b },
-                    "pow" => NumOp::Pow { dst, a, b },
-                    "quot" => NumOp::Quot { dst, a, b },
+                    "=" => KernelOp::Eq { dst, a, b },
+                    "<" => KernelOp::Lt { dst, a, b },
+                    ">" => KernelOp::Gt { dst, a, b },
+                    "<=" => KernelOp::Lte { dst, a, b },
+                    ">=" => KernelOp::Gte { dst, a, b },
+                    "min" => KernelOp::Min { dst, a, b },
+                    "max" => KernelOp::Max { dst, a, b },
+                    "mod" => KernelOp::Mod { dst, a, b },
+                    "pow" => KernelOp::Pow { dst, a, b },
+                    "quot" => KernelOp::Quot { dst, a, b },
                     _ => unreachable!(),
                 };
                 self.push(op)
@@ -673,32 +753,32 @@ impl Builder<'_> {
                 let dst = self.reg()?;
                 let x = args[0];
                 let op = match name {
-                    "abs" => NumOp::Abs { dst, x },
-                    "floor" => NumOp::Floor { dst, x },
-                    "ceil" => NumOp::Ceil { dst, x },
-                    "round" => NumOp::Round { dst, x },
-                    "sqrt" => NumOp::Sqrt { dst, x },
-                    "not" => NumOp::Not { dst, x },
-                    "sin" => NumOp::Sin { dst, x },
-                    "cos" => NumOp::Cos { dst, x },
-                    "einsine" => NumOp::Ease { dst, kind: EaseKind::InSine, x },
-                    "eoutsine" => NumOp::Ease { dst, kind: EaseKind::OutSine, x },
-                    "eiosine" => NumOp::Ease { dst, kind: EaseKind::InOutSine, x },
+                    "abs" => KernelOp::Abs { dst, x },
+                    "floor" => KernelOp::Floor { dst, x },
+                    "ceil" => KernelOp::Ceil { dst, x },
+                    "round" => KernelOp::Round { dst, x },
+                    "sqrt" => KernelOp::Sqrt { dst, x },
+                    "not" => KernelOp::Not { dst, x },
+                    "sin" => KernelOp::Sin { dst, x },
+                    "cos" => KernelOp::Cos { dst, x },
+                    "einsine" => KernelOp::Ease { dst, kind: EaseKind::InSine, x },
+                    "eoutsine" => KernelOp::Ease { dst, kind: EaseKind::OutSine, x },
+                    "eiosine" => KernelOp::Ease { dst, kind: EaseKind::InOutSine, x },
                     _ => unreachable!(),
                 };
                 self.push(op)
             }
             "sine" if args.len() == 3 => {
                 let dst = self.reg()?;
-                self.push(NumOp::Sine { dst, period: args[0], amp: args[1], x: args[2] })
+                self.push(KernelOp::Sine { dst, period: args[0], amp: args[1], x: args[2] })
             }
             "lerp" if args.len() == 5 => {
                 let dst = self.reg()?;
-                self.push(NumOp::Lerp { dst, a: args[0], b: args[1], ctrl: args[2], v1: args[3], v2: args[4] })
+                self.push(KernelOp::Lerp { dst, a: args[0], b: args[1], ctrl: args[2], v1: args[3], v2: args[4] })
             }
             "lerp3" if args.len() == 8 => {
                 let dst = self.reg()?;
-                self.push(NumOp::Lerp3 {
+                self.push(KernelOp::Lerp3 {
                     dst,
                     a1: args[0],
                     b1: args[1],
@@ -712,7 +792,7 @@ impl Builder<'_> {
             }
             "lssht" if args.len() == 4 => {
                 let dst = self.reg()?;
-                self.push(NumOp::Lssht { dst, c: args[0], pv: args[1], f1: args[2], f2: args[3] })
+                self.push(KernelOp::Lssht { dst, c: args[0], pv: args[1], f1: args[2], f2: args[3] })
             }
             _ => None,
         }
@@ -722,18 +802,18 @@ impl Builder<'_> {
         &mut self,
         args: &[u16],
         init: f64,
-        make: fn(u16, u16, u16) -> NumOp,
+        make: fn(u16, u16, u16) -> KernelOp,
     ) -> Option<u16> {
         let mut iter = args.iter().copied();
         let mut acc = if let Some(first) = iter.next() {
             first
         } else {
             let dst = self.reg()?;
-            return self.push(NumOp::Const { dst, v: init });
+            return self.push(KernelOp::Const { dst, v: init });
         };
         if args.len() == 1 {
             let init_reg = self.reg()?;
-            self.push(NumOp::Const { dst: init_reg, v: init })?;
+            self.push(KernelOp::Const { dst: init_reg, v: init })?;
             let dst = self.reg()?;
             return self.push(make(dst, init_reg, acc));
         }
@@ -745,45 +825,72 @@ impl Builder<'_> {
     }
 }
 
-fn op_dst(op: NumOp) -> u16 {
+fn op_dst(op: KernelOp) -> u16 {
     match op {
-        NumOp::Const { dst, .. }
-        | NumOp::Input { dst, .. }
-        | NumOp::T { dst }
-        | NumOp::U { dst }
-        | NumOp::PosX { dst }
-        | NumOp::PosY { dst }
-        | NumOp::Add { dst, .. }
-        | NumOp::Sub { dst, .. }
-        | NumOp::Mul { dst, .. }
-        | NumOp::Div { dst, .. }
-        | NumOp::Eq { dst, .. }
-        | NumOp::Lt { dst, .. }
-        | NumOp::Gt { dst, .. }
-        | NumOp::Lte { dst, .. }
-        | NumOp::Gte { dst, .. }
-        | NumOp::Neg { dst, .. }
-        | NumOp::Not { dst, .. }
-        | NumOp::Abs { dst, .. }
-        | NumOp::Floor { dst, .. }
-        | NumOp::Ceil { dst, .. }
-        | NumOp::Round { dst, .. }
-        | NumOp::Sin { dst, .. }
-        | NumOp::Cos { dst, .. }
-        | NumOp::Sqrt { dst, .. }
-        | NumOp::Pow { dst, .. }
-        | NumOp::Min { dst, .. }
-        | NumOp::Max { dst, .. }
-        | NumOp::Mod { dst, .. }
-        | NumOp::Quot { dst, .. }
-        | NumOp::Sine { dst, .. }
-        | NumOp::Lerp { dst, .. }
-        | NumOp::Lerp3 { dst, .. }
-        | NumOp::Ease { dst, .. }
-        | NumOp::LerpSmooth { dst, .. }
-        | NumOp::Lssht { dst, .. }
-        | NumOp::AuxIn { dst, .. }
-        | NumOp::Atan2 { dst, .. } => dst,
+        KernelOp::Const { dst, .. }
+        | KernelOp::ConstF32 { dst, .. }
+        | KernelOp::ConstU32 { dst, .. }
+        | KernelOp::ConstU64 { dst, .. }
+        | KernelOp::ConstMask { dst, .. }
+        | KernelOp::Load { dst, .. }
+        | KernelOp::Input { dst, .. }
+        | KernelOp::T { dst }
+        | KernelOp::U { dst }
+        | KernelOp::PosX { dst }
+        | KernelOp::PosY { dst }
+        | KernelOp::Add { dst, .. }
+        | KernelOp::Sub { dst, .. }
+        | KernelOp::Mul { dst, .. }
+        | KernelOp::Div { dst, .. }
+        | KernelOp::F32Add { dst, .. }
+        | KernelOp::F32Sub { dst, .. }
+        | KernelOp::F32Mul { dst, .. }
+        | KernelOp::F32Div { dst, .. }
+        | KernelOp::Eq { dst, .. }
+        | KernelOp::Lt { dst, .. }
+        | KernelOp::Gt { dst, .. }
+        | KernelOp::Lte { dst, .. }
+        | KernelOp::Gte { dst, .. }
+        | KernelOp::U32Eq { dst, .. }
+        | KernelOp::U32Lt { dst, .. }
+        | KernelOp::U64Eq { dst, .. }
+        | KernelOp::U64Lt { dst, .. }
+        | KernelOp::SymbolEq { dst, .. }
+        | KernelOp::HandleEq { dst, .. }
+        | KernelOp::MaskAnd { dst, .. }
+        | KernelOp::MaskOr { dst, .. }
+        | KernelOp::MaskNot { dst, .. }
+        | KernelOp::SelectF32 { dst, .. }
+        | KernelOp::SelectF64 { dst, .. }
+        | KernelOp::SelectU32 { dst, .. }
+        | KernelOp::SelectU64 { dst, .. }
+        | KernelOp::SelectMask { dst, .. }
+        | KernelOp::F32ToF64 { dst, .. }
+        | KernelOp::F64ToF32 { dst, .. }
+        | KernelOp::U32ToF64 { dst, .. }
+        | KernelOp::U64ToF64 { dst, .. }
+        | KernelOp::Neg { dst, .. }
+        | KernelOp::Not { dst, .. }
+        | KernelOp::Abs { dst, .. }
+        | KernelOp::Floor { dst, .. }
+        | KernelOp::Ceil { dst, .. }
+        | KernelOp::Round { dst, .. }
+        | KernelOp::Sin { dst, .. }
+        | KernelOp::Cos { dst, .. }
+        | KernelOp::Sqrt { dst, .. }
+        | KernelOp::Pow { dst, .. }
+        | KernelOp::Min { dst, .. }
+        | KernelOp::Max { dst, .. }
+        | KernelOp::Mod { dst, .. }
+        | KernelOp::Quot { dst, .. }
+        | KernelOp::Sine { dst, .. }
+        | KernelOp::Lerp { dst, .. }
+        | KernelOp::Lerp3 { dst, .. }
+        | KernelOp::Ease { dst, .. }
+        | KernelOp::LerpSmooth { dst, .. }
+        | KernelOp::Lssht { dst, .. }
+        | KernelOp::AuxIn { dst, .. }
+        | KernelOp::Atan2 { dst, .. } => dst,
     }
 }
 
@@ -866,7 +973,7 @@ pub struct LowerOpts<'a> {
 
 /// Classic entry: Const-folded captures, no aux (tests, option-free sites).
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
+pub fn lower_num_form(form: &Form, env: &Env, defs: &HashMap<String, Form>) -> Option<KernelProgram> {
     lower_num_form_opts(form, env, defs, LowerOpts::default())
 }
 
@@ -875,7 +982,7 @@ pub fn lower_num_form_opts(
     env: &Env,
     defs: &HashMap<String, Form>,
     opts: LowerOpts<'_>,
-) -> Option<NumProgram> {
+) -> Option<KernelProgram> {
     // Def inlining needs no cell-scope guard: signal evaluation skips bare
     // stream reads (signals read streams via (live $name)
     // only), so a def name can never be shadowed by a cell at runtime.
@@ -905,11 +1012,42 @@ pub fn lower_num_form_opts(
             .collect::<Option<Vec<_>>>()?;
         Some(Rc::new(AuxTables { slots: b.aux_slots, chans }))
     };
-    Some(NumProgram { ops: b.ops, n_regs: b.next as usize, n_inputs: b.n_inputs, aux, result })
+    let mut inputs = (0..b.n_inputs)
+        .map(|slot| KernelInput {
+            source: KernelInputSource::Capture(slot as u16),
+            ty: KernelType::F64,
+        })
+        .collect::<Vec<_>>();
+    if b.ops.iter().any(|op| matches!(op, KernelOp::T { .. })) {
+        inputs.push(KernelInput { source: KernelInputSource::Tick, ty: KernelType::F64 });
+    }
+    if b.ops.iter().any(|op| matches!(op, KernelOp::U { .. })) {
+        inputs.push(KernelInput { source: KernelInputSource::Axis, ty: KernelType::F64 });
+    }
+    if b.ops.iter().any(|op| matches!(op, KernelOp::PosX { .. })) {
+        inputs.push(KernelInput { source: KernelInputSource::PositionX, ty: KernelType::F64 });
+    }
+    if b.ops.iter().any(|op| matches!(op, KernelOp::PosY { .. })) {
+        inputs.push(KernelInput { source: KernelInputSource::PositionY, ty: KernelType::F64 });
+    }
+    if let Some(tables) = aux.as_deref() {
+        inputs.extend((0..tables.slots.len()).map(|slot| KernelInput {
+            source: KernelInputSource::Aux(slot as u16),
+            ty: KernelType::F64,
+        }));
+    }
+    Some(KernelProgram {
+        ops: b.ops,
+        register_types: vec![KernelType::F64; b.next as usize],
+        inputs,
+        outputs: vec![KernelOutput { register: result, ty: KernelType::F64 }],
+        n_inputs: b.n_inputs,
+        aux,
+    })
 }
 
-pub fn program_uses_pos(prog: &NumProgram) -> bool {
-    prog.ops.iter().any(|op| matches!(op, NumOp::PosX { .. } | NumOp::PosY { .. }))
+pub fn program_uses_pos(prog: &KernelProgram) -> bool {
+    prog.ops.iter().any(|op| matches!(op, KernelOp::PosX { .. } | KernelOp::PosY { .. }))
 }
 
 /// Structural interning: programs with identical op streams share one Rc,
@@ -918,81 +1056,159 @@ pub fn program_uses_pos(prog: &NumProgram) -> bool {
 /// arrives through Input slots, never through the program body. The cache
 /// key is an exact encoding of (ops, n_regs, n_inputs); f64s compare by
 /// bits (a NaN-const program simply never unifies).
-pub fn intern_program(prog: NumProgram) -> Rc<NumProgram> {
+pub fn intern_program(prog: KernelProgram) -> Rc<KernelProgram> {
     thread_local! {
-        static CACHE: RefCell<HashMap<Vec<u64>, Rc<NumProgram>>> = RefCell::new(HashMap::new());
+        static CACHE: RefCell<HashMap<Vec<u64>, Rc<KernelProgram>>> = RefCell::new(HashMap::new());
     }
     let key = program_key(&prog);
     CACHE.with(|c| c.borrow_mut().entry(key).or_insert_with(|| Rc::new(prog)).clone())
 }
 
-fn program_key(prog: &NumProgram) -> Vec<u64> {
-    let mut k = Vec::with_capacity(prog.ops.len() * 2 + 3);
-    k.push(prog.n_regs as u64);
+fn program_key(prog: &KernelProgram) -> Vec<u64> {
+    let mut k = Vec::with_capacity(prog.ops.len() * 2 + prog.inputs.len() + prog.outputs.len() + 8);
+    k.push(prog.n_regs() as u64);
     k.push(prog.n_inputs as u64);
-    k.push(prog.result as u64);
+    k.push(prog.register_types.len() as u64);
+    k.extend(prog.register_types.iter().map(|ty| *ty as u64));
+    k.push(prog.inputs.len() as u64);
+    for input in &prog.inputs {
+        k.push(input.ty as u64);
+        match input.source {
+            KernelInputSource::Capture(slot) => k.push(1 << 32 | slot as u64),
+            KernelInputSource::Tick => k.push(2 << 32),
+            KernelInputSource::Axis => k.push(3 << 32),
+            KernelInputSource::PositionX => k.push(4 << 32),
+            KernelInputSource::PositionY => k.push(5 << 32),
+            KernelInputSource::Aux(slot) => k.push(6 << 32 | slot as u64),
+            KernelInputSource::Direct(column) => k.push(7 << 32 | column as u64),
+            KernelInputSource::Indirect { handle, column } => {
+                k.push(8 << 32 | handle as u64);
+                k.push(column as u64);
+            }
+            KernelInputSource::Channel(channel) => k.push(9 << 32 | channel as u64),
+            KernelInputSource::State(slot) => k.push(10 << 32 | slot as u64),
+        }
+    }
+    k.push(prog.outputs.len() as u64);
+    for output in &prog.outputs {
+        k.push(((output.ty as u64) << 32) | output.register as u64);
+    }
     let reg2 = |a: u16, b: u16| ((a as u64) << 16) | b as u64;
     let reg3 = |a: u16, b: u16, c: u16| ((a as u64) << 32) | ((b as u64) << 16) | c as u64;
     for op in &prog.ops {
         // one discriminant word, then operand words; dst is derivable from
         // op order for most ops but encoded anyway — exactness over bytes
         match *op {
-            NumOp::Const { dst, v } => {
+            KernelOp::Const { dst, v } => {
                 k.push(1 << 32 | dst as u64);
                 k.push(v.to_bits());
             }
-            NumOp::Input { dst, slot } => k.push(2 << 32 | reg2(dst, slot)),
-            NumOp::T { dst } => k.push(3 << 32 | dst as u64),
-            NumOp::U { dst } => k.push(4 << 32 | dst as u64),
-            NumOp::PosX { dst } => k.push(5 << 32 | dst as u64),
-            NumOp::PosY { dst } => k.push(6 << 32 | dst as u64),
-            NumOp::Add { dst, a, b } => k.push(7 << 32 | reg3(dst, a, b)),
-            NumOp::Sub { dst, a, b } => k.push(8 << 32 | reg3(dst, a, b)),
-            NumOp::Mul { dst, a, b } => k.push(9 << 32 | reg3(dst, a, b)),
-            NumOp::Div { dst, a, b } => k.push(10 << 32 | reg3(dst, a, b)),
-            NumOp::Eq { dst, a, b } => k.push(11 << 32 | reg3(dst, a, b)),
-            NumOp::Lt { dst, a, b } => k.push(12 << 32 | reg3(dst, a, b)),
-            NumOp::Gt { dst, a, b } => k.push(13 << 32 | reg3(dst, a, b)),
-            NumOp::Lte { dst, a, b } => k.push(14 << 32 | reg3(dst, a, b)),
-            NumOp::Gte { dst, a, b } => k.push(15 << 32 | reg3(dst, a, b)),
-            NumOp::Neg { dst, x } => k.push(16 << 32 | reg2(dst, x)),
-            NumOp::Not { dst, x } => k.push(17 << 32 | reg2(dst, x)),
-            NumOp::Abs { dst, x } => k.push(18 << 32 | reg2(dst, x)),
-            NumOp::Floor { dst, x } => k.push(19 << 32 | reg2(dst, x)),
-            NumOp::Ceil { dst, x } => k.push(20 << 32 | reg2(dst, x)),
-            NumOp::Round { dst, x } => k.push(21 << 32 | reg2(dst, x)),
-            NumOp::Sin { dst, x } => k.push(22 << 32 | reg2(dst, x)),
-            NumOp::Cos { dst, x } => k.push(23 << 32 | reg2(dst, x)),
-            NumOp::Sqrt { dst, x } => k.push(24 << 32 | reg2(dst, x)),
-            NumOp::Pow { dst, a, b } => k.push(25 << 32 | reg3(dst, a, b)),
-            NumOp::Min { dst, a, b } => k.push(26 << 32 | reg3(dst, a, b)),
-            NumOp::Max { dst, a, b } => k.push(27 << 32 | reg3(dst, a, b)),
-            NumOp::Mod { dst, a, b } => k.push(28 << 32 | reg3(dst, a, b)),
-            NumOp::Quot { dst, a, b } => k.push(29 << 32 | reg3(dst, a, b)),
-            NumOp::Sine { dst, period, amp, x } => {
+            KernelOp::ConstF32 { dst, v } => {
+                k.push(42 << 32 | dst as u64);
+                k.push(v.to_bits() as u64);
+            }
+            KernelOp::ConstU32 { dst, v } => {
+                k.push(43 << 32 | dst as u64);
+                k.push(v as u64);
+            }
+            KernelOp::ConstU64 { dst, v } => {
+                k.push(44 << 32 | dst as u64);
+                k.push(v);
+            }
+            KernelOp::ConstMask { dst, v } => {
+                k.push(45 << 32 | dst as u64);
+                k.push(v as u64);
+            }
+            KernelOp::Load { dst, input } => k.push(46 << 32 | reg2(dst, input)),
+            KernelOp::Input { dst, slot } => k.push(2 << 32 | reg2(dst, slot)),
+            KernelOp::T { dst } => k.push(3 << 32 | dst as u64),
+            KernelOp::U { dst } => k.push(4 << 32 | dst as u64),
+            KernelOp::PosX { dst } => k.push(5 << 32 | dst as u64),
+            KernelOp::PosY { dst } => k.push(6 << 32 | dst as u64),
+            KernelOp::Add { dst, a, b } => k.push(7 << 32 | reg3(dst, a, b)),
+            KernelOp::Sub { dst, a, b } => k.push(8 << 32 | reg3(dst, a, b)),
+            KernelOp::Mul { dst, a, b } => k.push(9 << 32 | reg3(dst, a, b)),
+            KernelOp::Div { dst, a, b } => k.push(10 << 32 | reg3(dst, a, b)),
+            KernelOp::F32Add { dst, a, b } => k.push(47 << 32 | reg3(dst, a, b)),
+            KernelOp::F32Sub { dst, a, b } => k.push(48 << 32 | reg3(dst, a, b)),
+            KernelOp::F32Mul { dst, a, b } => k.push(49 << 32 | reg3(dst, a, b)),
+            KernelOp::F32Div { dst, a, b } => k.push(50 << 32 | reg3(dst, a, b)),
+            KernelOp::Eq { dst, a, b } => k.push(11 << 32 | reg3(dst, a, b)),
+            KernelOp::Lt { dst, a, b } => k.push(12 << 32 | reg3(dst, a, b)),
+            KernelOp::Gt { dst, a, b } => k.push(13 << 32 | reg3(dst, a, b)),
+            KernelOp::Lte { dst, a, b } => k.push(14 << 32 | reg3(dst, a, b)),
+            KernelOp::Gte { dst, a, b } => k.push(15 << 32 | reg3(dst, a, b)),
+            KernelOp::U32Eq { dst, a, b } => k.push(51 << 32 | reg3(dst, a, b)),
+            KernelOp::U32Lt { dst, a, b } => k.push(52 << 32 | reg3(dst, a, b)),
+            KernelOp::U64Eq { dst, a, b } => k.push(53 << 32 | reg3(dst, a, b)),
+            KernelOp::U64Lt { dst, a, b } => k.push(54 << 32 | reg3(dst, a, b)),
+            KernelOp::SymbolEq { dst, a, b } => k.push(55 << 32 | reg3(dst, a, b)),
+            KernelOp::HandleEq { dst, a, b } => k.push(56 << 32 | reg3(dst, a, b)),
+            KernelOp::MaskAnd { dst, a, b } => k.push(57 << 32 | reg3(dst, a, b)),
+            KernelOp::MaskOr { dst, a, b } => k.push(58 << 32 | reg3(dst, a, b)),
+            KernelOp::MaskNot { dst, x } => k.push(59 << 32 | reg2(dst, x)),
+            KernelOp::SelectF32 { dst, mask, yes, no } => {
+                k.push(60 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::SelectF64 { dst, mask, yes, no } => {
+                k.push(61 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::SelectU32 { dst, mask, yes, no } => {
+                k.push(62 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::SelectU64 { dst, mask, yes, no } => {
+                k.push(63 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::SelectMask { dst, mask, yes, no } => {
+                k.push(64 << 32 | reg3(dst, mask, yes));
+                k.push(no as u64);
+            }
+            KernelOp::F32ToF64 { dst, x } => k.push(65 << 32 | reg2(dst, x)),
+            KernelOp::F64ToF32 { dst, x } => k.push(66 << 32 | reg2(dst, x)),
+            KernelOp::U32ToF64 { dst, x } => k.push(67 << 32 | reg2(dst, x)),
+            KernelOp::U64ToF64 { dst, x } => k.push(68 << 32 | reg2(dst, x)),
+            KernelOp::Neg { dst, x } => k.push(16 << 32 | reg2(dst, x)),
+            KernelOp::Not { dst, x } => k.push(17 << 32 | reg2(dst, x)),
+            KernelOp::Abs { dst, x } => k.push(18 << 32 | reg2(dst, x)),
+            KernelOp::Floor { dst, x } => k.push(19 << 32 | reg2(dst, x)),
+            KernelOp::Ceil { dst, x } => k.push(20 << 32 | reg2(dst, x)),
+            KernelOp::Round { dst, x } => k.push(21 << 32 | reg2(dst, x)),
+            KernelOp::Sin { dst, x } => k.push(22 << 32 | reg2(dst, x)),
+            KernelOp::Cos { dst, x } => k.push(23 << 32 | reg2(dst, x)),
+            KernelOp::Sqrt { dst, x } => k.push(24 << 32 | reg2(dst, x)),
+            KernelOp::Pow { dst, a, b } => k.push(25 << 32 | reg3(dst, a, b)),
+            KernelOp::Min { dst, a, b } => k.push(26 << 32 | reg3(dst, a, b)),
+            KernelOp::Max { dst, a, b } => k.push(27 << 32 | reg3(dst, a, b)),
+            KernelOp::Mod { dst, a, b } => k.push(28 << 32 | reg3(dst, a, b)),
+            KernelOp::Quot { dst, a, b } => k.push(29 << 32 | reg3(dst, a, b)),
+            KernelOp::Sine { dst, period, amp, x } => {
                 k.push(30 << 32 | reg2(dst, period));
                 k.push(reg2(amp, x));
             }
-            NumOp::Lerp { dst, a, b, ctrl, v1, v2 } => {
+            KernelOp::Lerp { dst, a, b, ctrl, v1, v2 } => {
                 k.push(31 << 32 | reg3(dst, a, b));
                 k.push(reg3(ctrl, v1, v2));
             }
-            NumOp::Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
+            KernelOp::Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
                 k.push(32 << 32 | reg3(dst, a1, b1));
                 k.push(reg3(a2, b2, ctrl));
                 k.push(reg3(v1, v2, v3));
             }
-            NumOp::Ease { dst, kind, x } => k.push((33 + kind as u64) << 32 | reg2(dst, x)),
-            NumOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
+            KernelOp::Ease { dst, kind, x } => k.push((33 + kind as u64) << 32 | reg2(dst, x)),
+            KernelOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
                 k.push((36 + kind as u64) << 32 | reg3(dst, a, b));
                 k.push(reg3(ctrl, v1, v2));
             }
-            NumOp::Lssht { dst, c, pv, f1, f2 } => {
+            KernelOp::Lssht { dst, c, pv, f1, f2 } => {
                 k.push(39 << 32 | reg3(dst, c, pv));
                 k.push(reg2(f1, f2));
             }
-            NumOp::AuxIn { dst, idx } => k.push(40 << 32 | reg2(dst, idx)),
-            NumOp::Atan2 { dst, y, x } => k.push(41 << 32 | reg3(dst, y, x)),
+            KernelOp::AuxIn { dst, idx } => k.push(40 << 32 | reg2(dst, idx)),
+            KernelOp::Atan2 { dst, y, x } => k.push(41 << 32 | reg3(dst, y, x)),
         }
     }
     // aux tables join the key: programs differing only in what the driver
@@ -1040,12 +1256,12 @@ thread_local! {
 
 /// Cap-free convenience (tests, cap-free call sites).
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn run_num_program(prog: &NumProgram, t: f64, u: f64, pos: Option<(f64, f64)>) -> f64 {
-    run_num_program_caps(prog, t, u, pos, &[], &[])
+pub fn run_kernel_program(prog: &KernelProgram, t: f64, u: f64, pos: Option<(f64, f64)>) -> f64 {
+    run_kernel_program_caps(prog, t, u, pos, &[], &[])
 }
 
-pub fn run_num_program_caps(
-    prog: &NumProgram,
+pub fn run_kernel_program_caps(
+    prog: &KernelProgram,
     t: f64,
     u: f64,
     pos: Option<(f64, f64)>,
@@ -1059,7 +1275,7 @@ pub fn run_num_program_caps(
 }
 
 pub fn run(
-    prog: &NumProgram,
+    prog: &KernelProgram,
     t: f64,
     u: f64,
     pos: Option<(f64, f64)>,
@@ -1070,50 +1286,50 @@ pub fn run(
     debug_assert!(caps.len() >= prog.n_inputs);
     debug_assert!(aux.len() >= prog.aux.as_deref().map_or(0, |a| a.slots.len()));
     regs.clear();
-    regs.resize(prog.n_regs, 0.0);
+    regs.resize(prog.n_regs(), 0.0);
     for op in &prog.ops {
         match *op {
-            NumOp::Const { dst, v } => regs[dst as usize] = v,
-            NumOp::Input { dst, slot } => regs[dst as usize] = caps[slot as usize],
-            NumOp::AuxIn { dst, idx } => regs[dst as usize] = aux[idx as usize],
-            NumOp::Atan2 { dst, y, x } => {
+            KernelOp::Const { dst, v } => regs[dst as usize] = v,
+            KernelOp::Input { dst, slot } => regs[dst as usize] = caps[slot as usize],
+            KernelOp::AuxIn { dst, idx } => regs[dst as usize] = aux[idx as usize],
+            KernelOp::Atan2 { dst, y, x } => {
                 regs[dst as usize] = regs[y as usize].atan2(regs[x as usize]).to_degrees()
             }
-            NumOp::T { dst } => regs[dst as usize] = t,
-            NumOp::U { dst } => regs[dst as usize] = u,
-            NumOp::PosX { dst } => regs[dst as usize] = pos.map(|p| p.0).unwrap_or(0.0),
-            NumOp::PosY { dst } => regs[dst as usize] = pos.map(|p| p.1).unwrap_or(0.0),
-            NumOp::Add { dst, a, b } => regs[dst as usize] = regs[a as usize] + regs[b as usize],
-            NumOp::Sub { dst, a, b } => regs[dst as usize] = regs[a as usize] - regs[b as usize],
-            NumOp::Mul { dst, a, b } => regs[dst as usize] = regs[a as usize] * regs[b as usize],
-            NumOp::Div { dst, a, b } => regs[dst as usize] = regs[a as usize] / regs[b as usize],
-            NumOp::Eq { dst, a, b } => regs[dst as usize] = mask_num((regs[a as usize] - regs[b as usize]).abs() < 1e-9),
-            NumOp::Lt { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] < regs[b as usize]),
-            NumOp::Gt { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] > regs[b as usize]),
-            NumOp::Lte { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] <= regs[b as usize]),
-            NumOp::Gte { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] >= regs[b as usize]),
-            NumOp::Neg { dst, x } => regs[dst as usize] = -regs[x as usize],
-            NumOp::Not { dst, x } => regs[dst as usize] = mask_num(regs[x as usize] == 0.0),
-            NumOp::Abs { dst, x } => regs[dst as usize] = regs[x as usize].abs(),
-            NumOp::Floor { dst, x } => regs[dst as usize] = regs[x as usize].floor(),
-            NumOp::Ceil { dst, x } => regs[dst as usize] = regs[x as usize].ceil(),
-            NumOp::Round { dst, x } => regs[dst as usize] = regs[x as usize].round(),
-            NumOp::Sin { dst, x } => regs[dst as usize] = regs[x as usize].to_radians().sin(),
-            NumOp::Cos { dst, x } => regs[dst as usize] = regs[x as usize].to_radians().cos(),
-            NumOp::Sqrt { dst, x } => regs[dst as usize] = regs[x as usize].sqrt(),
-            NumOp::Pow { dst, a, b } => regs[dst as usize] = regs[a as usize].powf(regs[b as usize]),
-            NumOp::Min { dst, a, b } => regs[dst as usize] = regs[a as usize].min(regs[b as usize]),
-            NumOp::Max { dst, a, b } => regs[dst as usize] = regs[a as usize].max(regs[b as usize]),
-            NumOp::Mod { dst, a, b } => regs[dst as usize] = regs[a as usize].rem_euclid(regs[b as usize]),
-            NumOp::Quot { dst, a, b } => regs[dst as usize] = (regs[a as usize] / regs[b as usize]).trunc(),
-            NumOp::Sine { dst, period, amp, x } => {
+            KernelOp::T { dst } => regs[dst as usize] = t,
+            KernelOp::U { dst } => regs[dst as usize] = u,
+            KernelOp::PosX { dst } => regs[dst as usize] = pos.map(|p| p.0).unwrap_or(0.0),
+            KernelOp::PosY { dst } => regs[dst as usize] = pos.map(|p| p.1).unwrap_or(0.0),
+            KernelOp::Add { dst, a, b } => regs[dst as usize] = regs[a as usize] + regs[b as usize],
+            KernelOp::Sub { dst, a, b } => regs[dst as usize] = regs[a as usize] - regs[b as usize],
+            KernelOp::Mul { dst, a, b } => regs[dst as usize] = regs[a as usize] * regs[b as usize],
+            KernelOp::Div { dst, a, b } => regs[dst as usize] = regs[a as usize] / regs[b as usize],
+            KernelOp::Eq { dst, a, b } => regs[dst as usize] = mask_num((regs[a as usize] - regs[b as usize]).abs() < 1e-9),
+            KernelOp::Lt { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] < regs[b as usize]),
+            KernelOp::Gt { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] > regs[b as usize]),
+            KernelOp::Lte { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] <= regs[b as usize]),
+            KernelOp::Gte { dst, a, b } => regs[dst as usize] = mask_num(regs[a as usize] >= regs[b as usize]),
+            KernelOp::Neg { dst, x } => regs[dst as usize] = -regs[x as usize],
+            KernelOp::Not { dst, x } => regs[dst as usize] = mask_num(regs[x as usize] == 0.0),
+            KernelOp::Abs { dst, x } => regs[dst as usize] = regs[x as usize].abs(),
+            KernelOp::Floor { dst, x } => regs[dst as usize] = regs[x as usize].floor(),
+            KernelOp::Ceil { dst, x } => regs[dst as usize] = regs[x as usize].ceil(),
+            KernelOp::Round { dst, x } => regs[dst as usize] = regs[x as usize].round(),
+            KernelOp::Sin { dst, x } => regs[dst as usize] = regs[x as usize].to_radians().sin(),
+            KernelOp::Cos { dst, x } => regs[dst as usize] = regs[x as usize].to_radians().cos(),
+            KernelOp::Sqrt { dst, x } => regs[dst as usize] = regs[x as usize].sqrt(),
+            KernelOp::Pow { dst, a, b } => regs[dst as usize] = regs[a as usize].powf(regs[b as usize]),
+            KernelOp::Min { dst, a, b } => regs[dst as usize] = regs[a as usize].min(regs[b as usize]),
+            KernelOp::Max { dst, a, b } => regs[dst as usize] = regs[a as usize].max(regs[b as usize]),
+            KernelOp::Mod { dst, a, b } => regs[dst as usize] = regs[a as usize].rem_euclid(regs[b as usize]),
+            KernelOp::Quot { dst, a, b } => regs[dst as usize] = (regs[a as usize] / regs[b as usize]).trunc(),
+            KernelOp::Sine { dst, period, amp, x } => {
                 regs[dst as usize] = regs[amp as usize] * (std::f64::consts::TAU * regs[x as usize] / regs[period as usize]).sin();
             }
-            NumOp::Lerp { dst, a, b, ctrl, v1, v2 } => {
+            KernelOp::Lerp { dst, a, b, ctrl, v1, v2 } => {
                 let r = ((regs[ctrl as usize] - regs[a as usize]) / (regs[b as usize] - regs[a as usize])).clamp(0.0, 1.0);
                 regs[dst as usize] = regs[v1 as usize] + r * (regs[v2 as usize] - regs[v1 as usize]);
             }
-            NumOp::Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
+            KernelOp::Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
                 let out = if regs[ctrl as usize] < regs[a2 as usize] {
                     let r = ((regs[ctrl as usize] - regs[a1 as usize]) / (regs[b1 as usize] - regs[a1 as usize])).clamp(0.0, 1.0);
                     regs[v1 as usize] + r * (regs[v2 as usize] - regs[v1 as usize])
@@ -1123,24 +1339,25 @@ pub fn run(
                 };
                 regs[dst as usize] = out;
             }
-            NumOp::Ease { dst, kind, x } => regs[dst as usize] = ease_num(kind, regs[x as usize]),
-            NumOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
+            KernelOp::Ease { dst, kind, x } => regs[dst as usize] = ease_num(kind, regs[x as usize]),
+            KernelOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
                 let r = ((regs[ctrl as usize] - regs[a as usize]) / (regs[b as usize] - regs[a as usize])).clamp(0.0, 1.0);
                 regs[dst as usize] = regs[v1 as usize] + ease_num(kind, r) * (regs[v2 as usize] - regs[v1 as usize]);
             }
-            NumOp::Lssht { dst, c, pv, f1, f2 } => {
+            KernelOp::Lssht { dst, c, pv, f1, f2 } => {
                 let c = regs[c as usize];
                 let pv = regs[pv as usize];
                 let _w = 1.0 / (1.0 + (c.abs() * 4.0 * (pv - pv)).exp());
                 let m = (c * regs[f1 as usize]).exp() + (c * regs[f2 as usize]).exp();
                 regs[dst as usize] = m.ln() / c;
             }
+            _ => unreachable!("typed kernel ops execute through sim::kernel::execute"),
         }
     }
     if prog.ops.is_empty() {
         return 0.0;
     }
-    regs[prog.result as usize]
+    regs[prog.result() as usize]
 }
 
 /// Lane-batched program run over per-lane (t, pos) inputs (u is one shared
@@ -1155,8 +1372,8 @@ pub fn run(
 /// (0.0 per lane for an empty program, matching `run`). `caps` holds each
 /// lane's capture vector at stride `prog.n_inputs` (empty when the program
 /// takes no inputs).
-pub fn run_lanes(
-    prog: &NumProgram,
+pub fn run_kernel_lanes(
+    prog: &KernelProgram,
     u: f64,
     tau: &[f64],
     pos: &[[f64; 2]],
@@ -1170,158 +1387,158 @@ pub fn run_lanes(
     let stride = prog.n_inputs;
     debug_assert!(stride == 0 || caps.len() >= stride * n);
     regs.clear();
-    regs.resize(prog.n_regs * n, 0.0);
+    regs.resize(prog.n_regs() * n, 0.0);
     for op in &prog.ops {
         let dst = op_dst(*op) as usize;
         let (src, d) = regs.split_at_mut(dst * n);
         let d = &mut d[..n];
         let at = |r: u16, l: usize| src[r as usize * n + l];
         match *op {
-            NumOp::Const { v, .. } => d.fill(v),
-            NumOp::Input { slot, .. } => {
+            KernelOp::Const { v, .. } => d.fill(v),
+            KernelOp::Input { slot, .. } => {
                 for l in 0..n {
                     d[l] = caps[l * stride + slot as usize];
                 }
             }
-            NumOp::T { .. } => d.copy_from_slice(tau),
-            NumOp::U { .. } => d.fill(u),
-            NumOp::PosX { .. } => {
+            KernelOp::T { .. } => d.copy_from_slice(tau),
+            KernelOp::U { .. } => d.fill(u),
+            KernelOp::PosX { .. } => {
                 for l in 0..n {
                     d[l] = pos[l][0];
                 }
             }
-            NumOp::PosY { .. } => {
+            KernelOp::PosY { .. } => {
                 for l in 0..n {
                     d[l] = pos[l][1];
                 }
             }
-            NumOp::Add { a, b, .. } => {
+            KernelOp::Add { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l) + at(b, l);
                 }
             }
-            NumOp::Sub { a, b, .. } => {
+            KernelOp::Sub { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l) - at(b, l);
                 }
             }
-            NumOp::Mul { a, b, .. } => {
+            KernelOp::Mul { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l) * at(b, l);
                 }
             }
-            NumOp::Div { a, b, .. } => {
+            KernelOp::Div { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l) / at(b, l);
                 }
             }
-            NumOp::Eq { a, b, .. } => {
+            KernelOp::Eq { a, b, .. } => {
                 for l in 0..n {
                     d[l] = mask_num((at(a, l) - at(b, l)).abs() < 1e-9);
                 }
             }
-            NumOp::Lt { a, b, .. } => {
+            KernelOp::Lt { a, b, .. } => {
                 for l in 0..n {
                     d[l] = mask_num(at(a, l) < at(b, l));
                 }
             }
-            NumOp::Gt { a, b, .. } => {
+            KernelOp::Gt { a, b, .. } => {
                 for l in 0..n {
                     d[l] = mask_num(at(a, l) > at(b, l));
                 }
             }
-            NumOp::Lte { a, b, .. } => {
+            KernelOp::Lte { a, b, .. } => {
                 for l in 0..n {
                     d[l] = mask_num(at(a, l) <= at(b, l));
                 }
             }
-            NumOp::Gte { a, b, .. } => {
+            KernelOp::Gte { a, b, .. } => {
                 for l in 0..n {
                     d[l] = mask_num(at(a, l) >= at(b, l));
                 }
             }
-            NumOp::Neg { x, .. } => {
+            KernelOp::Neg { x, .. } => {
                 for l in 0..n {
                     d[l] = -at(x, l);
                 }
             }
-            NumOp::Not { x, .. } => {
+            KernelOp::Not { x, .. } => {
                 for l in 0..n {
                     d[l] = mask_num(at(x, l) == 0.0);
                 }
             }
-            NumOp::Abs { x, .. } => {
+            KernelOp::Abs { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).abs();
                 }
             }
-            NumOp::Floor { x, .. } => {
+            KernelOp::Floor { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).floor();
                 }
             }
-            NumOp::Ceil { x, .. } => {
+            KernelOp::Ceil { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).ceil();
                 }
             }
-            NumOp::Round { x, .. } => {
+            KernelOp::Round { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).round();
                 }
             }
-            NumOp::Sin { x, .. } => {
+            KernelOp::Sin { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).to_radians().sin();
                 }
             }
-            NumOp::Cos { x, .. } => {
+            KernelOp::Cos { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).to_radians().cos();
                 }
             }
-            NumOp::Sqrt { x, .. } => {
+            KernelOp::Sqrt { x, .. } => {
                 for l in 0..n {
                     d[l] = at(x, l).sqrt();
                 }
             }
-            NumOp::Pow { a, b, .. } => {
+            KernelOp::Pow { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l).powf(at(b, l));
                 }
             }
-            NumOp::Min { a, b, .. } => {
+            KernelOp::Min { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l).min(at(b, l));
                 }
             }
-            NumOp::Max { a, b, .. } => {
+            KernelOp::Max { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l).max(at(b, l));
                 }
             }
-            NumOp::Mod { a, b, .. } => {
+            KernelOp::Mod { a, b, .. } => {
                 for l in 0..n {
                     d[l] = at(a, l).rem_euclid(at(b, l));
                 }
             }
-            NumOp::Quot { a, b, .. } => {
+            KernelOp::Quot { a, b, .. } => {
                 for l in 0..n {
                     d[l] = (at(a, l) / at(b, l)).trunc();
                 }
             }
-            NumOp::Sine { period, amp, x, .. } => {
+            KernelOp::Sine { period, amp, x, .. } => {
                 for l in 0..n {
                     d[l] = at(amp, l) * (std::f64::consts::TAU * at(x, l) / at(period, l)).sin();
                 }
             }
-            NumOp::Lerp { a, b, ctrl, v1, v2, .. } => {
+            KernelOp::Lerp { a, b, ctrl, v1, v2, .. } => {
                 for l in 0..n {
                     let r = ((at(ctrl, l) - at(a, l)) / (at(b, l) - at(a, l))).clamp(0.0, 1.0);
                     d[l] = at(v1, l) + r * (at(v2, l) - at(v1, l));
                 }
             }
-            NumOp::Lerp3 { a1, b1, a2, b2, ctrl, v1, v2, v3, .. } => {
+            KernelOp::Lerp3 { a1, b1, a2, b2, ctrl, v1, v2, v3, .. } => {
                 for l in 0..n {
                     d[l] = if at(ctrl, l) < at(a2, l) {
                         let r = ((at(ctrl, l) - at(a1, l)) / (at(b1, l) - at(a1, l))).clamp(0.0, 1.0);
@@ -1332,18 +1549,18 @@ pub fn run_lanes(
                     };
                 }
             }
-            NumOp::Ease { kind, x, .. } => {
+            KernelOp::Ease { kind, x, .. } => {
                 for l in 0..n {
                     d[l] = ease_num(kind, at(x, l));
                 }
             }
-            NumOp::LerpSmooth { kind, a, b, ctrl, v1, v2, .. } => {
+            KernelOp::LerpSmooth { kind, a, b, ctrl, v1, v2, .. } => {
                 for l in 0..n {
                     let r = ((at(ctrl, l) - at(a, l)) / (at(b, l) - at(a, l))).clamp(0.0, 1.0);
                     d[l] = at(v1, l) + ease_num(kind, r) * (at(v2, l) - at(v1, l));
                 }
             }
-            NumOp::Lssht { c, pv, f1, f2, .. } => {
+            KernelOp::Lssht { c, pv, f1, f2, .. } => {
                 for l in 0..n {
                     let c = at(c, l);
                     let pv = at(pv, l);
@@ -1352,18 +1569,19 @@ pub fn run_lanes(
                     d[l] = m.ln() / c;
                 }
             }
-            NumOp::AuxIn { .. } => unreachable!("aux programs never batch as lanes"),
-            NumOp::Atan2 { y, x, .. } => {
+            KernelOp::AuxIn { .. } => unreachable!("aux programs never batch as lanes"),
+            KernelOp::Atan2 { y, x, .. } => {
                 for l in 0..n {
                     d[l] = at(y, l).atan2(at(x, l)).to_degrees();
                 }
             }
+            _ => unreachable!("typed kernel ops execute through sim::kernel::execute"),
         }
     }
     if prog.ops.is_empty() {
         out.extend(std::iter::repeat(0.0).take(n));
     } else {
-        let base = prog.result as usize * n;
+        let base = prog.result() as usize * n;
         out.extend_from_slice(&regs[base..base + n]);
     }
 }
@@ -1461,14 +1679,14 @@ mod tests {
     #[test]
     fn lowers_basic_t_arithmetic() {
         let prog = lower_num_form(&read("(* 2 t)"), &Env::empty(), &no_defs()).unwrap();
-        assert_eq!(run_num_program(&prog, 3.0, 0.0, None), 6.0);
+        assert_eq!(run_kernel_program(&prog, 3.0, 0.0, None), 6.0);
     }
 
     #[test]
     fn lowers_numeric_capture() {
         let env = Env::empty().bind("speed".into(), Val::Num(4.0));
         let prog = lower_num_form(&read("(* speed t)"), &env, &no_defs()).unwrap();
-        assert_eq!(run_num_program(&prog, 2.5, 0.0, None), 10.0);
+        assert_eq!(run_kernel_program(&prog, 2.5, 0.0, None), 10.0);
     }
 
     #[test]
@@ -1487,7 +1705,7 @@ mod tests {
         let mut defs = HashMap::new();
         defs.insert("sin".to_string(), read("(fn [x] x)"));
         let prog = lower_num_form(&read("(sin t)"), &Env::empty(), &defs).unwrap();
-        assert_eq!(run_num_program(&prog, 45.0, 0.0, None), 45.0);
+        assert_eq!(run_kernel_program(&prog, 45.0, 0.0, None), 45.0);
         assert!(lower_num_form(&read("(* 2 t)"), &Env::empty(), &defs).is_some());
 
         defs.insert("$ch".to_string(), read("(fn [x] x)"));
@@ -1500,7 +1718,7 @@ mod tests {
     fn inlines_defn_helper_call() {
         let defs = defs(&[("half", "(fn [x] (/ x 2))")]);
         let prog = lower_num_form(&read("(half t)"), &Env::empty(), &defs).unwrap();
-        let got = run_num_program(&prog, 9.0, 0.0, None);
+        let got = run_kernel_program(&prog, 9.0, 0.0, None);
         let want = eval_num("(half t)", &Env::empty(), &defs, 9.0, 0.0);
         assert_eq!(got, want);
     }
@@ -1509,14 +1727,14 @@ mod tests {
     fn inlines_bare_numeric_def() {
         let defs = defs(&[("speed2", "3")]);
         let prog = lower_num_form(&read("(* speed2 t)"), &Env::empty(), &defs).unwrap();
-        assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 12.0);
+        assert_eq!(run_kernel_program(&prog, 4.0, 0.0, None), 12.0);
     }
 
     #[test]
     fn inlines_def_chain_and_bails_on_cycle() {
         let chain_defs = defs(&[("base", "3"), ("speed2", "(* base 2)")]);
         let prog = lower_num_form(&read("(* speed2 t)"), &Env::empty(), &chain_defs).unwrap();
-        assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 24.0);
+        assert_eq!(run_kernel_program(&prog, 4.0, 0.0, None), 24.0);
 
         let cyclic = defs(&[("a", "b"), ("b", "a")]);
         assert!(lower_num_form(&read("a"), &Env::empty(), &cyclic).is_none());
@@ -1539,7 +1757,7 @@ mod tests {
         let env = Env::empty().bind("$mode".into(), Val::Stream(7));
         let defs = defs(&[("speed2", "3")]);
         let prog = lower_num_form(&read("(* speed2 t)"), &env, &defs).unwrap();
-        assert_eq!(run_num_program(&prog, 2.0, 0.0, None), 6.0);
+        assert_eq!(run_kernel_program(&prog, 2.0, 0.0, None), 6.0);
     }
 
     #[test]
@@ -1547,7 +1765,7 @@ mod tests {
         let env = Env::empty().bind("speed2".into(), Val::Num(5.0));
         let defs = defs(&[("speed2", "3")]);
         let prog = lower_num_form(&read("(* speed2 t)"), &env, &defs).unwrap();
-        assert_eq!(run_num_program(&prog, 4.0, 0.0, None), 20.0);
+        assert_eq!(run_kernel_program(&prog, 4.0, 0.0, None), 20.0);
     }
 
     #[test]
@@ -1556,7 +1774,7 @@ mod tests {
             let src = format!("(lerpsmooth {} 0 4 t 0 480)", ez);
             let prog = lower_num_form(&read(&src), &Env::empty(), &no_defs()).unwrap();
             for t in [-1.0, 0.0, 1.3, 4.0, 9.0] {
-                let got = run_num_program(&prog, t, 0.0, None);
+                let got = run_kernel_program(&prog, t, 0.0, None);
                 let want = eval_num(&src, &Env::empty(), &no_defs(), t, 0.0);
                 assert!((got - want).abs() <= 1e-12, "{} t={}: {} vs {}", ez, t, got, want);
             }
@@ -1569,7 +1787,7 @@ mod tests {
         let env = Env::empty().bind("ez".into(), Val::Builtin("eoutsine".into()));
         let prog = lower_num_form(&read("(lerpsmooth ez 0 1 t 0 10)"), &env, &no_defs()).unwrap();
         let want = eval_num("(lerpsmooth ez 0 1 t 0 10)", &env, &no_defs(), 0.5, 0.0);
-        assert_eq!(run_num_program(&prog, 0.5, 0.0, None), want);
+        assert_eq!(run_kernel_program(&prog, 0.5, 0.0, None), want);
 
         // def-shadowed easing name bails; non-builtin capture bails;
         // non-sym easing arg bails
@@ -1584,7 +1802,7 @@ mod tests {
     fn lowers_pos_component_reads() {
         let prog = lower_num_form(&read("(+ (:x pos) (:y pos))"), &Env::empty(), &no_defs()).unwrap();
         assert!(program_uses_pos(&prog));
-        assert_eq!(run_num_program(&prog, 0.0, 0.0, Some((3.0, 4.0))), 7.0);
+        assert_eq!(run_kernel_program(&prog, 0.0, 0.0, Some((3.0, 4.0))), 7.0);
 
         // captured pos shadows the slot at non-pos eval sites: ambiguous, bail
         let shadowed = Env::empty().bind("pos".into(), Val::Pose(Pose::point(1.0, 2.0)));
@@ -1604,13 +1822,13 @@ mod tests {
             .bind("delta".into(), Val::Pose(Pose::point(6.0, 8.0)));
 
         let prog = lower_num_form(&read("(* (:x (:vel exit)) t)"), &env, &no_defs()).unwrap();
-        assert_eq!(run_num_program(&prog, 2.0, 0.0, None), 3.0);
+        assert_eq!(run_kernel_program(&prog, 2.0, 0.0, None), 3.0);
         let prog = lower_num_form(&read("(:y delta)"), &env, &no_defs()).unwrap();
-        assert_eq!(run_num_program(&prog, 0.0, 0.0, None), 8.0);
+        assert_eq!(run_kernel_program(&prog, 0.0, 0.0, None), 8.0);
         // pointless pose has no theta: angle_or(0.0), same as the interpreter
         let prog = lower_num_form(&read("(:th delta)"), &env, &no_defs()).unwrap();
         assert_eq!(
-            run_num_program(&prog, 0.0, 0.0, None),
+            run_kernel_program(&prog, 0.0, 0.0, None),
             eval_num("(:th delta)", &env, &no_defs(), 0.0, 0.0)
         );
 
@@ -1646,9 +1864,9 @@ mod tests {
             let pos: Vec<[f64; 2]> = (0..17).map(|i| [i as f64 * 1.3, 5.0 - i as f64]).collect();
             let mut regs = Vec::new();
             let mut out = Vec::new();
-            run_lanes(&prog, 0.25, &tau, &pos, &[], &mut regs, &mut out);
+            run_kernel_lanes(&prog, 0.25, &tau, &pos, &[], &mut regs, &mut out);
             for l in 0..tau.len() {
-                let want = run_num_program(&prog, tau[l], 0.25, Some((pos[l][0], pos[l][1])));
+                let want = run_kernel_program(&prog, tau[l], 0.25, Some((pos[l][0], pos[l][1])));
                 let got = out[l];
                 assert!(
                     got == want || (got.is_nan() && want.is_nan()),
@@ -1664,7 +1882,7 @@ mod tests {
         assert!(lower_num_form(&read("(half t 1)"), &Env::empty(), &defs).is_none());
     }
 
-    fn lower_aux(src: &str, env: &Env, defs: &HashMap<String, Form>) -> Option<NumProgram> {
+    fn lower_aux(src: &str, env: &Env, defs: &HashMap<String, Form>) -> Option<KernelProgram> {
         lower_num_form_opts(&read(src), env, defs, LowerOpts { allow_aux: true, ..LowerOpts::default() })
     }
 
@@ -1676,19 +1894,19 @@ mod tests {
         let aux = prog.aux.as_deref().unwrap();
         assert_eq!(aux.chans, vec![(ChanRef::Named("tgt".into()), ChanKind::Pose)]);
         assert_eq!(aux.slots, vec![AuxSlot::ChanX(0), AuxSlot::ChanY(0)]);
-        let got = run_num_program_caps(&prog, 0.0, 0.0, Some((1.0, 1.0)), &[], &[3.0, 4.0]);
+        let got = run_kernel_program_caps(&prog, 0.0, 0.0, Some((1.0, 1.0)), &[], &[3.0, 4.0]);
         assert_eq!(got, (4.0f64 - 1.0).atan2(3.0 - 1.0).to_degrees());
 
         let prog = lower_aux("(mag (live $tgt))", &Env::empty(), &no_defs()).unwrap();
-        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 5.0);
+        assert_eq!(run_kernel_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 5.0);
         let prog = lower_aux("(:y (live $tgt))", &Env::empty(), &no_defs()).unwrap();
-        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 4.0);
+        assert_eq!(run_kernel_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 4.0);
         // theta never enters pairs
         assert!(lower_aux("(:th (live $tgt))", &Env::empty(), &no_defs()).is_none());
         // pair addition and a captured pose as a pair source
         let env = Env::empty().bind("off".into(), Val::Pose(Pose::point(1.0, 2.0)));
         let prog = lower_aux("(:x (+ (live $tgt) off))", &env, &no_defs()).unwrap();
-        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 4.0);
+        assert_eq!(run_kernel_program_caps(&prog, 0.0, 0.0, None, &[], &[3.0, 4.0]), 4.0);
     }
 
     #[test]
@@ -1697,7 +1915,7 @@ mod tests {
         let prog = lower_aux("(* 2 (live $rank))", &Env::empty(), &no_defs()).unwrap();
         let aux = prog.aux.as_deref().unwrap();
         assert_eq!(aux.chans, vec![(ChanRef::Named("rank".into()), ChanKind::Num)]);
-        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[5.0]), 10.0);
+        assert_eq!(run_kernel_program_caps(&prog, 0.0, 0.0, None, &[], &[5.0]), 10.0);
         // one channel consumed as both kinds bails
         assert!(lower_aux("(+ (mag (live $p)) (live $p))", &Env::empty(), &no_defs()).is_none());
         // env-captured stream handle resolves at lower time
@@ -1717,7 +1935,7 @@ mod tests {
         let prog = lower_aux(src, &Env::empty(), &no_defs()).unwrap();
         let aux = prog.aux.as_deref().unwrap();
         assert_eq!(aux.slots, vec![AuxSlot::Scan(0), AuxSlot::Scan(2)]);
-        assert_eq!(run_num_program_caps(&prog, 0.0, 0.0, None, &[], &[90.0, 0.5]), 90.5);
+        assert_eq!(run_kernel_program_caps(&prog, 0.0, 0.0, None, &[], &[90.0, 0.5]), 90.5);
         // form b of a pair starts after form a's sites
         let prog = lower_num_form_opts(
             &read("(evolve 0 (fn [s c] s))"),

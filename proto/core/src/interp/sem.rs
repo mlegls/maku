@@ -7,6 +7,7 @@
 use super::*;
 use crate::edn::Form;
 use crate::interp::types::Type;
+use crate::sim::kernel::ColliderProjectionPlan;
 use std::rc::Rc;
 
 /// Projector-local view of entity meta. Today this is implicit in the
@@ -69,32 +70,31 @@ impl FigureProjectorKind {
     }
 }
 
-/// Concrete numeric expression for a primitive projector override. This is not
-/// a dyn slot: any expression is evaluated in the projector's already-bound
-/// `e`/`ctx` environment and must produce a number for the current tick.
+/// Semantic source for one fixed-width primitive projector value. The source
+/// stays available for whole-projector interpretation when its optional typed
+/// projection plan cannot be used for the current row.
 #[derive(Clone, Debug)]
-pub enum ProjectorNum {
-    Const(f64),
-    /// `(:field e)` on the projector's entity scope for a non-special
-    /// field name: materialization reads the entity field directly — the
-    /// same value the bound view would hold — without building the view
-    /// or entering the evaluator. Recognized at spec build.
-    EntityCol(Rc<str>),
-    Expr(Form),
+pub enum ProjectorScalarSource {
+    Value(f64),
+    Form(Form),
 }
 
-impl ProjectorNum {
-    /// Only a general Expr needs the bound `e`/`ctx` views; Const needs
-    /// nothing and EntityCol reads the entity row directly.
+#[derive(Clone, Debug)]
+pub struct ProjectorScalar {
+    pub source: ProjectorScalarSource,
+    pub projection: Option<ColliderProjectionPlan>,
+}
+
+impl ProjectorScalar {
     pub(crate) fn needs_views(&self) -> bool {
-        matches!(self, ProjectorNum::Expr(_))
+        matches!(self.source, ProjectorScalarSource::Form(_))
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct CircleProjectorSpec {
     pub layer: Symbol,
-    pub radius: ProjectorNum,
+    pub radius: ProjectorScalar,
     pub env: Env,
     pub scope: Option<ProjectorScope>,
 }
@@ -102,16 +102,16 @@ pub struct CircleProjectorSpec {
 #[derive(Clone, Debug)]
 pub enum ProjectorSampleSet {
     Values(Rc<[f64]>),
-    Step(ProjectorNum),
+    Step(ProjectorScalar),
 }
 
 #[derive(Clone, Debug)]
 pub struct CapsuleChainProjectorSpec {
     pub layer: Symbol,
-    pub radius: ProjectorNum,
+    pub radius: ProjectorScalar,
     pub sample_set: ProjectorSampleSet,
-    pub u_max: Option<ProjectorNum>,
-    pub width: ProjectorNum,
+    pub u_max: Option<ProjectorScalar>,
+    pub width: ProjectorScalar,
     pub env: Env,
     pub scope: Option<ProjectorScope>,
 }
@@ -133,7 +133,7 @@ impl ColliderProjectorExpr {
             ColliderProjectorExpr::CapsuleChain(spec) => {
                 spec.radius.needs_views()
                     || spec.width.needs_views()
-                    || spec.u_max.as_ref().is_some_and(ProjectorNum::needs_views)
+                    || spec.u_max.as_ref().is_some_and(ProjectorScalar::needs_views)
                     || matches!(&spec.sample_set, ProjectorSampleSet::Step(n) if n.needs_views())
             }
             ColliderProjectorExpr::Callable { .. } => true,
@@ -146,19 +146,6 @@ impl ColliderProjectorExpr {
         }
     }
 
-    /// A projector the sim can materialize against `&World`: every slot is
-    /// Const/EntityCol, so no evaluator, no bound views, and no symbol-table
-    /// growth. Callable and Cond need the evaluator even when their children
-    /// don't (a Cond re-runs its predicates every tick).
-    pub(crate) fn is_direct(&self) -> bool {
-        match self {
-            ColliderProjectorExpr::Stable(_) => true,
-            ColliderProjectorExpr::Circle(_) | ColliderProjectorExpr::CapsuleChain(_) => {
-                !self.needs_views()
-            }
-            ColliderProjectorExpr::Callable { .. } | ColliderProjectorExpr::Cond { .. } => false,
-        }
-    }
 }
 
 /// A source-level collider projector expression after dyn-lifting and schema
@@ -242,10 +229,6 @@ impl ColliderProjector {
     pub(crate) fn needs_views(&self) -> bool {
         self.projectors.iter().any(|value| value.expr.needs_views())
     }
-
-    pub(crate) fn is_direct(&self) -> bool {
-        self.projectors.iter().all(|value| value.expr.is_direct())
-    }
 }
 
 #[cfg(test)]
@@ -264,27 +247,26 @@ mod collider_projector_tests {
                 figure: FigureProjectorKind::Pose,
             })
         };
-        // scope alone doesn't force views: Const and EntityCol radii never
-        // read the bound view, only a general Expr does
+        // Scope alone does not require views for an already-evaluated value.
         let scoped_const = ColliderProjectorValue::circle(CircleProjectorSpec {
             layer: Symbol(0),
-            radius: ProjectorNum::Const(1.0),
+            radius: ProjectorScalar {
+                source: ProjectorScalarSource::Value(1.0),
+                projection: None,
+            },
             env: Env::empty(),
             scope: scope(),
         });
         assert!(!scoped_const.expr.needs_views());
 
-        let scoped_col = ColliderProjectorValue::circle(CircleProjectorSpec {
-            layer: Symbol(0),
-            radius: ProjectorNum::EntityCol("hitbox".into()),
-            env: Env::empty(),
-            scope: scope(),
-        });
-        assert!(!scoped_col.expr.needs_views());
-
+        // A retained source form requires projector bindings whenever the
+        // driver selects whole-projector semantic fallback.
         let scoped_expr = ColliderProjectorValue::circle(CircleProjectorSpec {
             layer: Symbol(0),
-            radius: ProjectorNum::Expr(Form::Num(1.0)),
+            radius: ProjectorScalar {
+                source: ProjectorScalarSource::Form(Form::Num(1.0)),
+                projection: None,
+            },
             env: Env::empty(),
             scope: scope(),
         });
@@ -307,66 +289,6 @@ mod collider_projector_tests {
         assert!(!cond.expr.needs_views());
     }
 
-    #[test]
-    fn is_direct_classifies_projector_algebra() {
-        let scope = || {
-            Some(ProjectorScope {
-                entity: "e".into(),
-                context: "ctx".into(),
-                figure: FigureProjectorKind::Pose,
-            })
-        };
-        let circle = |radius: ProjectorNum| {
-            ColliderProjectorValue::circle(CircleProjectorSpec {
-                layer: Symbol(0),
-                radius,
-                env: Env::empty(),
-                scope: scope(),
-            })
-        };
-
-        let stable = ColliderProjectorValue::stable(Vec::new());
-        assert!(stable.expr.is_direct());
-        assert!(circle(ProjectorNum::Const(1.0)).expr.is_direct());
-        assert!(circle(ProjectorNum::EntityCol("hitbox".into())).expr.is_direct());
-        assert!(!circle(ProjectorNum::Expr(Form::Num(1.0))).expr.is_direct());
-
-        let callable = ColliderProjectorValue::callable(
-            FigureProjectorKind::Pose,
-            vec!["e".into(), "ctx".into()],
-            Vec::<Form>::new().into(),
-            Env::empty(),
-        );
-        assert!(!callable.expr.is_direct());
-
-        // a Cond is never direct even with direct children: its predicates
-        // re-run in the evaluator every tick
-        let cond = ColliderProjectorValue::cond(
-            FigureProjectorKind::Pose,
-            vec![(None, vec![ColliderProjectorValue::stable(Vec::new())].into())],
-            Env::empty(),
-            None,
-        );
-        assert!(!cond.expr.is_direct());
-
-        let direct = ColliderProjector {
-            projectors: vec![
-                ColliderProjectorValue::stable(Vec::new()),
-                circle(ProjectorNum::EntityCol("hitbox".into())),
-            ]
-            .into(),
-        };
-        assert!(direct.is_direct());
-
-        let mixed = ColliderProjector {
-            projectors: vec![
-                ColliderProjectorValue::stable(Vec::new()),
-                circle(ProjectorNum::Expr(Form::Num(1.0))),
-            ]
-            .into(),
-        };
-        assert!(!mixed.is_direct());
-    }
 }
 
 /// Literal meta forms are lifted through DynLike before merging so static keys
