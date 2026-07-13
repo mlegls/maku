@@ -78,22 +78,22 @@ pub struct Sim {
     load_warnings: Vec<String>,
 }
 
+type MotionBatchKey = (MotionProgramIdentity, MotionProgramIdentity, bool);
+
 /// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
 /// chain of constant wrappers over one compiled-integrand Vel node step as
-/// lanes of a single batched program run, grouped by program-pair address.
-/// Rebuilt every tick; groups recycle through `pool` to keep lane capacity.
+/// lanes of a single batched program run, grouped by full typed program/plan
+/// identity. Rebuilt every tick; groups recycle through `pool` to keep lane
+/// capacity.
 #[derive(Default)]
 struct VelBatchScratch {
     groups: Vec<VelBatchGroup>,
-    /// (a-program ptr, b-program ptr, polar) → index into `groups`, valid
-    /// for one tick (the plans' Rcs keep the keyed programs alive for the
-    /// tick). Polar is part of the key: programs are structurally INTERNED,
-    /// so a `(vel (polar s d))` and a `(vel (cart s d))` site can share the
-    /// same program pair while needing different component math.
-    index: crate::fxhash::FxHashMap<(usize, usize, bool), usize>,
-    /// Last (key, group) pushed: spawn groups occupy contiguous rows, so
-    /// consecutive lanes almost always hit the same group without hashing.
-    last: Option<((usize, usize, bool), usize)>,
+    /// Canonical ids are minted only after complete typed program/plan
+    /// comparison, so map and last-group lookup stay allocation-free and
+    /// never depend on Rc addresses.
+    index: crate::fxhash::FxHashMap<MotionBatchKey, usize>,
+    /// Contiguous spawn groups normally bypass the map.
+    last: Option<(MotionBatchKey, usize)>,
     pool: Vec<VelBatchGroup>,
     regs: Vec<f64>,
 }
@@ -104,7 +104,7 @@ struct VelBatchGroup {
     rows: Vec<(usize, usize)>,
     tau: Vec<f64>,
     pos: Vec<[f64; 2]>,
-    /// Per-lane capture vectors at stride `plan.ap.n_inputs` (empty when
+    /// Per-lane capture vectors at stride `plan.ap.n_inputs()` (empty when
     /// the group's programs take no inputs).
     caps: Vec<f64>,
     /// Oracle only: each lane's own Vel node — capture-slot lanes share
@@ -115,6 +115,7 @@ struct VelBatchGroup {
     va: Vec<f64>,
     vb: Vec<f64>,
 }
+
 
 impl VelBatchScratch {
     fn begin_tick(&mut self) {
@@ -140,13 +141,13 @@ impl VelBatchScratch {
         tau: f64,
         pos: [f64; 2],
     ) {
-        let key = (Rc::as_ptr(plan.ap) as usize, Rc::as_ptr(plan.bp) as usize, plan.polar);
+        let key = (plan.ap.identity(), plan.bp.identity(), plan.polar);
         let idx = match self.last {
-            Some((k, idx)) if k == key => idx,
+            Some((last_key, idx)) if last_key == key => idx,
             _ => {
                 let idx = *self.index.entry(key).or_insert_with(|| {
                     let owned = plan.to_plan();
-                    let mut g = self.pool.pop().unwrap_or_else(|| VelBatchGroup {
+                    let mut group = self.pool.pop().unwrap_or_else(|| VelBatchGroup {
                         plan: owned.clone(),
                         rows: Vec::new(),
                         tau: Vec::new(),
@@ -156,8 +157,8 @@ impl VelBatchScratch {
                         va: Vec::new(),
                         vb: Vec::new(),
                     });
-                    g.plan = owned;
-                    self.groups.push(g);
+                    group.plan = owned;
+                    self.groups.push(group);
                     self.groups.len() - 1
                 });
                 self.last = Some((key, idx));
@@ -167,7 +168,7 @@ impl VelBatchScratch {
         let g = &mut self.groups[idx];
         // group identity = program pair, so every lane's capture width is
         // the shared n_inputs (0 for cap-free programs)
-        debug_assert_eq!(plan.caps.len(), g.plan.ap.n_inputs);
+        debug_assert_eq!(plan.caps.len(), g.plan.ap.n_inputs());
         g.rows.push((row, slot));
         g.tau.push(tau);
         g.pos.push(pos);
@@ -179,17 +180,18 @@ impl VelBatchScratch {
 }
 
 /// Batched pos-only pose fill for wrapper-chain-over-ClosedPt rows
-/// (milestone B): grouped by interned program-pair address, one
-/// lane-batched run per component per phase (collide fill, cull), then
-/// per-row wrapper composition — the same value the per-row pos_only walk
-/// produces, lane-bit-identical by `run_lanes` construction and
-/// oracle-checked per lane.
+/// (milestone B): grouped by full typed program/plan identity, one
+/// lane-batched specialized F64 run per component per phase (collide fill,
+/// cull), then per-row wrapper composition — the same value the per-row
+/// pos_only walk produces, lane-bit-identical by `run_lanes` construction
+/// and oracle-checked per lane.
 #[derive(Default)]
 struct ClosedPoseScratch {
     groups: Vec<ClosedPoseGroup>,
-    index: crate::fxhash::FxHashMap<(usize, usize, bool), usize>,
-    /// Contiguous spawn groups hit the same group without hashing.
-    last: Option<((usize, usize, bool), usize)>,
+    index: crate::fxhash::FxHashMap<MotionBatchKey, usize>,
+    /// Contiguous spawn groups hit the same structurally checked group
+    /// without hashing.
+    last: Option<(MotionBatchKey, usize)>,
     pool: Vec<ClosedPoseGroup>,
     regs: Vec<f64>,
     /// ClosedPt programs never read pos (allow_pos=false); the lanes API
@@ -232,8 +234,8 @@ fn classify_row(fig: &DynFigure, sig: &SigEnv) -> RowClass {
 }
 
 struct ClosedPoseGroup {
-    ap: Rc<NumProgram>,
-    bp: Rc<NumProgram>,
+    ap: Rc<MotionProgram>,
+    bp: Rc<MotionProgram>,
     polar: bool,
     rows: Vec<usize>,
     tau: Vec<f64>,
@@ -241,6 +243,7 @@ struct ClosedPoseGroup {
     va: Vec<f64>,
     vb: Vec<f64>,
 }
+
 
 impl ClosedPoseScratch {
     fn begin_pass(&mut self) {
@@ -258,12 +261,12 @@ impl ClosedPoseScratch {
     }
 
     fn push_lane(&mut self, plan: &ClosedChainRef<'_>, row: usize, tau: f64) {
-        let key = (Rc::as_ptr(plan.ap) as usize, Rc::as_ptr(plan.bp) as usize, plan.polar);
+        let key = (plan.ap.identity(), plan.bp.identity(), plan.polar);
         let idx = match self.last {
-            Some((k, idx)) if k == key => idx,
+            Some((last_key, idx)) if last_key == key => idx,
             _ => {
                 let idx = *self.index.entry(key).or_insert_with(|| {
-                    let mut g = self.pool.pop().unwrap_or_else(|| ClosedPoseGroup {
+                    let mut group = self.pool.pop().unwrap_or_else(|| ClosedPoseGroup {
                         ap: plan.ap.clone(),
                         bp: plan.bp.clone(),
                         polar: plan.polar,
@@ -273,10 +276,10 @@ impl ClosedPoseScratch {
                         va: Vec::new(),
                         vb: Vec::new(),
                     });
-                    g.ap = plan.ap.clone();
-                    g.bp = plan.bp.clone();
-                    g.polar = plan.polar;
-                    self.groups.push(g);
+                    group.ap = plan.ap.clone();
+                    group.bp = plan.bp.clone();
+                    group.polar = plan.polar;
+                    self.groups.push(group);
                     self.groups.len() - 1
                 });
                 self.last = Some((key, idx));
@@ -284,7 +287,7 @@ impl ClosedPoseScratch {
             }
         };
         let g = &mut self.groups[idx];
-        debug_assert_eq!(plan.caps.len(), g.ap.n_inputs);
+        debug_assert_eq!(plan.caps.len(), g.ap.n_inputs());
         g.rows.push(row);
         g.tau.push(tau);
         g.caps.extend_from_slice(plan.caps);
@@ -790,8 +793,8 @@ impl Sim {
             s.zero_pos.resize(g.rows.len(), [0.0; 2]);
             g.va.clear();
             g.vb.clear();
-            run_lanes(&g.ap, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
-            run_lanes(&g.bp, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
+            run_lanes(g.ap.backend(), 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
+            run_lanes(g.bp.backend(), 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (x, y) = if g.polar {
                     let (sn, cs) = g.vb[l].to_radians().sin_cos();
@@ -912,8 +915,8 @@ impl Sim {
         let mut regs = std::mem::take(&mut self.vel_batch.regs);
         for g in &mut groups {
             let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
-            run_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
-            run_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
+            run_lanes(g.plan.ap.backend(), 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
+            run_lanes(g.plan.bp.backend(), 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (av, bv) = (g.va[l], g.vb[l]);
                 let (vx, vy) = if g.plan.polar {

@@ -3,9 +3,13 @@
 use super::*;
 use crate::edn::Form;
 use crate::fxhash::FxHashMap;
+use crate::sim::kernel::{
+    FallbackPolicy, IterationDomain, KernelBindings, KernelInputBinding, KernelInputSource,
+    KernelOutputBinding, KernelOutputTarget, KernelPlan, MergePolicy,
+};
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// Per-bullet scanned state keyed by stable lowered motion ids.
 #[derive(Debug, Clone)]
@@ -389,6 +393,148 @@ pub enum RandCell {
     Caps(Rc<[f64]>),
 }
 
+/// Canonical id for one fully compared typed motion program plus plan
+/// binding set. It is minted only after structural interning has compared
+/// the complete program, bindings, policies, and auxiliary source metadata;
+/// hot group lookup can therefore use it without pointer identity or
+/// re-walking the op stream per lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MotionProgramIdentity(u64);
+
+/// A validated MotionRows plan paired with the permanent specialized F64
+/// executor artifact. The typed program and bindings are the compile/cache
+/// identity; hot scalar and lane execution deliberately stays on
+/// `NumProgram` so its exact operation order does not change.
+#[derive(Debug)]
+pub struct MotionProgram {
+    backend: Rc<NumProgram>,
+    plan: KernelPlan,
+    identity: MotionProgramIdentity,
+}
+
+impl MotionProgram {
+    pub fn backend(&self) -> &NumProgram {
+        &self.backend
+    }
+
+    pub fn plan(&self) -> &KernelPlan {
+        &self.plan
+    }
+    pub fn identity(&self) -> MotionProgramIdentity {
+        self.identity
+    }
+
+
+    pub fn n_inputs(&self) -> usize {
+        self.backend.n_inputs
+    }
+
+    pub fn aux_free(&self) -> bool {
+        self.backend.aux_free()
+    }
+
+    /// Full structural plan identity. Program ids select an intern bucket,
+    /// but equality still checks the complete typed program and every
+    /// binding so a hash collision or differently bound input cannot merge.
+    pub fn same_identity(&self, other: &Self) -> bool {
+        self.plan.id() == other.plan.id()
+            && self.plan.program() == other.plan.program()
+            && self.plan.bindings() == other.plan.bindings()
+            && self.plan.domain() == other.plan.domain()
+            && self.plan.fallback() == other.plan.fallback()
+            && self.plan.merge() == other.plan.merge()
+            // Aux tables carry the exact named/stream channel identity;
+            // common Channel bindings name their per-plan component slot.
+            && self.backend.aux == other.backend.aux
+    }
+}
+
+fn motion_input_source(program: &NumProgram, source: NumKernelInputSource) -> Option<KernelInputSource> {
+    match source {
+        NumKernelInputSource::Capture(slot) => Some(KernelInputSource::Capture { slot }),
+        NumKernelInputSource::Tick => Some(KernelInputSource::Tick),
+        NumKernelInputSource::Axis => Some(KernelInputSource::Axis),
+        NumKernelInputSource::PositionX => Some(KernelInputSource::State { slot: 0 }),
+        NumKernelInputSource::PositionY => Some(KernelInputSource::State { slot: 1 }),
+        NumKernelInputSource::Aux(slot) => match program.aux.as_deref()?.slots.get(usize::from(slot))? {
+            // Slots 0/1 are the current position components. Scan cells
+            // follow them in the motion plan's state namespace.
+            crate::interp::lower::AuxSlot::Scan(index) => Some(KernelInputSource::State {
+                slot: u16::try_from(index.checked_add(2)?).ok()?,
+            }),
+            // Channel slots are flattened x/y components. For numeric
+            // channels only the even (x) slot is present.
+            crate::interp::lower::AuxSlot::ChanX(channel) => Some(KernelInputSource::Channel {
+                channel: channel.checked_mul(2)?,
+            }),
+            crate::interp::lower::AuxSlot::ChanY(channel) => Some(KernelInputSource::Channel {
+                channel: channel.checked_mul(2)?.checked_add(1)?,
+            }),
+        },
+    }
+}
+
+fn attach_motion_program(program: NumProgram) -> Option<Rc<MotionProgram>> {
+    let backend = intern_program(program);
+    let bridge = kernel_program_for_num(&backend).ok()?;
+    let inputs = bridge
+        .inputs
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, source)| {
+            Some(KernelInputBinding {
+                input: KernelInputRef::F64(u16::try_from(index).ok()?),
+                source: motion_input_source(&backend, source)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let plan = KernelPlan::new(
+        bridge.program,
+        IterationDomain::MotionRows,
+        KernelBindings {
+            inputs,
+            outputs: vec![KernelOutputBinding {
+                output: 0,
+                target: KernelOutputTarget::Driver,
+            }],
+        },
+        FallbackPolicy::WholePlanInterpreted,
+        MergePolicy::DriverOwned,
+    )
+    .ok()?;
+    let mut candidate = MotionProgram {
+        backend,
+        plan,
+        identity: MotionProgramIdentity(0),
+    };
+    thread_local! {
+        static PROGRAMS: RefCell<FxHashMap<KernelProgramId, Vec<Weak<MotionProgram>>>> =
+            RefCell::new(FxHashMap::default());
+        static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    }
+    PROGRAMS.with(|programs| {
+        let mut programs = programs.borrow_mut();
+        let bucket = programs.entry(candidate.plan.id()).or_default();
+        bucket.retain(|program| program.strong_count() != 0);
+        if let Some(existing) = bucket
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|program| program.same_identity(&candidate))
+        {
+            return Some(existing);
+        }
+        candidate.identity = NEXT_ID.with(|next| {
+            let identity = next.get();
+            next.set(identity.checked_add(1).expect("motion program identity overflow"));
+            MotionProgramIdentity(identity)
+        });
+        let program = Rc::new(candidate);
+        bucket.push(Rc::downgrade(&program));
+        Some(program)
+    })
+}
+
 #[derive(Debug)]
 pub struct ExtractedSig {
     /// Marker forms in node order — (a, b) for pair nodes, one for RotExpr.
@@ -397,10 +543,10 @@ pub struct ExtractedSig {
     /// Construction-time values of the env-capture slots (slot ids
     /// `sites.len()..`); the env is fixed per node, so these are too.
     pub env_caps: Vec<f64>,
-    /// One program per form, structurally INTERNED; every program's
-    /// `n_inputs` is bumped to the node's full capture width so all of a
-    /// node's programs read one capture vector (rand draws ++ env values).
-    pub programs: Vec<Rc<NumProgram>>,
+    /// One plan-backed program per form, structurally interned. Every
+    /// specialized backend's `n_inputs` is bumped to the node's full
+    /// capture width so all programs read one capture vector.
+    pub programs: Vec<Rc<MotionProgram>>,
 }
 
 /// Construction-time compile of a node's signal forms: rand-site extraction
@@ -423,7 +569,7 @@ pub(crate) fn compile_sig(
     sig: &SigEnv,
     allow_pos: bool,
     allow_aux: bool,
-) -> (Option<Rc<RandCell>>, Option<Vec<Rc<NumProgram>>>) {
+) -> (Option<Rc<RandCell>>, Option<Vec<Rc<MotionProgram>>>) {
     let has_rand = forms.iter().any(|f| super::spawn::form_has_rand(f));
     let mut sites = Vec::new();
     let marked: Vec<Form> = if has_rand {
@@ -453,13 +599,16 @@ pub(crate) fn compile_sig(
     }
     // late bump: an env slot discovered while lowering `b` widens `a` too
     let width = sites.len() + names.len();
-    let programs: Vec<Rc<NumProgram>> = programs
+    let programs = programs
         .into_iter()
         .map(|mut p| {
             p.n_inputs = width;
-            intern_program(p)
+            attach_motion_program(p)
         })
-        .collect();
+        .collect::<Option<Vec<_>>>();
+    let Some(programs) = programs else {
+        return (has_rand.then(|| Rc::new(RandCell::Bail)), None);
+    };
     // env lookups can't fail: slot mode only records names it resolved
     let env_caps: Vec<f64> = names
         .iter()
@@ -496,7 +645,7 @@ pub enum DynNode {
         b: Form,
         polar: bool,
         env: Env,
-        programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+        programs: OnceCell<Option<(Rc<MotionProgram>, Rc<MotionProgram>)>>,
         rand: Option<Rc<RandCell>>,
     },
     /// Integrated velocity (Scanned): components over slot-bound t.
@@ -505,7 +654,7 @@ pub enum DynNode {
         b: Form,
         polar: bool,
         env: Env,
-        programs: OnceCell<Option<(Rc<NumProgram>, Rc<NumProgram>)>>,
+        programs: OnceCell<Option<(Rc<MotionProgram>, Rc<MotionProgram>)>>,
         rand: Option<Rc<RandCell>>,
     },
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
@@ -529,7 +678,7 @@ pub enum DynNode {
     /// distance, you slide and turn back instantly.
     Clamp { lo: (f64, f64), hi: (f64, f64), child: Rc<DynNode> },
     /// Time-varying rotation frame: θ(t), stateful sites allowed inside.
-    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<NumProgram>>>, rand: Option<Rc<RandCell>> },
+    RotExpr { form: Form, env: Env, program: OnceCell<Option<Rc<MotionProgram>>>, rand: Option<Rc<RandCell>> },
     /// A user function adapted to a stateless pose dyn by calling it as (f t).
     FnPose(Val),
     /// A closed evolve used in a pose slot: the fold is replayed from epoch
@@ -1025,9 +1174,9 @@ pub(crate) fn eval_pt_at_rate(
     }
 }
 
-fn eval_num_program_pair(
-    a: &NumProgram,
-    b: &NumProgram,
+fn eval_motion_program_pair(
+    a: &MotionProgram,
+    b: &MotionProgram,
     polar: bool,
     tau: f64,
     u: f64,
@@ -1036,8 +1185,8 @@ fn eval_num_program_pair(
     aux_a: &[f64],
     aux_b: &[f64],
 ) -> (f64, f64) {
-    let av = run_num_program_caps(a, tau, u, pos, caps, aux_a);
-    let bv = run_num_program_caps(b, tau, u, pos, caps, aux_b);
+    let av = run_num_program_caps(a.backend(), tau, u, pos, caps, aux_a);
+    let bv = run_num_program_caps(b.backend(), tau, u, pos, caps, aux_b);
     if polar {
         let (s, c) = bv.to_radians().sin_cos();
         (av * c, av * s)
@@ -1046,14 +1195,14 @@ fn eval_num_program_pair(
     }
 }
 
-fn lower_program_pair(
+fn lower_motion_program_pair(
     a: &Form,
     b: &Form,
     env: &Env,
     sig: &SigEnv,
     allow_pos: bool,
     allow_aux: bool,
-) -> Option<(Rc<NumProgram>, Rc<NumProgram>)> {
+) -> Option<(Rc<MotionProgram>, Rc<MotionProgram>)> {
     let ap = lower_num_form_opts(
         a,
         env,
@@ -1069,16 +1218,16 @@ fn lower_program_pair(
     if !allow_pos && (program_uses_pos(&ap) || program_uses_pos(&bp)) {
         return None;
     }
-    Some((intern_program(ap), intern_program(bp)))
+    Some((attach_motion_program(ap)?, attach_motion_program(bp)?))
 }
 
-fn lower_single_program(
+fn lower_motion_program(
     form: &Form,
     env: &Env,
     sig: &SigEnv,
     allow_pos: bool,
     allow_aux: bool,
-) -> Option<Rc<NumProgram>> {
+) -> Option<Rc<MotionProgram>> {
     let prog = lower_num_form_opts(
         form,
         env,
@@ -1088,7 +1237,7 @@ fn lower_single_program(
     if !allow_pos && program_uses_pos(&prog) {
         return None;
     }
-    Some(intern_program(prog))
+    attach_motion_program(prog)
 }
 
 /// Fill a program's aux slice: scan cells through the row's readers (and
@@ -1099,13 +1248,14 @@ fn lower_single_program(
 /// reruns interpreted, which reproduces the interpreter's own result or
 /// error exactly.
 fn fetch_aux(
-    prog: &NumProgram,
+    prog: &MotionProgram,
     node_ptr: usize,
     state: &MotionState,
     sig: &SigEnv,
     readers: &MotionReaders,
     buf: &mut Vec<f64>,
 ) -> bool {
+    let prog = prog.backend();
     buf.clear();
     let Some(aux) = prog.aux.as_deref() else {
         return true;
@@ -1165,8 +1315,8 @@ pub struct VelStepPlan {
     /// The Vel node itself: its address keys the n2 state slot, and the
     /// oracle re-runs its integrand through the interpreter.
     pub vel: Rc<DynNode>,
-    pub ap: Rc<NumProgram>,
-    pub bp: Rc<NumProgram>,
+    pub ap: Rc<MotionProgram>,
+    pub bp: Rc<MotionProgram>,
     pub polar: bool,
 }
 
@@ -1175,8 +1325,8 @@ pub struct VelStepPlan {
 /// (rand draws), one lane's slice of the group's caps at stride n_inputs.
 pub struct VelStepPlanRef<'a> {
     pub vel: &'a Rc<DynNode>,
-    pub ap: &'a Rc<NumProgram>,
-    pub bp: &'a Rc<NumProgram>,
+    pub ap: &'a Rc<MotionProgram>,
+    pub bp: &'a Rc<MotionProgram>,
     pub polar: bool,
     pub caps: &'a [f64],
 }
@@ -1202,7 +1352,7 @@ pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlan
             DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
             DynNode::Vel { a, b, polar, env, programs, rand } => {
                 let (ap, bp) = programs
-                    .get_or_init(|| lower_program_pair(a, b, env, sig, true, true))
+                    .get_or_init(|| lower_motion_program_pair(a, b, env, sig, true, true))
                     .as_ref()?;
                 // aux programs never batch: the step must run the
                 // interpreted scan advance, and channel fetches are
@@ -1226,8 +1376,8 @@ pub struct ClosedChainRef<'a> {
     /// The figure's root pose node: wrapper composition (and the oracle)
     /// walk from here.
     pub root: &'a Rc<DynNode>,
-    pub ap: &'a Rc<NumProgram>,
-    pub bp: &'a Rc<NumProgram>,
+    pub ap: &'a Rc<MotionProgram>,
+    pub bp: &'a Rc<MotionProgram>,
     pub polar: bool,
     pub caps: &'a [f64],
 }
@@ -1243,7 +1393,7 @@ pub fn closed_chain_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<ClosedC
             DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
             DynNode::ClosedPt { a, b, polar, env, programs, rand } => {
                 let (ap, bp) = programs
-                    .get_or_init(|| lower_program_pair(a, b, env, sig, false, false))
+                    .get_or_init(|| lower_motion_program_pair(a, b, env, sig, false, false))
                     .as_ref()?;
                 return Some(ClosedChainRef { root, ap, bp, polar: *polar, caps: caps_of(rand) });
             }
@@ -1526,10 +1676,10 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
         DynNode::ClosedPt { a, b, polar, env, programs, rand } => {
             let key = d as *const DynNode as usize;
             if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_program_pair(a, b, env, sig, false, false))
+                .get_or_init(|| lower_motion_program_pair(a, b, env, sig, false, false))
                 .as_ref()
             {
-                let (x, y) = eval_num_program_pair(ap, bp, *polar, tau, u, None, caps_of(rand), &[], &[]);
+                let (x, y) = eval_motion_program_pair(ap, bp, *polar, tau, u, None, caps_of(rand), &[], &[]);
                 if !ctx.need_theta {
                     if oracle_enabled() {
                         let (a, b) = &oracle_forms(a, b, caps_of(rand));
@@ -1551,7 +1701,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     return Ok(Pose::point(x, y));
                 }
                 let eps = 1.0 / tick_rate;
-                let (x2, y2) = eval_num_program_pair(ap, bp, *polar, tau + eps, u, None, caps_of(rand), &[], &[]);
+                let (x2, y2) = eval_motion_program_pair(ap, bp, *polar, tau + eps, u, None, caps_of(rand), &[], &[]);
                 if oracle_enabled() {
                     let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let (ix, iy) = eval_pt_at_rate(
@@ -1630,7 +1780,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 return Ok(Pose::point(x, y));
             }
             if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_program_pair(a, b, env, sig, true, true))
+                .get_or_init(|| lower_motion_program_pair(a, b, env, sig, true, true))
                 .as_ref()
             {
                 // aux values (scan cells, channels) fetch per eval; a
@@ -1643,7 +1793,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                         {
                             return None;
                         }
-                        Some(eval_num_program_pair(
+                        Some(eval_motion_program_pair(
                             ap,
                             bp,
                             *polar,
@@ -1710,13 +1860,13 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             }
             let key = d as *const DynNode as usize;
             if let Some(prog) = program
-                .get_or_init(|| lower_single_program(form, env, sig, true, true))
+                .get_or_init(|| lower_motion_program(form, env, sig, true, true))
                 .as_ref()
             {
                 let fetched = AUX_A.with(|aa| {
                     let mut aa = aa.borrow_mut();
                     fetch_aux(prog, key, state, sig, readers, &mut aa)
-                        .then(|| run_num_program_caps(prog, tau, u, Some((0.0, 0.0)), caps_of(rand), &aa))
+                        .then(|| run_num_program_caps(prog.backend(), tau, u, Some((0.0, 0.0)), caps_of(rand), &aa))
                 });
                 if let Some(th) = fetched {
                     if oracle_enabled() {
@@ -1915,12 +2065,12 @@ pub fn step_motion_in(
             // Aux programs (scan/channel reads) take the interpreted path:
             // their sited evolves must ADVANCE here.
             let (vx, vy) = if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_program_pair(a, b, env, sig, true, true))
+                .get_or_init(|| lower_motion_program_pair(a, b, env, sig, true, true))
                 .as_ref()
                 .filter(|(ap, bp)| ap.aux_free() && bp.aux_free())
             {
                 let (vx, vy) =
-                    eval_num_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)), caps_of(rand), &[], &[]);
+                    eval_motion_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)), caps_of(rand), &[], &[]);
                 if oracle_enabled() {
                     let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let ((ivx, ivy), _) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
@@ -1956,7 +2106,7 @@ pub fn step_motion_in(
             // a lowered AUX-FREE program is scan-free: nothing to advance.
             // Aux programs still carry sited evolves that must advance.
             if program
-                .get_or_init(|| lower_single_program(form, env, ctx.sig, true, true))
+                .get_or_init(|| lower_motion_program(form, env, ctx.sig, true, true))
                 .as_ref()
                 .is_some_and(|p| p.aux_free())
             {
@@ -2371,6 +2521,70 @@ fn evolve_form_is_live(form: &Form, locals: &[&str]) -> bool {
         Form::Vector(items) => items.iter().any(|f| evolve_form_is_live(f, locals)),
         Form::Map(kvs) => kvs.iter().any(|(k, v)| evolve_form_is_live(k, locals) || evolve_form_is_live(v, locals)),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    fn compiled(src: &str, speed: f64) -> Rc<MotionProgram> {
+        let form = crate::edn::read_one(src).unwrap();
+        let env = Env::empty().bind("speed".into(), Val::Num(speed));
+        let (_, programs) = compile_sig(&[&form], &env, &SigEnv::default(), true, true);
+        programs.expect("supported motion expression").remove(0)
+    }
+
+    #[test]
+    fn motion_plan_declares_every_driver_input() {
+        let program = compiled("(+ speed t u (:x pos) (live $boost))", 2.0);
+        let plan = program.plan();
+        assert_eq!(plan.domain(), IterationDomain::MotionRows);
+        assert_eq!(plan.fallback(), FallbackPolicy::WholePlanInterpreted);
+        assert_eq!(plan.merge(), MergePolicy::DriverOwned);
+        assert_eq!(
+            plan.bindings().inputs,
+            [
+                KernelInputBinding {
+                    input: KernelInputRef::F64(0),
+                    source: KernelInputSource::Capture { slot: 0 },
+                },
+                KernelInputBinding {
+                    input: KernelInputRef::F64(1),
+                    source: KernelInputSource::Tick,
+                },
+                KernelInputBinding {
+                    input: KernelInputRef::F64(2),
+                    source: KernelInputSource::Axis,
+                },
+                KernelInputBinding {
+                    input: KernelInputRef::F64(3),
+                    source: KernelInputSource::State { slot: 0 },
+                },
+                KernelInputBinding {
+                    input: KernelInputRef::F64(4),
+                    source: KernelInputSource::Channel { channel: 0 },
+                },
+            ]
+        );
+        assert_eq!(
+            plan.bindings().outputs,
+            [KernelOutputBinding {
+                output: 0,
+                target: KernelOutputTarget::Driver,
+            }]
+        );
+        assert_eq!(plan.program().ops().len(), program.backend().ops.len());
+    }
+
+    #[test]
+    fn captures_share_full_typed_plan_identity() {
+        let a = compiled("(+ speed (* 2 t))", 2.0);
+        let b = compiled("(+ speed (* 2 t))", 3.0);
+        assert!(Rc::ptr_eq(&a, &b), "capture values must not specialize the typed plan");
+        assert!(a.same_identity(&b));
+        assert_eq!(a.plan().program(), b.plan().program());
+        assert_eq!(a.plan().bindings(), b.plan().bindings());
     }
 }
 
