@@ -395,6 +395,14 @@ impl Instance {
         self.session.sim.as_mut().map(|s| s.render_frame()).unwrap_or_default()
     }
 
+    /// Stable load-time schema identity for an optional renderer host.
+    pub fn declared_render_schema(
+        &self,
+        kind: &str,
+    ) -> Option<std::rc::Rc<crate::model::RenderSchema>> {
+        self.session.sim.as_ref().and_then(|sim| sim.declared_render_schema(kind))
+    }
+
     pub fn channel(&self, name: &str) -> Option<Val> {
         self.session.sim.as_ref().and_then(|s| s.channel_val(name))
     }
@@ -491,79 +499,6 @@ impl Instance {
             cmd_ticks: self.session.cmd_ticks(),
         })
     }
-}
-
-// -- shared render helpers (any host) ----------------------------------------
-
-/// Stock palette for style colors, as sRGB bytes.
-pub fn style_rgb(color: &str) -> (u8, u8, u8) {
-    match color {
-        "red" => (0xff, 0x4d, 0x5e),
-        "orange" => (0xff, 0x9d, 0x3c),
-        "yellow" => (0xff, 0xe0, 0x66),
-        "green" => (0x66, 0xe0, 0x85),
-        "teal" => (0x4d, 0xd8, 0xd0),
-        "blue" => (0x5c, 0x9d, 0xff),
-        "purple" => (0xb2, 0x7d, 0xff),
-        "pink" => (0xff, 0x85, 0xc2),
-        "black" => (0x60, 0x60, 0x70),
-        "blueteal" => (0x4d, 0xbc, 0xe8),
-        _ => (0xff, 0xff, 0xff),
-    }
-}
-
-/// Style color with a hue-shift (degrees) applied, as linear 0Ã¢ÂÂ1 RGB.
-pub fn style_rgb_hued(color: &str, hue_deg: f64) -> (f32, f32, f32) {
-    let (r, g, b) = style_rgb(color);
-    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-    if hue_deg.abs() < 1e-9 {
-        return (r, g, b);
-    }
-    let (h, s, l) = rgb_to_hsl(r, g, b);
-    hsl_to_rgb((h + hue_deg as f32).rem_euclid(360.0), s, l)
-}
-
-/// Display radius per family, in world units (render-contract default).
-pub fn dot_radius(family: &str) -> f32 {
-    match family {
-        "lstar" | "gglcircle" => 10.0 / 55.0,
-        "gem" | "star" => 5.0 / 55.0,
-        _ => 6.0 / 55.0,
-    }
-}
-
-fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
-    if (max - min).abs() < 1e-6 {
-        return (0.0, 0.0, l);
-    }
-    let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
-    let h = if (max - r).abs() < 1e-6 {
-        60.0 * (((g - b) / d).rem_euclid(6.0))
-    } else if (max - g).abs() < 1e-6 {
-        60.0 * ((b - r) / d + 2.0)
-    } else {
-        60.0 * ((r - g) / d + 4.0)
-    };
-    (h, s, l)
-}
-
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
-    let (r, g, b) = match (h / 60.0) as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    (r + m, g + m, b + m)
 }
 
 #[cfg(test)]

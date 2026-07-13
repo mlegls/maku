@@ -24,14 +24,18 @@ export class Maku {
         wasm.maku_add_file(this.__wbg_ptr, ptr0, len0, ptr1, len1);
     }
     /**
-     * Lasers/pathers: [active, r, g, b, a, n, x1, y1, … xn, yn]* repeated.
-     * @returns {Float32Array}
+     * @returns {number}
      */
-    beams() {
-        const ret = wasm.maku_beams(this.__wbg_ptr);
-        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+    basic_sprite_stride() {
+        const ret = wasm.maku_basic_sprite_stride(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    basic_sprites() {
+        const ret = wasm.maku_basic_sprites(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @param {string} path
@@ -43,6 +47,17 @@ export class Maku {
         var ptr1 = isLikeNone(pattern) ? 0 : passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len1 = WASM_VECTOR_LEN;
         wasm.maku_boot(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+    }
+    /**
+     * Build the pack frame once. Consume the zero-copy typed-array views
+     * before the next mutating wasm call: another build reuses their backing
+     * vectors, and any wasm-memory growth invalidates JavaScript views.
+     */
+    build_render_frame() {
+        const ret = wasm.maku_build_render_frame(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * Debug: pattern-scoped control cells as "name=value" lines (an
@@ -73,7 +88,7 @@ export class Maku {
         return ret;
     }
     /**
-     * [x, y] of a Vec2-valued channel ($player, $boss, …), or empty.
+     * [x, y] of a point-valued channel ($player, $boss, …), or empty.
      * @param {string} name
      * @returns {Float32Array}
      */
@@ -97,7 +112,7 @@ export class Maku {
     }
     /**
      * Wire protocol (docs/player.md): run/swap/add/load/pattern/restart/
-     * clear/seek/step/snapshots/pause/resume.
+     * clear/seek/step/snapshots/resize-entities/pause/resume.
      * @param {string} line
      */
     command(line) {
@@ -121,16 +136,18 @@ export class Maku {
         }
     }
     /**
-     * Point bullets: [x, y, radius_world, r, g, b, a]* (colors 0–1, hue
-     * pre-applied — every host renders identical colors; :scale is
-     * pre-applied to the radius, :opacity arrives as a).
-     * @returns {Float32Array}
+     * @returns {number}
      */
-    dots() {
-        const ret = wasm.maku_dots(this.__wbg_ptr);
-        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-        return v1;
+    draw_command_stride() {
+        const ret = wasm.maku_draw_command_stride(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    draw_commands() {
+        const ret = wasm.maku_draw_commands(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {number}
@@ -141,8 +158,8 @@ export class Maku {
     }
     /**
      * Recent positioned events for effect flashes: [code, age_ticks, x, y]*
-     * (codes: 0 graze, 1 player-hit, 2 enemy-hit, 3 died). Stateless — they
-     * replay under scrubbing.
+     * Event symbols are converted to this host's numeric effect ids here.
+     * Stateless — they replay under scrubbing.
      * @param {number} max_age
      * @returns {Float32Array}
      */
@@ -151,6 +168,13 @@ export class Maku {
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    frame_abi_version() {
+        const ret = wasm.maku_frame_abi_version(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * @returns {number}
@@ -185,7 +209,7 @@ export class Maku {
         wasm.maku_input_num(this.__wbg_ptr, ptr0, len0, v);
     }
     /**
-     * Set a Vec2 input channel ($player mock, $nearest-enemy mock, …).
+     * Set a point input channel ($player mock, $nearest-enemy mock, …).
      * @param {string} name
      * @param {number} x
      * @param {number} y
@@ -202,6 +226,101 @@ export class Maku {
     lives() {
         const ret = wasm.maku_lives(this.__wbg_ptr);
         return ret;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_address_u(index) {
+        const ret = wasm.maku_material_address_u(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_address_v(index) {
+        const ret = wasm.maku_material_address_v(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_blend(index) {
+        const ret = wasm.maku_material_blend(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    material_count() {
+        const ret = wasm.maku_material_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_fixed_color(index) {
+        const ret = wasm.maku_material_fixed_color(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {string}
+     */
+    material_key(index) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.maku_material_key(this.__wbg_ptr, index);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_layout(index) {
+        const ret = wasm.maku_material_layout(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_min_filter(index) {
+        const ret = wasm.maku_material_min_filter(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {string}
+     */
+    material_pipeline(index) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.maku_material_pipeline(this.__wbg_ptr, index);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    material_texture(index) {
+        const ret = wasm.maku_material_texture(this.__wbg_ptr, index);
+        return ret >>> 0;
     }
     /**
      * @param {string | null} [rig]
@@ -261,6 +380,20 @@ export class Maku {
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v2;
     }
+    /**
+     * @returns {number}
+     */
+    recolor_sprite_stride() {
+        const ret = wasm.maku_recolor_sprite_stride(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    recolor_sprites() {
+        const ret = wasm.maku_recolor_sprites(this.__wbg_ptr);
+        return ret;
+    }
     restart() {
         wasm.maku_restart(this.__wbg_ptr);
     }
@@ -307,6 +440,90 @@ export class Maku {
         wasm.maku_step(this.__wbg_ptr, n);
     }
     /**
+     * @returns {Uint32Array}
+     */
+    strip_indices() {
+        const ret = wasm.maku_strip_indices(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    strip_vertex_stride() {
+        const ret = wasm.maku_strip_vertex_stride(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    strip_vertices() {
+        const ret = wasm.maku_strip_vertices(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @param {number} index
+     * @returns {Uint8Array}
+     */
+    texture_bytes(index) {
+        const ret = wasm.maku_texture_bytes(this.__wbg_ptr, index);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    texture_count() {
+        const ret = wasm.maku_texture_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {string}
+     */
+    texture_external_key(index) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.maku_texture_external_key(this.__wbg_ptr, index);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    texture_height(index) {
+        const ret = wasm.maku_texture_height(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {string}
+     */
+    texture_key(index) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.maku_texture_key(this.__wbg_ptr, index);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    texture_width(index) {
+        const ret = wasm.maku_texture_width(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
      * @returns {number}
      */
     tick() {
@@ -322,6 +539,20 @@ export class Maku {
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    tinted_sprite_stride() {
+        const ret = wasm.maku_tinted_sprite_stride(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    tinted_sprites() {
+        const ret = wasm.maku_tinted_sprites(this.__wbg_ptr);
+        return ret;
     }
     toggle_pause() {
         wasm.maku_toggle_pause(this.__wbg_ptr);
@@ -350,6 +581,25 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
+        __wbg_new_with_length_e6785c33c8e4cce8: function(arg0) {
+            const ret = new Uint8Array(arg0 >>> 0);
+            return ret;
+        },
+        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(Slice(U32)) -> NamedExternref("Uint32Array")`.
+            const ret = getArrayU32FromWasm0(arg0, arg1);
+            return ret;
+        },
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
+            const ret = getArrayU8FromWasm0(arg0, arg1);
+            return ret;
+        },
+        __wbindgen_cast_0000000000000003: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
+            return ret;
+        },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
             const offset = table.grow(4);
@@ -375,6 +625,16 @@ function getArrayF32FromWasm0(ptr, len) {
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
 let cachedFloat32ArrayMemory0 = null;
 function getFloat32ArrayMemory0() {
     if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
@@ -385,6 +645,14 @@ function getFloat32ArrayMemory0() {
 
 function getStringFromWasm0(ptr, len) {
     return decodeText(ptr >>> 0, len);
+}
+
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -436,6 +704,12 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
+}
+
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
@@ -471,6 +745,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedFloat32ArrayMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

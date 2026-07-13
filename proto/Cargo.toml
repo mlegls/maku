@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "player", "mesh-touhou"]
+members = ["core", "player", "mesh-touhou", "web"]
 
 [workspace.package]
 edition = "2021"

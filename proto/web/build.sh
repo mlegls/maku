@@ -4,7 +4,7 @@
 #   ./build.sh serve    build + serve the repo root on :8000
 set -e
 cd "$(dirname "$0")"
-wasm-pack build ../core --target web --out-dir ../web/static/pkg --features web
+wasm-pack build . --target web --out-dir static/pkg --out-name maku
 cp static/pkg/maku.js static/pkg/maku.d.ts static/pkg/maku_bg.wasm static/pkg/maku_bg.wasm.d.ts ../js/maku/wasm/
 (cd ../js/maku && bun run build)
 bun build editor-src/maku-codemirror.js --outfile static/maku-codemirror.js --target browser --format esm
