@@ -1406,7 +1406,7 @@
 (deftick
   (map (fn [e]
          (let [p (:pos e)]
-           (emit :render {:shape :point
+           (emit :render {:kind :bullets :shape :point
                           :x (:x p)
                           :y (:y p)
                           :scale (value-or (:size e) 1)
@@ -1444,6 +1444,8 @@
                 })
                 .expect("compiled point rule should emit a column batch");
             assert_eq!(batch.len, 32);
+            assert_eq!(batch.kind.as_ref(), "bullets");
+            assert_eq!(batch.expand_row(0).kind.as_ref(), "bullets");
             batch.schema.clone()
         });
         // expansion carries per-row syms, presence-masked nums, and

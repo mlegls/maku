@@ -22,5 +22,5 @@ until scoped-channel-overrides' working tree lands.
 
 ## 5. Gates and sync
 
-- [ ] 5.1 Tests: per-kind scoping (same key, two kinds), declared-kind load fixing + new-key error, manifest failure/lint paths, adapter end-to-end (imported kind renders as local), batch/row equivalence under kinds. Full gate: `cargo test --release --manifest-path proto/core/Cargo.toml` + the 4 ignored oracle card suites. Commit each coherent change-set.
+- [x] 5.1 Tests: per-kind scoping (same key, two kinds), declared-kind load fixing + new-key error, manifest failure/lint paths, adapter end-to-end (imported kind renders as local), batch/row equivalence under kinds. Full gate: `cargo test --release --manifest-path proto/core/Cargo.toml` + the 4 ignored oracle card suites. Commit each coherent change-set.
 - [ ] 5.2 Archive-time spec sync: render-rows and load-time-schema deltas land in `openspec/specs/`; drop the "future work" note from the accretion requirement.
