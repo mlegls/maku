@@ -1233,6 +1233,152 @@
     }
 
     #[test]
+    fn render_projection_installs_one_typed_multi_output_plan() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (emit :render {:kind :bullet :shape :point
+                          :x (:x p) :y (:y p) :theta (:th p)
+                          :scale (value-or (:size e) 1)
+                          :family :orb :color (:color e)})))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(defpattern p [] (spawn (pose c[1 2]) {:render :sprite :color :red :size 2}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let compiled = sim.world.standing_rules[0].compiled[0]
+            .as_ref()
+            .expect("fixed render rule should install");
+        let CompiledTickAction::Render(render) = &compiled.action else {
+            panic!("expected render plan");
+        };
+        let installed = render
+            .projection
+            .borrow()
+            .as_ref()
+            .expect("initial render projection")
+            .clone();
+        let plan = installed.as_ref();
+        assert_eq!(plan.kernel.domain(), kernel::IterationDomain::RenderRows);
+        assert_eq!(
+            plan.kernel.fallback(),
+            kernel::FallbackPolicy::WholePlanInterpreted
+        );
+        assert_eq!(plan.kernel.merge(), kernel::MergePolicy::DriverOwned);
+        assert_eq!(
+            plan.kernel.program().outputs().len(),
+            (plan.geometry.len() + plan.extras.len()) * 4,
+            "every fixed value has number, symbol, and two presence outputs"
+        );
+        let bindings = &plan.kernel.bindings().inputs;
+        for slot in 0..=2 {
+            assert!(bindings.iter().any(|binding| {
+                matches!(
+                    (binding.input, binding.source),
+                    (
+                        KernelInputRef::F64(_),
+                        kernel::KernelInputSource::Capture { slot: found }
+                    ) if found == slot
+                )
+            }));
+        }
+        assert!(bindings.iter().any(|binding| {
+            matches!(
+                (binding.input, binding.source),
+                (
+                    KernelInputRef::Mask(_),
+                    kernel::KernelInputSource::Capture { slot: 3 }
+                )
+            )
+        }));
+        assert!(bindings.iter().any(|binding| {
+            matches!(
+                (binding.input, binding.source),
+                (
+                    KernelInputRef::F64(_),
+                    kernel::KernelInputSource::Direct { .. }
+                )
+            )
+        }));
+        assert!(bindings.iter().any(|binding| {
+            matches!(
+                (binding.input, binding.source),
+                (
+                    KernelInputRef::Symbol(_),
+                    kernel::KernelInputSource::Direct { .. }
+                )
+            )
+        }));
+        sim.step().unwrap();
+        let installed_again = {
+            let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
+            let CompiledTickAction::Render(render) = &compiled.action else {
+                unreachable!()
+            };
+            render.projection.borrow().as_ref().unwrap().clone()
+        };
+        assert!(
+            Rc::ptr_eq(&installed, &installed_again),
+            "stable resolved columns must reuse the installed artifact"
+        );
+    }
+
+    #[test]
+    fn render_projection_oracle_compares_expanded_rows_without_double_output() {
+        const RULE: &str = r#"
+(deftick
+  (map (fn [e]
+         (let [p (:pos e)]
+           (emit :render {:shape :point :x (:x p) :y (:y p)
+                          :scale (value-or (:size e) 1)
+                          :color (:color e)})))
+       (entities-where (fn [e] (= e.render :sprite)))))
+"#;
+        let mut card = String::from(RULE);
+        card.push_str("(defpattern p [] (par ");
+        for i in 0..16 {
+            card.push_str(&format!(
+                "(spawn (pose c[{i} 0]) {{:render :sprite :color :red}}) "
+            ));
+        }
+        card.push_str("))");
+        let _oracle = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(&card, Some("p")).unwrap();
+        sim.step().unwrap();
+        let rows = sim.render();
+        assert_eq!(rows.len(), 16, "oracle must retain only semantic output");
+        for (index, row) in rows.iter().enumerate() {
+            let RenderData::Point { x, .. } = row.data else {
+                panic!("expected point row");
+            };
+            assert_eq!(x, index as f64, "expanded order must be canonical");
+            assert_eq!(row.sym("color"), Some("red"));
+        }
+    }
+
+    #[test]
+    fn render_projection_aborts_before_output_on_mixed_geometry_type() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (emit :render {:shape :point :x (:bad e)}))
+       (entities-where (fn [e] (= e.render :sprite)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:render :sprite :bad 1})
+    (spawn (pose c[1 0]) {:render :sprite :bad :wrong})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        let error = sim.step().unwrap_err();
+        assert!(error.contains("expected number"), "{error}");
+        assert!(
+            sim.world.render_rows.is_empty(),
+            "whole-plan fallback must not leave partially projected rows"
+        );
+    }
+
+    #[test]
     fn compiled_cull_rule_culls_matched_rows() {
         const CARD: &str = r#"
 (deftick
