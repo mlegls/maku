@@ -6,7 +6,6 @@
 
 use super::*;
 use crate::edn::Form;
-use std::cell::OnceCell;
 use std::rc::Rc;
 
 pub trait DynKind {
@@ -21,11 +20,7 @@ pub struct Dyn<T: DynKind> {
 #[derive(Debug, Clone)]
 pub enum NumDynRepr {
     Const(f64),
-    Expr {
-        form: Form,
-        env: Env,
-        program: Rc<OnceCell<Option<Rc<KernelProgram>>>>,
-    },
+    Expr { form: Form, env: Env },
     /// A spawn-meta signal shared by a spawn group: an array-valued result
     /// binds per element with the style-axis rules (§5/F15), selected by
     /// the element's repeater path / flat index captured at spawn.
@@ -98,20 +93,14 @@ impl Dyn<f64> {
     }
 
     pub fn num_expr(form: Form, env: Env) -> DynNum {
-        Dyn {
-            repr: NumDynRepr::Expr {
-                form,
-                env,
-                program: Rc::new(OnceCell::new()),
-            },
-        }
+        Dyn { repr: NumDynRepr::Expr { form, env } }
     }
 
     /// The same signal bound to one spawn element: array results select
     /// by the element's axis position instead of erroring.
     pub fn with_axis(&self, path: &[(usize, usize)], flat: usize) -> DynNum {
         match &self.repr {
-            NumDynRepr::Expr { form, env, .. } => Dyn {
+            NumDynRepr::Expr { form, env } => Dyn {
                 repr: NumDynRepr::AxisSel {
                     form: form.clone(),
                     env: env.clone(),
@@ -125,40 +114,6 @@ impl Dyn<f64> {
 
     pub fn repr(&self) -> &NumDynRepr {
         &self.repr
-    }
-
-    /// Lower the fixed-width scalar source once. Variable-shaped axis
-    /// selection and programs requiring unavailable capture/position/aux
-    /// inputs remain semantic interpreter work.
-    pub(crate) fn lowered_field_program(&self, sig: &SigEnv) -> Option<Rc<KernelProgram>> {
-        let NumDynRepr::Expr {
-            form,
-            env,
-            program,
-        } = &self.repr
-        else {
-            return None;
-        };
-        program
-            .get_or_init(|| {
-                let program = lower_num_form(form, env, &sig.defs)?;
-                let fixed_inputs = program.inputs.iter().all(|input| {
-                    matches!(
-                        input.source,
-                        KernelInputSource::Tick | KernelInputSource::Axis
-                    ) && input.ty == KernelType::F64
-                });
-                let fixed_output = matches!(
-                    &program.outputs[..],
-                    [KernelOutput {
-                        ty: KernelType::F64,
-                        ..
-                    }]
-                );
-                (fixed_inputs && fixed_output && program.aux_free())
-                    .then(|| intern_program(program))
-            })
-            .clone()
     }
 }
 
@@ -236,28 +191,5 @@ impl Dyn<Figure> {
                 DynFigure::figure_curve(child.framed(parent), curve.clone())
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn axis_selected_num_remains_semantic_fallback() {
-        let value = DynNum {
-            repr: NumDynRepr::AxisSel {
-                form: Form::Vector(vec![Form::Num(2.0), Form::Num(7.0)].into()),
-                env: Env::empty(),
-                path: vec![(2, 1)].into(),
-                flat: 0,
-            },
-        };
-        let sig = SigEnv::default();
-        assert!(value.lowered_field_program(&sig).is_none());
-        assert_eq!(
-            eval_dyn(&value, 0.0, &MotionState::default(), &sig).unwrap(),
-            7.0
-        );
     }
 }

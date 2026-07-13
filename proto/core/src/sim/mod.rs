@@ -8,7 +8,6 @@ use std::rc::Rc;
 
 mod channels;
 mod collision;
-pub mod kernel;
 mod exec;
 mod render;
 mod slots;
@@ -181,7 +180,7 @@ impl VelBatchScratch {
 /// (milestone B): grouped by interned program-pair address, one
 /// lane-batched run per component per phase (collide fill, cull), then
 /// per-row wrapper composition — the same value the per-row pos_only walk
-/// produces, lane-bit-identical by `run_kernel_lanes` construction and
+/// produces, lane-bit-identical by `run_lanes` construction and
 /// oracle-checked per lane.
 #[derive(Default)]
 struct ClosedPoseScratch {
@@ -231,8 +230,8 @@ fn classify_row(fig: &DynFigure, sig: &SigEnv) -> RowClass {
 }
 
 struct ClosedPoseGroup {
-    ap: Rc<KernelProgram>,
-    bp: Rc<KernelProgram>,
+    ap: Rc<NumProgram>,
+    bp: Rc<NumProgram>,
     polar: bool,
     rows: Vec<usize>,
     tau: Vec<f64>,
@@ -295,6 +294,16 @@ struct ColliderScratch {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
     defs: Vec<DynCollider>,
+    /// Per-pass memo of collider EntityCol name → store slots, keyed by the
+    /// name's Rc address (specs stay alive for the whole pass). Cleared at
+    /// pass start and after any non-direct materialization, which holds
+    /// `&mut World` and could intern new columns.
+    field_slots: Vec<(*const u8, FieldSlots)>,
+    /// Per-pass memo of projector Rc address → all-Circle fast plan (None =
+    /// unclassifiable, take the general path). Same lifetime and staleness
+    /// rules as `field_slots` — the plans hold resolved store slots. Keyed
+    /// map, not a scan: distinct projectors scale with live spawn groups.
+    plans: crate::fxhash::FxHashMap<usize, Option<std::rc::Rc<collision::FastColliderPlan>>>,
 }
 
 impl ColliderScratch {
@@ -302,6 +311,8 @@ impl ColliderScratch {
         self.rows.clear();
         self.ranges.clear();
         self.defs.clear();
+        self.field_slots.clear();
+        self.plans.clear();
         if self.ranges.capacity() < len {
             self.ranges.reserve_exact(len - self.ranges.capacity());
         }
@@ -817,8 +828,8 @@ impl Sim {
             s.zero_pos.resize(g.rows.len(), [0.0; 2]);
             g.va.clear();
             g.vb.clear();
-            run_kernel_lanes(&g.ap, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
-            run_kernel_lanes(&g.bp, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
+            run_lanes(&g.ap, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.va);
+            run_lanes(&g.bp, 0.0, &g.tau, &s.zero_pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (x, y) = if g.polar {
                     let (sn, cs) = g.vb[l].to_radians().sin_cos();
@@ -939,8 +950,8 @@ impl Sim {
         let mut regs = std::mem::take(&mut self.vel_batch.regs);
         for g in &mut groups {
             let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
-            run_kernel_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
-            run_kernel_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
+            run_lanes(&g.plan.ap, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
+            run_lanes(&g.plan.bp, 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
                 let (av, bv) = (g.va[l], g.vb[l]);
                 let (vx, vy) = if g.plan.polar {
@@ -987,8 +998,51 @@ impl Sim {
     }
 
     fn refresh_dyn_cols(&mut self) -> Result<(), String> {
+        let tick = self.world.tick;
         let sig = self.ctx.sig.clone();
-        slots::refresh_dyn_field_columns(&mut self.world, &sig)
+        let state = MotionState::default();
+        // Shared array-valued meta signals (AxisSel) evaluate once per
+        // (form, env, tau) group per refresh; each row then selects only
+        // its own lane — the SS5 interchange at the Val level. Identity
+        // keys are sound because forms/envs are immutable and clones share
+        // Rcs; tau joins the key across different-birth spawn groups.
+        let mut shared: Option<crate::fxhash::FxHashMap<(usize, usize, u64), Val>> = None;
+        for i in 0..self.world.entities.len() {
+            if !self.world.entities.is_alive(i) {
+                continue;
+            }
+            let tau = self.world.entity_tau(i, tick);
+            let mut row_sig = None;
+            let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+            for (col, dyn_num) in self.world.entities.dyn_cols(i).iter() {
+                let tick_rate = self.world.tick_rate();
+                let value = match dyn_num.repr() {
+                    NumDynRepr::AxisSel { form, env, path, flat } => {
+                        // identity keys don't carry the override view; an
+                        // override row neither reads nor feeds the memo
+                        let key = (sig.overrides.is_none())
+                            .then(|| form_identity(form).map(|f| (f, env.identity(), tau.to_bits())))
+                            .flatten();
+                        let hit = key.and_then(|k| shared.as_ref().and_then(|m| m.get(&k).cloned()));
+                        let v = match hit {
+                            Some(v) => Ok(v),
+                            None => {
+                                let v = eval_sig_at_rate(form, env, sig, tau, 0.0, None, None, tick_rate);
+                                if let (Some(k), Ok(v)) = (key, &v) {
+                                    shared.get_or_insert_with(Default::default).insert(k, v.clone());
+                                }
+                                v
+                            }
+                        };
+                        v.and_then(|v| axis_select_val(&v, path, *flat).num())
+                    }
+                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, sig, tick_rate),
+                }
+                .map_err(|e| format!("dyn meta field: {}", e))?;
+                self.world.col_set_sym_at(i, *col, value);
+            }
+        }
+        Ok(())
     }
 
     fn exec_tick_value(&mut self, v: Val) -> Result<(), String> {
@@ -1173,13 +1227,8 @@ impl Sim {
             for (form, compiled) in rule.body.iter().zip(rule.compiled.iter()) {
                 let result = (|| -> Result<(), String> {
                     if let Some(compiled) = compiled {
-                        if oracle_enabled() {
-                            if matches!(compiled.action, CompiledTickAction::Cull) {
-                                return self.oracle_check_compiled_cull(compiled, form, &rule.env);
-                            }
-                            if matches!(compiled.action, CompiledTickAction::Update { .. }) {
-                                return self.oracle_check_compiled_update(compiled, form, &rule.env);
-                            }
+                        if oracle_enabled() && matches!(compiled.action, CompiledTickAction::Cull) {
+                            return self.oracle_check_compiled_cull(compiled, form, &rule.env);
                         }
                         let before = self.world.render_rows.len();
                         if self.run_compiled_tick_form(compiled)?.is_none() {
@@ -1230,7 +1279,7 @@ impl Sim {
         env: &Env,
     ) -> Result<(), String> {
         let mut predicted = Vec::new();
-        let bailed = !self.compiled_predicate_scan(&compiled.filter, &mut predicted);
+        let bailed = !self.compiled_predicate_scan(&compiled.predicate, &mut predicted);
         let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
         if !bailed {
             let mut culled = Vec::new();
@@ -1240,623 +1289,398 @@ impl Sim {
         }
         self.exec_tick_value(value)
     }
-    fn oracle_check_compiled_update(
-        &mut self,
-        compiled: &CompiledTickForm,
-        form: &Form,
-        env: &Env,
-    ) -> Result<(), String> {
-        let mut rows = Vec::new();
-        let predicted = if self.compiled_predicate_scan(&compiled.filter, &mut rows) {
-            let CompiledTickAction::Update { plan, column, .. } = &compiled.action else {
-                unreachable!()
+
+    /// Scan alive rows against the resolved predicate, in row-index order.
+    /// Returns false on a fallible-read bail: the whole form must rerun
+    /// interpreted.
+    fn compiled_predicate_scan(&self, predicate: &RowPredicate, rows: &mut Vec<usize>) -> bool {
+        let tests = predicate.resolve(&self.world);
+        let bail_at = infallible_suffix_start(&tests);
+        if resolved_tests_match_nothing(&tests, bail_at) {
+            return true;
+        }
+        for row in 0..self.world.entities.len() {
+            if !self.world.entities.is_alive(row) {
+                continue;
+            }
+            let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
+                return false;
             };
-            self.execute_masked_update_values(plan, &rows).map(|values| {
-                rows.iter()
-                    .copied()
-                    .zip(values)
-                    .map(|(row, value)| (self.world.entity_ref(row), *column, value))
-                    .collect::<Vec<_>>()
-            })
-        } else {
-            None
-        };
-        let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
-        if let Some(predicted) = predicted {
-            let mut actions = Vec::new();
-            collect_update_actions(&value, &mut actions);
-            let mut actual = Vec::with_capacity(actions.len());
-            for (target, column, update) in actions {
-                let mut call_ctx = self.closed_call_ctx(SigEnv {
-                    defs: self.ctx.sig.defs.clone(),
-                    ..SigEnv::default()
-                });
-                let mut call_world = World::for_eval(self.world.tick_rate());
-                let value = apply_fn(
-                    update,
-                    &[Val::Nothing],
-                    &mut call_ctx,
-                    &mut call_world,
-                    false,
-                )?;
-                let value = match value {
-                    Val::Num(value) => kernel::KernelValue::F64(value),
-                    Val::Kw(value) => {
-                        let symbol = self
-                            .world
-                            .symbols
-                            .lookup(&value)
-                            .ok_or_else(|| "update oracle: unknown keyword".to_string())?;
-                        kernel::KernelValue::Symbol(symbol.0)
-                    }
-                    other => {
-                        return Err(format!(
-                            "update oracle: expected fixed-width value, got {:?}",
-                            other
-                        ))
-                    }
-                };
-                actual.push((target, column, value));
+            if matches {
+                rows.push(row);
             }
-            assert_eq!(
-                actual, predicted,
-                "compiled deftick update rows/values mismatch for {:?}",
-                form
-            );
         }
-        self.exec_tick_value(value)
+        true
     }
-
-
-    /// Gather and execute the typed filter plan in row-index order.
-    /// Returns false when gathering finds a mistyped input or the kernel
-    /// rejects the plan; callers rerun the whole form interpreted.
-    fn compiled_predicate_scan(
-        &self,
-        filter: &kernel::FilterPlan,
-        rows: &mut Vec<usize>,
-    ) -> bool {
-        execute_filter_plan(filter, &self.world, rows)
-    }
-    fn execute_masked_update_values(
-        &self,
-        plan: &kernel::MaskedUpdatePlan,
-        rows: &[usize],
-    ) -> Option<Vec<kernel::KernelValue>> {
-        if plan.value.domain != kernel::IterationDomain::EntityRows
-            || plan.value.fallback != kernel::FallbackPolicy::WholePlanInterpreted
-            || plan.value.merge != kernel::MergePolicy::CanonicalRowOrder
-        {
-            return None;
-        }
-        let mut inputs = kernel::KernelLanes {
-            lanes: rows.len(),
-            values: Vec::with_capacity(plan.value.program.inputs.len() * rows.len()),
-        };
-        for input in 0..plan.value.program.inputs.len() {
-            let input = u16::try_from(input).ok()?;
-            let binding = plan
-                .value
-                .bindings
-                .captures
-                .iter()
-                .find(|binding| binding.input == input)?;
-            if binding.ty != KernelType::Symbol {
-                return None;
-            }
-            inputs.values.extend(
-                std::iter::repeat(kernel::KernelValue::Symbol(binding.slot as u32))
-                    .take(rows.len()),
-            );
-        }
-        let mut scratch = kernel::KernelScratch::default();
-        let mut outputs = kernel::KernelOutputs::default();
-        kernel::execute(&plan.value, &inputs, &mut scratch, &mut outputs).ok()?;
-        (0..rows.len())
-            .map(|lane| outputs.output(plan.output.output as usize, lane))
-            .collect()
-    }
-
 
     fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
-        // Predicate gathering and execution completes before any body effect.
+        // The whole predicate scan runs before any row body, mirroring the
+        // interpreted phase order (entities-where completes before map), so
+        // a body error cannot preempt a later row's predicate bail.
         let mut rows = std::mem::take(&mut self.render_scratch.match_rows);
         rows.clear();
-        if !self.compiled_predicate_scan(&form.filter, &mut rows) {
+        if !self.compiled_predicate_scan(&form.predicate, &mut rows) {
             self.render_scratch.match_rows = rows;
             return Ok(None);
         }
         let render = match &form.action {
             CompiledTickAction::Cull => {
+                // matches were collected before any cull applies, so
+                // in-scan liveness is unaffected; row order = the
+                // interpreter's entities-where order
                 for &row in &rows {
                     self.world.cull_at(row);
                 }
                 self.render_scratch.match_rows = rows;
                 return Ok(Some(()));
             }
-            CompiledTickAction::Update {
-                plan,
-                column,
-                kind,
-            } => {
-                let Some(values) = self.execute_masked_update_values(plan, &rows) else {
-                    self.render_scratch.match_rows = rows;
-                    return Ok(None);
-                };
-                for (&row, value) in rows.iter().zip(values) {
-                    let value = match (kind, value) {
-                        (UpdateValueKind::Num, kernel::KernelValue::F64(value)) => Val::Num(value),
-                        (UpdateValueKind::Sym, kernel::KernelValue::Symbol(value)) => {
-                            let value = self
-                                .world
-                                .symbols
-                                .resolve_rc(Symbol(value))
-                                .ok_or_else(|| "update: unknown interned symbol".to_string())?;
-                            Val::Kw(value.clone())
-                        }
-                        _ => {
-                            self.render_scratch.match_rows = rows;
-                            return Ok(None);
-                        }
-                    };
-                    self.world.pending_writes.push(PendingWrite::Field {
-                        target: self.world.entity_ref(row),
-                        col: *column,
-                        f: value,
-                    });
-                }
-                self.render_scratch.match_rows = rows;
-                return Ok(Some(()));
-            }
             CompiledTickAction::Render(render) => render,
         };
-        if rows.is_empty() {
-            self.render_scratch.match_rows = rows;
-            return Ok(Some(()));
-        }
-
-        let mut poses = std::mem::take(&mut self.render_scratch.pose_rows);
-        poses.clear();
-        if render.needs_pose {
-            let needs_theta = render
-                .plan
-                .projection
-                .bindings
-                .pose
-                .iter()
-                .any(|binding| {
-                    matches!(
-                        binding.component,
-                        kernel::PoseComponent::Theta | kernel::PoseComponent::HasTheta
-                    )
-                });
-            for &row in &rows {
-                let fast = (!needs_theta)
-                    .then(|| {
-                        let tau = self.world.entity_motion_tau(row, self.world.tick);
-                        self.fast_pos_pose(row, tau, &self.ctx.sig)
-                    })
-                    .flatten();
-                let pose = match fast {
-                    Some(pose) => pose,
-                    None => match entity_pose_at(row, &self.world, &self.ctx.sig) {
-                        Ok(pose) => pose,
-                        Err(_) => {
-                            self.render_scratch.pose_rows = poses;
-                            self.render_scratch.match_rows = rows;
-                            return Ok(None);
+        // field names resolve once per pass; entity fields cannot change
+        // mid-pass (writes are pending until the next tick boundary)
+        let fields: Vec<(&Rc<str>, RenderKey, ResolvedRowVal)> = render
+            .fields
+            .iter()
+            .map(|(key, slot, value)| (key, *slot, value.resolve(&self.world)))
+            .collect();
+        let mut checked: Vec<(Rc<str>, RenderFieldKind)> = Vec::new();
+        let result = (|| {
+            if let Some(plan) = CompiledRowPlan::from_fields(&fields) {
+                if rows.is_empty() {
+                    return Ok(Some(()));
+                }
+                // small passes stay rows: below this, per-batch column
+                // allocs cost more than a few pooled row boxes (either
+                // path is exact — the frame is a mixed stream by design)
+                const RENDER_BATCH_MIN: usize = 16;
+                if rows.len() >= RENDER_BATCH_MIN {
+                    if let Some(batch) = self.try_render_batch(render, &plan, &rows) {
+                        self.world.render_rows.push(RenderItem::Batch(batch));
+                        return Ok(Some(()));
+                    }
+                }
+                // batch abort (an error or a per-row kind surprise): the
+                // per-row loop below reproduces interpreted error semantics
+                // exactly — evaluation is pure and the batch's schema
+                // checks were staged, so the world is untouched
+                for &row in &rows {
+                    let pose = render.needs_pose
+                        .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
+                        .transpose()?;
+                    let pose = pose.as_ref();
+                    // coercion order matches finish_checked: x, y, theta, scale,
+                    // alpha, hue — the first bad slot surfaces the same error
+                    let data = RenderData::Point {
+                        x: self.compiled_num_slot(plan.x, row, pose, 0.0)?,
+                        y: self.compiled_num_slot(plan.y, row, pose, 0.0)?,
+                        theta: self.compiled_num_slot(plan.theta, row, pose, 0.0)?,
+                        scale: self.compiled_num_slot(plan.scale, row, pose, 1.0)?,
+                        alpha: self.compiled_num_slot(plan.alpha, row, pose, 1.0)?,
+                        hue: self.compiled_num_slot(plan.hue, row, pose, 0.0)?,
+                    };
+                    let mut rc = self.render_scratch.take_row();
+                    let rendered = Rc::get_mut(&mut rc).expect("pooled render row is uniquely owned");
+                    rendered.kind = plan.kind.clone();
+                    rendered.data = data;
+                    for (key, value) in &plan.extras {
+                        match self.eval_compiled_row_val(value, row, pose) {
+                            Val::Num(n) => {
+                                render_field_checked(&mut self.world, &plan.kind, key, RenderFieldKind::Num, &mut checked)?;
+                                rendered.nums.push(((*key).clone(), n));
+                            }
+                            Val::Kw(sym) => {
+                                render_field_checked(&mut self.world, &plan.kind, key, RenderFieldKind::Sym, &mut checked)?;
+                                rendered.syms.push(((*key).clone(), sym));
+                            }
+                            Val::Nothing => {}
+                            _ => return Err(format!("render: field :{key} must be a number or keyword")),
                         }
-                    },
-                };
-                poses.push(pose);
+                    }
+                    self.world.render_rows.push(RenderItem::Row(rc));
+                }
+                return Ok(Some(()));
             }
-        }
-
-        let Some(outputs) = self.execute_render_projection(render, &rows, &poses) else {
-            self.render_scratch.pose_rows = poses;
-            self.render_scratch.match_rows = rows;
-            return Ok(None);
-        };
-        const RENDER_BATCH_MIN: usize = 16;
-        let result = if rows.len() >= RENDER_BATCH_MIN {
-            self.emit_kernel_render_batch(render, &rows, &outputs)
-                .map(|batch| self.world.render_rows.push(RenderItem::Batch(batch)))
-        } else {
-            self.emit_kernel_render_rows(render, &rows, &outputs)
-        };
-        poses.clear();
-        self.render_scratch.pose_rows = poses;
+            for &row in &rows {
+                let pose = render.needs_pose
+                    .then(|| entity_pose_at(row, &self.world, &self.ctx.sig))
+                    .transpose()?;
+                let mut row_fields = RenderRowFields::default();
+                for (key, slot, value) in &fields {
+                    row_fields.push_slot(*slot, key, self.eval_compiled_row_val(value, row, pose.as_ref()));
+                }
+                let rendered = row_fields.finish_checked(&mut self.world, &self.ctx.sig, Some(&mut checked))?;
+                self.world.render_rows.push(RenderItem::Row(Rc::new(rendered)));
+            }
+            Ok(Some(()))
+        })();
         self.render_scratch.match_rows = rows;
-        result.map(|()| Some(()))
+        result
     }
 
-    fn execute_render_projection(
+    fn compiled_num_slot(
         &self,
-        render: &CompiledRender,
+        slot: Option<&ResolvedRowVal>,
+        row: usize,
+        pose: Option<&Pose>,
+        default: f64,
+    ) -> Result<f64, String> {
+        match slot {
+            Some(value) => self.eval_compiled_row_val(value, row, pose).num(),
+            None => Ok(default),
+        }
+    }
+
+    /// One compiled point-rule pass as a column batch (SoA render output,
+    /// openspec/specs/render-rows/spec.md). None aborts to the per-row
+    /// path on any error or per-row kind surprise; evaluation is pure and
+    /// schema checks are staged, so an abort leaves the world untouched
+    /// and the rerun reproduces interpreted behavior exactly.
+    fn try_render_batch(
+        &mut self,
+        form: &CompiledRender,
+        plan: &CompiledRowPlan,
+        rows: &[usize],
+    ) -> Option<Rc<crate::model::RenderBatch>> {
+        let mut poses = std::mem::take(&mut self.render_scratch.pose_rows);
+        poses.clear();
+        let ok = self.fill_pose_rows(form, plan, rows, &mut poses);
+        let batch = if ok { self.fill_render_batch(form, plan, rows, &poses) } else { None };
+        poses.clear();
+        self.render_scratch.pose_rows = poses;
+        batch
+    }
+
+    fn fill_pose_rows(
+        &self,
+        form: &CompiledRender,
+        plan: &CompiledRowPlan,
+        rows: &[usize],
+        poses: &mut Vec<Pose>,
+    ) -> bool {
+        if !form.needs_pose {
+            return true;
+        }
+        // when no lowered value reads :th the theta component is never
+        // consumed, so the pos_only fast pose (exact in x/y) is legal
+        let needs_theta = plan.reads_theta();
+        for &row in rows {
+            let fast = (!needs_theta)
+                .then(|| {
+                    let tau = self.world.entity_motion_tau(row, self.world.tick);
+                    self.fast_pos_pose(row, tau, &self.ctx.sig)
+                })
+                .flatten();
+            let pose = match fast {
+                Some(p) => p,
+                None => match entity_pose_at(row, &self.world, &self.ctx.sig) {
+                    Ok(p) => p,
+                    Err(_) => return false,
+                },
+            };
+            poses.push(pose);
+        }
+        true
+    }
+
+    fn batch_num_col(
+        &self,
+        slot: Option<&ResolvedRowVal>,
+        default: f64,
         rows: &[usize],
         poses: &[Pose],
-    ) -> Option<kernel::KernelOutputs> {
-        let plan = &render.plan.projection;
-        if plan.domain != kernel::IterationDomain::RenderRows
-            || plan.fallback != kernel::FallbackPolicy::WholePlanInterpreted
-            || plan.merge != kernel::MergePolicy::DriverOwned
-        {
-            return None;
+    ) -> Option<crate::model::NumColumn> {
+        use crate::model::NumColumn;
+        match slot {
+            None => Some(NumColumn::Const(default)),
+            Some(ResolvedRowVal::Num(v)) => Some(NumColumn::Const(*v)),
+            Some(value) => {
+                if let Some(col) = self.gather_num_rows(value, rows, poses) {
+                    return Some(NumColumn::Rows(col));
+                }
+                let mut col = Vec::with_capacity(rows.len());
+                for (k, &row) in rows.iter().enumerate() {
+                    col.push(self.eval_compiled_row_val(value, row, poses.get(k)).num().ok()?);
+                }
+                Some(NumColumn::Rows(col))
+            }
         }
-        let mut sources = Vec::with_capacity(plan.program.inputs.len());
-        for input in 0..plan.program.inputs.len() {
-            let input_id = u16::try_from(input).ok()?;
-            if let Some(binding) = plan.bindings.direct.iter().find(|binding| binding.input == input_id)
-            {
-                let column = binding.column as usize;
-                let source = match binding.ty {
-                    KernelType::F64 => RenderLaneSource::Num(column),
-                    KernelType::Symbol => RenderLaneSource::Sym(column),
-                    KernelType::Mask => {
-                        let value = input_id.checked_sub(1).and_then(|prior| {
-                            plan.bindings.direct.iter().find(|candidate| {
-                                candidate.input == prior && candidate.column == binding.column
-                            })
-                        })?;
-                        match value.ty {
-                            KernelType::F64 => RenderLaneSource::NumPresent(column),
-                            KernelType::Symbol => RenderLaneSource::SymPresent(column),
+    }
+
+    /// Direct numeric gather for reads that provably cannot yield a
+    /// keyword: a field name with no sym-field slot only ever reads its
+    /// num column (`entity_field_at_slots` checks sym first), and pose
+    /// components come from the pose pass. None = shape not covered; the
+    /// caller's generic Val loop keeps the error/abort semantics.
+    fn gather_num_rows(
+        &self,
+        value: &ResolvedRowVal,
+        rows: &[usize],
+        poses: &[Pose],
+    ) -> Option<Vec<f64>> {
+        match value {
+            ResolvedRowVal::PoseX => Some((0..rows.len()).map(|k| poses[k].x).collect()),
+            ResolvedRowVal::PoseY => Some((0..rows.len()).map(|k| poses[k].y).collect()),
+            ResolvedRowVal::PoseTheta => {
+                Some((0..rows.len()).map(|k| poses[k].angle_or(0.0)).collect())
+            }
+            ResolvedRowVal::Field(slots) if slots.sym.is_none() => {
+                // a missing value is Nothing → the interpreted read errors;
+                // bail so the generic loop surfaces it
+                let mut out = Vec::with_capacity(rows.len());
+                for &row in rows {
+                    out.push(self.world.col_at_slot(row, slots.num)?);
+                }
+                Some(out)
+            }
+            ResolvedRowVal::FieldOr(slots, default) if slots.sym.is_none() => {
+                let col = |k: usize| self.world.col_at_slot(rows[k], slots.num);
+                match &**default {
+                    ResolvedRowVal::Num(d) => {
+                        Some((0..rows.len()).map(|k| col(k).unwrap_or(*d)).collect())
+                    }
+                    ResolvedRowVal::PoseX => {
+                        Some((0..rows.len()).map(|k| col(k).unwrap_or_else(|| poses[k].x)).collect())
+                    }
+                    ResolvedRowVal::PoseY => {
+                        Some((0..rows.len()).map(|k| col(k).unwrap_or_else(|| poses[k].y)).collect())
+                    }
+                    ResolvedRowVal::PoseTheta => Some(
+                        (0..rows.len())
+                            .map(|k| col(k).unwrap_or_else(|| poses[k].angle_or(0.0)))
+                            .collect(),
+                    ),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn fill_render_batch(
+        &mut self,
+        form: &CompiledRender,
+        plan: &CompiledRowPlan,
+        rows: &[usize],
+        poses: &[Pose],
+    ) -> Option<Rc<crate::model::RenderBatch>> {
+        use crate::model::{Column, NumColumn, RenderBatch, RenderSchema};
+        let x = self.batch_num_col(plan.x, 0.0, rows, poses)?;
+        let y = self.batch_num_col(plan.y, 0.0, rows, poses)?;
+        let theta = self.batch_num_col(plan.theta, 0.0, rows, poses)?;
+        let scale = self.batch_num_col(plan.scale, 1.0, rows, poses)?;
+        let alpha = self.batch_num_col(plan.alpha, 1.0, rows, poses)?;
+        let hue = self.batch_num_col(plan.hue, 0.0, rows, poses)?;
+        let mut pending: Vec<(FieldName, RenderFieldKind)> = Vec::new();
+        let mut cols: Vec<(Rc<str>, RenderFieldKind, Column)> = Vec::with_capacity(plan.extras.len());
+        for (key, value) in &plan.extras {
+            match value {
+                ResolvedRowVal::Num(v) => {
+                    self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Num, &mut pending).ok()?;
+                    cols.push(((*key).clone(), RenderFieldKind::Num, Column::Num(NumColumn::Const(*v))));
+                }
+                ResolvedRowVal::Kw(k) => {
+                    self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Sym, &mut pending).ok()?;
+                    cols.push(((*key).clone(), RenderFieldKind::Sym, Column::SymConst(k.clone())));
+                }
+                value => {
+                    enum Fill {
+                        Empty,
+                        Nums(Vec<f64>, Vec<bool>, bool),
+                        Syms(Vec<Option<Rc<str>>>),
+                    }
+                    let mut fill = Fill::Empty;
+                    for (k, &row) in rows.iter().enumerate() {
+                        match self.eval_compiled_row_val(value, row, poses.get(k)) {
+                            Val::Nothing => match &mut fill {
+                                Fill::Empty => {}
+                                Fill::Nums(vals, mask, all) => {
+                                    vals.push(0.0);
+                                    mask.push(false);
+                                    *all = false;
+                                }
+                                Fill::Syms(vals) => vals.push(None),
+                            },
+                            Val::Num(v) => match &mut fill {
+                                Fill::Empty => {
+                                    let mut vals = vec![0.0; k];
+                                    let mut mask = vec![false; k];
+                                    vals.push(v);
+                                    mask.push(true);
+                                    fill = Fill::Nums(vals, mask, k == 0);
+                                }
+                                Fill::Nums(vals, mask, _) => {
+                                    vals.push(v);
+                                    mask.push(true);
+                                }
+                                Fill::Syms(_) => return None,
+                            },
+                            Val::Kw(s) => match &mut fill {
+                                Fill::Empty => {
+                                    let mut vals: Vec<Option<Rc<str>>> = vec![None; k];
+                                    vals.push(Some(s));
+                                    fill = Fill::Syms(vals);
+                                }
+                                Fill::Syms(vals) => vals.push(Some(s)),
+                                Fill::Nums(..) => return None,
+                            },
                             _ => return None,
                         }
                     }
-                    _ => return None,
-                };
-                sources.push(source);
-                continue;
-            }
-            if let Some(binding) = plan.bindings.captures.iter().find(|binding| binding.input == input_id)
-            {
-                if binding.ty != KernelType::Symbol {
-                    return None;
-                }
-                sources.push(RenderLaneSource::SymConst(Symbol(binding.slot as u32)));
-                continue;
-            }
-            if let Some(binding) = plan.bindings.pose.iter().find(|binding| binding.input == input_id)
-            {
-                sources.push(RenderLaneSource::Pose(binding.component));
-                continue;
-            }
-            return None;
-        }
-
-        let mut inputs = kernel::KernelLanes {
-            lanes: rows.len(),
-            values: Vec::with_capacity(plan.program.inputs.len() * rows.len()),
-        };
-        for source in sources {
-            for (lane, &row) in rows.iter().enumerate() {
-                let pose = poses.get(lane);
-                inputs.values.push(match source {
-                    RenderLaneSource::Num(slot) => {
-                        kernel::KernelValue::F64(self.world.col_at_slot(row, Some(slot)).unwrap_or(0.0))
-                    }
-                    RenderLaneSource::NumPresent(slot) => {
-                        kernel::KernelValue::Mask(self.world.col_at_slot(row, Some(slot)).is_some())
-                    }
-                    RenderLaneSource::Sym(slot) => kernel::KernelValue::Symbol(
-                        self.world
-                            .sym_field_at_slot(row, Some(slot))
-                            .map_or(0, |symbol| symbol.0),
-                    ),
-                    RenderLaneSource::SymPresent(slot) => kernel::KernelValue::Mask(
-                        self.world.sym_field_at_slot(row, Some(slot)).is_some(),
-                    ),
-                    RenderLaneSource::SymConst(symbol) => kernel::KernelValue::Symbol(symbol.0),
-                    RenderLaneSource::Pose(kernel::PoseComponent::X) => {
-                        kernel::KernelValue::F64(pose?.x)
-                    }
-                    RenderLaneSource::Pose(kernel::PoseComponent::Y) => {
-                        kernel::KernelValue::F64(pose?.y)
-                    }
-                    RenderLaneSource::Pose(kernel::PoseComponent::Theta) => {
-                        kernel::KernelValue::F64(pose?.theta.unwrap_or(0.0))
-                    }
-                    RenderLaneSource::Pose(kernel::PoseComponent::HasTheta) => {
-                        kernel::KernelValue::Mask(pose?.theta.is_some())
-                    }
-                });
-            }
-        }
-        let mut scratch = kernel::KernelScratch::default();
-        let mut outputs = kernel::KernelOutputs::default();
-        kernel::execute(plan, &inputs, &mut scratch, &mut outputs).ok()?;
-        Some(outputs)
-    }
-
-    fn projected_cell(
-        &self,
-        value: ProjectedValue,
-        lane: usize,
-        outputs: &kernel::KernelOutputs,
-    ) -> Option<ProjectedCell> {
-        let output = |index: u16| outputs.output(index as usize, lane);
-        match value {
-            ProjectedValue::Num { value, present } => match output(present)? {
-                kernel::KernelValue::Mask(false) => Some(ProjectedCell::Nothing),
-                kernel::KernelValue::Mask(true) => match output(value)? {
-                    kernel::KernelValue::F64(value) => Some(ProjectedCell::Num(value)),
-                    _ => None,
-                },
-                _ => None,
-            },
-            ProjectedValue::Sym { value, present } => match output(present)? {
-                kernel::KernelValue::Mask(false) => Some(ProjectedCell::Nothing),
-                kernel::KernelValue::Mask(true) => match output(value)? {
-                    kernel::KernelValue::Symbol(value) => {
-                        Some(ProjectedCell::Sym(Symbol(value)))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            },
-            ProjectedValue::Dynamic {
-                num,
-                num_present,
-                sym,
-                sym_present,
-            } => {
-                let sym_present = matches!(
-                    output(sym_present)?,
-                    kernel::KernelValue::Mask(true)
-                );
-                if sym_present {
-                    return match output(sym)? {
-                        kernel::KernelValue::Symbol(value) => {
-                            Some(ProjectedCell::Sym(Symbol(value)))
+                    match fill {
+                        // a field that is nothing on every row contributes
+                        // no column (no row would have carried it)
+                        Fill::Empty => {}
+                        Fill::Nums(vals, mask, all) => {
+                            self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Num, &mut pending).ok()?;
+                            let col = if all {
+                                Column::Num(NumColumn::Rows(vals))
+                            } else {
+                                Column::NumOpt(vals, mask)
+                            };
+                            cols.push(((*key).clone(), RenderFieldKind::Num, col));
                         }
-                        _ => None,
-                    };
-                }
-                let num_present = matches!(
-                    output(num_present)?,
-                    kernel::KernelValue::Mask(true)
-                );
-                if num_present {
-                    return match output(num)? {
-                        kernel::KernelValue::F64(value) => Some(ProjectedCell::Num(value)),
-                        _ => None,
-                    };
-                }
-                Some(ProjectedCell::Nothing)
-            }
-        }
-    }
-
-    fn projected_num(
-        &self,
-        field: Option<&ProjectedRenderField>,
-        lane: usize,
-        outputs: &kernel::KernelOutputs,
-        default: f64,
-    ) -> Result<f64, String> {
-        let cell = match field {
-            None => ProjectedCell::Nothing,
-            Some(field) => self
-                .projected_cell(field.value, lane, outputs)
-                .ok_or_else(|| "render: invalid typed projection output".to_string())?,
-        };
-        match cell {
-            ProjectedCell::Nothing => Ok(default),
-            ProjectedCell::Num(value) => Ok(value),
-            ProjectedCell::Sym(symbol) => {
-                let name = self.world.symbols.resolve(symbol).unwrap_or("<unknown>");
-                Err(format!("expected number, got Kw(\"{name}\")"))
-            }
-        }
-    }
-
-    fn emit_kernel_render_rows(
-        &mut self,
-        render: &CompiledRender,
-        rows: &[usize],
-        outputs: &kernel::KernelOutputs,
-    ) -> Result<(), String> {
-        let layout = ProjectionLayout::from_fields(&render.fields);
-        let mut checked = Vec::new();
-        for lane in 0..rows.len() {
-            let data = RenderData::Point {
-                x: self.projected_num(layout.x, lane, outputs, 0.0)?,
-                y: self.projected_num(layout.y, lane, outputs, 0.0)?,
-                theta: self.projected_num(layout.theta.or(layout.facing), lane, outputs, 0.0)?,
-                scale: self.projected_num(layout.scale, lane, outputs, 1.0)?,
-                alpha: self.projected_num(layout.alpha.or(layout.opacity), lane, outputs, 1.0)?,
-                hue: self.projected_num(layout.hue, lane, outputs, 0.0)?,
-            };
-            let mut row = self.render_scratch.take_row();
-            let projected = Rc::get_mut(&mut row).expect("pooled render row is uniquely owned");
-            projected.kind = render.kind.clone();
-            projected.data = data;
-            for field in &layout.extras {
-                match self
-                    .projected_cell(field.value, lane, outputs)
-                    .ok_or_else(|| "render: invalid typed projection output".to_string())?
-                {
-                    ProjectedCell::Nothing => {}
-                    ProjectedCell::Num(value) => {
-                        render_field_checked(
-                            &mut self.world,
-                            &render.kind,
-                            &field.key,
-                            RenderFieldKind::Num,
-                            &mut checked,
-                        )?;
-                        projected.nums.push((field.key.clone(), value));
-                    }
-                    ProjectedCell::Sym(symbol) => {
-                        render_field_checked(
-                            &mut self.world,
-                            &render.kind,
-                            &field.key,
-                            RenderFieldKind::Sym,
-                            &mut checked,
-                        )?;
-                        let value = self
-                            .world
-                            .symbols
-                            .resolve_rc(symbol)
-                            .ok_or_else(|| "render: unknown interned symbol".to_string())?;
-                        projected.syms.push((field.key.clone(), value.clone()));
-                    }
-                }
-            }
-            self.world.render_rows.push(RenderItem::Row(row));
-        }
-        Ok(())
-    }
-
-    fn emit_kernel_render_batch(
-        &mut self,
-        render: &CompiledRender,
-        rows: &[usize],
-        outputs: &kernel::KernelOutputs,
-    ) -> Result<Rc<crate::model::RenderBatch>, String> {
-        use crate::model::{Column, NumColumn, RenderBatch, RenderSchema};
-        let layout = ProjectionLayout::from_fields(&render.fields);
-        let num_column = |this: &Self,
-                          field: Option<&ProjectedRenderField>,
-                          default: f64|
-         -> Result<NumColumn, String> {
-            let mut values = Vec::with_capacity(rows.len());
-            for lane in 0..rows.len() {
-                values.push(this.projected_num(field, lane, outputs, default)?);
-            }
-            Ok(NumColumn::Rows(values))
-        };
-        let x = num_column(self, layout.x, 0.0)?;
-        let y = num_column(self, layout.y, 0.0)?;
-        let theta = num_column(self, layout.theta.or(layout.facing), 0.0)?;
-        let scale = num_column(self, layout.scale, 1.0)?;
-        let alpha = num_column(self, layout.alpha.or(layout.opacity), 1.0)?;
-        let hue = num_column(self, layout.hue, 0.0)?;
-
-        let mut pending = Vec::new();
-        let mut cols = Vec::with_capacity(layout.extras.len());
-        for field in &layout.extras {
-            let mut nums = Vec::with_capacity(rows.len());
-            let mut num_presence = Vec::with_capacity(rows.len());
-            let mut syms = Vec::with_capacity(rows.len());
-            let mut seen = None;
-            for lane in 0..rows.len() {
-                match self
-                    .projected_cell(field.value, lane, outputs)
-                    .ok_or_else(|| "render: invalid typed projection output".to_string())?
-                {
-                    ProjectedCell::Nothing => {
-                        nums.push(0.0);
-                        num_presence.push(false);
-                        syms.push(None);
-                    }
-                    ProjectedCell::Num(value) => {
-                        if matches!(seen, Some(RenderFieldKind::Sym)) {
-                            return Err(format!(
-                                "render: field :{} is Num here but Sym elsewhere",
-                                field.key
-                            ));
+                        Fill::Syms(vals) => {
+                            self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Sym, &mut pending).ok()?;
+                            cols.push(((*key).clone(), RenderFieldKind::Sym, Column::Syms(vals)));
                         }
-                        seen = Some(RenderFieldKind::Num);
-                        nums.push(value);
-                        num_presence.push(true);
-                        syms.push(None);
                     }
-                    ProjectedCell::Sym(symbol) => {
-                        if matches!(seen, Some(RenderFieldKind::Num)) {
-                            return Err(format!(
-                                "render: field :{} is Sym here but Num elsewhere",
-                                field.key
-                            ));
-                        }
-                        seen = Some(RenderFieldKind::Sym);
-                        nums.push(0.0);
-                        num_presence.push(false);
-                        syms.push(Some(
-                            self.world
-                                .symbols
-                                .resolve_rc(symbol)
-                                .ok_or_else(|| "render: unknown interned symbol".to_string())?
-                                .clone(),
-                        ));
-                    }
-                }
-            }
-            match seen {
-                None => {}
-                Some(RenderFieldKind::Num) => {
-                    self.world.render_field_check_staged(
-                        &render.kind,
-                        &field.key,
-                        RenderFieldKind::Num,
-                        &mut pending,
-                    )?;
-                    let all = num_presence.iter().all(|present| *present);
-                    cols.push((
-                        field.key.clone(),
-                        RenderFieldKind::Num,
-                        if all {
-                            Column::Num(NumColumn::Rows(nums))
-                        } else {
-                            Column::NumOpt(nums, num_presence)
-                        },
-                    ));
-                }
-                Some(RenderFieldKind::Sym) => {
-                    self.world.render_field_check_staged(
-                        &render.kind,
-                        &field.key,
-                        RenderFieldKind::Sym,
-                        &mut pending,
-                    )?;
-                    cols.push((field.key.clone(), RenderFieldKind::Sym, Column::Syms(syms)));
                 }
             }
         }
-
-        let declared = self
-            .world
-            .declared_render_schema(&render.kind)
-            .map(|(_, schema)| schema);
+        let declared = self.world.declared_render_schema(&plan.kind).map(|(_, schema)| schema);
         if let Some(schema) = &declared {
             let mut observed = std::mem::take(&mut cols);
             cols = Vec::with_capacity(schema.cols.len());
             for (key, kind) in &schema.cols {
-                if let Some(index) = observed.iter().position(|(found, _, _)| found == key) {
-                    cols.push(observed.remove(index));
+                if let Some(i) = observed.iter().position(|(k, _, _)| k == key) {
+                    cols.push(observed.remove(i));
                 } else {
                     let empty = match kind {
-                        RenderFieldKind::Num => {
-                            Column::NumOpt(vec![0.0; rows.len()], vec![false; rows.len()])
-                        }
+                        RenderFieldKind::Num => Column::NumOpt(vec![0.0; rows.len()], vec![false; rows.len()]),
                         RenderFieldKind::Sym => Column::Syms(vec![None; rows.len()]),
                     };
                     cols.push((key.clone(), *kind, empty));
                 }
             }
         }
-        let schema_cols = cols
-            .iter()
-            .map(|(key, kind, _)| (key.clone(), *kind))
-            .collect::<Vec<_>>();
-        let mut memo = render.schema.borrow_mut();
+        let schema_cols: Vec<(Rc<str>, RenderFieldKind)> =
+            cols.iter().map(|(k, kind, _)| (k.clone(), *kind)).collect();
+        let mut memo = form.schema.borrow_mut();
         let schema = match declared {
             Some(schema) => schema,
             None => match memo.as_ref() {
-                Some(schema) if schema.cols == schema_cols => schema.clone(),
+                Some(s) if s.cols == schema_cols => s.clone(),
                 _ => {
-                    let schema = Rc::new(RenderSchema { cols: schema_cols });
-                    *memo = Some(schema.clone());
-                    schema
+                    let s = Rc::new(RenderSchema { cols: schema_cols });
+                    *memo = Some(s.clone());
+                    s
                 }
-            },
+            }
         };
         drop(memo);
-        self.world.render_field_commit(&render.kind, &pending);
-        Ok(Rc::new(RenderBatch {
-            kind: render.kind.clone(),
+        self.world.render_field_commit(&plan.kind, &pending);
+        Some(Rc::new(RenderBatch {
+            kind: plan.kind.clone(),
             schema,
             len: rows.len(),
             x,
@@ -1865,13 +1689,28 @@ impl Sim {
             scale,
             alpha,
             hue,
-            cols: cols.into_iter().map(|(_, _, column)| column).collect(),
+            cols: cols.into_iter().map(|(_, _, c)| c).collect(),
         }))
     }
 
-
-
-
+    fn eval_compiled_row_val(&self, value: &ResolvedRowVal, row: usize, pose: Option<&Pose>) -> Val {
+        match value {
+            ResolvedRowVal::Num(n) => Val::Num(*n),
+            ResolvedRowVal::Kw(k) => Val::Kw(k.clone()),
+            ResolvedRowVal::PoseX => Val::Num(pose.expect("lowered pose read").x),
+            ResolvedRowVal::PoseY => Val::Num(pose.expect("lowered pose read").y),
+            ResolvedRowVal::PoseTheta => Val::Num(pose.expect("lowered pose read").angle_or(0.0)),
+            ResolvedRowVal::Field(slots) => entity_field_at_slots(row, *slots, &self.world),
+            ResolvedRowVal::FieldOr(slots, default) => {
+                let present = entity_field_at_slots(row, *slots, &self.world);
+                if matches!(present, Val::Nothing) {
+                    self.eval_compiled_row_val(default, row, pose)
+                } else {
+                    present
+                }
+            }
+        }
+    }
 
     pub fn step(&mut self) -> Result<(), String> {
         self.step_with(&Inputs::default())
@@ -2179,6 +2018,12 @@ impl Sim {
     }
 }
 
+/// Per-pass slot assignment for compiled point/dot render rows. The field
+/// list is fixed for the whole pass and named slots are first-write-wins,
+/// so each slot resolves to at most one field up front and every row build
+/// skips the RenderRowFields staging (a Val per slot plus an extras vec).
+/// None when the shape isn't a static :point/:dot keyword — the generic
+/// finish_checked path keeps its error semantics for those forms.
 /// Flatten an interpreted cull-rule result into target rows, in production
 /// order. Anything other than cull actions means the compiled recognizer
 /// accepted a form it should not have — a lowering bug, so panic (oracle
@@ -2202,97 +2047,92 @@ fn collect_cull_rows(v: &Val, world: &World, out: &mut Vec<usize>) {
         other => panic!("compiled cull oracle: unexpected value {other:?}"),
     }
 }
-fn collect_update_actions(
-    value: &Val,
-    out: &mut Vec<(EntityRef, Symbol, Val)>,
-) {
+
+struct CompiledRowPlan<'a> {
+    kind: Rc<str>,
+    x: Option<&'a ResolvedRowVal>,
+    y: Option<&'a ResolvedRowVal>,
+    theta: Option<&'a ResolvedRowVal>,
+    scale: Option<&'a ResolvedRowVal>,
+    alpha: Option<&'a ResolvedRowVal>,
+    hue: Option<&'a ResolvedRowVal>,
+    extras: Vec<(&'a Rc<str>, &'a ResolvedRowVal)>,
+}
+
+fn row_val_reads_theta(value: &ResolvedRowVal) -> bool {
     match value {
-        Val::Arr(items) => {
-            for item in items.iter() {
-                collect_update_actions(item, out);
-            }
-        }
-        Val::Action(action) => match action.as_ref() {
-            ActionV::ChangeCol { target, col, f } => {
-                out.push((*target, *col, f.clone()));
-            }
-            other => panic!("compiled update oracle: unexpected action {other:?}"),
-        },
-        Val::Nothing => {}
-        other => panic!("compiled update oracle: unexpected value {other:?}"),
+        ResolvedRowVal::PoseTheta => true,
+        ResolvedRowVal::FieldOr(_, default) => row_val_reads_theta(default),
+        _ => false,
     }
 }
 
+impl<'a> CompiledRowPlan<'a> {
+    /// Whether any lowered value consumes the pose angle; when none does,
+    /// the pos_only fast pose is exact for this plan.
+    fn reads_theta(&self) -> bool {
+        [self.x, self.y, self.theta, self.scale, self.alpha, self.hue]
+            .iter()
+            .flatten()
+            .any(|v| row_val_reads_theta(v))
+            || self.extras.iter().any(|(_, v)| row_val_reads_theta(v))
+    }
 
-
-
-#[derive(Clone, Copy)]
-enum RenderLaneSource {
-    Num(usize),
-    NumPresent(usize),
-    Sym(usize),
-    SymPresent(usize),
-    SymConst(Symbol),
-    Pose(kernel::PoseComponent),
-}
-
-#[derive(Clone, Copy)]
-enum ProjectedCell {
-    Nothing,
-    Num(f64),
-    Sym(Symbol),
-}
-
-struct ProjectionLayout<'a> {
-    x: Option<&'a ProjectedRenderField>,
-    y: Option<&'a ProjectedRenderField>,
-    theta: Option<&'a ProjectedRenderField>,
-    facing: Option<&'a ProjectedRenderField>,
-    scale: Option<&'a ProjectedRenderField>,
-    alpha: Option<&'a ProjectedRenderField>,
-    opacity: Option<&'a ProjectedRenderField>,
-    hue: Option<&'a ProjectedRenderField>,
-    extras: Vec<&'a ProjectedRenderField>,
-}
-
-impl<'a> ProjectionLayout<'a> {
-    fn from_fields(fields: &'a [ProjectedRenderField]) -> Self {
-        let mut layout = Self {
-            x: None,
-            y: None,
-            theta: None,
-            facing: None,
-            scale: None,
-            alpha: None,
-            opacity: None,
-            hue: None,
-            extras: Vec::new(),
-        };
-        let set_first = |slot: &mut Option<&'a ProjectedRenderField>,
-                         value: &'a ProjectedRenderField| {
+    fn from_fields(fields: &'a [(&'a Rc<str>, RenderKey, ResolvedRowVal)]) -> Option<CompiledRowPlan<'a>> {
+        let mut kind = None;
+        let mut shape = None;
+        let mut x = None;
+        let mut y = None;
+        let mut theta = None;
+        let mut facing = None;
+        let mut scale = None;
+        let mut alpha = None;
+        let mut opacity = None;
+        let mut hue = None;
+        let mut extras = Vec::new();
+        let set_first = |slot: &mut Option<&'a ResolvedRowVal>, value: &'a ResolvedRowVal| {
             if slot.is_none() {
                 *slot = Some(value);
             }
         };
-        for field in fields {
-            match field.slot {
-                RenderKey::X => set_first(&mut layout.x, field),
-                RenderKey::Y => set_first(&mut layout.y, field),
-                RenderKey::Theta => set_first(&mut layout.theta, field),
-                RenderKey::Facing => set_first(&mut layout.facing, field),
-                RenderKey::Scale => set_first(&mut layout.scale, field),
-                RenderKey::Alpha => set_first(&mut layout.alpha, field),
-                RenderKey::Opacity => set_first(&mut layout.opacity, field),
-                RenderKey::Hue => set_first(&mut layout.hue, field),
-                RenderKey::Kind
-                | RenderKey::Shape
-                | RenderKey::Points
-                | RenderKey::Pts
-                | RenderKey::Active => {}
-                RenderKey::Extra => layout.extras.push(field),
+        for (key, slot, value) in fields {
+            match slot {
+                RenderKey::Kind => set_first(&mut kind, value),
+                RenderKey::Shape => set_first(&mut shape, value),
+                RenderKey::X => set_first(&mut x, value),
+                RenderKey::Y => set_first(&mut y, value),
+                RenderKey::Theta => set_first(&mut theta, value),
+                RenderKey::Facing => set_first(&mut facing, value),
+                RenderKey::Scale => set_first(&mut scale, value),
+                RenderKey::Alpha => set_first(&mut alpha, value),
+                RenderKey::Opacity => set_first(&mut opacity, value),
+                RenderKey::Hue => set_first(&mut hue, value),
+                // point data never reads these; finish_checked drops them
+                RenderKey::Points | RenderKey::Pts | RenderKey::Active => {}
+                RenderKey::Extra => extras.push((*key, value)),
             }
         }
-        layout
+        let Some(ResolvedRowVal::Kw(kw)) = shape else {
+            return None;
+        };
+        if !matches!(kw.as_ref(), "point" | "dot") {
+            return None;
+        }
+        let kind = match kind {
+            None => Rc::from("default"),
+            Some(ResolvedRowVal::Kw(kind)) => kind.clone(),
+            Some(_) => return None,
+        };
+        Some(CompiledRowPlan {
+            kind,
+            x,
+            y,
+            theta: theta.or(facing),
+            scale,
+            alpha: alpha.or(opacity),
+            hue,
+            extras,
+        })
     }
 }
 

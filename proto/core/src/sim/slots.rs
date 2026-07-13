@@ -1,151 +1,6 @@
 use super::*;
-use super::kernel::{
-    self, DynFieldPlan, FallbackPolicy, IterationDomain, KernelLanes, KernelOutputs, KernelPlan,
-    KernelScratch, KernelValue, MergePolicy, TickAxisBinding, TickAxisSource,
-};
 
 const CURVE_R: f64 = 0.08; // compatibility curve half-width for collision
-
-fn dyn_field_plan(dyn_num: &DynNum, output: ColName, sig: &SigEnv) -> Option<DynFieldPlan> {
-    let output_column = u16::try_from(output.0).ok()?;
-    let program = dyn_num.lowered_field_program(sig)?;
-    let mut value = KernelPlan::new(program, IterationDomain::DynFieldRows);
-    value.fallback = FallbackPolicy::WholePlanInterpreted;
-    value.merge = MergePolicy::Direct;
-    for (input, descriptor) in value.program.inputs.iter().enumerate() {
-        let source = match descriptor.source {
-            KernelInputSource::Tick => TickAxisSource::Tick,
-            KernelInputSource::Axis => TickAxisSource::Axis,
-            _ => return None,
-        };
-        value.bindings.tick_axis.push(TickAxisBinding {
-            input: u16::try_from(input).ok()?,
-            source,
-            ty: descriptor.ty,
-        });
-    }
-    Some(DynFieldPlan {
-        value,
-        output_column,
-    })
-}
-
-fn execute_dyn_field_plan(
-    plan: &DynFieldPlan,
-    tau: f64,
-    scratch: &mut KernelScratch,
-    outputs: &mut KernelOutputs,
-) -> Option<f64> {
-    let mut values = Vec::with_capacity(plan.value.program.inputs.len());
-    for (input, descriptor) in plan.value.program.inputs.iter().enumerate() {
-        let binding = plan.value.bindings.tick_axis.iter().find(|binding| {
-            binding.input as usize == input && binding.ty == descriptor.ty
-        })?;
-        let value = match (descriptor.source, binding.source, binding.ty) {
-            (KernelInputSource::Tick, TickAxisSource::Tick, KernelType::F64) => tau,
-            (KernelInputSource::Axis, TickAxisSource::Axis, KernelType::F64) => 0.0,
-            _ => return None,
-        };
-        values.push(KernelValue::F64(value));
-    }
-    let inputs = KernelLanes { lanes: 1, values };
-    kernel::execute(&plan.value, &inputs, scratch, outputs).ok()?;
-    match outputs.output(0, 0)? {
-        KernelValue::F64(value) => Some(value),
-        _ => None,
-    }
-}
-
-/// Refresh fixed-width dynamic numeric columns before collider/render drivers
-/// read them. Unsupported variable-shaped forms and any rejected typed plan
-/// take the existing semantic evaluator path for the entire field.
-pub(super) fn refresh_dyn_field_columns(world: &mut World, sig: &SigEnv) -> Result<(), String> {
-    let tick = world.tick;
-    let state = MotionState::default();
-    let tick_rate = world.tick_rate();
-    let oracle = oracle_enabled();
-    let mut shared: Option<crate::fxhash::FxHashMap<(usize, usize, u64), Val>> = None;
-    let mut scratch = KernelScratch::default();
-    let mut outputs = KernelOutputs::default();
-    for row in 0..world.entities.len() {
-        if !world.entities.is_alive(row) {
-            continue;
-        }
-        let tau = world.entity_tau(row, tick);
-        let mut row_sig = None;
-        let row_sig = sig.for_row(world.entities.overrides(row), &mut row_sig);
-        for (column, dyn_num) in world.entities.dyn_cols(row).iter() {
-            let planned = dyn_field_plan(dyn_num, *column, row_sig).and_then(|plan| {
-                (u32::from(plan.output_column) == column.0)
-                    .then(|| execute_dyn_field_plan(&plan, tau, &mut scratch, &mut outputs))
-                    .flatten()
-            });
-            let value = match planned {
-                Some(value) => {
-                    if oracle {
-                        let expected = eval_dyn_with_tick_rate(
-                            dyn_num,
-                            tau,
-                            &state,
-                            row_sig,
-                            tick_rate,
-                        )
-                        .map_err(|error| format!("dyn meta field: {}", error))?;
-                        assert_eq!(
-                            value, expected,
-                            "dyn field projection mismatch for row {row}, column {}",
-                            column.0
-                        );
-                    }
-                    value
-                }
-                None => match dyn_num.repr() {
-                    NumDynRepr::AxisSel {
-                        form,
-                        env,
-                        path,
-                        flat,
-                    } => {
-                        let key = (row_sig.overrides.is_none())
-                            .then(|| {
-                                form_identity(form)
-                                    .map(|form| (form, env.identity(), tau.to_bits()))
-                            })
-                            .flatten();
-                        let hit =
-                            key.and_then(|key| shared.as_ref().and_then(|m| m.get(&key).cloned()));
-                        let value = match hit {
-                            Some(value) => Ok(value),
-                            None => {
-                                let value = eval_sig_at_rate(
-                                    form,
-                                    env,
-                                    row_sig,
-                                    tau,
-                                    0.0,
-                                    None,
-                                    None,
-                                    tick_rate,
-                                );
-                                if let (Some(key), Ok(value)) = (key, &value) {
-                                    shared
-                                        .get_or_insert_with(Default::default)
-                                        .insert(key, value.clone());
-                                }
-                                value
-                            }
-                        };
-                        value.and_then(|value| axis_select_val(&value, path, *flat).num())
-                    }
-                    _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, row_sig, tick_rate),
-                }
-                .map_err(|error| format!("dyn meta field: {}", error))?,
-            };
-            world.col_set_sym_at(row, *column, value);
-        }
-    }
-    Ok(())
-}
 
 fn sample_curve_collider_frac(
     dyn_figure: &DynFigure,
@@ -244,20 +99,21 @@ pub fn materialize_collider_defs_into(
                 out.extend(slots.iter().cloned());
             }
             ColliderProjectorExpr::Circle(spec) => {
-                // Bind semantic views only for retained source forms.
+                // the env only feeds Expr slots; Const/EntityCol never read
+                // it, so skip the scope binding (env clone + two view maps)
                 if list.expr.needs_views() {
                     let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
-                    out.push(materialize_circle_projector(spec, &env, sig, world)?);
+                    out.push(materialize_circle_projector(spec, &env, sig, world, row)?);
                 } else {
-                    out.push(materialize_circle_projector(spec, &spec.env, sig, world)?);
+                    out.push(materialize_circle_projector(spec, &spec.env, sig, world, row)?);
                 }
             }
             ColliderProjectorExpr::CapsuleChain(spec) => {
                 if list.expr.needs_views() {
                     let env = bind_projector_scope(&spec.env, spec.scope.as_ref(), e_view, ctx_view);
-                    out.push(materialize_capsule_chain_projector(spec, &env, sig, world)?);
+                    out.push(materialize_capsule_chain_projector(spec, &env, sig, world, row)?);
                 } else {
-                    out.push(materialize_capsule_chain_projector(spec, &spec.env, sig, world)?);
+                    out.push(materialize_capsule_chain_projector(spec, &spec.env, sig, world, row)?);
                 }
             }
             ColliderProjectorExpr::Callable { params, body, env } => {
@@ -448,11 +304,11 @@ fn capsule_chain_collider_data(
     }
 }
 
-/// Execute a fully lowered primitive projector. All typed inputs for every
-/// scalar are gathered before the first program executes; any missing,
-/// mistyped, or unsupported binding rejects the whole projector so the caller
-/// can run the semantic source form instead. Geometry remains driver-owned.
-pub(super) fn materialize_projected_colliders(
+/// Materialize a direct projector (`ColliderProjector::is_direct`) without
+/// the defs round-trip: slots are Const/EntityCol, so each shape's numbers
+/// come straight from the spec (or an entity-row read) and the collider
+/// data is built in place — no evaluator, no `DynCollider`, no `&mut World`.
+pub(super) fn materialize_direct_colliders(
     dyn_figure: &DynFigure,
     projector: &ColliderProjector,
     tau: f64,
@@ -464,231 +320,70 @@ pub(super) fn materialize_projected_colliders(
     trace: &[Pose],
     traced: bool,
     out: &mut Vec<ColliderData>,
+    slot_cache: &mut Vec<(*const u8, FieldSlots)>,
     tick_rate: f64,
-) -> Result<bool, String> {
-    fn gather_scalar<'a>(
-        scalar: &'a ProjectorScalar,
-        row: Option<usize>,
-        world: &World,
-        gathered: &mut Vec<(&'a kernel::KernelPlan, KernelLanes)>,
-    ) -> Option<()> {
-        let plan = &scalar.projection.as_ref()?.projection;
-        if !plan.supported {
-            return None;
-        }
-        let mut values = Vec::with_capacity(plan.program.inputs.len());
-        for (input, descriptor) in plan.program.inputs.iter().enumerate() {
-            let KernelInputSource::Direct(column) = descriptor.source else {
-                return None;
-            };
-            let binding = plan.bindings.direct.iter().find(|binding| {
-                binding.input as usize == input
-                    && binding.column == column
-                    && binding.ty == descriptor.ty
-            })?;
-            if binding.ty != KernelType::F64 {
-                return None;
+) -> Result<(), String> {
+    let mut num = |n: &ProjectorNum| -> Result<f64, String> {
+        match n {
+            ProjectorNum::Const(n) => Ok(*n),
+            // EntityCol is never a special view field (scope filter), so the
+            // read skips entity_field_at's special-name match and goes
+            // straight through resolved store slots — same Val, same errors.
+            // Names resolve once per pass, keyed by the name's Rc address
+            // (the spec outlives the pass, so the key cannot be reused).
+            ProjectorNum::EntityCol(col) => {
+                let row = row.ok_or("collider: entity field read outside an entity context")?;
+                let key = Rc::as_ptr(col) as *const u8;
+                let slots = match slot_cache.iter().find(|(k, _)| *k == key) {
+                    Some((_, slots)) => *slots,
+                    None => {
+                        let slots = world.field_slots(col);
+                        slot_cache.push((key, slots));
+                        slots
+                    }
+                };
+                entity_field_at_slots(row, slots, world).num()
             }
-            let row = row?;
-            let value = entity_field_sym_at(row, Some(Symbol(binding.column as u32)), world)
-                .num()
-                .ok()?;
-            values.push(KernelValue::F64(value));
+            ProjectorNum::Expr(_) => Err("collider: expression slot on the direct path".into()),
         }
-        gathered.push((
-            plan,
-            KernelLanes {
-                lanes: 1,
-                values,
-            },
-        ));
-        Some(())
-    }
-
-    let mut gathered = Vec::new();
+    };
     for value in projector.projectors.iter() {
         match &value.expr {
+            ColliderProjectorExpr::Stable(slots) => {
+                out.extend(slots.iter().map(|slot| {
+                    eval_collider_slot(dyn_figure, slot, tau, sig, scale, pose, trace, traced, tick_rate)
+                }));
+            }
             ColliderProjectorExpr::Circle(spec) => {
-                if gather_scalar(&spec.radius, row, world, &mut gathered).is_none() {
-                    return Ok(false);
-                }
-            }
-            ColliderProjectorExpr::CapsuleChain(spec) => {
-                if let ProjectorSampleSet::Step(resolution) = &spec.sample_set {
-                    if gather_scalar(resolution, row, world, &mut gathered).is_none() {
-                        return Ok(false);
-                    }
-                }
-                if let Some(u_max) = &spec.u_max {
-                    if gather_scalar(u_max, row, world, &mut gathered).is_none() {
-                        return Ok(false);
-                    }
-                }
-                if gather_scalar(&spec.width, row, world, &mut gathered).is_none()
-                    || gather_scalar(&spec.radius, row, world, &mut gathered).is_none()
-                {
-                    return Ok(false);
-                }
-            }
-            ColliderProjectorExpr::Stable(_)
-            | ColliderProjectorExpr::Callable { .. }
-            | ColliderProjectorExpr::Cond { .. } => return Ok(false),
-        }
-    }
-
-    let mut projected = Vec::with_capacity(gathered.len());
-    let mut scratch = KernelScratch::default();
-    let mut outputs = KernelOutputs::default();
-    for (plan, inputs) in &gathered {
-        if kernel::execute(plan, inputs, &mut scratch, &mut outputs).is_err() {
-            return Ok(false);
-        }
-        let Some(KernelValue::F64(value)) = outputs.output(0, 0) else {
-            return Ok(false);
-        };
-        projected.push(value);
-    }
-
-    if oracle_enabled() {
-        fn interpreted_scalar(
-            scalar: &ProjectorScalar,
-            env: &Env,
-            sig: &SigEnv,
-            world: &World,
-            tick_rate: f64,
-        ) -> Result<f64, String> {
-            match &scalar.source {
-                ProjectorScalarSource::Value(value) => Ok(*value),
-                ProjectorScalarSource::Form(form) => {
-                    let mut ctx = Ctx::default();
-                    ctx.sig = sig.clone();
-                    let mut eval_world = World::for_eval(tick_rate);
-                    eval_world.symbols = world.symbols.clone();
-                    evaluate(form, env, &mut ctx, &mut eval_world)?.num()
-                }
-            }
-        }
-
-        let e_view = row.map(|row| entity_view(row, world, sig)).transpose()?;
-        let ctx_view = Val::Map(std::rc::Rc::new(vec![
-            (Val::Kw("age".into()), Val::Num(tau)),
-            (Val::Kw("t".into()), Val::Num(tau)),
-            (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
-        ]));
-        let mut expected = Vec::with_capacity(projected.len());
-        for value in projector.projectors.iter() {
-            match &value.expr {
-                ColliderProjectorExpr::Circle(spec) => {
-                    let env = bind_projector_scope(
-                        &spec.env,
-                        spec.scope.as_ref(),
-                        e_view.as_ref(),
-                        Some(&ctx_view),
-                    );
-                    expected.push(interpreted_scalar(
-                        &spec.radius,
-                        &env,
-                        sig,
-                        world,
-                        tick_rate,
-                    )?);
-                }
-                ColliderProjectorExpr::CapsuleChain(spec) => {
-                    let env = bind_projector_scope(
-                        &spec.env,
-                        spec.scope.as_ref(),
-                        e_view.as_ref(),
-                        Some(&ctx_view),
-                    );
-                    if let ProjectorSampleSet::Step(resolution) = &spec.sample_set {
-                        expected.push(interpreted_scalar(
-                            resolution,
-                            &env,
-                            sig,
-                            world,
-                            tick_rate,
-                        )?);
-                    }
-                    if let Some(u_max) = &spec.u_max {
-                        expected.push(interpreted_scalar(
-                            u_max,
-                            &env,
-                            sig,
-                            world,
-                            tick_rate,
-                        )?);
-                    }
-                    expected.push(interpreted_scalar(
-                        &spec.width,
-                        &env,
-                        sig,
-                        world,
-                        tick_rate,
-                    )?);
-                    expected.push(interpreted_scalar(
-                        &spec.radius,
-                        &env,
-                        sig,
-                        world,
-                        tick_rate,
-                    )?);
-                }
-                ColliderProjectorExpr::Stable(_)
-                | ColliderProjectorExpr::Callable { .. }
-                | ColliderProjectorExpr::Cond { .. } => unreachable!(),
-            }
-        }
-        assert_eq!(projected, expected, "collider fixed projection mismatch");
-    }
-
-    let mut projected = projected.into_iter();
-    for value in projector.projectors.iter() {
-        match &value.expr {
-            ColliderProjectorExpr::Circle(spec) => {
-                let radius = projected
-                    .next()
-                    .ok_or("collider: missing projected circle radius")?;
+                let radius = num(&spec.radius)?;
                 out.push(circle_collider_data(
                     dyn_figure, spec.layer, radius, scale, pose, trace, traced,
                 ));
             }
             ColliderProjectorExpr::CapsuleChain(spec) => {
+                // slot numbers evaluate in the same order as
+                // materialize_capsule_chain_projector: sample set, u-max,
+                // width, radius — first error wins identically
                 let sample_set = match &spec.sample_set {
                     ProjectorSampleSet::Values(samples) => SampleSet::Values(samples.clone()),
-                    ProjectorSampleSet::Step(_) => SampleSet::Step {
-                        resolution: projected
-                            .next()
-                            .ok_or("collider: missing projected capsule resolution")?,
+                    ProjectorSampleSet::Step(resolution) => SampleSet::Step {
+                        resolution: num(resolution)?,
                     },
                 };
-                let u_max = if spec.u_max.is_some() {
-                    projected
-                        .next()
-                        .ok_or("collider: missing projected capsule u-max")?
-                } else {
-                    10.0
-                };
-                let width = projected
-                    .next()
-                    .ok_or("collider: missing projected capsule width")?;
-                let radius = projected
-                    .next()
-                    .ok_or("collider: missing projected capsule radius")?;
                 let slot = CapsuleChainSlot {
                     sample_set,
-                    u_max,
-                    width,
+                    u_max: spec.u_max.as_ref().map(&mut num).transpose()?.unwrap_or(10.0),
+                    width: num(&spec.width)?,
                 };
+                let radius = num(&spec.radius)?;
                 out.push(capsule_chain_collider_data(
                     dyn_figure, spec.layer, radius, &slot, tau, sig, scale, trace, traced, tick_rate,
                 ));
             }
-            ColliderProjectorExpr::Stable(_)
-            | ColliderProjectorExpr::Callable { .. }
-            | ColliderProjectorExpr::Cond { .. } => {
-                return Err("collider: unsupported projector entered projected merge".into());
+            ColliderProjectorExpr::Callable { .. } | ColliderProjectorExpr::Cond { .. } => {
+                return Err("collider: non-direct projector on the direct path".into());
             }
         }
     }
-    Ok(true)
+    Ok(())
 }

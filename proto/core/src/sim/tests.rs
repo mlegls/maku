@@ -594,14 +594,6 @@
 "#;
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         sim.step().unwrap();
-        let projector = sim.world.entities.collider_projector(0).unwrap();
-        let ColliderProjectorExpr::Circle(spec) = &projector.projectors[0].expr else {
-            panic!("expected lowered circle projector");
-        };
-        assert!(
-            spec.radius.projection.is_some(),
-            "entity-field radius should carry a typed collider projection plan"
-        );
         let a = sim.world.symbols.intern("a");
         // radii 2+2 span the 3-unit gap; radius 1 at x=9 reaches nothing
         assert_eq!(&*sim.world.collision_index.query(a, a), &[(0, 1), (1, 0)]);
@@ -618,37 +610,6 @@
         let mut sim = Sim::load(CARD, Some("t")).unwrap();
         let err = sim.step().unwrap_err();
         assert!(err.contains("expected number"), "got: {err}");
-    }
-
-    #[test]
-    fn entity_col_collider_missing_field_uses_semantic_error() {
-        const CARD: &str = r#"
-(defcollider :pose hb [e ctx]
-  (circle-collider {:layer :a :r e.hitbox}))
-(defpattern t []
-  (spawn (pose c[0 0]) hb))
-"#;
-        let mut sim = Sim::load(CARD, Some("t")).unwrap();
-        let err = sim.step().unwrap_err();
-        assert!(err.contains("expected number"), "got: {err}");
-    }
-
-    #[test]
-    fn collider_plan_rejects_before_partial_geometry_merge() {
-        const CARD: &str = r#"
-(defcollider :pose hb [e ctx]
-  [(circle-collider {:layer :a :r e.first})
-   (circle-collider {:layer :b :r e.missing})])
-(defpattern t []
-  (spawn (pose c[0 0]) hb {:first 1}))
-"#;
-        let mut sim = Sim::load(CARD, Some("t")).unwrap();
-        let err = sim.step().unwrap_err();
-        assert!(err.contains("expected number"), "got: {err}");
-        assert!(
-            sim.collider_scratch.rows.is_empty(),
-            "rejected plan must not expose partial collider geometry"
-        );
     }
 
     #[test]
@@ -1272,65 +1233,6 @@
     }
 
     #[test]
-    fn compiled_render_uses_typed_multi_output_projection_plan() {
-        const CARD: &str = r#"
-(deftick
-  (map (fn [e]
-         (let [p (:pos e)]
-           (render {:kind :sprites :shape :point
-                    :x (:x p) :theta (:th p)
-                    :family e.family :alpha (value-or e.opacity 1)})))
-       (entities-where (fn [e] (= e.render :sprite)))))
-(defpattern p [] (spawn (pose c[1 2]) {:render :sprite :family :orb}))
-"#;
-        let sim = Sim::load(CARD, Some("p")).unwrap();
-        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
-        let CompiledTickAction::Render(render) = &compiled.action else {
-            panic!("expected render projection")
-        };
-        let plan = &render.plan.projection;
-        assert_eq!(plan.domain, kernel::IterationDomain::RenderRows);
-        assert_eq!(plan.fallback, kernel::FallbackPolicy::WholePlanInterpreted);
-        assert_eq!(plan.merge, kernel::MergePolicy::DriverOwned);
-        assert!(plan.program.outputs.len() > render.fields.len());
-        assert!(plan.program.outputs.iter().any(|output| output.ty == KernelType::F64));
-        assert!(plan.program.outputs.iter().any(|output| output.ty == KernelType::Symbol));
-        assert!(plan.program.outputs.iter().any(|output| output.ty == KernelType::Mask));
-        assert!(plan.bindings.pose.iter().any(|binding| {
-            binding.component == kernel::PoseComponent::HasTheta
-                && binding.ty == KernelType::Mask
-        }));
-    }
-
-    #[test]
-    fn masked_update_plan_queues_fixed_values_in_row_order() {
-        const CARD: &str = r#"
-(deftick
-  (map (fn [e] (change-col e :mark (fn [_] 7)))
-       (entities-where (fn [e] (= e.team :enemy)))))
-(defpattern p []
-  (par
-    (spawn (pose c[0 0]) {:team :enemy})
-    (spawn (pose c[1 0]) {:team :friend})
-    (spawn (pose c[2 0]) {:team :enemy})))
-"#;
-        let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
-        let CompiledTickAction::Update { plan, kind, .. } = &compiled.action else {
-            panic!("expected masked update plan")
-        };
-        assert!(matches!(kind, UpdateValueKind::Num));
-        assert_eq!(plan.value.domain, kernel::IterationDomain::EntityRows);
-        assert_eq!(plan.value.merge, kernel::MergePolicy::CanonicalRowOrder);
-        sim.step().unwrap();
-        assert_eq!(sim.world.pending_writes.len(), 2);
-        sim.step().unwrap();
-        assert_eq!(sim.world.col_get_at(0, "mark"), Some(7.0));
-        assert_eq!(sim.world.col_get_at(1, "mark"), None);
-        assert_eq!(sim.world.col_get_at(2, "mark"), Some(7.0));
-    }
-
-    #[test]
     fn compiled_cull_rule_culls_matched_rows() {
         const CARD: &str = r#"
 (deftick
@@ -1623,46 +1525,6 @@
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         let err = sim.step().unwrap_err();
         assert!(err.contains("expected number, got Kw(\"full\")"), "{err}");
-    }
-
-    #[test]
-    fn mistyped_predicate_input_abandons_the_whole_cull_before_execution() {
-        const CARD: &str = r#"
-(deftick
-  (map (fn [e] (cull e))
-       (entities-where (fn [e] (<= (value-or (:hp e) 1) 0)))))
-(defpattern p []
-  (par
-    (spawn (pose c[0 0]) {:hp 0})
-    (spawn (pose c[1 0]) {:hp :full})))
-"#;
-        let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        assert!(sim.world.standing_rules[0].compiled[0].is_some());
-        let err = sim.step().unwrap_err();
-        assert!(err.contains("expected number, got Kw(\"full\")"), "{err}");
-        assert!(
-            (0..sim.world.entities.len()).all(|row| sim.world.entities.is_alive(row)),
-            "typed gathering must abandon the whole plan before any cull"
-        );
-    }
-
-    #[test]
-    fn compiled_filter_preserves_numeric_equality_and_oracle_actions() {
-        const CARD: &str = r#"
-(deftick
-  (map (fn [e] (cull e))
-       (entities-where (fn [e] (= (+ (value-or (:hp e) 0) 0) 0)))))
-(defpattern p []
-  (par
-    (spawn (pose c[0 0]) {:hp 0.0000000005})
-    (spawn (pose c[1 0]) {:hp 0.000000002})))
-"#;
-        let _guard = crate::interp::oracle_on_guard();
-        let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        assert!(sim.world.standing_rules[0].compiled[0].is_some());
-        sim.step().unwrap();
-        assert!(!sim.world.entities.is_alive(0), "value inside equality threshold should match");
-        assert!(sim.world.entities.is_alive(1), "value outside equality threshold should not match");
     }
 
     #[test]
@@ -3667,11 +3529,6 @@
         for _ in 0..60 {
             sim.step().unwrap();
         }
-        let dyn_cols = sim.world.entities.dyn_cols(0);
-        assert!(
-            dyn_cols[0].1.lowered_field_program(&sim.ctx.sig).is_some(),
-            "fixed-width DynNum should lower to a typed field program"
-        );
         let grow = sim.world.col_get_at(0, "grow").unwrap();
         assert!((grow - 1.0).abs() < 0.02, "grow at 0.5s = 1: {}", grow);
     }

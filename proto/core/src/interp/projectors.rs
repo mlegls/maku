@@ -5,10 +5,6 @@
 
 use super::*;
 use crate::edn::Form;
-use crate::sim::kernel::{
-    ColliderProjectionPlan, DirectInputBinding, FallbackPolicy, IterationDomain, KernelPlan,
-    MergePolicy,
-};
 use std::rc::Rc;
 
 pub(crate) fn contains_bound_projector_context(form: &Form, scope: Option<&ProjectorScope>) -> bool {
@@ -139,68 +135,6 @@ fn scope_entity_col(form: &Form, scope: Option<&ProjectorScope>) -> Option<Rc<st
         .then(|| col.clone())
 }
 
-fn collider_projection_plan(program: KernelProgram, direct: Option<u16>) -> ColliderProjectionPlan {
-    let mut projection = KernelPlan::new(intern_program(program), IterationDomain::ColliderRows);
-    projection.fallback = FallbackPolicy::WholePlanInterpreted;
-    projection.merge = MergePolicy::DriverOwned;
-    if let Some(column) = direct {
-        projection.bindings.direct.push(DirectInputBinding {
-            input: 0,
-            column,
-            ty: KernelType::F64,
-        });
-    }
-    ColliderProjectionPlan { projection }
-}
-
-fn constant_projector_scalar(value: f64) -> ProjectorScalar {
-    let program = KernelProgram {
-        ops: vec![KernelOp::Const { dst: 0, v: value }],
-        register_types: vec![KernelType::F64],
-        inputs: Vec::new(),
-        outputs: vec![KernelOutput {
-            register: 0,
-            ty: KernelType::F64,
-        }],
-        n_inputs: 0,
-        aux: None,
-    };
-    ProjectorScalar {
-        source: ProjectorScalarSource::Value(value),
-        projection: Some(collider_projection_plan(program, None)),
-    }
-}
-
-fn source_projector_scalar(
-    form: &Form,
-    scope: Option<&ProjectorScope>,
-    world: &mut World,
-) -> ProjectorScalar {
-    let projection = scope_entity_col(form, scope).and_then(|name| {
-        let column = world.intern_col(name.as_ref());
-        let column = u16::try_from(column.0).ok()?;
-        let program = KernelProgram {
-            ops: vec![KernelOp::Load { dst: 0, input: 0 }],
-            register_types: vec![KernelType::F64],
-            inputs: vec![KernelInput {
-                source: KernelInputSource::Direct(column),
-                ty: KernelType::F64,
-            }],
-            outputs: vec![KernelOutput {
-                register: 0,
-                ty: KernelType::F64,
-            }],
-            n_inputs: 0,
-            aux: None,
-        };
-        Some(collider_projection_plan(program, Some(column)))
-    });
-    ProjectorScalar {
-        source: ProjectorScalarSource::Form(form.clone()),
-        projection,
-    }
-}
-
 fn circle_projector_spec_from_form(
     opts: Option<Form>,
     env: &Env,
@@ -214,10 +148,16 @@ fn circle_projector_spec_from_form(
         .map(|k| world.symbols.intern(k.as_ref()))?;
     let radius = match form_map_value(&opts, &["radius", "r"]) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
-            source_projector_scalar(form, ctx.projector_scope.as_ref(), world)
+            match scope_entity_col(form, ctx.projector_scope.as_ref()) {
+                Some(col) => ProjectorNum::EntityCol(col),
+                None => ProjectorNum::Expr(form.clone()),
+            }
         }
-        Some(form) => constant_projector_scalar(evaluate(form, env, ctx, world)?.num()?),
-        None => constant_projector_scalar(0.08),
+        Some(form) => {
+            let radius = evaluate(form, env, ctx, world)?.num()?;
+            ProjectorNum::Const(radius)
+        }
+        None => ProjectorNum::Const(0.08),
     };
     Ok(CircleProjectorSpec {
         layer,
@@ -227,7 +167,7 @@ fn circle_projector_spec_from_form(
     })
 }
 
-fn projector_scalar_from_form(
+fn projector_num_from_form(
     name: &str,
     opts: &Option<Form>,
     keys: &[&str],
@@ -235,36 +175,46 @@ fn projector_scalar_from_form(
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<ProjectorScalar, String> {
+) -> Result<ProjectorNum, String> {
     match form_map_value(opts, keys) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
-            Ok(source_projector_scalar(form, ctx.projector_scope.as_ref(), world))
+            Ok(match scope_entity_col(form, ctx.projector_scope.as_ref()) {
+                Some(col) => ProjectorNum::EntityCol(col),
+                None => ProjectorNum::Expr(form.clone()),
+            })
         }
-        Some(form) => evaluate(form, env, ctx, world)
-            .and_then(|v| v.num())
-            .map(constant_projector_scalar)
-            .map_err(|e| format!("{}: {}", name, e)),
-        None => Ok(constant_projector_scalar(default)),
+        Some(form) => {
+            evaluate(form, env, ctx, world)
+                .and_then(|v| v.num())
+                .map(ProjectorNum::Const)
+                .map_err(|e| format!("{}: {}", name, e))
+        }
+        None => Ok(ProjectorNum::Const(default)),
     }
 }
 
-fn optional_projector_scalar_from_form(
+fn optional_projector_num_from_form(
     name: &str,
     opts: &Option<Form>,
     keys: &[&str],
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<Option<ProjectorScalar>, String> {
+) -> Result<Option<ProjectorNum>, String> {
     match form_map_value(opts, keys) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
-            Ok(Some(source_projector_scalar(form, ctx.projector_scope.as_ref(), world)))
+            Ok(Some(match scope_entity_col(form, ctx.projector_scope.as_ref()) {
+                Some(col) => ProjectorNum::EntityCol(col),
+                None => ProjectorNum::Expr(form.clone()),
+            }))
         }
-        Some(form) => evaluate(form, env, ctx, world)
-            .and_then(|v| v.num())
-            .map(constant_projector_scalar)
-            .map(Some)
-            .map_err(|e| format!("{}: {}", name, e)),
+        Some(form) => {
+            evaluate(form, env, ctx, world)
+                .and_then(|v| v.num())
+                .map(ProjectorNum::Const)
+                .map(Some)
+                .map_err(|e| format!("{}: {}", name, e))
+        }
         None => Ok(None),
     }
 }
@@ -305,7 +255,7 @@ fn capsule_chain_projector_spec_from_form(
         .map(|k| world.symbols.intern(k.as_ref()))?;
     let sample_set = match static_samples_from_form(&opts, env, ctx, world)? {
         Some(samples) => ProjectorSampleSet::Values(samples),
-        None => ProjectorSampleSet::Step(projector_scalar_from_form(
+        None => ProjectorSampleSet::Step(projector_num_from_form(
             "capsule-chain-collider",
             &opts,
             &["resolution"],
@@ -317,10 +267,10 @@ fn capsule_chain_projector_spec_from_form(
     };
     Ok(CapsuleChainProjectorSpec {
         layer,
-        radius: projector_scalar_from_form("capsule-chain-collider", &opts, &["radius", "r"], 0.08, env, ctx, world)?,
+        radius: projector_num_from_form("capsule-chain-collider", &opts, &["radius", "r"], 0.08, env, ctx, world)?,
         sample_set,
-        u_max: optional_projector_scalar_from_form("capsule-chain-collider", &opts, &["u-max"], env, ctx, world)?,
-        width: projector_scalar_from_form("capsule-chain-collider", &opts, &["width"], 0.0, env, ctx, world)?,
+        u_max: optional_projector_num_from_form("capsule-chain-collider", &opts, &["u-max"], env, ctx, world)?,
+        width: projector_num_from_form("capsule-chain-collider", &opts, &["width"], 0.0, env, ctx, world)?,
         env: env.clone(),
         scope: ctx.projector_scope.clone(),
     })
@@ -341,18 +291,34 @@ pub(crate) fn materialize_circle_projector(
     env: &Env,
     sig: &SigEnv,
     world: &World,
+    row: Option<usize>,
 ) -> Result<DynCollider, String> {
-    let radius = match &spec.radius.source {
-        ProjectorScalarSource::Value(value) => *value,
-        ProjectorScalarSource::Form(form) => {
+    // Const/EntityCol radii need no evaluator; this runs per entity per
+    // tick, so the Ctx/World scaffolding is built only for the Expr case.
+    let radius = match &spec.radius {
+        ProjectorNum::Const(n) => *n,
+        ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig)?,
+        ProjectorNum::Expr(form) => {
             let mut run_ctx = Ctx::default();
             run_ctx.sig = sig.clone();
-            let mut run_world = World::for_eval(world.tick_rate());
-            run_world.symbols = world.symbols.clone();
+            let mut run_world = World::with_entity_capacity(0);
             evaluate(form, env, &mut run_ctx, &mut run_world)?.num()?
         }
     };
     Ok(DynCollider::collider_circle_const(spec.layer, radius))
+}
+
+/// An EntityCol read at materialize time: `entity_field_at` yields the
+/// same Val the scope view holds for a non-special field, so the `.num()`
+/// coercion (and its error) matches the evaluated form exactly.
+pub(crate) fn entity_col_projector_num(
+    col: &str,
+    world: &World,
+    row: Option<usize>,
+    sig: &SigEnv,
+) -> Result<f64, String> {
+    let row = row.ok_or("collider: entity field read outside an entity context")?;
+    entity_field_at(row, col, world, sig)?.num()
 }
 
 pub(crate) fn materialize_capsule_chain_projector(
@@ -360,18 +326,22 @@ pub(crate) fn materialize_capsule_chain_projector(
     env: &Env,
     sig: &SigEnv,
     world: &mut World,
+    row: Option<usize>,
 ) -> Result<DynCollider, String> {
+    // Same per-tick constraint as the circle projector: only build (and
+    // clone the symbol table into) the evaluator when some field is an Expr.
     let mut scaffold: Option<(Ctx, World)> = None;
-    let mut eval_num = |scalar: &ProjectorScalar| -> Result<f64, String> {
-        match &scalar.source {
-            ProjectorScalarSource::Value(value) => Ok(*value),
-            ProjectorScalarSource::Form(form) => {
+    let mut eval_num = |n: &ProjectorNum| -> Result<f64, String> {
+        match n {
+            ProjectorNum::Const(n) => Ok(*n),
+            ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig),
+            ProjectorNum::Expr(form) => {
                 let (run_ctx, run_world) = match &mut scaffold {
                     Some(pair) => pair,
                     None => {
                         let mut run_ctx = Ctx::default();
                         run_ctx.sig = sig.clone();
-                        let mut run_world = World::for_eval(world.tick_rate());
+                        let mut run_world = World::with_entity_capacity(0);
                         run_world.symbols = world.symbols.clone();
                         scaffold.insert((run_ctx, run_world))
                     }
