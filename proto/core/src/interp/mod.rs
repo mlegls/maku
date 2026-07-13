@@ -4045,11 +4045,24 @@ pub(crate) fn expand_macros(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Form, String> {
+    let mut path = Vec::new();
+    let mut ignore = |_: &[usize], _: &Rc<str>| {};
+    expand_macros_traced(form, env, ctx, world, &mut path, &mut ignore)
+}
+
+pub(crate) fn expand_macros_traced(
+    form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+    path: &mut Vec<usize>,
+    trace: &mut dyn FnMut(&[usize], &Rc<str>),
+) -> Result<Form, String> {
     if ctx.macros.is_empty() {
         return Ok(form.clone());
     }
     let mut bound = std::collections::HashSet::new();
-    expand_macros_in(form, env, ctx, world, &mut bound)
+    expand_macros_in(form, env, ctx, world, &mut bound, path, trace)
 }
 
 fn expand_macros_in(
@@ -4058,27 +4071,34 @@ fn expand_macros_in(
     ctx: &mut Ctx,
     world: &mut World,
     bound: &mut std::collections::HashSet<Rc<str>>,
+    path: &mut Vec<usize>,
+    trace: &mut dyn FnMut(&[usize], &Rc<str>),
 ) -> Result<Form, String> {
     match form {
-        Form::List(items) => expand_macros_list(items, env, ctx, world, bound),
-        Form::Vector(items) => Ok(Form::Vector(
-            items
-                .iter()
-                .map(|f| expand_macros_in(f, env, ctx, world, bound))
-                .collect::<Result<Vec<_>, _>>()?
-                .into(),
-        )),
-        Form::Map(kvs) => Ok(Form::Map(
-            kvs.iter()
-                .map(|(k, v)| {
-                    Ok((
-                        expand_macros_in(k, env, ctx, world, bound)?,
-                        expand_macros_in(v, env, ctx, world, bound)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, String>>()?
-                .into(),
-        )),
+        Form::List(items) => expand_macros_list(items, env, ctx, world, bound, path, trace),
+        Form::Vector(items) => {
+            let mut expanded = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                path.push(index);
+                let item = expand_macros_in(item, env, ctx, world, bound, path, trace);
+                path.pop();
+                expanded.push(item?);
+            }
+            Ok(Form::Vector(expanded.into()))
+        }
+        Form::Map(kvs) => {
+            let mut expanded = Vec::with_capacity(kvs.len());
+            for (index, (key, value)) in kvs.iter().enumerate() {
+                path.push(index * 2);
+                let key = expand_macros_in(key, env, ctx, world, bound, path, trace);
+                path.pop();
+                path.push(index * 2 + 1);
+                let value = expand_macros_in(value, env, ctx, world, bound, path, trace);
+                path.pop();
+                expanded.push((key?, value?));
+            }
+            Ok(Form::Map(expanded.into()))
+        }
         atom => Ok(atom.clone()),
     }
 }
@@ -4089,21 +4109,11 @@ fn expand_macros_list(
     ctx: &mut Ctx,
     world: &mut World,
     bound: &mut std::collections::HashSet<Rc<str>>,
+    path: &mut Vec<usize>,
+    trace: &mut dyn FnMut(&[usize], &Rc<str>),
 ) -> Result<Form, String> {
-    let recurse_all = |ctx: &mut Ctx,
-                       world: &mut World,
-                       bound: &mut std::collections::HashSet<Rc<str>>|
-     -> Result<Form, String> {
-        Ok(Form::List(
-            items
-                .iter()
-                .map(|f| expand_macros_in(f, env, ctx, world, bound))
-                .collect::<Result<Vec<_>, _>>()?
-                .into(),
-        ))
-    };
     let Some(Form::Sym(head)) = items.first() else {
-        return recurse_all(ctx, world, bound);
+        return expand_macro_list_children(items, env, ctx, world, bound, path, trace);
     };
     match head.as_ref() {
         // data, not code: never expand inside
@@ -4115,30 +4125,34 @@ fn expand_macros_list(
                 out.push(params.clone());
                 let names = macro_binding_names(params);
                 let inserted: Vec<_> =
-                    names.into_iter().filter(|n| bound.insert(n.clone())).collect();
-                let body = items[2..]
-                    .iter()
-                    .map(|f| expand_macros_in(f, env, ctx, world, bound))
-                    .collect::<Result<Vec<_>, _>>();
+                    names.into_iter().filter(|name| bound.insert(name.clone())).collect();
+                for (index, form) in items.iter().enumerate().skip(2) {
+                    path.push(index);
+                    let form = expand_macros_in(form, env, ctx, world, bound, path, trace);
+                    path.pop();
+                    out.push(form?);
+                }
                 for name in inserted {
                     bound.remove(&name);
                 }
-                out.extend(body?);
             }
             Ok(Form::List(out.into()))
         }
         "let" | "loop" if matches!(items.get(1), Some(Form::Vector(_))) => {
             let Some(Form::Vector(binds)) = items.get(1) else { unreachable!() };
-            // let binds sequentially; loop's names scope over its own
-            // init exprs conservatively too (a shadowing macro name in a
-            // loop init is vanishingly unlikely, and conservative here
-            // only means a call is left unexpanded for the evaluator)
             let mut local = bound.clone();
             let mut new_binds = Vec::with_capacity(binds.len());
-            for pair in binds.chunks(2) {
+            for (offset, pair) in binds.chunks(2).enumerate() {
+                let binding_index = offset * 2;
                 if pair.len() == 2 {
                     new_binds.push(pair[0].clone());
-                    new_binds.push(expand_macros_in(&pair[1], env, ctx, world, &mut local)?);
+                    path.push(1);
+                    path.push(binding_index + 1);
+                    let value =
+                        expand_macros_in(&pair[1], env, ctx, world, &mut local, path, trace);
+                    path.pop();
+                    path.pop();
+                    new_binds.push(value?);
                     for name in macro_binding_names(&pair[0]) {
                         local.insert(name);
                     }
@@ -4147,8 +4161,11 @@ fn expand_macros_list(
                 }
             }
             let mut out = vec![items[0].clone(), Form::Vector(new_binds.into())];
-            for f in &items[2..] {
-                out.push(expand_macros_in(f, env, ctx, world, &mut local)?);
+            for (index, form) in items.iter().enumerate().skip(2) {
+                path.push(index);
+                let form = expand_macros_in(form, env, ctx, world, &mut local, path, trace);
+                path.pop();
+                out.push(form?);
             }
             Ok(Form::List(out.into()))
         }
@@ -4159,20 +4176,40 @@ fn expand_macros_list(
                 && !name.starts_with('$')
             {
                 if let Some(mac) = ctx.macros.clone().get(name) {
-                    let menv = bind_params(Env::empty(), &mac.params, &items[1..], |f| {
-                        Val::FormV(Rc::new(f.clone()))
+                    trace(path, head);
+                    let menv = bind_params(Env::empty(), &mac.params, &items[1..], |form| {
+                        Val::FormV(Rc::new(form.clone()))
                     })?;
                     let mut expansion = Val::Nothing;
-                    for f in mac.body.iter() {
-                        expansion = evaluate(f, &menv, ctx, world)?;
+                    for form in mac.body.iter() {
+                        expansion = evaluate(form, &menv, ctx, world)?;
                     }
                     let form = val_to_form(&expansion)?;
-                    return expand_macros_in(&form, env, ctx, world, bound);
+                    return expand_macros_in(&form, env, ctx, world, bound, path, trace);
                 }
             }
-            recurse_all(ctx, world, bound)
+            expand_macro_list_children(items, env, ctx, world, bound, path, trace)
         }
     }
+}
+
+fn expand_macro_list_children(
+    items: &Rc<[Form]>,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+    bound: &mut std::collections::HashSet<Rc<str>>,
+    path: &mut Vec<usize>,
+    trace: &mut dyn FnMut(&[usize], &Rc<str>),
+) -> Result<Form, String> {
+    let mut expanded = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        path.push(index);
+        let item = expand_macros_in(item, env, ctx, world, bound, path, trace);
+        path.pop();
+        expanded.push(item?);
+    }
+    Ok(Form::List(expanded.into()))
 }
 
 fn macro_binding_names(form: &Form) -> Vec<Rc<str>> {

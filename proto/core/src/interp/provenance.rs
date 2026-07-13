@@ -150,10 +150,22 @@ impl ProvenanceMap {
         definition: Option<SourceSpan>,
     ) {
         let name = name.into();
+        let inherited = (0..=path.len())
+            .rev()
+            .find_map(|len| self.entries.get(&path[..len]).cloned());
+        let mut updated = false;
         for (candidate, provenance) in &mut self.entries {
             if candidate.starts_with(path) {
-                *provenance = provenance.expanded(name.clone(), call_site.clone(), definition.clone());
+                *provenance =
+                    provenance.expanded(name.clone(), call_site.clone(), definition.clone());
+                updated = true;
             }
+        }
+        if !updated {
+            let provenance = inherited
+                .unwrap_or_else(|| Provenance::authored(call_site.clone()))
+                .expanded(name, call_site, definition);
+            self.entries.insert(path.to_vec(), provenance);
         }
     }
 }

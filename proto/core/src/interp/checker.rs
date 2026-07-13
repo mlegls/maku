@@ -261,29 +261,40 @@ pub fn check_forms(
 ) -> CheckReport {
     let mut traced = provenance.clone();
     let definitions = macro_definition_spans(forms, provenance);
-    for (index, form) in forms.iter().enumerate() {
-        trace_macro_calls(
-            form,
-            &mut vec![index],
-            card,
-            &definitions,
-            &mut traced,
-        );
-    }
-
     let mut ctx = super::Ctx::default();
     ctx.sig.defs = Rc::new(card.defs.clone());
     ctx.patterns = Rc::new(card.patterns.clone());
     ctx.macros = Rc::new(card.macros.clone());
     let mut world = super::World::default();
     let env = super::Env::empty();
-    let expanded = forms
-        .iter()
-        .map(|form| {
-            super::expand_macros(form, &env, &mut ctx, &mut world)
-                .unwrap_or_else(|_| form.clone())
-        })
-        .collect::<Vec<_>>();
+    let mut expanded = Vec::with_capacity(forms.len());
+    for (index, form) in forms.iter().enumerate() {
+        let mut path = vec![index];
+        let mut record = |path: &[usize], name: &Rc<str>| {
+            let call_site = (0..=path.len())
+                .rev()
+                .find_map(|len| traced.get(&path[..len]))
+                .map(|origin| origin.primary_span().clone())
+                .unwrap_or_else(|| SourceSpan::synthetic("<generated>"));
+            traced.record_expansion(
+                path,
+                name.clone(),
+                call_site,
+                definitions.get(name.as_ref()).cloned(),
+            );
+        };
+        expanded.push(
+            super::expand_macros_traced(
+                form,
+                &env,
+                &mut ctx,
+                &mut world,
+                &mut path,
+                &mut record,
+            )
+            .unwrap_or_else(|_| form.clone()),
+        );
+    }
     Checker::new(card, schema, &traced).check(&expanded)
 }
 
@@ -305,58 +316,6 @@ fn macro_definition_spans(
     definitions
 }
 
-fn trace_macro_calls(
-    form: &Form,
-    path: &mut FormPath,
-    card: &Card,
-    definitions: &HashMap<String, SourceSpan>,
-    provenance: &mut ProvenanceMap,
-) {
-    match form {
-        Form::List(items) => {
-            if matches!(items.first(), Some(Form::Sym(head)) if matches!(head.as_ref(), "quote" | "quasiquote")) {
-                return;
-            }
-            if let Some(Form::Sym(head)) = items.first() {
-                if card.macros.contains_key(head.as_ref()) {
-                    let call_site = provenance
-                        .get(path)
-                        .map(|origin| origin.authored.clone())
-                        .unwrap_or_else(|| SourceSpan::synthetic("<generated>"));
-                    provenance.record_expansion(
-                        path,
-                        head.clone(),
-                        call_site,
-                        definitions.get(head.as_ref()).cloned(),
-                    );
-                }
-            }
-            for (index, child) in items.iter().enumerate() {
-                path.push(index);
-                trace_macro_calls(child, path, card, definitions, provenance);
-                path.pop();
-            }
-        }
-        Form::Vector(items) => {
-            for (index, child) in items.iter().enumerate() {
-                path.push(index);
-                trace_macro_calls(child, path, card, definitions, provenance);
-                path.pop();
-            }
-        }
-        Form::Map(fields) => {
-            for (index, (key, value)) in fields.iter().enumerate() {
-                path.push(index * 2);
-                trace_macro_calls(key, path, card, definitions, provenance);
-                path.pop();
-                path.push(index * 2 + 1);
-                trace_macro_calls(value, path, card, definitions, provenance);
-                path.pop();
-            }
-        }
-        _ => {}
-    }
-}
 
 struct Checker<'a> {
     card: &'a Card,
@@ -510,7 +469,7 @@ impl<'a> Checker<'a> {
     ) -> Type {
         let inferred = match form {
             Form::Num(_) | Form::Bool(_) => Type::Num,
-            Form::Str(_) => Type::String,
+            Form::Str(_) => Type::Symbol,
             Form::Kw(_) => Type::Symbol,
             Form::Sym(name) => self.resolve_symbol(name, path, &context),
             Form::Vector(items) => self.infer_sequence(items, expected, path),
@@ -977,10 +936,15 @@ impl<'a> Checker<'a> {
         signature: &Signature,
         args: &[Form],
         path: &mut FormPath,
-        context: &BoundaryContext,
+        _context: &BoundaryContext,
     ) -> Type {
         if !signature.arity.accepts(args.len()) {
-            self.report_arity(path, context.clone(), signature.arity, args.len());
+            self.report_arity(
+                path,
+                BoundaryContext::named(BoundaryKind::Argument, signature.name),
+                signature.arity,
+                args.len(),
+            );
             return Type::Unknown;
         }
         let Type::Fn { args: expected_args, ret } = self.instantiate_signature(signature) else { unreachable!() };
@@ -1794,6 +1758,39 @@ mod tests {
     }
 
     #[test]
+    fn runtime_string_atoms_satisfy_symbol_boundaries_in_enforced_mode() {
+        let src = r#"
+            (def collision-set (collisions "shot" "enemy"))
+            (def collider-spec (circle-collider {:layer "shot" :r 1}))
+            (defpattern ok [] (wait 0))
+        "#;
+        let (_sim, report) = crate::sim::Sim::load_with_check_mode(
+            src,
+            Some("ok"),
+            CheckMode::Enforced,
+        )
+        .unwrap();
+        assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn fork_requires_exactly_one_action() {
+        let report = check(
+            "(defpattern bad [] (seq (fork) (fork (wait 1) (wait 2)) (fork (wait 3))))",
+        );
+        let fork_arities = report
+            .violations()
+            .filter(|diagnostic| {
+                diagnostic.category == DiagnosticCategory::ArityMismatch
+                    && diagnostic.context.name.as_ref() == "fork"
+            })
+            .collect::<Vec<_>>();
+        assert!(fork_arities.iter().any(|diagnostic| diagnostic.message.contains("found 0")));
+        assert!(fork_arities.iter().any(|diagnostic| diagnostic.message.contains("found 2")));
+        assert!(!fork_arities.iter().any(|diagnostic| diagnostic.message.contains("found 1")));
+    }
+
+    #[test]
     fn canonical_pose_then_dyn_coercion_is_recorded() {
         let report = check("(defpattern ok [] (spawn (cart 1 2)))");
         assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
@@ -1862,6 +1859,49 @@ mod tests {
             ["bad-num"]
         );
         assert_eq!(diagnostic.related_spans.len(), 1);
+    }
+
+    #[test]
+    fn resolved_nested_macro_expansion_records_each_actual_step() {
+        let src = "
+            (defmacro inner [] `(wait :bad))
+            (defmacro outer [] `(inner))
+            (defpattern bad [] (outer))
+        ";
+        let report = check(src);
+        let diagnostic = report
+            .violations()
+            .find(|diagnostic| diagnostic.found == Some(Type::Symbol))
+            .unwrap();
+        assert_eq!(
+            diagnostic
+                .expansion_stack
+                .iter()
+                .map(|frame| frame.name.as_ref())
+                .collect::<Vec<_>>(),
+            ["outer", "inner"]
+        );
+        assert_eq!(diagnostic.related_spans.len(), 2);
+    }
+
+    #[test]
+    fn shadowed_macro_names_do_not_create_expansion_frames() {
+        let src = "
+            (defmacro local-macro [] `(wait :bad))
+            (defmacro def-macro [] `(wait :bad))
+            (defn def-macro [] (wait 1))
+            (defpattern ok []
+              (seq
+                (let [local-macro (fn [] (wait 1))] (local-macro))
+                (def-macro)))
+        ";
+        let report = check(src);
+        assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
+        assert!(report.nodes.iter().all(|node| {
+            node.provenance.expansion_stack.iter().all(|frame| {
+                !matches!(frame.name.as_ref(), "local-macro" | "def-macro")
+            })
+        }));
     }
 
     #[test]

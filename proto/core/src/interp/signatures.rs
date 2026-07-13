@@ -216,7 +216,8 @@ pub fn projector_field_type(constructor: &str, field: &str) -> Option<Type> {
 pub fn action_slot_signature(name: &str) -> Option<Signature> {
     let signature = match name {
         "wait" => signature(name, Arity::Exact(1), vec![Type::Num], Type::Action, SignatureKind::Action),
-        "seq" | "fork" => signature(name, Arity::Variadic { min: 0 }, vec![Type::Action], Type::Action, SignatureKind::Action),
+        "seq" => signature(name, Arity::Variadic { min: 0 }, vec![Type::Action], Type::Action, SignatureKind::Action),
+        "fork" => signature(name, Arity::Exact(1), vec![Type::Action], Type::Action, SignatureKind::Action),
         "spawn" => signature(
             name,
             Arity::Variadic { min: 1 },
