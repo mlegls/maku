@@ -25,10 +25,15 @@ pub(crate) enum CompiledTickAction {
     Update(MaskedUpdatePlan),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum UpdateValueKind {
-    Num,
-    Sym,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CpuUpdateValue {
+    Num(f64),
+    Sym(Symbol),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CpuMaskedUpdateArtifact {
+    pub value: CpuUpdateValue,
 }
 
 pub(crate) struct MaskedUpdatePlan {
@@ -37,7 +42,9 @@ pub(crate) struct MaskedUpdatePlan {
     pub predicate: FilterPlan,
     pub value: KernelPlan,
     pub column: Symbol,
-    pub kind: UpdateValueKind,
+    /// Installation-time CPU backend derived from the same constant op as
+    /// `value`; normal execution publishes it directly without lane buffers.
+    pub cpu: CpuMaskedUpdateArtifact,
 }
 
 pub(crate) struct CompiledRender {
@@ -792,7 +799,7 @@ fn fixed_update_plan(
     value: &Form,
     world: &mut World,
 ) -> Option<MaskedUpdatePlan> {
-    let (registers, output, ops, kind) = match value {
+    let (registers, output, ops, cpu_value) = match value {
         Form::Num(value) => (
             KernelLayout {
                 f64s: 1,
@@ -803,7 +810,7 @@ fn fixed_update_plan(
                 dst: 0,
                 bits: value.to_bits(),
             }],
-            UpdateValueKind::Num,
+            CpuUpdateValue::Num(*value),
         ),
         Form::Kw(value) => {
             let value = world.field_sym(value);
@@ -817,7 +824,7 @@ fn fixed_update_plan(
                     dst: 0,
                     value: value.0,
                 }],
-                UpdateValueKind::Sym,
+                CpuUpdateValue::Sym(value),
             )
         }
         _ => return None,
@@ -850,7 +857,7 @@ fn fixed_update_plan(
         predicate: filter,
         value,
         column,
-        kind,
+        cpu: CpuMaskedUpdateArtifact { value: cpu_value },
     })
 }
 

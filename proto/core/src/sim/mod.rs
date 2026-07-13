@@ -872,6 +872,81 @@ impl Sim {
         Some((x, y))
     }
 
+    /// Remove rows whose fixed pose lies outside the playfield.
+    ///
+    /// Keep this phase out of `step_with`: that scheduler is deliberately
+    /// broad, and inlining the row loop into it made unrelated compiled-rule
+    /// growth degrade this fixed hot path through code-layout churn.
+    #[inline(never)]
+    fn cull_off_playfield(&mut self, sig: &SigEnv) -> Result<(), String> {
+        let tick = self.world.tick;
+        // The tick advanced since the collide-phase fill, so closed-chain
+        // poses re-sample at the new tau.
+        self.refill_closed_poses(tick, sig)?;
+        let closed_any = self.has_closed_poses();
+        // Resolve invariant field identities once. Looking both strings up
+        // inside the entity loop made this fixed phase sensitive to unrelated
+        // code-layout changes elsewhere in the scheduler.
+        let team_slot = self.world.field_slots("team").sym;
+        let player_body = self.world.symbols.lookup("player-body");
+        let mut err = None;
+        for i in 0..self.world.entities.len() {
+            if !self.world.entities.is_alive(i) {
+                continue;
+            }
+            if player_body.is_some()
+                && self.world.sym_field_at_slot(i, team_slot) == player_body
+            {
+                continue; // the player rides a channel; never field-culled
+            }
+            let tau = self.world.entity_motion_tau(i, tick);
+            let keep = if let Some(p) = if closed_any { self.closed_pose_at(i) } else { None } {
+                p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
+            } else if let Some((x, y)) = self.cull_reused_pos(i, tick, sig) {
+                x.abs() <= PLAYFIELD && y.abs() <= PLAYFIELD
+            } else if let Some(p) = self.fast_pos_pose(i, tau, sig) {
+                p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
+            } else {
+                let readers = self.motion_readers(i);
+                let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                    continue;
+                };
+                match dyn_figure.repr() {
+                    FigureDynRepr::Pose(_) => {
+                        let state = MotionState::default();
+                        let mut row_sig = None;
+                        let row_sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+                        match dyn_figure_pose_in(
+                            dyn_figure,
+                            tau,
+                            MotionEvalCtx::with_tick_rate(
+                                &state,
+                                row_sig,
+                                &readers,
+                                self.world.tick_rate(),
+                            )
+                            .pos_only(),
+                        ) {
+                            Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
+                            Err(e) => {
+                                err = Some(e);
+                                false
+                            }
+                        }
+                    }
+                    FigureDynRepr::Curve { .. } => true,
+                }
+            };
+            if !keep {
+                self.world.cull_at(i);
+            }
+        }
+        match err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
     /// This phase's batched closed-chain pose for a row, if it was filled.
     /// Inline: called per row in the collide/cull hot loops, and the
     /// common non-closed card must pay only the empty-vec check.
@@ -1317,6 +1392,9 @@ impl Sim {
         {
             return false;
         }
+        if !oracle_enabled() {
+            return true;
+        }
         let scratch = &mut self.render_scratch;
         scratch.update_lanes.lanes = rows.len();
         scratch.update_lanes.f32s.clear();
@@ -1336,34 +1414,36 @@ impl Sim {
         {
             return false;
         }
-        match plan.kind {
-            UpdateValueKind::Num => scratch.update_outputs.f64s.len() == rows.len(),
-            UpdateValueKind::Sym => scratch.update_outputs.symbols.len() == rows.len(),
+        match plan.cpu.value {
+            CpuUpdateValue::Num(value) => {
+                scratch.update_outputs.f64s.len() == rows.len()
+                    && scratch
+                        .update_outputs
+                        .f64s
+                        .iter()
+                        .all(|actual| actual.to_bits() == value.to_bits())
+            }
+            CpuUpdateValue::Sym(value) => {
+                scratch.update_outputs.symbols.len() == rows.len()
+                    && scratch
+                        .update_outputs
+                        .symbols
+                        .iter()
+                        .all(|&actual| actual == value.0)
+            }
         }
+
     }
 
     fn compiled_update_value(
         &self,
         plan: &MaskedUpdatePlan,
-        lane: usize,
+        _lane: usize,
     ) -> Option<FixedUpdateValue> {
-        match plan.kind {
-            UpdateValueKind::Num => self
-                .render_scratch
-                .update_outputs
-                .f64s
-                .get(lane)
-                .copied()
-                .map(FixedUpdateValue::Num),
-            UpdateValueKind::Sym => self
-                .render_scratch
-                .update_outputs
-                .symbols
-                .get(lane)
-                .copied()
-                .map(Symbol)
-                .map(FixedUpdateValue::Sym),
-        }
+        Some(match plan.cpu.value {
+            CpuUpdateValue::Num(value) => FixedUpdateValue::Num(value),
+            CpuUpdateValue::Sym(value) => FixedUpdateValue::Sym(value),
+        })
     }
 
     fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
@@ -1394,16 +1474,11 @@ impl Sim {
                     self.render_scratch.match_rows = rows;
                     return Ok(None);
                 }
-                if matches!(plan.kind, UpdateValueKind::Sym)
-                    && self
-                        .render_scratch
-                        .update_outputs
-                        .symbols
-                        .iter()
-                        .any(|value| self.world.symbols.resolve_rc(Symbol(*value)).is_none())
-                {
-                    self.render_scratch.match_rows = rows;
-                    return Ok(None);
+                if let CpuUpdateValue::Sym(value) = plan.cpu.value {
+                    if self.world.symbols.resolve_rc(value).is_none() {
+                        self.render_scratch.match_rows = rows;
+                        return Ok(None);
+                    }
                 }
                 for (lane, &row) in rows.iter().enumerate() {
                     let value = match self
@@ -2040,63 +2115,11 @@ impl Sim {
         }
         let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         // cull: off-playfield poses/traces; curve lifetime is card/library policy
-        let tick = self.world.tick;
-        // refill: the tick advanced since the collide-phase fill, so
-        // closed-chain poses re-sample at the new tau
-        self.refill_closed_poses(tick, &sig)?;
-        let closed_any = self.has_closed_poses();
-        let mut err = None;
-        for i in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(i) {
-                continue;
-            }
-            if self.world.sym_field_matches_at(i, "team", "player-body") {
-                continue; // the player rides a channel; never field-culled
-            }
-            let tau = self.world.entity_motion_tau(i, tick);
-            let keep = if let Some(p) = if closed_any { self.closed_pose_at(i) } else { None } {
-                p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
-            } else if let Some((x, y)) = self.cull_reused_pos(i, tick, &sig) {
-                x.abs() <= PLAYFIELD && y.abs() <= PLAYFIELD
-            } else if let Some(p) = self.fast_pos_pose(i, tau, &sig) {
-                p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
-            } else {
-                let readers = self.motion_readers(i);
-                let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
-                    continue;
-                };
-                match dyn_figure.repr() {
-                    FigureDynRepr::Pose(_) => {
-                        let state = MotionState::default();
-                        let mut row_sig = None;
-                        let row_sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
-                        match dyn_figure_pose_in(
-                            dyn_figure,
-                            tau,
-                            MotionEvalCtx::with_tick_rate(&state, row_sig, &readers, self.world.tick_rate())
-                                .pos_only(),
-                        ) {
-                        Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
-                        Err(e) => {
-                            err = Some(e);
-                            false
-                        }
-                        }
-                    }
-                    FigureDynRepr::Curve { .. } => true,
-                }
-            };
-            if !keep {
-                self.world.cull_at(i);
-            }
-        }
+        let cull_result = self.cull_off_playfield(&sig);
         if let Some(f) = probe {
             crate::interp::profile::close("phase:cull", f);
         }
-        match err {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+        cull_result
     }
     /// Current value of a channel (for host UI, e.g. scrub indicators).
     pub fn channel_val(&self, name: &str) -> Option<Val> {

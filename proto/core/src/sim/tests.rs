@@ -4217,7 +4217,7 @@
         let CompiledTickAction::Update(plan) = &compiled.action else {
             panic!("expected masked update plan")
         };
-        assert_eq!(plan.kind, UpdateValueKind::Num);
+        assert_eq!(plan.cpu.value, CpuUpdateValue::Num(7.0));
         assert_eq!(plan.value.domain(), kernel::IterationDomain::EntityRows);
         assert_eq!(plan.value.fallback(), kernel::FallbackPolicy::WholePlanInterpreted);
         assert_eq!(plan.value.merge(), kernel::MergePolicy::CanonicalRowOrder);
@@ -4257,7 +4257,10 @@
         let CompiledTickAction::Update(plan) = &compiled.action else {
             panic!("expected masked update plan")
         };
-        assert_eq!(plan.kind, UpdateValueKind::Sym);
+        assert!(matches!(
+            plan.cpu.value,
+            CpuUpdateValue::Sym(value) if sim.world.symbols.resolve(value) == Some("blue")
+        ));
         assert_eq!(plan.value.program().outputs(), &[KernelRegister::Symbol(0)]);
         sim.step().unwrap();
         assert_eq!(sim.world.pending_writes.len(), 2, "oracle must not double-queue updates");
