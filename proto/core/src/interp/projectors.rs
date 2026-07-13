@@ -149,15 +149,15 @@ fn circle_projector_spec_from_form(
     let radius = match form_map_value(&opts, &["radius", "r"]) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
             match scope_entity_col(form, ctx.projector_scope.as_ref()) {
-                Some(col) => ProjectorNum::EntityCol(col),
-                None => ProjectorNum::Expr(form.clone()),
+                Some(col) => ColliderScalarSource::EntityCol(col),
+                None => ColliderScalarSource::Expr(form.clone()),
             }
         }
         Some(form) => {
             let radius = evaluate(form, env, ctx, world)?.num()?;
-            ProjectorNum::Const(radius)
+            ColliderScalarSource::Const(radius)
         }
-        None => ProjectorNum::Const(0.08),
+        None => ColliderScalarSource::Const(0.08),
     };
     Ok(CircleProjectorSpec {
         layer,
@@ -175,21 +175,21 @@ fn projector_num_from_form(
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<ProjectorNum, String> {
+) -> Result<ColliderScalarSource, String> {
     match form_map_value(opts, keys) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
             Ok(match scope_entity_col(form, ctx.projector_scope.as_ref()) {
-                Some(col) => ProjectorNum::EntityCol(col),
-                None => ProjectorNum::Expr(form.clone()),
+                Some(col) => ColliderScalarSource::EntityCol(col),
+                None => ColliderScalarSource::Expr(form.clone()),
             })
         }
         Some(form) => {
             evaluate(form, env, ctx, world)
                 .and_then(|v| v.num())
-                .map(ProjectorNum::Const)
+                .map(ColliderScalarSource::Const)
                 .map_err(|e| format!("{}: {}", name, e))
         }
-        None => Ok(ProjectorNum::Const(default)),
+        None => Ok(ColliderScalarSource::Const(default)),
     }
 }
 
@@ -200,18 +200,18 @@ fn optional_projector_num_from_form(
     env: &Env,
     ctx: &mut Ctx,
     world: &mut World,
-) -> Result<Option<ProjectorNum>, String> {
+) -> Result<Option<ColliderScalarSource>, String> {
     match form_map_value(opts, keys) {
         Some(form) if contains_bound_projector_context(form, ctx.projector_scope.as_ref()) => {
             Ok(Some(match scope_entity_col(form, ctx.projector_scope.as_ref()) {
-                Some(col) => ProjectorNum::EntityCol(col),
-                None => ProjectorNum::Expr(form.clone()),
+                Some(col) => ColliderScalarSource::EntityCol(col),
+                None => ColliderScalarSource::Expr(form.clone()),
             }))
         }
         Some(form) => {
             evaluate(form, env, ctx, world)
                 .and_then(|v| v.num())
-                .map(ProjectorNum::Const)
+                .map(ColliderScalarSource::Const)
                 .map(Some)
                 .map_err(|e| format!("{}: {}", name, e))
         }
@@ -296,9 +296,9 @@ pub(crate) fn materialize_circle_projector(
     // Const/EntityCol radii need no evaluator; this runs per entity per
     // tick, so the Ctx/World scaffolding is built only for the Expr case.
     let radius = match &spec.radius {
-        ProjectorNum::Const(n) => *n,
-        ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig)?,
-        ProjectorNum::Expr(form) => {
+        ColliderScalarSource::Const(n) => *n,
+        ColliderScalarSource::EntityCol(col) => entity_col_projector_num(col, world, row, sig)?,
+        ColliderScalarSource::Expr(form) => {
             let mut run_ctx = Ctx::default();
             run_ctx.sig = sig.clone();
             let mut run_world = World::with_entity_capacity(0);
@@ -331,11 +331,11 @@ pub(crate) fn materialize_capsule_chain_projector(
     // Same per-tick constraint as the circle projector: only build (and
     // clone the symbol table into) the evaluator when some field is an Expr.
     let mut scaffold: Option<(Ctx, World)> = None;
-    let mut eval_num = |n: &ProjectorNum| -> Result<f64, String> {
+    let mut eval_num = |n: &ColliderScalarSource| -> Result<f64, String> {
         match n {
-            ProjectorNum::Const(n) => Ok(*n),
-            ProjectorNum::EntityCol(col) => entity_col_projector_num(col, world, row, sig),
-            ProjectorNum::Expr(form) => {
+            ColliderScalarSource::Const(n) => Ok(*n),
+            ColliderScalarSource::EntityCol(col) => entity_col_projector_num(col, world, row, sig),
+            ColliderScalarSource::Expr(form) => {
                 let (run_ctx, run_world) = match &mut scaffold {
                     Some(pair) => pair,
                     None => {

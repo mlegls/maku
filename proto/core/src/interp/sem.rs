@@ -73,7 +73,7 @@ impl FigureProjectorKind {
 /// a dyn slot: any expression is evaluated in the projector's already-bound
 /// `e`/`ctx` environment and must produce a number for the current tick.
 #[derive(Clone, Debug)]
-pub enum ProjectorNum {
+pub enum ColliderScalarSource {
     Const(f64),
     /// `(:field e)` on the projector's entity scope for a non-special
     /// field name: materialization reads the entity field directly — the
@@ -83,18 +83,18 @@ pub enum ProjectorNum {
     Expr(Form),
 }
 
-impl ProjectorNum {
+impl ColliderScalarSource {
     /// Only a general Expr needs the bound `e`/`ctx` views; Const needs
     /// nothing and EntityCol reads the entity row directly.
     pub(crate) fn needs_views(&self) -> bool {
-        matches!(self, ProjectorNum::Expr(_))
+        matches!(self, ColliderScalarSource::Expr(_))
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct CircleProjectorSpec {
     pub layer: Symbol,
-    pub radius: ProjectorNum,
+    pub radius: ColliderScalarSource,
     pub env: Env,
     pub scope: Option<ProjectorScope>,
 }
@@ -102,16 +102,16 @@ pub struct CircleProjectorSpec {
 #[derive(Clone, Debug)]
 pub enum ProjectorSampleSet {
     Values(Rc<[f64]>),
-    Step(ProjectorNum),
+    Step(ColliderScalarSource),
 }
 
 #[derive(Clone, Debug)]
 pub struct CapsuleChainProjectorSpec {
     pub layer: Symbol,
-    pub radius: ProjectorNum,
+    pub radius: ColliderScalarSource,
     pub sample_set: ProjectorSampleSet,
-    pub u_max: Option<ProjectorNum>,
-    pub width: ProjectorNum,
+    pub u_max: Option<ColliderScalarSource>,
+    pub width: ColliderScalarSource,
     pub env: Env,
     pub scope: Option<ProjectorScope>,
 }
@@ -133,7 +133,7 @@ impl ColliderProjectorExpr {
             ColliderProjectorExpr::CapsuleChain(spec) => {
                 spec.radius.needs_views()
                     || spec.width.needs_views()
-                    || spec.u_max.as_ref().is_some_and(ProjectorNum::needs_views)
+                    || spec.u_max.as_ref().is_some_and(ColliderScalarSource::needs_views)
                     || matches!(&spec.sample_set, ProjectorSampleSet::Step(n) if n.needs_views())
             }
             ColliderProjectorExpr::Callable { .. } => true,
@@ -268,7 +268,7 @@ mod collider_projector_tests {
         // read the bound view, only a general Expr does
         let scoped_const = ColliderProjectorValue::circle(CircleProjectorSpec {
             layer: Symbol(0),
-            radius: ProjectorNum::Const(1.0),
+            radius: ColliderScalarSource::Const(1.0),
             env: Env::empty(),
             scope: scope(),
         });
@@ -276,7 +276,7 @@ mod collider_projector_tests {
 
         let scoped_col = ColliderProjectorValue::circle(CircleProjectorSpec {
             layer: Symbol(0),
-            radius: ProjectorNum::EntityCol("hitbox".into()),
+            radius: ColliderScalarSource::EntityCol("hitbox".into()),
             env: Env::empty(),
             scope: scope(),
         });
@@ -284,7 +284,7 @@ mod collider_projector_tests {
 
         let scoped_expr = ColliderProjectorValue::circle(CircleProjectorSpec {
             layer: Symbol(0),
-            radius: ProjectorNum::Expr(Form::Num(1.0)),
+            radius: ColliderScalarSource::Expr(Form::Num(1.0)),
             env: Env::empty(),
             scope: scope(),
         });
@@ -316,7 +316,7 @@ mod collider_projector_tests {
                 figure: FigureProjectorKind::Pose,
             })
         };
-        let circle = |radius: ProjectorNum| {
+        let circle = |radius: ColliderScalarSource| {
             ColliderProjectorValue::circle(CircleProjectorSpec {
                 layer: Symbol(0),
                 radius,
@@ -327,9 +327,9 @@ mod collider_projector_tests {
 
         let stable = ColliderProjectorValue::stable(Vec::new());
         assert!(stable.expr.is_direct());
-        assert!(circle(ProjectorNum::Const(1.0)).expr.is_direct());
-        assert!(circle(ProjectorNum::EntityCol("hitbox".into())).expr.is_direct());
-        assert!(!circle(ProjectorNum::Expr(Form::Num(1.0))).expr.is_direct());
+        assert!(circle(ColliderScalarSource::Const(1.0)).expr.is_direct());
+        assert!(circle(ColliderScalarSource::EntityCol("hitbox".into())).expr.is_direct());
+        assert!(!circle(ColliderScalarSource::Expr(Form::Num(1.0))).expr.is_direct());
 
         let callable = ColliderProjectorValue::callable(
             FigureProjectorKind::Pose,
@@ -352,7 +352,7 @@ mod collider_projector_tests {
         let direct = ColliderProjector {
             projectors: vec![
                 ColliderProjectorValue::stable(Vec::new()),
-                circle(ProjectorNum::EntityCol("hitbox".into())),
+                circle(ColliderScalarSource::EntityCol("hitbox".into())),
             ]
             .into(),
         };
@@ -361,7 +361,7 @@ mod collider_projector_tests {
         let mixed = ColliderProjector {
             projectors: vec![
                 ColliderProjectorValue::stable(Vec::new()),
-                circle(ProjectorNum::Expr(Form::Num(1.0))),
+                circle(ColliderScalarSource::Expr(Form::Num(1.0))),
             ]
             .into(),
         };

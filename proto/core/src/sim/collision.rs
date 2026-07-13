@@ -426,19 +426,19 @@ fn rewrite_projector_form(
 }
 
 fn projector_scalar(
-    scalar: &ProjectorNum,
+    scalar: &ColliderScalarSource,
     env: &Env,
     scope: Option<&ProjectorScope>,
     world: &World,
     inputs: &mut Vec<ColliderInput>,
 ) -> Option<OwnedScalar> {
     match scalar {
-        ProjectorNum::Const(value) => Some(OwnedScalar::Const(*value)),
-        ProjectorNum::EntityCol(name) => {
+        ColliderScalarSource::Const(value) => Some(OwnedScalar::Const(*value)),
+        ColliderScalarSource::EntityCol(name) => {
             let form = capture_input(inputs, ColliderInput::Column(world.symbols.lookup(name)?))?;
             Some(OwnedScalar::Form(form, Env::empty()))
         }
-        ProjectorNum::Expr(form) => Some(OwnedScalar::Form(
+        ColliderScalarSource::Expr(form) => Some(OwnedScalar::Form(
             rewrite_projector_form(form, scope, world, inputs)?,
             env.clone(),
         )),
@@ -691,16 +691,16 @@ fn compile_projector(
 }
 
 fn eval_projector_num(
-    scalar: &ProjectorNum,
+    scalar: &ColliderScalarSource,
     env: &Env,
     sig: &SigEnv,
     world: &World,
     row: usize,
 ) -> Result<f64, String> {
     match scalar {
-        ProjectorNum::Const(value) => Ok(*value),
-        ProjectorNum::EntityCol(name) => entity_field_at(row, name, world, sig)?.num(),
-        ProjectorNum::Expr(form) => {
+        ColliderScalarSource::Const(value) => Ok(*value),
+        ColliderScalarSource::EntityCol(name) => entity_field_at(row, name, world, sig)?.num(),
+        ColliderScalarSource::Expr(form) => {
             let mut ctx = Ctx::default();
             ctx.sig = sig.clone();
             let mut eval_world = World::with_entity_capacity(0);
