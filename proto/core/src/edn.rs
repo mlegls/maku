@@ -784,6 +784,64 @@ const STDLIB: &[(&str, &str)] = &[
 const PRELUDE_KEY: &str = "@lib/prelude.maku";
 const PRELUDE_SENTINEL: &str = ";;@prelude";
 
+/// Import-expanded text plus byte ranges mapping every retained authored line
+/// back to its original file. The runtime consumes `text`; frontend
+/// diagnostics use `segments` to recover import provenance without changing
+/// the compact `Form` representation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpandedSource {
+    pub text: String,
+    pub segments: Vec<SourceSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceSegment {
+    pub output_start: usize,
+    pub output_end: usize,
+    pub source: Rc<str>,
+    pub source_start: usize,
+}
+
+impl ExpandedSource {
+    pub fn origin_for(&self, start: usize, end: usize) -> Option<(Rc<str>, usize, usize)> {
+        let segment = self
+            .segments
+            .iter()
+            .find(|segment| start >= segment.output_start && start < segment.output_end)?;
+        let source_start = segment.source_start + start - segment.output_start;
+        let source_end = if end <= segment.output_end {
+            segment.source_start + end - segment.output_start
+        } else {
+            segment.source_start + segment.output_end - segment.output_start
+        };
+        Some((segment.source.clone(), source_start, source_end))
+    }
+
+    fn append(&mut self, other: ExpandedSource) {
+        let offset = self.text.len();
+        self.text.push_str(&other.text);
+        self.segments.extend(other.segments.into_iter().map(|mut segment| {
+            segment.output_start += offset;
+            segment.output_end += offset;
+            segment
+        }));
+    }
+
+    fn push_authored(&mut self, text: &str, source: Rc<str>, source_start: usize) {
+        let output_start = self.text.len();
+        self.text.push_str(text);
+        let output_end = self.text.len();
+        if output_end > output_start {
+            self.segments.push(SourceSegment {
+                output_start,
+                output_end,
+                source,
+                source_start,
+            });
+        }
+    }
+}
+
 fn with_prelude(
     expanded: String,
     read: &dyn Fn(&str) -> Result<String, String>,
@@ -833,6 +891,92 @@ pub fn expand_card_with(
     let mut visited = HashSet::new();
     let expanded = expand_inner(&normalize(path), read, &mut visited)?;
     with_prelude(expanded, read, &mut visited)
+}
+
+/// Expand a filesystem card while preserving the source file and byte offset
+/// of every retained authored line.
+pub fn expand_card_traced(path: &Path) -> Result<ExpandedSource, String> {
+    let key = normalize(&path.to_string_lossy());
+    let mut visited = HashSet::new();
+    let expanded = expand_inner_traced(&key, &fs_reader, &mut visited)?;
+    with_prelude_traced(expanded, &fs_reader, &mut visited)
+}
+
+/// Expand in-memory source while preserving imported-library/file origins.
+pub fn expand_src_traced(src: &str) -> Result<ExpandedSource, String> {
+    let mut visited = HashSet::new();
+    let expanded = expand_lines_traced(src, "", Rc::from("<card>"), &fs_reader, &mut visited)?;
+    with_prelude_traced(expanded, &fs_reader, &mut visited)
+}
+
+fn with_prelude_traced(
+    expanded: ExpandedSource,
+    read: &dyn Fn(&str) -> Result<String, String>,
+    visited: &mut HashSet<String>,
+) -> Result<ExpandedSource, String> {
+    if expanded.text.contains(PRELUDE_SENTINEL) {
+        return Ok(expanded);
+    }
+    let mut out = expand_inner_traced(PRELUDE_KEY, read, visited)?;
+    out.append(expanded);
+    Ok(out)
+}
+
+fn expand_inner_traced(
+    path: &str,
+    read: &dyn Fn(&str) -> Result<String, String>,
+    visited: &mut HashSet<String>,
+) -> Result<ExpandedSource, String> {
+    if !visited.insert(path.to_string()) {
+        return Ok(ExpandedSource { text: String::new(), segments: Vec::new() });
+    }
+    let src = if path.starts_with(LIB_PREFIX) {
+        STDLIB
+            .iter()
+            .find(|(key, _)| *key == path)
+            .map(|(_, source)| source.to_string())
+            .ok_or_else(|| format!("import {}: no such library", path))?
+    } else {
+        read(path).map_err(|error| format!("import {}", error))?
+    };
+    let base = path.rfind('/').map(|index| &path[..index]).unwrap_or("");
+    expand_lines_traced(&src, base, Rc::from(path), read, visited)
+}
+
+fn expand_lines_traced(
+    src: &str,
+    base: &str,
+    source: Rc<str>,
+    read: &dyn Fn(&str) -> Result<String, String>,
+    visited: &mut HashSet<String>,
+) -> Result<ExpandedSource, String> {
+    let mut out = ExpandedSource {
+        text: String::with_capacity(src.len()),
+        segments: Vec::new(),
+    };
+    let mut source_offset = 0;
+    for line in src.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        match import_target(content) {
+            Some(relative) => {
+                let target = if !relative.contains('/') && !relative.ends_with(".maku") {
+                    format!("{}{}.maku", LIB_PREFIX, relative)
+                } else if base.is_empty() {
+                    relative.to_string()
+                } else {
+                    format!("{}/{}", base, relative)
+                };
+                out.append(expand_inner_traced(&normalize(&target), read, visited)?);
+                out.text.push('\n');
+            }
+            None => out.push_authored(line, source.clone(), source_offset),
+        }
+        source_offset += line.len();
+    }
+    if !src.is_empty() && !src.ends_with('\n') && out.text.ends_with(src.rsplit_once('\n').map(|(_, tail)| tail).unwrap_or(src)) {
+        out.text.push('\n');
+    }
+    Ok(out)
 }
 
 fn expand_inner(
