@@ -114,6 +114,7 @@ impl BoundaryContext {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoercionKind {
+    RecordToPose,
     PoseToFigure,
     HomogeneousList,
     ConstantToDyn,
@@ -124,6 +125,7 @@ pub enum CoercionKind {
 impl fmt::Display for CoercionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            CoercionKind::RecordToPose => "record to Pose",
             CoercionKind::PoseToFigure => "Pose to Figure",
             CoercionKind::HomogeneousList => "homogeneous list recognition",
             CoercionKind::ConstantToDyn => "constant to Dyn lifting",
@@ -840,7 +842,7 @@ impl<'a> Checker<'a> {
     ) -> Type {
         if let Some(test) = items.get(1) {
             path.push(1);
-            let _ = self.infer(test, Some(&Type::Num), path, BoundaryContext::named(BoundaryKind::Branch, "if condition"));
+            let _ = self.infer(test, None, path, BoundaryContext::named(BoundaryKind::Branch, "if condition"));
             path.pop();
         }
         let then_ty = items.get(2).map(|form| {
@@ -873,7 +875,7 @@ impl<'a> Checker<'a> {
     fn infer_when(&mut self, items: &[Form], path: &mut FormPath, context: &BoundaryContext) -> Type {
         if let Some(test) = items.get(1) {
             path.push(1);
-            let _ = self.infer(test, Some(&Type::Num), path, BoundaryContext::named(BoundaryKind::Branch, "when condition"));
+            let _ = self.infer(test, None, path, BoundaryContext::named(BoundaryKind::Branch, "when condition"));
             path.pop();
         }
         let body = self.infer_body(&items[2..], None, path, 2, context);
@@ -1153,7 +1155,7 @@ impl<'a> Checker<'a> {
                     let found = self.infer(value, None, path, BoundaryContext::field(BoundaryKind::Render, kind.clone(), field.clone()));
                     self.diagnostic(
                         DiagnosticCategory::RenderField,
-                        CheckConfidence::ProvenViolation,
+                        CheckConfidence::UncheckedDynamic,
                         path,
                         None,
                         Some(found),
@@ -1342,6 +1344,26 @@ impl<'a> Checker<'a> {
                 let elem = self.types.unify(expected_elem, found_elem)?;
                 coercions.push(CoercionKind::HomogeneousList);
                 return Ok(Type::Vec { len: *len, elem: Box::new(elem) });
+            }
+            (Type::Record(found_record), Type::Pose) => {
+                let x = found_record
+                    .fields
+                    .get("x")
+                    .ok_or_else(|| UnifyError::Mismatch {
+                        expected: Type::Pose,
+                        found: found.clone(),
+                    })?;
+                let y = found_record
+                    .fields
+                    .get("y")
+                    .ok_or_else(|| UnifyError::Mismatch {
+                        expected: Type::Pose,
+                        found: found.clone(),
+                    })?;
+                let _ = self.types.unify(&Type::Num, x)?;
+                let _ = self.types.unify(&Type::Num, y)?;
+                coercions.push(CoercionKind::RecordToPose);
+                return Ok(Type::Pose);
             }
             (Type::Record(found_record), Type::Meta) => {
                 if found_record.fields.values().all(is_meta_value) {
@@ -1744,6 +1766,19 @@ mod tests {
     }
 
     #[test]
+    fn branch_conditions_accept_source_truthiness() {
+        let report = check(
+            "(defchannel $flag :red)
+             (defpattern ok []
+               (seq
+                 (if :red (wait 1) (wait 2))
+                 (when :go (wait 1))
+                 (if (live $flag) (wait 1) (wait 2))))",
+        );
+        assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
+    }
+
+    #[test]
     fn lexical_shadowing_wins_over_builtin_signature() {
         let report = check("(defn use [+] (+ :symbol))");
         assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
@@ -1807,10 +1842,36 @@ mod tests {
     }
 
     #[test]
+    fn render_polyline_records_coerce_to_pose_elements() {
+        let report = check(
+            "(deftick (render {:shape :polyline :points [c[0 0] {:x 1 :y 2}]}))",
+        );
+        assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
+        assert!(report
+            .nodes
+            .iter()
+            .any(|node| node.coercions.contains(&CoercionKind::RecordToPose)));
+    }
+
+    #[test]
     fn declared_render_schema_checks_fields_but_open_kind_stays_unchecked() {
         let report = check("(defrender-kind :bullet {:geometry :point :fields {:glow :num}}) (deftick (emit :render {:kind :bullet :glow :hot})) (deftick (emit :render {:kind :extension :whatever :ok}))");
         assert!(report.violations().any(|diagnostic| diagnostic.category == DiagnosticCategory::RenderField && diagnostic.expected == Some(Type::Num)));
         assert!(report.unchecked().any(|diagnostic| diagnostic.category == DiagnosticCategory::UnknownRenderKind));
+    }
+
+    #[test]
+    fn undeclared_field_on_declared_render_kind_remains_runtime_checked() {
+        let report = check(
+            "(defrender-kind :sprite {:geometry :point :fields {:family :sym}})
+             (deftick (render {:kind :sprite :shape :point :extra 1}))",
+        );
+        assert_eq!(report.violations().count(), 0, "{:?}", report.diagnostics);
+        assert!(report.unchecked().any(|diagnostic| {
+            diagnostic.category == DiagnosticCategory::RenderField
+                && diagnostic.context.field.as_deref() == Some("extra")
+        }));
+        assert!(report.enforce(CheckMode::Enforced).is_ok());
     }
 
     #[test]
