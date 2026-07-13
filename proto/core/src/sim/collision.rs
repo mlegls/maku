@@ -57,6 +57,19 @@ enum ColliderOutputSource {
     Const(f64),
     Input(usize),
 }
+#[derive(Clone, Copy)]
+enum CpuColliderScalar {
+    Const(f64),
+    Tick,
+    Axis,
+    WorldTick,
+    Column(FieldSlots),
+}
+
+struct CpuColliderArtifact {
+    circles: Vec<(Symbol, CpuColliderScalar)>,
+}
+
 
 enum ColliderExecutor {
     Direct(Vec<ColliderOutputSource>),
@@ -70,8 +83,8 @@ struct ColliderProjectionPlan {
     inputs: Vec<ColliderInput>,
     shapes: Vec<ProjectedShape>,
     executor: ColliderExecutor,
-    direct_inputs: Vec<ColliderGatherInput>,
     circles_only: bool,
+    cpu: Option<CpuColliderArtifact>,
 }
 
 struct ColliderGroup {
@@ -185,11 +198,7 @@ impl ColliderScratch {
     ) -> Option<Rc<ColliderProjectionPlan>> {
         let source = Rc::as_ptr(&projector.projectors) as *const () as usize;
         if let Some(hint) = self.projector_hints.get(&source) {
-            if hint
-                .source
-                .upgrade()
-                .is_some_and(|cached| Rc::ptr_eq(&cached, &projector.projectors))
-            {
+            if std::ptr::eq(hint.source.as_ptr(), Rc::as_ptr(&projector.projectors)) {
                 return hint.plan.clone();
             }
         }
@@ -482,6 +491,33 @@ fn direct_kernel_outputs(program: &KernelProgram) -> Option<Vec<ColliderOutputSo
         })
         .collect()
 }
+fn cpu_collider_artifact(
+    shapes: &[ProjectedShape],
+    executor: &ColliderExecutor,
+    inputs: &[ColliderGatherInput],
+) -> Option<CpuColliderArtifact> {
+    let ColliderExecutor::Direct(outputs) = executor else {
+        return None;
+    };
+    let scalar = |output: usize| match outputs.get(output)? {
+        ColliderOutputSource::Const(value) => Some(CpuColliderScalar::Const(*value)),
+        ColliderOutputSource::Input(input) => Some(match inputs.get(*input)? {
+            ColliderGatherInput::Tick => CpuColliderScalar::Tick,
+            ColliderGatherInput::Axis => CpuColliderScalar::Axis,
+            ColliderGatherInput::WorldTick => CpuColliderScalar::WorldTick,
+            ColliderGatherInput::Column(slots) => CpuColliderScalar::Column(*slots),
+        }),
+    };
+    let mut circles = Vec::with_capacity(shapes.len());
+    for shape in shapes {
+        let ProjectedShape::Circle { layer, radius } = shape else {
+            return None;
+        };
+        circles.push((*layer, scalar(*radius)?));
+    }
+    Some(CpuColliderArtifact { circles })
+}
+
 
 
 fn push_sample_layout(layout: &mut Vec<u64>, samples: &[f64]) {
@@ -675,6 +711,7 @@ fn compile_projector(
     let circles_only = shapes
         .iter()
         .all(|shape| matches!(shape, ProjectedShape::Circle { .. }));
+    let cpu = cpu_collider_artifact(&shapes, &executor, &direct_inputs);
     Some(ColliderProjectionPlan {
         key: ColliderProjectionKey {
             program: fixed.program.id().0,
@@ -684,9 +721,9 @@ fn compile_projector(
         kernel,
         inputs,
         shapes,
-        direct_inputs,
         executor,
         circles_only,
+        cpu,
     })
 }
 
@@ -945,6 +982,7 @@ impl Sim {
         self.collider_scratch.begin_pass(n);
         let scale_sym = self.world.symbols.lookup("scale");
         let mut eligible = Vec::with_capacity(n);
+        let mut last_plan: Option<(usize, Rc<ColliderProjectionPlan>)> = None;
         for row in 0..n {
             if !self.world.entities.is_alive(row) {
                 self.world.entities.set_sampled_pose(row, tick, None);
@@ -986,16 +1024,22 @@ impl Sim {
                 .world
                 .entities
                 .collider_projector(row)
-                .ok_or_else(|| format!("colliders: missing projector for row {row}"))?
-                .clone();
-            let Some(plan) = self
-                .collider_scratch
-                .projection_plan(&projector, &self.world, sig)
-            else {
-                return Ok(None);
-            };
-            if !plan.circles_only
-                || self.world.entities.is_traced(row)
+                .ok_or_else(|| format!("colliders: missing projector for row {row}"))?;
+            let source = Rc::as_ptr(&projector.projectors) as *const () as usize;
+            if last_plan
+                .as_ref()
+                .is_none_or(|(last_source, _)| *last_source != source)
+            {
+                let Some(plan) = self
+                    .collider_scratch
+                    .projection_plan(projector, &self.world, sig)
+                else {
+                    return Ok(None);
+                };
+                last_plan = Some((source, plan));
+            }
+            let plan = &last_plan.as_ref().unwrap().1;
+            if self.world.entities.is_traced(row)
                 || !self
                     .world
                     .entities
@@ -1004,26 +1048,21 @@ impl Sim {
             {
                 return Ok(None);
             }
-            let ColliderExecutor::Direct(outputs) = &plan.executor else {
+            let Some(cpu) = &plan.cpu else {
                 return Ok(None);
             };
             let start = self.collider_scratch.begin_row();
-            for shape in &plan.shapes {
-                let ProjectedShape::Circle { layer, radius } = shape else {
-                    unreachable!()
-                };
-                let radius = match &outputs[*radius] {
-                    ColliderOutputSource::Const(value) => *value,
-                    ColliderOutputSource::Input(input) => match plan.direct_inputs[*input] {
-                        ColliderGatherInput::Tick => tau,
-                        ColliderGatherInput::Axis => 0.0,
-                        ColliderGatherInput::WorldTick => self.world.tick as f64,
-                        ColliderGatherInput::Column(slots) => {
-                            entity_field_at_slots(row, slots, &self.world)
-                                .num()
-                                .map_err(|error| format!("colliders: {error}"))?
-                        }
-                    },
+            for (layer, scalar) in &cpu.circles {
+                let radius = match scalar {
+                    CpuColliderScalar::Const(value) => *value,
+                    CpuColliderScalar::Tick => tau,
+                    CpuColliderScalar::Axis => 0.0,
+                    CpuColliderScalar::WorldTick => self.world.tick as f64,
+                    CpuColliderScalar::Column(slots) => {
+                        entity_field_at_slots(row, *slots, &self.world)
+                            .num()
+                            .map_err(|error| format!("colliders: {error}"))?
+                    }
                 };
                 self.collider_scratch.rows.push(ColliderData::Circle {
                     layer: *layer,
