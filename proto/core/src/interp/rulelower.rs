@@ -1,11 +1,18 @@
 use super::engine::RenderKey;
 use super::world::FieldSlots;
-use super::{evaluate, row_predicate, Ctx, Env, RowPredicate, World};
+use super::{
+    evaluate, intern_kernel_program, row_predicate, Ctx, Env, FilterPlan, KernelLayout,
+    KernelOp, KernelProgram, KernelRegister, Symbol, World,
+};
 use crate::edn::Form;
+use crate::sim::kernel::{
+    FallbackPolicy, IterationDomain, KernelBindings, KernelOutputBinding, KernelOutputTarget,
+    KernelPlan, MergePolicy,
+};
 use std::rc::Rc;
 
 pub(crate) struct CompiledTickForm {
-    pub predicate: RowPredicate,
+    pub filter: FilterPlan,
     pub action: CompiledTickAction,
 }
 
@@ -15,6 +22,22 @@ pub(crate) enum CompiledTickAction {
     /// cull matched rows in row order (the interpreted phase order —
     /// entities-where completes before any cull applies).
     Cull,
+    Update(MaskedUpdatePlan),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateValueKind {
+    Num,
+    Sym,
+}
+
+pub(crate) struct MaskedUpdatePlan {
+    /// The complete predicate plan is retained with the value plan so the
+    /// update artifact's identity includes both fixed-width computations.
+    pub predicate: FilterPlan,
+    pub value: KernelPlan,
+    pub column: Symbol,
+    pub kind: UpdateValueKind,
 }
 
 pub(crate) struct CompiledRender {
@@ -129,6 +152,74 @@ fn is_pose(rv: &RowVal) -> bool {
     }
 }
 
+fn fixed_update_plan(
+    filter: FilterPlan,
+    column: Symbol,
+    value: &Form,
+    world: &mut World,
+) -> Option<MaskedUpdatePlan> {
+    let (registers, output, ops, kind) = match value {
+        Form::Num(value) => (
+            KernelLayout {
+                f64s: 1,
+                ..KernelLayout::default()
+            },
+            KernelRegister::F64(0),
+            vec![KernelOp::ConstF64 {
+                dst: 0,
+                bits: value.to_bits(),
+            }],
+            UpdateValueKind::Num,
+        ),
+        Form::Kw(value) => {
+            let value = world.field_sym(value);
+            (
+                KernelLayout {
+                    symbols: 1,
+                    ..KernelLayout::default()
+                },
+                KernelRegister::Symbol(0),
+                vec![KernelOp::ConstSymbol {
+                    dst: 0,
+                    value: value.0,
+                }],
+                UpdateValueKind::Sym,
+            )
+        }
+        _ => return None,
+    };
+    let program = intern_kernel_program(
+        KernelProgram::new(
+            KernelLayout::default(),
+            registers,
+            vec![output],
+            ops,
+        )
+        .ok()?,
+    );
+    let bindings = KernelBindings {
+        inputs: Vec::new(),
+        outputs: vec![KernelOutputBinding {
+            output: 0,
+            target: KernelOutputTarget::Driver,
+        }],
+    };
+    let value = KernelPlan::new(
+        program,
+        IterationDomain::EntityRows,
+        bindings,
+        FallbackPolicy::WholePlanInterpreted,
+        MergePolicy::CanonicalRowOrder,
+    )
+    .ok()?;
+    Some(MaskedUpdatePlan {
+        predicate: filter,
+        value,
+        column,
+        kind,
+    })
+}
+
 pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Option<CompiledTickForm> {
     let args = call(form, "map", env, ctx)?;
     let [fnform, query] = args else { return None };
@@ -136,19 +227,39 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     let [predform] = query_args else { return None };
     let pred_args = call(predform, "fn", env, ctx)?;
     if pred_args.len() < 2 || !matches!(&pred_args[0], Form::Vector(_)) { return None; }
-    let predicate = row_predicate(&evaluate(predform, env, ctx, world).ok()?, ctx)?;
+    let filter = row_predicate(&evaluate(predform, env, ctx, world).ok()?, ctx)?.lower(world)?;
 
     let fn_args = call(fnform, "fn", env, ctx)?;
     let [Form::Vector(params), body] = fn_args else { return None };
     let [Form::Sym(entity)] = &params[..] else { return None };
     if matches!(entity.as_ref(), "&" | "*" | "=") || HEADS.contains(&entity.as_ref()) { return None; }
 
-    // the cull-rule shape: body is exactly (cull e); anything else about
-    // the body (extra args, a shadowing param named cull) bails the form
+    // Exact fixed-width action shapes. Predicate execution always finishes
+    // before either driver-owned effect is published.
     if let Some(args) = call(body, "cull", env, ctx) {
         return (entity.as_ref() != "cull"
             && matches!(args, [Form::Sym(target)] if target == entity))
-            .then(|| CompiledTickForm { predicate, action: CompiledTickAction::Cull });
+            .then(|| CompiledTickForm { filter, action: CompiledTickAction::Cull });
+    }
+    if let Some(args) = call(body, "change-col", env, ctx) {
+        let [Form::Sym(target), Form::Kw(column), value_fn] = args else {
+            return None;
+        };
+        if entity.as_ref() == "change-col" || target != entity {
+            return None;
+        }
+        let [Form::Vector(params), value] = call(value_fn, "fn", env, ctx)? else {
+            return None;
+        };
+        if !matches!(&params[..], [Form::Sym(param)] if param.as_ref() != "&") {
+            return None;
+        }
+        let column = world.field_sym(column);
+        let plan = fixed_update_plan(filter.clone(), column, value, world)?;
+        return Some(CompiledTickForm {
+            filter,
+            action: CompiledTickAction::Update(plan),
+        });
     }
 
     let (pose, emit_form) = if let Some(let_args) = call(body, "let", env, ctx) {
@@ -178,7 +289,7 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
     if !has_shape { return None; }
     let needs_pose = fields.iter().any(|(_, _, value)| is_pose(value));
     Some(CompiledTickForm {
-        predicate,
+        filter,
         action: CompiledTickAction::Render(CompiledRender {
             needs_pose,
             fields,

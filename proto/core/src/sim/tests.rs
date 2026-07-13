@@ -1528,6 +1528,46 @@
     }
 
     #[test]
+    fn mistyped_predicate_input_abandons_the_whole_cull_before_execution() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (<= (value-or (:hp e) 1) 0)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:hp 0})
+    (spawn (pose c[1 0]) {:hp :full})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("expected number, got Kw(\"full\")"), "{err}");
+        assert!(
+            (0..sim.world.entities.len()).all(|row| sim.world.entities.is_alive(row)),
+            "typed gathering must abandon the whole plan before any cull"
+        );
+    }
+
+    #[test]
+    fn compiled_filter_preserves_numeric_equality_and_oracle_actions() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (= (+ (value-or (:hp e) 0) 0) 0)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:hp 0.0000000005})
+    (spawn (pose c[1 0]) {:hp 0.000000002})))
+"#;
+        let _guard = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_some());
+        sim.step().unwrap();
+        assert!(!sim.world.entities.is_alive(0), "value inside equality threshold should match");
+        assert!(sim.world.entities.is_alive(1), "value outside equality threshold should not match");
+    }
+
+    #[test]
     fn compiled_render_rule_bails_to_interpreter_on_keyword_valued_field() {
         const CARD: &str = r#"
 (deftick
@@ -4010,6 +4050,115 @@
             sim.step().unwrap();
         }
         assert_eq!(sim.world.entities.len(), 1, "gate opened at tick 5");
+    }
+
+    #[test]
+    fn masked_update_plan_queues_fixed_values_in_row_order() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (change-col e :mark (fn [_] 7)))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy})
+    (spawn (pose c[1 0]) {:team :friend})
+    (spawn (pose c[2 0]) {:team :enemy})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
+        let CompiledTickAction::Update(plan) = &compiled.action else {
+            panic!("expected masked update plan")
+        };
+        assert_eq!(plan.kind, UpdateValueKind::Num);
+        assert_eq!(plan.value.domain(), kernel::IterationDomain::EntityRows);
+        assert_eq!(plan.value.fallback(), kernel::FallbackPolicy::WholePlanInterpreted);
+        assert_eq!(plan.value.merge(), kernel::MergePolicy::CanonicalRowOrder);
+        assert_eq!(plan.value.program().outputs(), &[KernelRegister::F64(0)]);
+        let column = plan.column;
+        sim.step().unwrap();
+        let queued = sim
+            .world
+            .pending_writes
+            .iter()
+            .map(|write| match write {
+                PendingWrite::Field { target, col, .. } => (target.row, *col),
+                other => panic!("unexpected queued update: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(queued, vec![(0, column), (2, column)]);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "mark"), Some(7.0));
+        assert_eq!(sim.world.col_get_at(1, "mark"), None);
+        assert_eq!(sim.world.col_get_at(2, "mark"), Some(7.0));
+    }
+
+    #[test]
+    fn masked_symbol_update_oracle_queues_effects_once() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (change-col e :mark (fn [_] :blue)))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy})
+    (spawn (pose c[1 0]) {:team :enemy})))
+"#;
+        let _guard = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
+        let CompiledTickAction::Update(plan) = &compiled.action else {
+            panic!("expected masked update plan")
+        };
+        assert_eq!(plan.kind, UpdateValueKind::Sym);
+        assert_eq!(plan.value.program().outputs(), &[KernelRegister::Symbol(0)]);
+        sim.step().unwrap();
+        assert_eq!(sim.world.pending_writes.len(), 2, "oracle must not double-queue updates");
+        sim.step().unwrap();
+        assert!(sim.world.sym_field_matches_at(0, "mark", "blue"));
+        assert!(sim.world.sym_field_matches_at(1, "mark", "blue"));
+        assert_eq!(sim.world.pending_writes.len(), 2, "next oracle pass queues one update per row");
+    }
+
+    #[test]
+    fn masked_updates_preserve_rule_and_row_action_order() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (change-col e :mark (fn [_] 1)))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(deftick
+  (map (fn [e] (change-col e :mark (fn [_] 2)))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(defpattern p []
+  (par
+    (spawn (pose c[0 0]) {:team :enemy})
+    (spawn (pose c[1 0]) {:team :enemy})))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim
+            .world
+            .standing_rules
+            .iter()
+            .all(|rule| matches!(rule.compiled[0].as_ref().map(|form| &form.action), Some(CompiledTickAction::Update(_)))));
+        sim.step().unwrap();
+        assert_eq!(sim.world.pending_writes.len(), 4);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "mark"), Some(2.0));
+        assert_eq!(sim.world.col_get_at(1, "mark"), Some(2.0));
+    }
+
+    #[test]
+    fn nonliteral_field_update_stays_on_semantic_fallback() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [e] (change-col e :mark (fn [_] (+ 3 4))))
+       (entities-where (fn [e] (= e.team :enemy)))))
+(defpattern p [] (spawn (pose c[0 0]) {:team :enemy}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules[0].compiled[0].is_none());
+        sim.step().unwrap();
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "mark"), Some(7.0));
     }
 
     #[test]

@@ -1149,8 +1149,13 @@ impl Sim {
             for (form, compiled) in rule.body.iter().zip(rule.compiled.iter()) {
                 let result = (|| -> Result<(), String> {
                     if let Some(compiled) = compiled {
-                        if oracle_enabled() && matches!(compiled.action, CompiledTickAction::Cull) {
-                            return self.oracle_check_compiled_cull(compiled, form, &rule.env);
+                        if oracle_enabled() {
+                            if matches!(compiled.action, CompiledTickAction::Cull) {
+                                return self.oracle_check_compiled_cull(compiled, form, &rule.env);
+                            }
+                            if matches!(compiled.action, CompiledTickAction::Update(_)) {
+                                return self.oracle_check_compiled_update(compiled, form, &rule.env);
+                            }
                         }
                         let before = self.world.render_rows.len();
                         if self.run_compiled_tick_form(compiled)?.is_none() {
@@ -1201,7 +1206,7 @@ impl Sim {
         env: &Env,
     ) -> Result<(), String> {
         let mut predicted = Vec::new();
-        let bailed = !self.compiled_predicate_scan(&compiled.predicate, &mut predicted);
+        let bailed = !self.compiled_predicate_scan(&compiled.filter, &mut predicted);
         let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
         if !bailed {
             let mut culled = Vec::new();
@@ -1212,27 +1217,153 @@ impl Sim {
         self.exec_tick_value(value)
     }
 
-    /// Scan alive rows against the resolved predicate, in row-index order.
-    /// Returns false on a fallible-read bail: the whole form must rerun
-    /// interpreted.
-    fn compiled_predicate_scan(&self, predicate: &RowPredicate, rows: &mut Vec<usize>) -> bool {
-        let tests = predicate.resolve(&self.world);
-        let bail_at = infallible_suffix_start(&tests);
-        if resolved_tests_match_nothing(&tests, bail_at) {
-            return true;
-        }
-        for row in 0..self.world.entities.len() {
-            if !self.world.entities.is_alive(row) {
-                continue;
+    fn oracle_check_compiled_update(
+        &mut self,
+        compiled: &CompiledTickForm,
+        form: &Form,
+        env: &Env,
+    ) -> Result<(), String> {
+        let CompiledTickAction::Update(plan) = &compiled.action else {
+            unreachable!()
+        };
+        let mut rows = Vec::new();
+        let predicted = if update_filter_matches(plan, &compiled.filter)
+            && self.compiled_predicate_scan(&plan.predicate, &mut rows)
+            && self.execute_masked_update_values(plan, &rows)
+        {
+            let mut values = Vec::with_capacity(rows.len());
+            for (lane, &row) in rows.iter().enumerate() {
+                let Some(value) = self.compiled_update_value(plan, lane) else {
+                    values.clear();
+                    break;
+                };
+                values.push((self.world.entity_ref(row), plan.column, value));
             }
-            let Some(matches) = resolved_row_tests_match(&tests, bail_at, row, &self.world) else {
-                return false;
-            };
-            if matches {
-                rows.push(row);
+            (values.len() == rows.len()).then_some(values)
+        } else {
+            None
+        };
+        let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
+        if let Some(predicted) = predicted {
+            let mut actions = Vec::new();
+            collect_update_actions(&value, &mut actions);
+            let mut actual = Vec::with_capacity(actions.len());
+            for (target, column, update) in actions {
+                let mut call_ctx = self.closed_call_ctx(SigEnv {
+                    defs: self.ctx.sig.defs.clone(),
+                    ..SigEnv::default()
+                });
+                let mut call_world = World::for_eval(self.world.tick_rate());
+                let fixed = match apply_fn(
+                    update,
+                    &[Val::Nothing],
+                    &mut call_ctx,
+                    &mut call_world,
+                    false,
+                )? {
+                    Val::Num(value) => FixedUpdateValue::Num(value),
+                    Val::Kw(value) => FixedUpdateValue::Sym(
+                        self.world
+                            .symbols
+                            .lookup(&value)
+                            .ok_or_else(|| "update oracle: unknown keyword".to_string())?,
+                    ),
+                    other => {
+                        return Err(format!(
+                            "update oracle: expected fixed-width value, got {:?}",
+                            other
+                        ))
+                    }
+                };
+                actual.push((target, column, fixed));
             }
+            assert_eq!(
+                actual, predicted,
+                "compiled deftick update rows/values mismatch for {:?}",
+                form
+            );
         }
-        true
+        self.exec_tick_value(value)
+    }
+
+    /// Gather and execute the typed filter plan in row-index order.
+    /// Returns false when gathering finds a mistyped input or the kernel
+    /// rejects the plan; callers rerun the whole form interpreted.
+    fn compiled_predicate_scan(
+        &self,
+        filter: &FilterPlan,
+        rows: &mut Vec<usize>,
+    ) -> bool {
+        execute_filter_plan(filter, &self.world, rows)
+    }
+
+    fn execute_masked_update_values(
+        &mut self,
+        plan: &MaskedUpdatePlan,
+        rows: &[usize],
+    ) -> bool {
+        if plan.value.domain() != kernel::IterationDomain::EntityRows
+            || plan.value.fallback() != kernel::FallbackPolicy::WholePlanInterpreted
+            || plan.value.merge() != kernel::MergePolicy::CanonicalRowOrder
+            || plan.value.program().inputs() != KernelLayout::default()
+            || !plan.value.bindings().inputs.is_empty()
+            || !matches!(
+                &plan.value.bindings().outputs[..],
+                [kernel::KernelOutputBinding {
+                    output: 0,
+                    target: kernel::KernelOutputTarget::Driver,
+                }]
+            )
+        {
+            return false;
+        }
+        let scratch = &mut self.render_scratch;
+        scratch.update_lanes.lanes = rows.len();
+        scratch.update_lanes.f32s.clear();
+        scratch.update_lanes.f64s.clear();
+        scratch.update_lanes.u32s.clear();
+        scratch.update_lanes.u64s.clear();
+        scratch.update_lanes.symbols.clear();
+        scratch.update_lanes.handles.clear();
+        scratch.update_lanes.masks.clear();
+        if kernel::execute(
+            &plan.value,
+            &scratch.update_lanes,
+            &mut scratch.update_kernel_scratch,
+            &mut scratch.update_outputs,
+        )
+        .is_err()
+        {
+            return false;
+        }
+        match plan.kind {
+            UpdateValueKind::Num => scratch.update_outputs.f64s.len() == rows.len(),
+            UpdateValueKind::Sym => scratch.update_outputs.symbols.len() == rows.len(),
+        }
+    }
+
+    fn compiled_update_value(
+        &self,
+        plan: &MaskedUpdatePlan,
+        lane: usize,
+    ) -> Option<FixedUpdateValue> {
+        match plan.kind {
+            UpdateValueKind::Num => self
+                .render_scratch
+                .update_outputs
+                .f64s
+                .get(lane)
+                .copied()
+                .map(FixedUpdateValue::Num),
+            UpdateValueKind::Sym => self
+                .render_scratch
+                .update_outputs
+                .symbols
+                .get(lane)
+                .copied()
+                .map(Symbol)
+                .map(FixedUpdateValue::Sym),
+        }
     }
 
     fn run_compiled_tick_form(&mut self, form: &CompiledTickForm) -> Result<Option<()>, String> {
@@ -1241,7 +1372,7 @@ impl Sim {
         // a body error cannot preempt a later row's predicate bail.
         let mut rows = std::mem::take(&mut self.render_scratch.match_rows);
         rows.clear();
-        if !self.compiled_predicate_scan(&form.predicate, &mut rows) {
+        if !self.compiled_predicate_scan(&form.filter, &mut rows) {
             self.render_scratch.match_rows = rows;
             return Ok(None);
         }
@@ -1252,6 +1383,47 @@ impl Sim {
                 // interpreter's entities-where order
                 for &row in &rows {
                     self.world.cull_at(row);
+                }
+                self.render_scratch.match_rows = rows;
+                return Ok(Some(()));
+            }
+            CompiledTickAction::Update(plan) => {
+                if !update_filter_matches(plan, &form.filter)
+                    || !self.execute_masked_update_values(plan, &rows)
+                {
+                    self.render_scratch.match_rows = rows;
+                    return Ok(None);
+                }
+                if matches!(plan.kind, UpdateValueKind::Sym)
+                    && self
+                        .render_scratch
+                        .update_outputs
+                        .symbols
+                        .iter()
+                        .any(|value| self.world.symbols.resolve_rc(Symbol(*value)).is_none())
+                {
+                    self.render_scratch.match_rows = rows;
+                    return Ok(None);
+                }
+                for (lane, &row) in rows.iter().enumerate() {
+                    let value = match self
+                        .compiled_update_value(plan, lane)
+                        .expect("validated update output lane")
+                    {
+                        FixedUpdateValue::Num(value) => Val::Num(value),
+                        FixedUpdateValue::Sym(value) => Val::Kw(
+                            self.world
+                                .symbols
+                                .resolve_rc(value)
+                                .expect("validated update symbol")
+                                .clone(),
+                        ),
+                    };
+                    self.world.pending_writes.push(PendingWrite::Field {
+                        target: self.world.entity_ref(row),
+                        col: plan.column,
+                        f: value,
+                    });
                 }
                 self.render_scratch.match_rows = rows;
                 return Ok(Some(()));
@@ -1967,6 +2139,41 @@ fn collect_cull_rows(v: &Val, world: &World, out: &mut Vec<usize>) {
         },
         Val::Nothing => {}
         other => panic!("compiled cull oracle: unexpected value {other:?}"),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum FixedUpdateValue {
+    Num(f64),
+    Sym(Symbol),
+}
+
+fn update_filter_matches(plan: &MaskedUpdatePlan, filter: &FilterPlan) -> bool {
+    plan.predicate.predicate.id() == filter.predicate.id()
+        && plan.predicate.predicate.program().inputs()
+            == filter.predicate.program().inputs()
+        && plan.predicate.predicate.bindings() == filter.predicate.bindings()
+        && plan.predicate.predicate.domain() == filter.predicate.domain()
+        && plan.predicate.predicate.fallback() == filter.predicate.fallback()
+        && plan.predicate.predicate.merge() == filter.predicate.merge()
+        && plan.predicate.short_circuit_prefix == filter.short_circuit_prefix
+}
+
+fn collect_update_actions(value: &Val, out: &mut Vec<(EntityRef, Symbol, Val)>) {
+    match value {
+        Val::Arr(items) => {
+            for item in items.iter() {
+                collect_update_actions(item, out);
+            }
+        }
+        Val::Action(action) => match action.as_ref() {
+            ActionV::ChangeCol { target, col, f } => {
+                out.push((*target, *col, f.clone()));
+            }
+            other => panic!("compiled update oracle: unexpected action {other:?}"),
+        },
+        Val::Nothing => {}
+        other => panic!("compiled update oracle: unexpected value {other:?}"),
     }
 }
 

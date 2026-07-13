@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(super) struct RenderScratch {
     rows: Vec<RenderData>,
     ranges: Vec<std::ops::Range<usize>>,
@@ -12,6 +12,10 @@ pub(super) struct RenderScratch {
     pub(super) match_rows: Vec<usize>,
     /// Pose scratch for the compiled batch fill.
     pub(super) pose_rows: Vec<Pose>,
+    /// Reused typed SoA storage for compiled fixed-width rule updates.
+    pub(super) update_lanes: kernel::KernelLanes,
+    pub(super) update_outputs: kernel::KernelOutputs,
+    pub(super) update_kernel_scratch: kernel::KernelScratch,
 }
 
 impl RenderScratch {
