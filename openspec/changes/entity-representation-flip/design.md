@@ -95,3 +95,25 @@ spec in `openspec/specs/language/spec.md` is authoritative where they overlap.
 - Retained entity storage should be cold data plus dense row state. Hot data
   should be per-tick derived SoA buffers for poses, colliders, render rows,
   and sampled curve points.
+- Cold spec/runtime row split:
+  ```text
+  EntitySpec {
+    figure_motion_plan : KernelPlanId
+    collider_plans     : [KernelPlanId]
+    render/schema refs : ...
+    state_schema       : ...
+    cache_policy       : ...
+  }
+
+  EntityRow {
+    spec_id
+    capture_range
+    typed field/state slots
+    per-slot epochs
+    generation
+  }
+  ```
+  `KernelProgram`/`KernelPlan` execution belongs to `ir-unification`; this
+  representation owns stable spec identity and dense row bindings. Batch
+  grouping, state lookup, and projector memoization must key explicit
+  spec/program/plan ids rather than `Rc<DynNode>` pointer identity.

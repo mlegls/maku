@@ -1,434 +1,159 @@
-<!-- Moved verbatim from docs/types.md (dissolve-design-notes). Target design
-for the typed IR pipeline; also feeds entity-representation-flip and
-pose-figure-unification. -->
+## Context
 
-# Maku Type System Notes
+`proto/core/src/interp/lower.rs` already lowers a subset of motion expressions to an interned register program and executes it through scalar and lane-oriented IR loops. Other per-row surfaces retain private representations: collider fields use `ProjectorNum`, row predicates and values use resolved-row enums/evaluators, and numeric dyn columns use `DynNum`. The fragmentation prevents structural interning, capture/input sharing, batching, and future code generation from applying uniformly.
 
-Status: target design. The interpreter only implements parts of this today.
+At the hot-loop boundary, source strings, maps, lists, lexical environments, and actions have already been resolved away. Supported values are fixed-width machine data: f32/f64 numbers, interned `Symbol` ids, handles, row ids/offsets, masks, and flattened fixed-width aggregates. Variable-shape figures, collection topology, and effects still need domain-specific orchestration.
 
-The type system should separate meaning from execution. A source expression
-first becomes a typed semantic expression; only after that should the runtime
-choose whether to execute it as interpreter closures, dense SoA loops, cached
-projectors, compiled code, or another backend-specific representation.
+The governing contracts are `openspec/specs/lowering/spec.md`, `openspec/specs/determinism/spec.md`, and `openspec/specs/language/spec.md`. Ergonomic load-time type checking and typed semantic elaboration remain useful, but belong to the separate `language-type-checking` track: kernel lowering must not wait for that frontend, and type checking must not be designed around optimization backend needs.
 
-## Pipeline
+## Goals / Non-Goals
 
-```text
-Form
-  -> macro-expanded Form
-  -> untyped AST
-  -> typed / elaborated IR
-  -> representation-classified IR
-  -> backend lowering
-```
+**Goals:**
 
-The parser only knows source syntax. Macro expansion rewrites syntax. Type
-elaboration assigns semantic meaning, applies expected-type coercions, and
-infers semantic signal classes such as `Closed` vs `Scanned`. The later
-representation pass classifies equivalent semantic programs by execution
-strategy.
+- One typed fixed-width program representation for supported per-row computation across motion/dyn, collider projection, render projection, predicates, and fixed-width updates.
+- One explicit plan ABI describing iteration, inputs, outputs, state, masks, and driver-owned merge behavior.
+- Structural program identity and capture/input slots suitable for IR-loop, native, wasm, SIMD, and GPU executors.
+- Total, callback-free programs with deterministic operation order and width.
+- Incremental migration with interpreter parity under `MAKU_LOWER_ORACLE`.
 
-## Semantic Types
+**Non-Goals:**
 
-Core scalar atoms:
+- A universal typed IR for all `.maku` expressions.
+- Whole-card or action-tree compilation.
+- Replacing the scheduler, structured concurrency, states, live add/swap, or the source interpreter.
+- Encoding reductions, compaction, collision pair generation, variable-length allocation, or effect application as ordinary lane programs.
+- Native, wasm, or GPU emission in this change.
+- Choosing physical f32 storage columns; `f32-hot-columns` owns that migration.
+- Changing language-visible values or semantics.
 
-- `Num`: one numeric type. Predicates, counts, indices, and masks are numeric
-  schemas, not separate runtime scalars.
-- `Kw`: interned keyword/event/style atoms. String syntax is source or host
-  boundary syntax; runtime comparison uses interned atoms.
-- `Handle`: generation-checked entity handle.
-- `Nothing`: explicit empty value. It is not implicit nullability; a slot that
-  may be absent must say so with `Option<T>` or with a domain variant such as
-  `ColliderData::none`.
+## Decisions
 
-Geometry:
+### 1. Generalize `NumProgram` into a typed `KernelProgram`
 
-- `Pose`: `(x, y, theta?)`, where `theta = none` means unspecified facing.
-  This is `theta: Option<Num>`, not implicit `Nothing` inhabiting numeric
-  slots.
-- `Curve`: abstract 2D curve. Sampling is a projection choice.
-- `Figure`: `Pose | Curve | ...`.
-
-Structured values:
-
-- `List<T>`: unstructured list data for macros, schemas, and ordinary sequence
-  manipulation.
-- `Array<T>`: homogeneous runtime sequence.
-- `Vec<N, T>`: fixed-size homogeneous vector.
-- `Mat<R, C, T>`: fixed-size homogeneous matrix.
-- `Record{field: T, ...}`: finite known fields.
-- `Option<T>`: explicit absence/presence. Optional record fields elaborate to
-  this type or to a record-row schema with an explicit presence bit.
-
-Engine boundary types:
-
-- `Collider` / `ColliderData`: typed literal collision boundary rows,
-  including `none`. These are emitted by extraction from collider projectors;
-  they are not the opaque projector values themselves.
-- `RenderData<K>`: the typed render boundary row for a registered render kind
-  `K`. Unlike `ColliderData`, this is not a single closed schema: each kind
-  selects its own typed record schema from the load-time render-kind registry.
-  Source code may construct render rows directly when a renderer slot expects
-  them. Each entity emits exactly one render row; nullable/no-render behavior is
-  encoded by fields chosen by that schema, not by a language-reserved kind.
-- `Meta`: finite record of entity fields. Field storage is selected at
-  load/schema time, not allocated per tick.
-- `EntityView<F>`: the same entity view shape used by query/manip callbacks,
-  specialized by the entity's core figure variant `F`: handle identity plus
-  entity-scoped meta and the figure-specific fields/getters for `F`.
-- `MetaEnv`: lexical/projector view of an entity's meta. By default it is the
-  entity's shared meta namespace, but higher-order adapters may rebind names or
-  select a subrecord for an imported projector.
-- `ProjectorContext`: non-entity execution context for projectors, including
-  world tick, entity-local age/`t`, and extraction-pass parameters.
-- `ColliderProjector<F>`: opaque source value produced only by registered
-  primitive projector constructors and projector combinators. Extraction lowers
-  it with `(EntityView<F>, ProjectorContext)` to `List<Collider>` each tick.
-- `RenderProjector<F, K>`: typed pure function or projector expression lowered
-  by extraction with `(EntityView<F>, ProjectorContext)` to one `RenderData<K>`
-  each tick. Unlike `ColliderProjector<F>`, render rows are open schema data, so
-  this does not have to be an opaque primitive-only value.
-- `EntitySet`: ephemeral row-index view.
-- `Action`: inert control-layer effect description.
-- `Fn<A, B>`: pure function.
-
-Time-varying values:
-
-- `Dyn<T>`: value of type `T` over a slot-bound axis. The axis is not a free
-  type parameter: `t`, `u`, tunnel `s`, and ancestor clocks are bound by the
-  expecting slot, and named signal expressions rebind at the referencing slot
-  as described in `openspec/specs/language/spec.md` section 3. A `Dyn<T>` value cannot be floated
-  out with an unbound hidden axis.
-- `Fn<Num, Pose>` values can coerce to pose dyns at dyn-typed boundaries. The
-  function is called as `(f t)` during dyn evaluation and must return a pose.
-- `(evolve init step)` values are dyns with any carried state type. Applying
-  one to a time replays its fold (any value results); coercion into a pose or
-  figure slot requires pose state and errors otherwise.
-- Applying a dyn to numeric axes samples it: `(d t)` for the time axis, or
-  `(d t u)` for time plus materialization/curve axis. Applying a dyn to a
-  non-numeric child keeps frame-application semantics.
-
-Signal class is an inferred semantic property of `Dyn<T>`:
-
-- `Const`: independent of the slot axis.
-- `Closed`: pure function of the slot-bound axes, evaluable at arbitrary axis
-  values.
-- `PiecewiseClosed`: static segment table of closed pieces.
-- `Integrated`: stateful integration with fixed state slots.
-- `Scanned`: general tick-advanced stateful signal with fixed state slots.
-
-Closedness is semantic because it determines whether arbitrary-axis evaluation
-is meaningful. Storage choices such as SoA layout, specialized linear motion,
-or interpreter enum cases are representation details layered after this.
-
-The target low-level entity model is:
+A kernel program is a topologically ordered, register-addressed computation. Every input, register, and output has a fixed backend-portable type. The initial set is:
 
 ```text
-Entity = Dyn<Figure>
-       * Dyn<Meta>
-       * List<ColliderProjector<F>>
-       * RenderProjector<F, K>
+F32 | F64 | U32 | U64 | Mask
 ```
 
-Storage may be SoA, AoS, compiled buffers, or interpreter objects. That choice
-must not leak into the semantic type of `spawn`.
+`U32` covers interned symbols, row ids, small enum tags, and offsets. Generation-safe handles use either a `U64` canonical packing or two explicitly bound integer lanes; the implementation must choose one representation and keep stale-handle validation in declared ops/inputs. `Mask` is the backend predicate type and may be bit-packed in storage while remaining a logical lane value in the program.
 
-## Expected-Type Elaboration
+Alternative: keep float-only `NumProgram` and leave symbol/handle/presence work in resolved evaluators. Rejected because it preserves the evaluator split and prevents a render/rule kernel from compiling as one unit.
 
-Inference should be HM-like for pure expressions, but Maku also needs
-expected-type elaboration. Some meanings are only valid because a slot says
-what type is expected.
+Alternative: use interpreter `Val` registers. Rejected because boxed/tagged dynamic values prevent total callback-free kernels and transfer poorly to SIMD, wasm, and GPU backends.
 
-Important coercions:
+### 2. Flatten fixed-width aggregates; specialize variable-shape values in plans
+
+A pose lowers to numeric lanes plus orientation presence:
 
 ```text
-T                         => Dyn<T>
-Pose                      => Figure
-List<T>                   => Array<T> / Vec<N, T> where context requires it
+x, y, theta, has_theta
 ```
 
-These are typed rewrites, not Rust conversion traits. They should leave an
-explicit elaborated IR node so diagnostics and compiler lowering can see what
-happened.
+Pose construction, composition, sampling, and selection may lower to primitive operations or deterministic convenience ops when preserving component order and shared math is clearer. Fixed render/collider records lower to multiple typed outputs bound by schema.
 
-Coercion must be coherent: every legal derivation from the same source
-expression to the same expected type must denote the same value. The compiler
-therefore uses one canonical elaboration order:
+A general `Figure` is not a register type. Pose, parametric-curve, polyline, and later figure groups select specialized plans. A curve evaluator is a program over `(t, u, captures, frame inputs)`; polyline/composite storage and variable-size pools remain driver-owned.
 
-1. Apply non-dyn structural coercions required by the expected type, such as
-   `Pose => Figure`, `List<T> => Array<T>`, `List<T> => Vec<N, T>`, and
-   homogeneous vector/matrix recognition.
-2. Recursively elaborate each field or element under its expected element type.
-3. If `Dyn<S>` is expected, lift every non-dyn child to `Const`, then sequence
-   the structure into one `Dyn<S>`.
-4. Apply schema checks such as collider/render/meta conversion at the typed
-   slot boundary.
+Alternative: carry opaque figure objects through the program. Rejected because representation dispatch and variable-size ownership would leak interpreter/backend objects into every executor.
 
-So a `List<Num>` checked against `Dyn<Array<Num>>` is canonicalized as:
+### 3. Programs are pure computation; `KernelPlan`s own execution bindings
+
+`KernelProgram` answers “what fixed-width outputs follow from these inputs?” A domain plan answers “which rows run it, where are inputs/state, where do outputs go, and what does the driver do afterward?” Initial plan families are:
 
 ```text
-list literal
-  -> Array<Num>
-  -> Dyn<Array<Num>> by lifting all elements to Const and sequencing once
+MotionPlan
+DynFieldPlan
+ColliderProjectionPlan
+RenderProjectionPlan
+FilterPlan
+MaskedUpdatePlan
 ```
 
-Mixed dynamic structures are the same rule, not a union rule:
+A plan declares:
+
+- structural program id(s);
+- iteration/group domain;
+- direct and indirect column inputs;
+- capture, channel, tick/axis, and scan-state inputs;
+- fixed output and next-state bindings;
+- optional predicate/presence masks;
+- driver-owned fallback and deterministic merge policy.
+
+Plans may contain several programs during migration. Common-subexpression/fused multi-output lowering is allowed when one program can share setup and arithmetic without changing operation order.
+
+Alternative: make each subsystem call programs ad hoc. Rejected because backend code generation needs a stable buffer/state ABI and because fallback, grouping, and effects would otherwise diverge by subsystem.
+
+### 4. Cross-row and effect topology stays in drivers
+
+Filter/reduction/compaction, collision contact generation, variable-length curve sampling, and ordered actions are not ordinary independent-lane expressions. Drivers or explicit plan templates own them. Their fixed-width predicate/key/value calculations still use `KernelProgram`.
+
+Examples:
 
 ```text
-[a b(t) c]
-  -> [Const(a) b(t) Const(c)]
-  -> sequence -> Dyn<List<T>>
+FilterPlan(predicate) -> row mask/entity set
+MaskedUpdatePlan(predicate, values) -> deterministic queued writes
+ColliderProjectionPlan(programs) -> collider columns
+collision driver(collider columns) -> ordered contact facts
 ```
 
-Records follow the same rule: elaborate every field under its field type, lift
-non-dyn fields to `Const` when a `Dyn<Record{...}>` is expected, then sequence
-the whole record. The elaborated IR is deterministic even when a shorter proof
-path would have existed.
+Spawn, cull, remat, and event results may eventually be fixed per-row action records produced by a plan, but canonical application stays driver-owned and row/tick ordered.
 
-The `spawn` slots provide the clearest example:
+Alternative: introduce a universal control/dataflow IR covering reductions and actions. Rejected until a measured backend requires more than a small set of explicit driver templates.
 
-```text
-(spawn figure meta colliders renderer)
+### 5. Lowering is schema-directed and all-or-nothing per plan kernel
 
-figure    expects Dyn<Figure>
-meta      expects Dyn<Meta>
-colliders expects ColliderProjector<F> or List<ColliderProjector<F>>
-renderer  expects RenderProjector<F, K>
-```
+Macro expansion and the existing load-time rewrite run first. The domain recognizer resolves bindings, field schemas, projector/render schemas, and expected slot kinds, then lowers supported fixed-width expressions. Optimizations recognize expansion shapes, never source macro names.
 
-The figure and meta slots are the dynamic slots. Meta is where non-positional
-dynamic data lives; the meta slot binds the current figure as a reserved name
-alongside `t`, so fields can depend on per-tick geometry without needing a
-separate `Figure -> Dyn<T>` surface type. Collider and renderer slots choose
-projector functions. A projector may read any typed meta field, the current
-figure, and `ProjectorContext` each tick. Primitive projector override fields
-expect concrete values of their declared field types in that already-bound
-`e`/`ctx` environment: `Num` for `:radius`/`:r`, `Kw` for `:layer`, etc.
-`(* e.hitbox 2)` is therefore a `Num`, not a hidden entity callback. There is
-no keyword-as-field-access shortcut in override maps; use `e.hitbox`, not
-`:hitbox`, when reading an entity field. Time-dependent projector arguments
-normally use explicit context fields such as `ctx.t` or `ctx.age`. A free-`t`
-expression can still be defined inside projector code, but it remains a
-dyn-valued expression and must be explicitly applied before it can feed
-one of those concrete fields. The `m"..."` reader macro remains available
-inside projector code because it is only syntax. Direct dynamic collider/render
-row lists are not the public low-level surface. Purely local temporal behavior
-such as "this collider until age 0.5" can be expressed as a higher-order
-projector combinator rather than as a public meta switch.
+A supported kernel contains no interpreter callback. An unsupported expression rejects the relevant plan/kernel and retains the semantic interpreter path. If a runtime input violates the declared type/presence assumptions, the driver abandons that batch and reruns the semantic operation interpreted.
 
-The `ExpectedType::Spawn*` names in the prototype are transitional spelling for
-these compositional targets. The convergence target is ordinary expected types:
-`Dyn<Figure>`, `Dyn<Meta>`, `List<ColliderProjector<F>>`, and
-`RenderProjector<F, K>`.
+This resolves the old `Interp`-op ambiguity in favor of the current JIT-readiness contract: there is no native-to-interpreter callback ABI.
 
-## Schema Checking
+### 6. Width is part of program and plan identity
 
-Collider projectors are opaque source values, not parser forms and not runtime
-maps. They are produced by normal typed function calls such as
-`circle-collider`, but their result type cannot be constructed by user code
-except through registered primitive constructors and combinators. Raw
-`Collider` rows are boundary rows produced by extraction; they are not the
-normal authoring surface.
+Programs declare lane widths. Physical hot columns may later be f32 while control-plane values remain f64. Conversions are explicit ops/bindings, and structural cache identity includes types and widths. Executors use the same operation order and shared math shims; no backend may select fast-math or platform libm behavior that breaks the oracle.
 
-Render rows are different: render kinds are open, host/library-registered
-schemas, and card code may construct schema-checked map-like `RenderData<K>`
-directly when a renderer slot expects it. A `defrenderer` can therefore be a
-normal function over `e`/`ctx` that returns one `RenderData<K>` row.
-Stock renderer helpers are conveniences for common projections from figure/meta
-to those rows, not the only way to get render data.
+`ir-unification` supplies typed width support. `f32-hot-columns` decides which physical storage classes narrow and measures corpus drift.
 
-Example:
+### 7. The IR-loop executor remains permanent
 
-```edn
-(spawn fig
-  {:radius m"0.1 + 0.02*t" :layer :enemy-hit}
-  bullet-collider
-  (touhou-renderer))
-```
+The existing scalar/lane IR executor evolves to execute typed programs and plans. It is the universal backend on every host, the cold fallback for uncompiled programs, and one side of the interpreter ↔ IR-loop ↔ generated-code oracle.
 
-At the semantic boundary:
+Native, wasm, SIMD, and GPU backends consume the same program/plan contract but are separate changes. Backend availability never changes card validity or semantics.
 
-```text
-meta source data
-  -> Dyn<Meta>
+### 8. Surface migration order follows increasing orchestration complexity
 
-bullet-collider
-  -> ColliderProjector<Pose>
-  -> extraction: source projector specs over (EntityView<Pose>, ProjectorContext)
-  -> each tick: List<Collider>
-```
+1. Generalize the program, registers, outputs, interning, executor, and oracle without changing existing motion behavior.
+2. Migrate `DynNum` and motion/pose fixed-width paths.
+3. Migrate row predicates and symbol/field tests to `FilterPlan`.
+4. Migrate fixed render-row projection to typed multi-output plans.
+5. Migrate fixed collider projection.
+6. Migrate supported masked field updates while retaining deterministic driver application.
+7. Remove private evaluator variants only after every caller has cut over or deliberately remains control-plane interpreted.
 
-The current interpreter still realizes dynamic bridge values per tick and
-checks them at the simulation boundary. The target is to elaborate projector
-functions directly, with dynamic data evaluated through figure, meta, and
-context fields per tick; literal colliders are emitted by extraction rather
-than returned as ordinary `.maku` values.
+Each migration keeps its old semantic evaluator available for all-or-nothing fallback and oracle comparison; obsolete private compiled representations are removed at cutover.
 
-`Meta` itself is a flat typed record of primitive atoms. Source maps and lists
-are still ordinary values for macros, option records, and reserved spawn
-directives, but retained entity meta does not store arbitrary structures or
-allocate cold per-entity records. Namespace hygiene is handled by field naming
-or adapters that map one flat field convention to another.
+## Risks / Trade-offs
 
-Two projector output cases must classify differently:
+- **[Risk] The typed program grows into a second general interpreter.** → Admit only fixed-width total ops needed by measured hot plans; keep collections, actions, allocation, and arbitrary calls outside.
+- **[Risk] Program fusion changes floating-point order.** → Preserve source/interpreter operation order and oracle every migrated plan; fusion may share inputs/setup but not reassociate arithmetic.
+- **[Risk] Handle gathers introduce aliasing and stale-row bugs.** → Declare indirect inputs explicitly, validate generations through one driver/kernel contract, and prohibit undeclared world access.
+- **[Risk] Multi-output programs increase scratch pressure.** → Measure register counts and permit several shared-input programs when fusion regresses wall time or GPU occupancy.
+- **[Risk] Driver plans duplicate semantic decisions.** → Plans contain bindings and execution topology only; source meaning and fallback remain in the existing domain interpreter.
+- **[Risk] Early GPU concerns overcomplicate the CPU IR.** → Require backend-portable fixed-width values and explicit bindings, but add GPU-only orchestration only in `gpu-kernel-backend` when measured.
+- **[Risk] Type checking and kernel lowering duplicate some resolution work.** → Give `language-type-checking` ownership of ergonomic source types and diagnostics, keep `KernelProgram` ownership limited to executable fixed-width lanes, and permit shared resolved annotations later without making either track depend on the other.
 
-- static projector shape with dynamic meta reads, e.g. one bullet circle whose
-  radius is `meta.radius(t)`: fixed collider count, vectorizable per output column;
-- dynamic projector output, e.g. a laser projector that returns no hot capsules
-  during warn time and a sampled capsule chain during active time: row count
-  changes, so the backend needs per-tick range realization or a lowered
-  equivalent.
+## Migration Plan
 
-Both are produced by `ColliderProjector<F>`; the representation classifier
-must preserve whether row count is fixed, bounded range-like, or truly dynamic.
+- Introduce typed program metadata and typed executor paths alongside the current numeric path.
+- Dual-run each migrated surface against its existing evaluator under `MAKU_LOWER_ORACLE`.
+- Migrate one domain plan family per coherent change-set and retain whole-plan interpreted fallback.
+- Remove each private compiled evaluator only after its corpus coverage and focused tests pass through the common program.
+- Keep rollback local: disabling a plan family restores the existing interpreted evaluator without changing card or storage semantics.
+- After all target surfaces use the common ABI, `jit-native-codegen` and `gpu-kernel-backend` may add executors without changing source semantics.
 
-Projectors compose at the authoring level. For example:
+## Open Questions
 
-```edn
-(defcollider bullet-collider [e ctx]
-  (let [r e.hitbox
-        graze (* 2 r)]
-    [
-      (circle-collider {:radius r :layer :enemy-hit})
-      (circle-collider {:radius graze :layer :enemy-graze})]))
-
-(defcollider laser-collider [e ctx]
-  (capsule-chain-collider {:width e.width :layer e.layer}))
-```
-
-Lists mean concatenation/parallel projection of collider projector specs at
-collider body and spawn-slot boundaries. Flattening is one level only:
-`[a b]` concatenates projector values, `[]` and `nothing` mean no colliders,
-and nested lists are errors. This recovers the expressiveness of directly
-composing collider behavior while keeping all changing non-geometry inputs in
-meta.
-
-`(collider :pose|:parametric [e ctx] body...)` constructs a parameterized
-collider projector value, and `defcollider` is top-level sugar for defining
-one by name. Its body is pure code in a scope containing an explicit entity
-view parameter such as `e` and an explicit non-entity context
-parameter such as `ctx`. Because it cannot close over card-local mutable state,
-ordinary `let` is enough for sharing computed values; no special binding syntax
-is required. Semantically this is `defn` with an expected return type of
-`ColliderProjector<F> | List<ColliderProjector<F>>`; the special form is
-surface sugar for that typed definition. The optional figure type annotation on
-the definition, e.g. `(defcollider :pose name [e ctx] ...)` or
-`(defcollider :parametric name [e ctx] ...)`, selects the shape of `e` and the
-extraction loop that will run it. User code can branch, parameterize, and
-compose projectors, but it cannot define a new primitive collider projector kind
-without registering a builtin.
-
-Collider constructors are typed constructors inside that pure body. Their
-argument records must have load-time-known shape so the elaborator can preserve
-the projector algebra, and each field value must check against the field's
-concrete type. These argument records are ordinary expressions over `e` and
-`ctx`, not dyn-expecting slots, so `ctx.t` is the usual local time source. The
-available figure accessors depend on `F`: a pose projector may read pose fields,
-while a parametric-curve projector may read curve/domain/sampling helpers that
-do not exist on pointlike entities.
-
-```edn
-(circle-collider {:radius m"2 * e.hitbox + 0.05 * ctx.t"
-                  :layer :enemy-graze})
-```
-
-This elaborates to a circle-projector node whose `radius` expression is visible
-to lowering, not to an opaque map-returning closure.
-
-Projectors intentionally share the entity meta namespace. That lets hit,
-graze, render, query, and host-exposed behavior agree on fields such as
-`:radius`, `:style`, or `:scale`. To avoid collisions when importing
-projectors from another library, authors can wrap the projector with an adapter
-that rebinds flat names in the meta environment seen by the projector.
-Colliders themselves do not have author-visible fields in this model; operators
-compose or adapt opaque projector values.
-
-Meta is the same kind of typed boundary. The current interpreter's
-`SpawnMetaInput` still carries raw source forms because `:expose` channel
-designators and legacy signal tags are directives, not ordinary `Meta` values.
-Target elaboration should separate those directives from the `Dyn<Meta>` value
-the entity stores.
-
-Render schemas are the open counterpart to collider schemas. A render row is
-typed by a kind discriminator plus that kind's registered record schema:
-
-```text
-RenderKind : Kw * RecordSchema
-RenderData<K> = record checked against schema(K)
-```
-
-The kind is not an ordinary peer field such as `:mode`; it selects the schema
-that gives the remaining fields meaning. A card's render-kind manifest is
-derivable from renderer specs after macro/import expansion. Hosts and optional
-rendering crates declare which kinds they implement; unsupported kinds fail at
-load unless a declared degradation path is available.
-
-Each entity has exactly one render row. If a schema needs no-render or nullable
-behavior, it must define the field convention that expresses it, such as a
-host/profile-owned `:kind`, `:visible`, or `:enabled` field. The language does
-not reserve a no-render kind. To expose several visual parts, define a schema
-with enough fields for the maximum shape, such as `:aux-sprite-1`/`:aux-sprite-2`
-or a nested record, rather than returning multiple rows.
-
-Render schemas merge by field key, not by key/type pairs: if two renderers
-contribute the same key with incompatible types, card load fails. Imported
-renderers with conflicting field names can be adapted by a builtin projection
-operator that renames fields, selects a subset of fields, or both before schema
-merge.
-
-Core owns the render slot boundary, registry/manifest mechanics, typed row
-transport, and deterministic extraction order. It does not own sprite family
-semantics, texture/material binding, palette interpretation, or the meaning of
-library-defined render fields. Stock kinds such as `:sprite`/`:dot` and
-`:polyline` may ship with the engine for the prototype and debug hosts, but
-they are registered profiles rather than universal language semantics.
-
-Dynamic renderer inputs are ordinary dyn-valued meta fields. For example, the
-current compatibility tags `:hue`, `:scale`, `:facing`, and `:opacity` should
-become fields read by a stock `:sprite` renderer projector, sequenced through
-the normal `Record{field: Dyn<T>} => Dyn<Record{field: T}>` meta coercion
-instead of sampled by special render-side tags. The renderer projector itself
-is not dyn and is not manipulated directly; changing render behavior over time
-means changing figure/meta inputs or rematerializing with a different projector.
-
-## Representation Classification
-
-After type elaboration, a separate pass chooses execution/storage classes.
-It may use the semantic signal class, but it does not decide whether a dyn is
-closed, integrated, or scanned.
-
-For structures:
-
-- homogeneous list literals may classify as `Array`, `Vec`, or `Mat`;
-- unstructured lists remain list data;
-- records lower to fixed field layouts;
-- entity meta fields lower to typed matrices in `WorldFields`.
-- render rows lower to per-kind, per-field column buffers, optionally bucketed
-  by an interned batch key. Because there is exactly one render row per entity,
-  fixed-width fields can be entity-indexed directly. Variable-size payload
-  fields such as mesh vertices or polyline points are represented as fields
-  containing offsets/ranges into shared pools, not as multiple render rows.
-
-This pass may choose optimized representations such as specialized linear
-motion, dense motion-state slots, shared curve sampling caches, or compiled
-loops. Those choices should preserve the typed semantic IR.
-
-## Compiler Implications
-
-An AOT compiler and the interpreter should share the typed semantic IR and as
-much representation classification as practical. Backend lowering can differ:
-the interpreter may lower to closures/enums, while a compiler lowers to vector
-loops or codegen.
-
-This suggests the implementation boundary:
-
-```text
-source parser / macros
-  shared typed elaboration
-  shared representation classification where possible
-  backend-specific lowering
-```
-
-`sem.rs` in the current interpreter is the first narrow version of this
-boundary. It should grow toward elaborated semantic slots, not toward a second
-runtime model.
+- Canonical handle lane representation: packed `U64` versus explicit row/generation lanes.
+- Whether the first implementation uses typed register metadata or type-specific op variants.
+- Whether multi-output programs expose output registers directly or explicit store ops to bound columns.
+- Which reductions deserve reusable plan templates after the fixed-output migrations are measured.

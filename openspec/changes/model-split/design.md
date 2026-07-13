@@ -1,122 +1,104 @@
-<!-- Moved verbatim from docs/notes/model-split.md (dissolve-design-notes). -->
+## Context
 
-# model/ split — moving dyn (and friends) to the semantic model
+The original design proposed moving a backend-parametric `Dyn<E>` plus entity-spec and state-schema halves into `model/`, on the assumption that interpreter, compiled CPU, and GPU backends would consume the same semantic enum before choosing execution representation. Two newer boundaries make that assumption unnecessary:
 
-Status: DIRECTION SETTLED, sequencing recorded here; execution deferred until
-the evolve re-expression lands (see "Sequencing"). Companion to the module
-doc in `proto/core/src/model/mod.rs`: model/ is the semantic representation
-at a level that doesn't depend on backend — an interpreter vs compiler, CPU
-vs GPU — and the backend converts it to runtime-optimized forms, including
-choice of data layout.
+```text
+language-type-checking
+    owns source semantic types and elaborated author-facing meaning
 
-## The criterion
+ir-unification
+    owns typed fixed-width KernelProgram/KernelPlan execution
 
-A type belongs in model/ iff a second backend would need it UNCHANGED.
-Everything that encodes a choice of evaluation strategy or data layout stays
-on the backend side. `Figure<E>`/`CurveEval<E>` already demonstrate the
-pattern: the semantic shape is parametric over the expression representation
-`E`; the frontend/backend picks `E` (Form+Env for the interpreter,
-NumProgram for the compiled path, a kernel handle for a GPU).
-
-## Where dyn stands semantically (assessed 2026-07)
-
-The target is NOT "everything is `t -> T`". The settled semantics
-(evolve-design.md, SCANNED) are a trichotomy, and the model type should
-encode it explicitly:
-
-- **closed** — pure `t -> T`, samplable at any tau (Const/Linear/ClosedPt/
-  RotExpr/Frame/Translate/Clamp/Path over closed children);
-- **evolve** — a fold over the tick clock; pure in tau only relative to an
-  epoch; live evolves error on off-clock sampling by design;
-- **live** — a function of the host channel stream, not of t at all.
-
-Today the runtime has three specialized encodings instead of one parametric
-dyn: `interp::DynNode` is hardwired to poses (the Frame/Translate/Clamp
-algebra is SE(2)-specific), dyn COLUMNS are a separate scalar path
-(`DynNum`, `refresh_dyn_cols`), and `EvolveDyn` is the only genuinely
-Val-valued one. `Vel`, `slew`/`smooth`, and `Stages` are clocked folds
-wearing a sampling interface — semantically evolve shapes. `slew`/
-`smooth` are re-expressed (prelude macros over sited evolves); `vel`
-and `stages` remain kernel nodes pending this split and their own
-round respectively (evolve-design step 3).
-
-## The model dyn (target shape)
-
-Cut at the POST-re-expression kernel, parametric over expression repr and
-(eventually) value domain:
-
-```rust
-// model/dyn.rs — sketch, names illustrative
-enum Dyn<E> {
-    Const(Pose),
-    Closed { a: E, b: E, polar: bool },   // pure (t, u) -> component
-    Evolve { init: E, step: E },          // tick-clock fold; epoch-relative
-    Live { channel: Symbol },
-    Frame(Box<Dyn<E>>, Box<Dyn<E>>),
-    Translate { dx: f64, dy: f64, child: Box<Dyn<E>> },
-    Clamp { lo: (f64, f64), hi: (f64, f64), child: Box<Dyn<E>> },
-    Path { curve: Box<Dyn<E>>, progress: E },
-}
+entity-representation-flip + sim
+    own spec ids, captures, state/epoch columns, snapshots, and drivers
 ```
 
-Notes:
-- `Vel` and `Stages` are deliberately ABSENT: after the evolve
-  re-expression they are surface shapes (lib macros over evolve + closed
-  exprs), not kernel nodes. Moving DynNode before that lands would enshrine
-  nodes we intend to delete — this is the main reason to sequence, not rush.
-- Each node DECLARES its state kind (integrator `[f64; 2]`, evolve Val
-  cell) as a schema the backend realizes; the model never owns storage.
-- Whether `Dyn` also abstracts the value domain (pose vs scalar for dyn
-  cols) is decided at execution time; at minimum the scalar-column path
-  should stop being a parallel machinery and become `Dyn<E>` over a scalar
-  domain.
+A GPU or native backend consumes kernel plans, not a generic semantic dyn tree. The interpreter still needs its own closures, `Val`, environments, state construction, and fallback behavior. The remaining reason to move a type into `model/` must therefore be stable domain sharing, not anticipated backend reuse.
 
-## What must NOT move (backend artifacts currently tangled into DynNode)
+## Goals / Non-Goals
 
-- `OnceCell<NumProgram>` caches — the compiled backend's lowering artifact.
-- `Env` captures inside Form leaves — the interpreter's closure repr; in
-  model terms these become declared input slots (compiled-dyn milestone B's
-  capture vector is the same concept from the other end).
-- Pointer-identity `node_ids` / `MotionStateKey` — interpreter state
-  addressing. The model side is only "this node has a state cell of kind K".
-- `FnPose(Val)` — interpreter value repr; model-side it's an `E` adapter.
-- `NumProgram` itself — one backend's IR, not semantics.
-- `Form`/`Env`/`Val` overall: Form is frontend syntax, Val the interpreter's
-  value repr. model/ sits between them — post-elaboration, pre-layout.
+**Goals:**
 
-## What else cuts along the same seam
+- Give stable domain data, source typing, interpreter execution, kernel execution, and runtime storage unambiguous owners.
+- Move only types with two concrete consumers that need identical domain meaning.
+- Avoid extracting soon-to-be-reexpressed `Vel`/`Stages` or interpreter/cache artifacts.
+- Allow a no-op outcome when the existing owner is already correct.
 
-Already in model/ (the 2026-07 commits): Pose/Curve/Figure, collider shapes
-+ parametric collider projectors, renderer projector definitions, flat
-primitive entity meta.
+**Non-Goals:**
 
-Still to split when dyn moves (fold into the same move — same seam):
-- **Entity spec** (`interp/specs.rs`): what an entity IS (fields, motion
-  slot, render/collider bindings) vs how the SoA lays it out. The
-  EntitySpecStore dedup TODO keys naturally off the model type, and
-  compiled-dyn milestone B needs that dedup anyway — these converge.
-- **Motion state schema, semantic half**: "this figure carries these state
-  cells of these kinds" is model; slot indices, snapshots,
-  `shared_node_ids` are backend.
-- **Clock/epoch contract**: tick rate, epoch-local tau, `motion_birth`
-  semantics — currently implicit across world.rs/motion.rs; any compiler
-  backend needs the same contract.
-- **Channel contract**: the names/types the host injects are semantic;
-  `sim/channels.rs` runtime stays.
+- A generic semantic IR between type checking and kernel lowering.
+- Making `model/` the dependency root for every backend-related type.
+- Moving interpreter `Form`/`Env`/`Val` or kernel program/plan types into `model/`.
+- Moving physical storage/schema slot ids, snapshots, epochs, or execution caches into `model/`.
+- Blocking native/GPU code generation on a model refactor.
 
-## Sequencing
+## Decisions
 
-1. Land live-evolve milestones 1–3 (engine-clock advance, live evolves).
-2. Evolve re-expression: `vel`/`slew`/`smooth`/`stages`/`pather` as lib
-   shapes over evolve + closed exprs (evolve-design step 3). The kernel dyn
-   shrinks to the model shape above.
-3. Cut `model::dyn` as `Dyn<E>`; `interp::DynNode` becomes the
-   `E = (Form, Env)` instantiation plus its caches; `NumProgram` the
-   compiled backend's `E`. Fold in the entity-spec and state-schema splits.
-4. Optimization work (compiled-dyn B/C, group eval, GPU-shaped layouts)
-   then targets the model type, per the standing rule that optimization
-   recognizes expansion SHAPES, never names.
+### 1. Ownership follows unchanged meaning across current consumers
 
-Anti-goal: moving code for tidiness while the seams are churning. Steps 1–2
-are actively rewriting exactly the state/layout boundaries the split cuts
-along; every early move would land twice.
+A type belongs in `model/` only when at least two current subsystems consume the same domain value and neither owns its execution or storage policy. Candidates include:
+
+- `Symbol`, field-name ids, and generation-safe handle values;
+- `Pose`, `Figure`, and stable curve/geometry descriptors;
+- literal `ColliderData` and typed render-boundary records/descriptors;
+- stable schema descriptors that source checking and runtime validation must interpret identically.
+
+A type does not move merely because it is generic over an expression type or could hypothetically be consumed by a future backend.
+
+### 2. Source semantic types belong to the frontend
+
+`language-type-checking` owns `Num`, `Symbol`, `Handle`, `Dyn<T>`, signal classes, functions, records, projectors, render rows, actions, expected-type coercions, and typed elaboration as author-facing meaning. Those types may reference stable model domain types, but they do not become runtime storage or backend IR.
+
+### 3. Interpreter dyns remain interpreter execution representations
+
+`DynNode`, `DynNum`, `EvolveDyn`, `Form`, `Env`, `Val`, interpreter closure adapters, node-local caches, and fallback state construction remain under `interp/` unless a later cut removes them entirely. Their variants encode interpreter evaluation strategy and migration history, not a backend-independent domain value.
+
+`Vel` and `Stages` remain explicitly ineligible for extraction while their `evolve-followups` re-expression is pending.
+
+### 4. Kernel plans are the compiled backend boundary
+
+`KernelProgram`, `KernelPlan`, typed registers, column/state bindings, structural compile identity, generated code, and backend eligibility live in lowering/kernel modules. Native, wasm, SIMD, and GPU backends share this contract directly. Duplicating it behind `model::Dyn<E>` would add a translation layer without another semantic consumer.
+
+### 5. Runtime spec/state identity belongs to entity/sim storage
+
+The entity spec table may refer to stable model schemas and kernel plan ids, but spec ids, capture ranges, state slots, epochs, generations, row reuse, snapshots, cache policy, and driver bindings are runtime representation. `entity-representation-flip` owns that layout and the replacement of pointer identity with explicit ids.
+
+A state-kind descriptor moves to `model/` only if source checking and more than one runtime executor require the exact same descriptor unchanged. Physical slot assignment never moves.
+
+### 6. Reassessment precedes movement
+
+At pick-up, inventory every proposed moved type and record:
+
+```text
+current owner
+current consumers
+meaning shared unchanged?
+execution/storage policy embedded?
+post-kernel/type-check target owner
+move / split / keep / delete
+```
+
+Only then create implementation tasks. If no type passes the criterion, close/archive this change as a resolved no-op rather than performing organizational churn.
+
+## Risks / Trade-offs
+
+- **[Risk] Keeping interpreter dyn types under `interp/` preserves some coupling.** → Remove coupling at real plan/schema boundaries; do not move it into a generic layer without a second consumer.
+- **[Risk] Frontend and runtime schemas drift.** → Share only stable schema descriptors/registries in `model/`; keep elaborated expressions and physical slots in their owning layers.
+- **[Risk] The no-op criterion feels too conservative.** → Prefer evidence from current consumers; a later concrete backend can justify a narrow move without paying for a speculative abstraction now.
+- **[Risk] `model/` becomes an incoherent grab bag.** → Require domain-value identity and two unchanged consumers for every addition; execution and storage types are categorically excluded.
+- **[Risk] Evolve/model changes race.** → Retain the sequencing gate and reassess only after `Vel`/`Stages` target shapes are settled.
+
+## Migration Plan
+
+1. Land or stabilize `KernelProgram`/`KernelPlan` ownership and the entity spec-id target.
+2. Complete the relevant evolve re-expression before assessing dyn variants as stable.
+3. Produce the type ownership inventory and decide move/split/keep/delete for each candidate.
+4. Move one coherent stable-domain cluster at a time, with no behavior changes and focused compile/tests.
+5. Delete obsolete bridge types/imports after each cutover; do not retain aliases or duplicate schema authorities.
+6. Close the change without code edits if no remaining candidate passes the ownership criterion.
+
+## Open Questions
+
+- Whether any motion state-kind descriptor is genuinely shared semantic data after kernel plans and typed source elaboration exist.
+- Whether current `Figure<E>` generic evaluation descriptors remain stable domain structure or should split into a non-generic figure descriptor plus frontend/kernel evaluators.
+- Which render/collider schema descriptors are already authoritative enough to share directly with the type checker.
