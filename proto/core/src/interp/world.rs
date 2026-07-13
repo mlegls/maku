@@ -996,6 +996,8 @@ pub struct World {
     pub render_rows: Vec<crate::model::RenderItem>,
     /// Accreted schemas for open host-facing render row fields, scoped by kind.
     pub render_schema: FxHashMap<FieldName, FxHashMap<FieldName, RenderFieldKind>>,
+    /// Declared kinds are prefilled and frozen; their Rc schema is host layout identity.
+    pub declared_render_schemas: FxHashMap<FieldName, (super::schema::RenderGeometry, Rc<crate::model::RenderSchema>)>,
     /// Card-defined standing rules over row domains, run once per tick.
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
@@ -1018,6 +1020,7 @@ impl Clone for World {
             symbols: self.symbols.clone(),
             render_rows: self.render_rows.clone(),
             render_schema: self.render_schema.clone(),
+            declared_render_schemas: self.declared_render_schemas.clone(),
             standing_rules: self.standing_rules.clone(),
             collision_index: self.collision_index.clone(),
             pending_writes: self.pending_writes.clone(),
@@ -1131,6 +1134,7 @@ impl World {
             symbols: SymbolTable::default(),
             render_rows: Vec::new(),
             render_schema: FxHashMap::default(),
+            declared_render_schemas: FxHashMap::default(),
             standing_rules: Vec::new(),
             collision_index: CollisionIndex::default(),
             pending_writes: Vec::new(),
@@ -1399,6 +1403,36 @@ impl World {
 
     /// Register/verify a render row field. Exact-kind merge: a key means one
     /// type everywhere; a conflict is an error, not a coercion.
+    pub fn install_render_kinds(&mut self, decls: &[super::schema::RenderKindDecl]) -> Result<(), String> {
+        for decl in decls {
+            let kind = self.field_sym(&decl.name);
+            let mut fields = FxHashMap::default();
+            for (name, field_kind) in &decl.fields {
+                let field = self.field_sym(name);
+                fields.insert(field, *field_kind);
+            }
+            let cols = decl.fields.iter().filter(|(name, _)| !matches!(name.as_ref(),
+                "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity"
+                | "hue" | "points" | "pts" | "active" | "shape" | "kind"))
+                .cloned().collect();
+            let schema = Rc::new(crate::model::RenderSchema { cols });
+            if let Some((geometry, prior)) = self.declared_render_schemas.get(&kind) {
+                if *geometry != decl.geometry || prior.cols != schema.cols {
+                    return Err(format!("defrender-kind :{}: conflicting declaration", decl.name));
+                }
+                continue;
+            }
+            self.render_schema.insert(kind, fields);
+            self.declared_render_schemas.insert(kind, (decl.geometry, schema));
+        }
+        Ok(())
+    }
+
+    pub fn declared_render_schema(&self, render_kind: &str) -> Option<(super::schema::RenderGeometry, Rc<crate::model::RenderSchema>)> {
+        let kind = self.symbols.lookup(render_kind)?;
+        self.declared_render_schemas.get(&kind).map(|(g, s)| (*g, s.clone()))
+    }
+
     pub fn render_field_check(&mut self, render_kind: &str, name: &str, kind: RenderFieldKind) -> Result<(), String> {
         let render_kind_field = self.field_sym(render_kind);
         let field = self.field_sym(name);
@@ -1413,6 +1447,9 @@ impl World {
             }
             Some(_) => Ok(()),
             None => {
+                if self.declared_render_schemas.contains_key(&render_kind_field) {
+                    return Err(format!("render :{render_kind}: field :{name} is not declared"));
+                }
                 schema.insert(field, kind);
                 Ok(())
             }
@@ -1446,6 +1483,9 @@ impl World {
             }
             Some(_) => Ok(()),
             None => {
+                if self.declared_render_schemas.contains_key(&render_kind_field) {
+                    return Err(format!("render :{render_kind}: field :{name} is not declared"));
+                }
                 pending.push((field, kind));
                 Ok(())
             }

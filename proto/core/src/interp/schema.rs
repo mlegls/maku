@@ -6,11 +6,23 @@
 //! (fresh load, run/swap/add fragments).
 
 use crate::edn::Form;
+use crate::model::RenderFieldKind;
+use std::rc::Rc;
 use super::card::Card;
 use std::collections::HashSet;
 
 /// Names the pass always resolves: engine-provided streams.
 const BUILTIN_STREAMS: [&str; 1] = ["tick"];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenderGeometry { Point, Polyline }
+
+#[derive(Clone, Debug)]
+pub struct RenderKindDecl {
+    pub name: Rc<str>,
+    pub geometry: RenderGeometry,
+    pub fields: Vec<(Rc<str>, RenderFieldKind)>,
+}
 
 pub struct CardSchema {
     /// Host inputs the card requires: bare names from (from-host :name) sites.
@@ -18,9 +30,64 @@ pub struct CardSchema {
     /// Lints (never errors): e.g. set! on a stream whose top-level producer
     /// looks always-writing — the write survives only until the next refresh.
     pub warnings: Vec<String>,
+    /// Fixed schemas declared by this card, in declaration order.
+    pub render_kinds: Vec<RenderKindDecl>,
+    /// Kinds directly visible at standing render emission sites.
+    pub emitted_render_kinds: Vec<String>,
 }
 
 pub fn collect_card_schema(card: &Card) -> Result<CardSchema, String> {
+    let mut render_kinds = Vec::new();
+    for form in &card.render_kinds {
+        let Form::List(items) = form else { unreachable!() };
+        let Some(Form::Kw(name)) = items.get(1) else {
+            return Err("defrender-kind: expected a keyword name".into());
+        };
+        let Some(Form::Map(opts)) = items.get(2) else {
+            return Err(format!("defrender-kind :{name}: expected option map"));
+        };
+        let mut geometry = None;
+        let mut fields = None;
+        for (key, value) in opts.iter() {
+            let Form::Kw(key) = key else { return Err(format!("defrender-kind :{name}: option keys must be keywords")) };
+            match key.as_ref() {
+                "geometry" => geometry = Some(match value {
+                    Form::Kw(v) if v.as_ref() == "point" => RenderGeometry::Point,
+                    Form::Kw(v) if v.as_ref() == "polyline" => RenderGeometry::Polyline,
+                    _ => return Err(format!("defrender-kind :{name}: :geometry must be :point or :polyline")),
+                }),
+                "fields" => {
+                    let Form::Map(map) = value else { return Err(format!("defrender-kind :{name}: :fields must be a map")) };
+                    let mut out = Vec::new();
+                    for (field, kind) in map.iter() {
+                        let (Form::Kw(field), Form::Kw(kind)) = (field, kind) else {
+                            return Err(format!("defrender-kind :{name}: fields must map keywords to :num or :sym"));
+                        };
+                        let kind = match kind.as_ref() {
+                            "num" => RenderFieldKind::Num,
+                            "sym" => RenderFieldKind::Sym,
+                            _ => return Err(format!("defrender-kind :{name}: field :{field} must be :num or :sym")),
+                        };
+                        out.push((field.clone(), kind));
+                    }
+                    fields = Some(out);
+                }
+                _ => return Err(format!("defrender-kind :{name}: unknown option :{key}")),
+            }
+        }
+        let decl = RenderKindDecl {
+            name: name.clone(),
+            geometry: geometry.ok_or_else(|| format!("defrender-kind :{name}: missing :geometry"))?,
+            fields: fields.ok_or_else(|| format!("defrender-kind :{name}: missing :fields"))?,
+        };
+        if let Some(prior) = render_kinds.iter().find(|d: &&RenderKindDecl| d.name == decl.name) {
+            if prior.geometry != decl.geometry || prior.fields != decl.fields {
+                return Err(format!("defrender-kind :{name}: conflicting declaration"));
+            }
+        } else {
+            render_kinds.push(decl);
+        }
+    }
     // Card-global stream names: top-level defs, plus every name published
     // by an (export! ...) form anywhere in the card (publication makes the
     // name readable card-wide once the exporting pattern runs).
@@ -98,7 +165,30 @@ pub fn collect_card_schema(card: &Card) -> Result<CardSchema, String> {
             cx.walk(f, &scope).map_err(|e| format!("pattern {}: {}", p.name, e))?;
         }
     }
-    Ok(CardSchema { host_channels: cx.hosts, warnings: cx.warnings })
+    let mut emitted_render_kinds = Vec::new();
+    for form in &card.tick_rules {
+        collect_emitted_render_kinds(form, &mut emitted_render_kinds);
+    }
+    Ok(CardSchema { host_channels: cx.hosts, warnings: cx.warnings, render_kinds, emitted_render_kinds })
+}
+
+fn collect_emitted_render_kinds(form: &Form, out: &mut Vec<String>) {
+    if let Form::List(items) = form {
+        let fields = if matches!(items.first(), Some(Form::Sym(h)) if h.as_ref() == "emit")
+            && matches!(items.get(1), Some(Form::Kw(c)) if c.as_ref() == "render") {
+            items.get(2)
+        } else if matches!(items.first(), Some(Form::Sym(h)) if h.as_ref() == "render") {
+            items.get(1)
+        } else { None };
+        if let Some(Form::Map(fields)) = fields {
+                let kind = fields.iter().find_map(|(k, v)| match (k, v) {
+                    (Form::Kw(k), Form::Kw(v)) if k.as_ref() == "kind" => Some(v.to_string()),
+                    _ => None,
+                }).unwrap_or_else(|| "default".into());
+                if !out.contains(&kind) { out.push(kind); }
+        }
+    }
+    for child in form_children(form) { collect_emitted_render_kinds(child, out); }
 }
 
 /// Pre-scan: (export! $x) / (export! $x :as $name) publication names

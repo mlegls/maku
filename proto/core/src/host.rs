@@ -30,6 +30,8 @@ pub struct Instance {
     /// verify the card's (from-host ...) manifest against it â a missing
     /// channel fails the load before tick 0 (specs/load-time-schema).
     pub host_channels: Option<Vec<String>>,
+    /// Render kinds this host understands. None keeps permissive legacy loading.
+    pub render_kinds: Option<Vec<String>>,
 }
 
 /// Timeline info for scrub UIs.
@@ -56,6 +58,7 @@ impl Instance {
             status: String::new(),
             vfs: None,
             host_channels: None,
+            render_kinds: None,
         }
     }
 
@@ -111,12 +114,20 @@ impl Instance {
     pub fn restart(&mut self) {
         self.refresh_menu();
         match Sim::load(&self.card_src, self.pattern.as_deref()) {
-            Ok(sim) => {
+            Ok(mut sim) => {
                 if let Some(provided) = &self.host_channels {
                     let provided: Vec<&str> = provided.iter().map(|s| s.as_str()).collect();
                     if let Err(e) = sim.verify_host_channels(&provided) {
                         self.session.stop();
                         self.status = format!("load error: {} (add a binding row â press B)", e);
+                        return;
+                    }
+                }
+                if let Some(supported) = &self.render_kinds {
+                    let supported: Vec<&str> = supported.iter().map(|s| s.as_str()).collect();
+                    if let Err(e) = sim.verify_render_kinds(&supported) {
+                        self.session.stop();
+                        self.status = format!("load error: {}", e);
                         return;
                     }
                 }

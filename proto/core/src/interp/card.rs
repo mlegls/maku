@@ -37,6 +37,8 @@ pub struct Card {
     /// (def $name init?) — top-level stream declarations, in card order.
     /// Bare names (no sigil); ids allocate at install.
     pub streams: Vec<(Rc<str>, Option<Form>)>,
+    /// Top-level render-kind declarations, validated by the load-time schema pass.
+    pub render_kinds: Vec<Form>,
     /// Top-level (bind! ...) / (export! ...) forms, run at install in
     /// card order — producers attach before any pattern executes.
     pub stream_forms: Vec<Form>,
@@ -50,6 +52,7 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut tick_rules: Vec<Form> = Vec::new();
     let mut streams: Vec<(Rc<str>, Option<Form>)> = Vec::new();
     let mut stream_forms: Vec<Form> = Vec::new();
+    let mut render_kinds: Vec<Form> = Vec::new();
     for f in forms {
         if let Form::List(items) = f {
             match items.first() {
@@ -189,11 +192,14 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                 Some(Form::Sym(s)) if &**s == "deftick" => {
                     tick_rules.push(f.clone());
                 }
+                Some(Form::Sym(s)) if &**s == "defrender-kind" => {
+                    render_kinds.push(f.clone());
+                }
                 _ => {}
             }
         }
     }
-    let mut card = Card { patterns, order, defs, macros, tick_rules, streams, stream_forms };
+    let mut card = Card { patterns, order, defs, macros, tick_rules, streams, render_kinds, stream_forms };
     rewrite_card(&mut card);
     Ok(card)
 }

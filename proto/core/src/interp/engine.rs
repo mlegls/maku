@@ -491,6 +491,14 @@ impl RenderRowFields {
             }
             other => return Err(format!("render: unsupported shape :{}", other)),
         };
+        if let Some((geometry, _)) = world.declared_render_schema(&row_kind) {
+            let matches = matches!((geometry, &data),
+                (super::schema::RenderGeometry::Point, RenderData::Point { .. })
+                | (super::schema::RenderGeometry::Polyline, RenderData::Polyline { .. }));
+            if !matches {
+                return Err(format!("render :{row_kind}: geometry does not match its declaration"));
+            }
+        }
         let mut row = RenderRow::of_kind(row_kind.clone(), data);
         let num_count = self.extras.iter().filter(|(_, v)| matches!(v, Val::Num(_))).count();
         let sym_count = self.extras.iter().filter(|(_, v)| matches!(v, Val::Kw(_))).count();

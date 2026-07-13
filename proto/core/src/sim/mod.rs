@@ -68,6 +68,10 @@ pub struct Sim {
     /// Host inputs the loaded card requires: the (from-host :name) sites
     /// collected by the load-time schema pass, in first-use order.
     host_manifest: Vec<String>,
+    /// Declared render kinds negotiated with strict hosts.
+    render_manifest: Vec<String>,
+    /// Statically emitted kinds with no declaration.
+    undeclared_render_kinds: Vec<String>,
     /// Load-time lints from the schema pass (advisory, never errors).
     load_warnings: Vec<String>,
 }
@@ -412,6 +416,8 @@ impl Clone for Sim {
             vel_batch: VelBatchScratch::default(),
             closed_pose: ClosedPoseScratch::default(),
             host_manifest: self.host_manifest.clone(),
+            render_manifest: self.render_manifest.clone(),
+            undeclared_render_kinds: self.undeclared_render_kinds.clone(),
             load_warnings: self.load_warnings.clone(),
         }
     }
@@ -461,6 +467,7 @@ impl Sim {
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
         let schema = collect_card_schema(&card)?;
+        world.install_render_kinds(&schema.render_kinds)?;
         install_tick_rules(&card, &mut ctx, &mut world)?;
         install_streams(&card, &mut ctx, &mut world)?;
         let env = Env::empty();
@@ -474,6 +481,8 @@ impl Sim {
             vel_batch: VelBatchScratch::default(),
             closed_pose: ClosedPoseScratch::default(),
             host_manifest: schema.host_channels,
+            render_manifest: schema.render_kinds.iter().map(|d| d.name.to_string()).collect(),
+            undeclared_render_kinds: schema.emitted_render_kinds.iter().filter(|k| !schema.render_kinds.iter().any(|d| d.name.as_ref() == k.as_str())).cloned().collect(),
             load_warnings: schema.warnings,
         })
     }
@@ -492,8 +501,8 @@ impl Sim {
         // load_card's defchannel rule), and the task body is the fragment's
         // trailing action forms — or the first sent pattern when there are
         // none (live-swapped bare defpatterns auto-play).
-        const DEF_HEADS: [&str; 7] =
-            ["def", "defn", "defmacro", "defpattern", "defcollider", "defchannel", "deftick"];
+        const DEF_HEADS: [&str; 8] =
+            ["def", "defn", "defmacro", "defpattern", "defcollider", "defchannel", "deftick", "defrender-kind"];
         let head_in = |form: &Form, heads: &[&str]| {
             matches!(form, Form::List(items)
                 if matches!(items.first(), Some(Form::Sym(s)) if heads.contains(&s.as_ref())))
@@ -518,6 +527,17 @@ impl Sim {
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 let schema = collect_card_schema(&card)?;
+                self.world.install_render_kinds(&schema.render_kinds)?;
+                for decl in &schema.render_kinds {
+                    let name = decl.name.to_string();
+                    if !self.render_manifest.contains(&name) { self.render_manifest.push(name); }
+                }
+                for kind in &schema.emitted_render_kinds {
+                    if !schema.render_kinds.iter().any(|d| d.name.as_ref() == kind)
+                        && !self.undeclared_render_kinds.contains(kind) {
+                        self.undeclared_render_kinds.push(kind.clone());
+                    }
+                }
                 for name in schema.host_channels {
                     if !self.host_manifest.contains(&name) {
                         self.host_manifest.push(name);
@@ -554,6 +574,17 @@ impl Sim {
                 self.ctx.patterns = Rc::new(card.patterns.clone());
                 self.ctx.macros = Rc::new(card.macros.clone());
                 let schema = collect_card_schema(&card)?;
+                self.world.install_render_kinds(&schema.render_kinds)?;
+                for decl in &schema.render_kinds {
+                    let name = decl.name.to_string();
+                    if !self.render_manifest.contains(&name) { self.render_manifest.push(name); }
+                }
+                for kind in &schema.emitted_render_kinds {
+                    if !schema.render_kinds.iter().any(|d| d.name.as_ref() == kind)
+                        && !self.undeclared_render_kinds.contains(kind) {
+                        self.undeclared_render_kinds.push(kind.clone());
+                    }
+                }
                 for name in schema.host_channels {
                     if !self.host_manifest.contains(&name) {
                         self.host_manifest.push(name);
@@ -602,6 +633,7 @@ impl Sim {
         ctx.macros = Rc::new(card.macros.clone());
         let mut world = World::default();
         let schema = collect_card_schema(card)?;
+        world.install_render_kinds(&schema.render_kinds)?;
         install_tick_rules(card, &mut ctx, &mut world)?;
         install_streams(card, &mut ctx, &mut world)?;
         let mut env = Env::empty();
@@ -619,6 +651,8 @@ impl Sim {
             vel_batch: VelBatchScratch::default(),
             closed_pose: ClosedPoseScratch::default(),
             host_manifest: schema.host_channels,
+            render_manifest: schema.render_kinds.iter().map(|d| d.name.to_string()).collect(),
+            undeclared_render_kinds: schema.emitted_render_kinds.iter().filter(|k| !schema.render_kinds.iter().any(|d| d.name.as_ref() == k.as_str())).cloned().collect(),
             load_warnings: schema.warnings,
         })
     }
@@ -1586,15 +1620,34 @@ impl Sim {
                 }
             }
         }
+        let declared = self.world.declared_render_schema(&plan.kind).map(|(_, schema)| schema);
+        if let Some(schema) = &declared {
+            let mut observed = std::mem::take(&mut cols);
+            cols = Vec::with_capacity(schema.cols.len());
+            for (key, kind) in &schema.cols {
+                if let Some(i) = observed.iter().position(|(k, _, _)| k == key) {
+                    cols.push(observed.remove(i));
+                } else {
+                    let empty = match kind {
+                        RenderFieldKind::Num => Column::NumOpt(vec![0.0; rows.len()], vec![false; rows.len()]),
+                        RenderFieldKind::Sym => Column::Syms(vec![None; rows.len()]),
+                    };
+                    cols.push((key.clone(), *kind, empty));
+                }
+            }
+        }
         let schema_cols: Vec<(Rc<str>, RenderFieldKind)> =
             cols.iter().map(|(k, kind, _)| (k.clone(), *kind)).collect();
         let mut memo = form.schema.borrow_mut();
-        let schema = match memo.as_ref() {
-            Some(s) if s.cols == schema_cols => s.clone(),
-            _ => {
-                let s = Rc::new(RenderSchema { cols: schema_cols });
-                *memo = Some(s.clone());
-                s
+        let schema = match declared {
+            Some(schema) => schema,
+            None => match memo.as_ref() {
+                Some(s) if s.cols == schema_cols => s.clone(),
+                _ => {
+                    let s = Rc::new(RenderSchema { cols: schema_cols });
+                    *memo = Some(s.clone());
+                    s
+                }
             }
         };
         drop(memo);
@@ -1854,6 +1907,16 @@ impl Sim {
         &self.host_manifest
     }
 
+    /// Declared render kinds collected by the load-time schema pass.
+    pub fn render_manifest(&self) -> &[String] {
+        &self.render_manifest
+    }
+
+    /// Fixed schema identity for a declared kind.
+    pub fn declared_render_schema(&self, kind: &str) -> Option<Rc<crate::model::RenderSchema>> {
+        self.world.declared_render_schema(kind).map(|(_, schema)| schema)
+    }
+
     /// Load-time lints from the schema pass (advisory).
     pub fn load_warnings(&self) -> &[String] {
         &self.load_warnings
@@ -1866,6 +1929,23 @@ impl Sim {
         for name in &self.host_manifest {
             if !provided.iter().any(|p| p == name) {
                 return Err(format!("host does not provide channel {}", name));
+            }
+        }
+        Ok(())
+    }
+
+    /// Negotiate declared kinds before tick 0. Undeclared static emissions
+    /// remain legal and become load lints under a strict host.
+    pub fn verify_render_kinds(&mut self, supported: &[&str]) -> Result<(), String> {
+        for kind in &self.render_manifest {
+            if !supported.iter().any(|p| p == kind) {
+                return Err(format!("host does not support render kind :{kind} declared by loaded card"));
+            }
+        }
+        for kind in &self.undeclared_render_kinds {
+            let warning = format!("render kind :{kind} is emitted without a declaration");
+            if !self.load_warnings.contains(&warning) {
+                self.load_warnings.push(warning);
             }
         }
         Ok(())

@@ -24,7 +24,9 @@ pub struct Maku {
 impl Maku {
     #[wasm_bindgen(constructor)]
     pub fn new(rig: Option<String>) -> Maku {
-        Maku { inst: Instance::new(rig), pending: Inputs::default() }
+        let mut inst = Instance::new(rig);
+        inst.render_kinds = Some(vec!["default".into(), "sprite".into(), "beam".into()]);
+        Maku { inst, pending: Inputs::default() }
     }
 
     /// Register a card file in the virtual filesystem (path → text).

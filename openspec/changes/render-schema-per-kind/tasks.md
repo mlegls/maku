@@ -5,12 +5,12 @@ until scoped-channel-overrides' working tree lands.
 
 ## 1. Per-kind schema store
 
-- [ ] 1.1 Scope the render field schema per kind (`kind → key → RenderFieldKind`); `RenderRow`/`RenderBatch` carry the kind as a distinguished slot (`:default` when unset). Staged batch validation indexes by kind; within-kind conflicts keep the exact abort-and-rerun behavior. Behavior-preserving for single-kind worlds.
+- [x] 1.1 Scope the render field schema per kind (`kind → key → RenderFieldKind`); `RenderRow`/`RenderBatch` carry the kind as a distinguished slot (`:default` when unset). Staged batch validation indexes by kind; within-kind conflicts keep the exact abort-and-rerun behavior. Behavior-preserving for single-kind worlds.
 
 ## 2. Declaration and negotiation
 
-- [ ] 2.1 `defrender-kind` collected by the load-time pass (geometry class, field table, identity); declared-kind tables are fixed at load — emissions check against them, new keys are schema errors with the standard error surface.
-- [ ] 2.2 `Sim::verify_render_kinds` (next to `verify_host_channels`): host manifest in, load failure naming unsupported declared kinds, lint for undeclared kinds under a strict host. Wire the native player and wasm host.
+- [x] 2.1 `defrender-kind` collected by the load-time pass (geometry class, field table, identity); declared-kind tables are fixed at load — emissions check against them, new keys are schema errors with the standard error surface.
+- [x] 2.2 `Sim::verify_render_kinds` (next to `verify_host_channels`): host manifest in, load failure naming unsupported declared kinds, lint for undeclared kinds under a strict host. Wire the native player and wasm host.
 
 ## 3. Adapter
 

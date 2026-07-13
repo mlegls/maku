@@ -1675,6 +1675,45 @@
     }
 
     #[test]
+    fn declared_render_kind_is_fixed_and_negotiated() {
+        const CARD: &str = r#"
+(defrender-kind :sprite {:geometry :point :fields {:family :sym}})
+(deftick (render {:kind :sprite :shape :point :family :orb}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert_eq!(sim.render_manifest(), &["sprite"]);
+        let schema = sim.declared_render_schema("sprite").unwrap();
+        assert_eq!(schema.cols[0].0.as_ref(), "family");
+        assert!(sim.verify_render_kinds(&["sprite"]).is_ok());
+        sim.step().unwrap();
+
+        let mut unsupported = Sim::load(CARD, Some("p")).unwrap();
+        let err = unsupported.verify_render_kinds(&[]).unwrap_err();
+        assert!(err.contains(":sprite") && err.contains("loaded card"), "{err}");
+
+        const NEW_KEY: &str = r#"
+(defrender-kind :sprite {:geometry :point :fields {:family :sym}})
+(deftick (render {:kind :sprite :shape :point :extra 1}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(NEW_KEY, Some("p")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("field :extra is not declared"), "{err}");
+    }
+
+    #[test]
+    fn strict_render_host_lints_undeclared_static_kind() {
+        const CARD: &str = r#"
+(deftick (render {:kind :debug :shape :point}))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.verify_render_kinds(&[]).unwrap();
+        assert!(sim.load_warnings().iter().any(|w| w.contains(":debug")));
+    }
+
+    #[test]
     fn deftick_render_emits_polyline_row() {
         const CARD: &str = r#"
 (deftick

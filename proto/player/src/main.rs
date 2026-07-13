@@ -236,6 +236,12 @@ async fn main() {
         dragging: false,
         binds: Bindings::defaults(),
     };
+    let mut provided = app.binds.channel_names();
+    for m in ["player", "nearest-enemy"] {
+        if !provided.iter().any(|n| n == m) { provided.push(m.to_string()); }
+    }
+    app.inst.host_channels = Some(provided);
+    app.inst.render_kinds = Some(vec!["default".into(), "sprite".into(), "beam".into()]);
     if card_path.is_empty() {
         app.inst.set_status(format!("no card — listening on 127.0.0.1:{}", PORT));
     } else {
