@@ -788,14 +788,16 @@
 (defpattern t []
   (spawn (pose c[0 0]) {:hitbox 0.3} hitbox-collider))
 "#;
-        let mut sim = Sim::load(CARD, Some("t")).unwrap();
-        let err = match sim.step() {
-            Ok(_) => panic!("keyword radius override unexpectedly stepped"),
+        let err = match Sim::load(CARD, Some("t")) {
             Err(err) => err,
+            Ok(mut sim) => match sim.step() {
+                Ok(_) => panic!("keyword radius override unexpectedly stepped"),
+                Err(err) => err,
+            },
         };
         assert!(
-            err.contains("expected number"),
-            "keyword radius override should be a type error, got {err}"
+            err.contains("expected number") || err.contains("expected Num"),
+            "keyword radius override should be a numeric type error, got {err}"
         );
     }
 
