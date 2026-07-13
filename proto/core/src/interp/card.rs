@@ -190,7 +190,19 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
                     stream_forms.push(Form::list(vec![Form::sym("export!"), Form::Sym(n.clone())]));
                 }
                 Some(Form::Sym(s)) if &**s == "deftick" => {
-                    tick_rules.push(f.clone());
+                    tick_rules.push(expand_render_adapts(f)?);
+                }
+                Some(Form::Sym(s)) if &**s == "render-adapt" => {
+                    let adapted = parse_render_adapter(items)?;
+                    for rule in items.iter().skip(2) {
+                        let rewritten = rewrite_render_form(rule, &adapted);
+                        if matches!(&rewritten, Form::List(xs)
+                            if matches!(xs.first(), Some(Form::Sym(h)) if h.as_ref() == "deftick")) {
+                            tick_rules.push(expand_render_adapts(&rewritten)?);
+                        } else {
+                            return Err("render-adapt: top-level bodies must be deftick rules".into());
+                        }
+                    }
                 }
                 Some(Form::Sym(s)) if &**s == "defrender-kind" => {
                     render_kinds.push(f.clone());
@@ -202,4 +214,92 @@ pub fn load_card(forms: &[Form]) -> Result<Card, String> {
     let mut card = Card { patterns, order, defs, macros, tick_rules, streams, render_kinds, stream_forms };
     rewrite_card(&mut card);
     Ok(card)
+}
+
+struct RenderAdapter {
+    from: Rc<str>,
+    to: Rc<str>,
+    fields: Vec<(Rc<str>, Rc<str>)>,
+}
+
+fn parse_render_adapter(items: &[Form]) -> Result<RenderAdapter, String> {
+    let Some(Form::Map(opts)) = items.get(1) else {
+        return Err("render-adapt: expected option map".into());
+    };
+    let mut from = None;
+    let mut to = None;
+    let mut fields = None;
+    for (key, value) in opts.iter() {
+        let Form::Kw(key) = key else { return Err("render-adapt: option keys must be keywords".into()) };
+        match key.as_ref() {
+            "kind" => match value { Form::Kw(v) => from = Some(v.clone()), _ => return Err("render-adapt: :kind must be a keyword".into()) },
+            "as" => match value { Form::Kw(v) => to = Some(v.clone()), _ => return Err("render-adapt: :as must be a keyword".into()) },
+            "fields" => {
+                let Form::Map(map) = value else { return Err("render-adapt: :fields must be a map".into()) };
+                fields = Some(map.iter().map(|(a, b)| match (a, b) {
+                    (Form::Kw(a), Form::Kw(b)) => Ok((a.clone(), b.clone())),
+                    _ => Err("render-adapt: field mappings must be keywords".to_string()),
+                }).collect::<Result<Vec<_>, _>>()?);
+            }
+            _ => return Err(format!("render-adapt: unknown option :{key}")),
+        }
+    }
+    Ok(RenderAdapter {
+        from: from.ok_or("render-adapt: missing :kind")?,
+        to: to.ok_or("render-adapt: missing :as")?,
+        fields: fields.ok_or("render-adapt: missing :fields")?,
+    })
+}
+
+fn expand_render_adapts(form: &Form) -> Result<Form, String> {
+    let Form::List(items) = form else { return Ok(form.clone()) };
+    if matches!(items.first(), Some(Form::Sym(h)) if h.as_ref() == "render-adapt") {
+        let adapter = parse_render_adapter(items)?;
+        let mut seq = vec![Form::sym("seq")];
+        for body in items.iter().skip(2) { seq.push(rewrite_render_form(body, &adapter)); }
+        return Ok(Form::list(seq));
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for item in items.iter() { out.push(expand_render_adapts(item)?); }
+    Ok(Form::list(out))
+}
+
+fn rewrite_render_form(form: &Form, adapter: &RenderAdapter) -> Form {
+    match form {
+        Form::List(items) => {
+            let map_idx = if matches!(items.first(), Some(Form::Sym(h)) if h.as_ref() == "render") { Some(1) }
+                else if matches!(items.first(), Some(Form::Sym(h)) if h.as_ref() == "emit")
+                    && matches!(items.get(1), Some(Form::Kw(c)) if c.as_ref() == "render") { Some(2) }
+                else { None };
+            let mut out: Vec<Form> = items.iter().map(|f| rewrite_render_form(f, adapter)).collect();
+            if let Some(i) = map_idx {
+                if let Some(Form::Map(fields)) = items.get(i) {
+                    let source = fields.iter().find_map(|(k, v)| match (k, v) {
+                        (Form::Kw(k), Form::Kw(v)) if k.as_ref() == "kind" => Some(v.as_ref()),
+                        _ => None,
+                    }).unwrap_or("default");
+                    if source == adapter.from.as_ref() {
+                        let structural = |k: &str| matches!(k, "shape" | "kind" | "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity" | "hue" | "points" | "pts" | "active");
+                        let mut picked = Vec::new();
+                        for (key, value) in fields.iter() {
+                            let Form::Kw(key) = key else { continue };
+                            if key.as_ref() == "kind" {
+                                picked.push((Form::Kw(key.clone()), Form::Kw(adapter.to.clone())));
+                            } else if structural(key) {
+                                picked.push((Form::Kw(key.clone()), rewrite_render_form(value, adapter)));
+                            } else if let Some((_, target)) = adapter.fields.iter().find(|(from, _)| from == key) {
+                                picked.push((Form::Kw(target.clone()), rewrite_render_form(value, adapter)));
+                            }
+                        }
+                        if !fields.iter().any(|(k, _)| matches!(k, Form::Kw(k) if k.as_ref() == "kind")) {
+                            picked.push((Form::kw("kind"), Form::Kw(adapter.to.clone())));
+                        }
+                        out[i] = Form::Map(picked.into());
+                    }
+                }
+            }
+            Form::list(out)
+        }
+        _ => form.clone(),
+    }
 }

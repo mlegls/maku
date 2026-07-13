@@ -14,7 +14,7 @@ until scoped-channel-overrides' working tree lands.
 
 ## 3. Adapter
 
-- [ ] 3.1 `render-adapt`: registration-time kind/key rewriting + field pick over wrapped rules; remap folds into the memoized `RenderSchema` (no per-row compiled cost); downstream sees only the post-adapter world.
+- [x] 3.1 `render-adapt`: registration-time kind/key rewriting + field pick over wrapped rules; remap folds into the memoized `RenderSchema` (no per-row compiled cost); downstream sees only the post-adapter world.
 
 ## 4. First consumer
 

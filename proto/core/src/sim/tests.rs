@@ -1703,6 +1703,24 @@
     }
 
     #[test]
+    fn render_adapter_rewrites_kind_and_picks_fields_before_registration() {
+        const CARD: &str = r#"
+(defrender-kind :sprite {:geometry :point :fields {:color :sym}})
+(deftick
+  (render-adapt {:kind :their-sprite :as :sprite :fields {:col :color}}
+    (render {:kind :their-sprite :shape :point :col :red :discard 3})))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let rows = sim.render();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind.as_ref(), "sprite");
+        assert_eq!(rows[0].sym("color"), Some("red"));
+        assert_eq!(rows[0].num("discard"), None);
+    }
+
+    #[test]
     fn strict_render_host_lints_undeclared_static_kind() {
         const CARD: &str = r#"
 (deftick (render {:kind :debug :shape :point}))
