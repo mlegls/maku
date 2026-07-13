@@ -32,7 +32,7 @@ mod schema;
 mod colliders;
 mod coerce;
 mod engine;
-mod lower;
+pub(crate) mod lower;
 mod r#dyn;
 pub mod model;
 mod motion;
@@ -56,6 +56,11 @@ pub use colliders::*;
 pub use coerce::*;
 pub(crate) use engine::{RenderKey, RenderRowFields};
 pub(crate) use lower::*;
+pub use lower::{
+    intern_kernel_program, FloatBinaryOp, FloatCompareOp, FloatUnaryOp, IntegerBinaryOp,
+    IntegerCompareOp, KernelInputRef, KernelLayout, KernelOp, KernelProgram, KernelProgramId,
+    KernelRegister, KernelType, KernelValidationError, MaskBinaryOp,
+};
 pub(crate) use spawn::axis_select_val;
 pub use r#dyn::*;
 pub use crate::model::{

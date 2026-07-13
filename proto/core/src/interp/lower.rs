@@ -1,6 +1,577 @@
 use super::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::rc::Weak;
+
+/// Backend-portable scalar lanes accepted by the typed kernel ABI.
+///
+/// `Symbol` and `Handle` deliberately remain distinct from their integer
+/// representations: type-local storage and validation must not accidentally
+/// make a symbol column usable as an integer or a handle column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelType {
+    F32,
+    F64,
+    U32,
+    U64,
+    Symbol,
+    Handle,
+    Mask,
+}
+
+impl KernelType {
+    pub const fn width(self) -> u8 {
+        match self {
+            Self::F32 | Self::U32 | Self::Symbol | Self::Mask => 32,
+            Self::F64 | Self::U64 | Self::Handle => 64,
+        }
+    }
+}
+
+/// Counts in each type-local input or register file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct KernelLayout {
+    pub f32s: u16,
+    pub f64s: u16,
+    pub u32s: u16,
+    pub u64s: u16,
+    pub symbols: u16,
+    pub handles: u16,
+    pub masks: u16,
+}
+
+impl KernelLayout {
+    pub const fn count(self, ty: KernelType) -> u16 {
+        match ty {
+            KernelType::F32 => self.f32s,
+            KernelType::F64 => self.f64s,
+            KernelType::U32 => self.u32s,
+            KernelType::U64 => self.u64s,
+            KernelType::Symbol => self.symbols,
+            KernelType::Handle => self.handles,
+            KernelType::Mask => self.masks,
+        }
+    }
+
+    fn increment(&mut self, ty: KernelType) {
+        let count = match ty {
+            KernelType::F32 => &mut self.f32s,
+            KernelType::F64 => &mut self.f64s,
+            KernelType::U32 => &mut self.u32s,
+            KernelType::U64 => &mut self.u64s,
+            KernelType::Symbol => &mut self.symbols,
+            KernelType::Handle => &mut self.handles,
+            KernelType::Mask => &mut self.masks,
+        };
+        *count += 1;
+    }
+}
+
+/// A type-local register reference. The index is within the named register
+/// file, never within a mixed/tagged register array.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelRegister {
+    F32(u16),
+    F64(u16),
+    U32(u16),
+    U64(u16),
+    Symbol(u16),
+    Handle(u16),
+    Mask(u16),
+}
+
+impl KernelRegister {
+    pub const fn ty(self) -> KernelType {
+        match self {
+            Self::F32(_) => KernelType::F32,
+            Self::F64(_) => KernelType::F64,
+            Self::U32(_) => KernelType::U32,
+            Self::U64(_) => KernelType::U64,
+            Self::Symbol(_) => KernelType::Symbol,
+            Self::Handle(_) => KernelType::Handle,
+            Self::Mask(_) => KernelType::Mask,
+        }
+    }
+
+    pub const fn index(self) -> u16 {
+        match self {
+            Self::F32(index)
+            | Self::F64(index)
+            | Self::U32(index)
+            | Self::U64(index)
+            | Self::Symbol(index)
+            | Self::Handle(index)
+            | Self::Mask(index) => index,
+        }
+    }
+}
+
+/// A type-local input reference. Its index addresses the corresponding
+/// concrete input vector in `KernelLanes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelInputRef {
+    F32(u16),
+    F64(u16),
+    U32(u16),
+    U64(u16),
+    Symbol(u16),
+    Handle(u16),
+    Mask(u16),
+}
+
+impl KernelInputRef {
+    pub const fn ty(self) -> KernelType {
+        match self {
+            Self::F32(_) => KernelType::F32,
+            Self::F64(_) => KernelType::F64,
+            Self::U32(_) => KernelType::U32,
+            Self::U64(_) => KernelType::U64,
+            Self::Symbol(_) => KernelType::Symbol,
+            Self::Handle(_) => KernelType::Handle,
+            Self::Mask(_) => KernelType::Mask,
+        }
+    }
+
+    pub const fn index(self) -> u16 {
+        match self {
+            Self::F32(index)
+            | Self::F64(index)
+            | Self::U32(index)
+            | Self::U64(index)
+            | Self::Symbol(index)
+            | Self::Handle(index)
+            | Self::Mask(index) => index,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatUnaryOp {
+    Neg,
+    Abs,
+    Floor,
+    Ceil,
+    Round,
+    Sqrt,
+    SinDegrees,
+    CosDegrees,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatBinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Min,
+    Max,
+    Pow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatCompareOp {
+    Eq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IntegerBinaryOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IntegerCompareOp {
+    Eq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MaskBinaryOp {
+    And,
+    Or,
+    Xor,
+}
+
+/// Typed operations over type-local registers. Floating constants are stored
+/// as bits so equality and hashing cover NaNs and signed zero exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelOp {
+    ConstF32 { dst: u16, bits: u32 },
+    ConstF64 { dst: u16, bits: u64 },
+    ConstU32 { dst: u16, value: u32 },
+    ConstU64 { dst: u16, value: u64 },
+    ConstSymbol { dst: u16, value: u32 },
+    ConstHandle { dst: u16, value: u64 },
+    ConstMask { dst: u16, value: bool },
+    LoadF32 { dst: u16, input: u16 },
+    LoadF64 { dst: u16, input: u16 },
+    LoadU32 { dst: u16, input: u16 },
+    LoadU64 { dst: u16, input: u16 },
+    LoadSymbol { dst: u16, input: u16 },
+    LoadHandle { dst: u16, input: u16 },
+    LoadMask { dst: u16, input: u16 },
+    F32Unary { op: FloatUnaryOp, dst: u16, x: u16 },
+    F64Unary { op: FloatUnaryOp, dst: u16, x: u16 },
+    F32Binary { op: FloatBinaryOp, dst: u16, a: u16, b: u16 },
+    F64Binary { op: FloatBinaryOp, dst: u16, a: u16, b: u16 },
+    U32Binary { op: IntegerBinaryOp, dst: u16, a: u16, b: u16 },
+    U64Binary { op: IntegerBinaryOp, dst: u16, a: u16, b: u16 },
+    F32Compare { op: FloatCompareOp, dst: u16, a: u16, b: u16 },
+    F64Compare { op: FloatCompareOp, dst: u16, a: u16, b: u16 },
+    U32Compare { op: IntegerCompareOp, dst: u16, a: u16, b: u16 },
+    U64Compare { op: IntegerCompareOp, dst: u16, a: u16, b: u16 },
+    SymbolEq { dst: u16, a: u16, b: u16 },
+    HandleEq { dst: u16, a: u16, b: u16 },
+    MaskBinary { op: MaskBinaryOp, dst: u16, a: u16, b: u16 },
+    MaskNot { dst: u16, x: u16 },
+    SelectF32 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectF64 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectU32 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectU64 { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectSymbol { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectHandle { dst: u16, mask: u16, yes: u16, no: u16 },
+    SelectMask { dst: u16, mask: u16, yes: u16, no: u16 },
+    F32ToF64 { dst: u16, x: u16 },
+    F64ToF32 { dst: u16, x: u16 },
+    U32ToU64 { dst: u16, x: u16 },
+    U64ToU32 { dst: u16, x: u16 },
+    U32ToF32 { dst: u16, x: u16 },
+    U32ToF64 { dst: u16, x: u16 },
+    U64ToF32 { dst: u16, x: u16 },
+    U64ToF64 { dst: u16, x: u16 },
+    F32ToU32 { dst: u16, x: u16 },
+    F32ToU64 { dst: u16, x: u16 },
+    F64ToU32 { dst: u16, x: u16 },
+    F64ToU64 { dst: u16, x: u16 },
+    U32ToSymbol { dst: u16, x: u16 },
+    SymbolToU32 { dst: u16, x: u16 },
+    U64ToHandle { dst: u16, x: u16 },
+    HandleToU64 { dst: u16, x: u16 },
+}
+
+impl KernelOp {
+    pub const fn destination(self) -> KernelRegister {
+        match self {
+            Self::ConstF32 { dst, .. }
+            | Self::LoadF32 { dst, .. }
+            | Self::F32Unary { dst, .. }
+            | Self::F32Binary { dst, .. }
+            | Self::SelectF32 { dst, .. }
+            | Self::F64ToF32 { dst, .. }
+            | Self::U32ToF32 { dst, .. }
+            | Self::U64ToF32 { dst, .. } => KernelRegister::F32(dst),
+            Self::ConstF64 { dst, .. }
+            | Self::LoadF64 { dst, .. }
+            | Self::F64Unary { dst, .. }
+            | Self::F64Binary { dst, .. }
+            | Self::SelectF64 { dst, .. }
+            | Self::F32ToF64 { dst, .. }
+            | Self::U32ToF64 { dst, .. }
+            | Self::U64ToF64 { dst, .. } => KernelRegister::F64(dst),
+            Self::ConstU32 { dst, .. }
+            | Self::LoadU32 { dst, .. }
+            | Self::U32Binary { dst, .. }
+            | Self::SelectU32 { dst, .. }
+            | Self::U64ToU32 { dst, .. }
+            | Self::F32ToU32 { dst, .. }
+            | Self::F64ToU32 { dst, .. }
+            | Self::SymbolToU32 { dst, .. } => KernelRegister::U32(dst),
+            Self::ConstU64 { dst, .. }
+            | Self::LoadU64 { dst, .. }
+            | Self::U64Binary { dst, .. }
+            | Self::SelectU64 { dst, .. }
+            | Self::U32ToU64 { dst, .. }
+            | Self::F32ToU64 { dst, .. }
+            | Self::F64ToU64 { dst, .. }
+            | Self::HandleToU64 { dst, .. } => KernelRegister::U64(dst),
+            Self::ConstSymbol { dst, .. }
+            | Self::LoadSymbol { dst, .. }
+            | Self::SelectSymbol { dst, .. }
+            | Self::U32ToSymbol { dst, .. } => KernelRegister::Symbol(dst),
+            Self::ConstHandle { dst, .. }
+            | Self::LoadHandle { dst, .. }
+            | Self::SelectHandle { dst, .. }
+            | Self::U64ToHandle { dst, .. } => KernelRegister::Handle(dst),
+            Self::ConstMask { dst, .. }
+            | Self::LoadMask { dst, .. }
+            | Self::F32Compare { dst, .. }
+            | Self::F64Compare { dst, .. }
+            | Self::U32Compare { dst, .. }
+            | Self::U64Compare { dst, .. }
+            | Self::SymbolEq { dst, .. }
+            | Self::HandleEq { dst, .. }
+            | Self::MaskBinary { dst, .. }
+            | Self::MaskNot { dst, .. }
+            | Self::SelectMask { dst, .. } => KernelRegister::Mask(dst),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct KernelProgram {
+    inputs: KernelLayout,
+    registers: KernelLayout,
+    outputs: Vec<KernelRegister>,
+    ops: Vec<KernelOp>,
+}
+
+impl KernelProgram {
+    pub fn new(
+        inputs: KernelLayout,
+        registers: KernelLayout,
+        outputs: Vec<KernelRegister>,
+        ops: Vec<KernelOp>,
+    ) -> Result<Self, KernelValidationError> {
+        let program = Self { inputs, registers, outputs, ops };
+        program.validate()?;
+        Ok(program)
+    }
+
+    pub const fn inputs(&self) -> KernelLayout {
+        self.inputs
+    }
+
+    pub const fn registers(&self) -> KernelLayout {
+        self.registers
+    }
+
+    pub fn outputs(&self) -> &[KernelRegister] {
+        &self.outputs
+    }
+
+    pub fn ops(&self) -> &[KernelOp] {
+        &self.ops
+    }
+
+    pub fn id(&self) -> KernelProgramId {
+        let mut hasher = crate::fxhash::FxHasher::default();
+        self.hash(&mut hasher);
+        KernelProgramId(hasher.finish())
+    }
+
+    fn validate(&self) -> Result<(), KernelValidationError> {
+        let mut initialized = KernelLayout::default();
+        for (op_index, op) in self.ops.iter().copied().enumerate() {
+            validate_kernel_operands(op_index, op, self.inputs, initialized)?;
+            let destination = op.destination();
+            let expected = initialized.count(destination.ty());
+            if destination.index() != expected {
+                return Err(KernelValidationError::DestinationOrder {
+                    op: op_index,
+                    destination,
+                    expected,
+                });
+            }
+            initialized.increment(destination.ty());
+        }
+        if initialized != self.registers {
+            return Err(KernelValidationError::RegisterLayout {
+                declared: self.registers,
+                actual: initialized,
+            });
+        }
+        for (output, register) in self.outputs.iter().copied().enumerate() {
+            if register.index() >= initialized.count(register.ty()) {
+                return Err(KernelValidationError::InvalidOutput { output, register });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KernelProgramId(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KernelValidationError {
+    InvalidInput { op: usize, input: KernelInputRef },
+    UninitializedRegister { op: usize, register: KernelRegister },
+    DestinationOrder { op: usize, destination: KernelRegister, expected: u16 },
+    RegisterLayout { declared: KernelLayout, actual: KernelLayout },
+    InvalidOutput { output: usize, register: KernelRegister },
+}
+
+fn validate_kernel_operands(
+    op_index: usize,
+    op: KernelOp,
+    inputs: KernelLayout,
+    initialized: KernelLayout,
+) -> Result<(), KernelValidationError> {
+    let input = match op {
+        KernelOp::LoadF32 { input, .. } => Some(KernelInputRef::F32(input)),
+        KernelOp::LoadF64 { input, .. } => Some(KernelInputRef::F64(input)),
+        KernelOp::LoadU32 { input, .. } => Some(KernelInputRef::U32(input)),
+        KernelOp::LoadU64 { input, .. } => Some(KernelInputRef::U64(input)),
+        KernelOp::LoadSymbol { input, .. } => Some(KernelInputRef::Symbol(input)),
+        KernelOp::LoadHandle { input, .. } => Some(KernelInputRef::Handle(input)),
+        KernelOp::LoadMask { input, .. } => Some(KernelInputRef::Mask(input)),
+        _ => None,
+    };
+    if let Some(input) = input {
+        if input.index() >= inputs.count(input.ty()) {
+            return Err(KernelValidationError::InvalidInput { op: op_index, input });
+        }
+    }
+
+    let check = |register: KernelRegister| {
+        if register.index() < initialized.count(register.ty()) {
+            Ok(())
+        } else {
+            Err(KernelValidationError::UninitializedRegister { op: op_index, register })
+        }
+    };
+    match op {
+        KernelOp::F32Unary { x, .. } => check(KernelRegister::F32(x))?,
+        KernelOp::F64Unary { x, .. } => check(KernelRegister::F64(x))?,
+        KernelOp::F32Binary { a, b, .. } => {
+            check(KernelRegister::F32(a))?;
+            check(KernelRegister::F32(b))?;
+        }
+        KernelOp::F64Binary { a, b, .. } => {
+            check(KernelRegister::F64(a))?;
+            check(KernelRegister::F64(b))?;
+        }
+        KernelOp::U32Binary { a, b, .. } => {
+            check(KernelRegister::U32(a))?;
+            check(KernelRegister::U32(b))?;
+        }
+        KernelOp::U64Binary { a, b, .. } => {
+            check(KernelRegister::U64(a))?;
+            check(KernelRegister::U64(b))?;
+        }
+        KernelOp::F32Compare { a, b, .. } => {
+            check(KernelRegister::F32(a))?;
+            check(KernelRegister::F32(b))?;
+        }
+        KernelOp::F64Compare { a, b, .. } => {
+            check(KernelRegister::F64(a))?;
+            check(KernelRegister::F64(b))?;
+        }
+        KernelOp::U32Compare { a, b, .. } => {
+            check(KernelRegister::U32(a))?;
+            check(KernelRegister::U32(b))?;
+        }
+        KernelOp::U64Compare { a, b, .. } => {
+            check(KernelRegister::U64(a))?;
+            check(KernelRegister::U64(b))?;
+        }
+        KernelOp::SymbolEq { a, b, .. } => {
+            check(KernelRegister::Symbol(a))?;
+            check(KernelRegister::Symbol(b))?;
+        }
+        KernelOp::HandleEq { a, b, .. } => {
+            check(KernelRegister::Handle(a))?;
+            check(KernelRegister::Handle(b))?;
+        }
+        KernelOp::MaskBinary { a, b, .. } => {
+            check(KernelRegister::Mask(a))?;
+            check(KernelRegister::Mask(b))?;
+        }
+        KernelOp::MaskNot { x, .. } => check(KernelRegister::Mask(x))?,
+        KernelOp::SelectF32 { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::F32(yes))?;
+            check(KernelRegister::F32(no))?;
+        }
+        KernelOp::SelectF64 { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::F64(yes))?;
+            check(KernelRegister::F64(no))?;
+        }
+        KernelOp::SelectU32 { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::U32(yes))?;
+            check(KernelRegister::U32(no))?;
+        }
+        KernelOp::SelectU64 { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::U64(yes))?;
+            check(KernelRegister::U64(no))?;
+        }
+        KernelOp::SelectSymbol { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::Symbol(yes))?;
+            check(KernelRegister::Symbol(no))?;
+        }
+        KernelOp::SelectHandle { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::Handle(yes))?;
+            check(KernelRegister::Handle(no))?;
+        }
+        KernelOp::SelectMask { mask, yes, no, .. } => {
+            check(KernelRegister::Mask(mask))?;
+            check(KernelRegister::Mask(yes))?;
+            check(KernelRegister::Mask(no))?;
+        }
+        KernelOp::F32ToF64 { x, .. } => check(KernelRegister::F32(x))?,
+        KernelOp::F64ToF32 { x, .. } => check(KernelRegister::F64(x))?,
+        KernelOp::U32ToU64 { x, .. }
+        | KernelOp::U32ToF32 { x, .. }
+        | KernelOp::U32ToF64 { x, .. }
+        | KernelOp::U32ToSymbol { x, .. } => check(KernelRegister::U32(x))?,
+        KernelOp::U64ToU32 { x, .. }
+        | KernelOp::U64ToF32 { x, .. }
+        | KernelOp::U64ToF64 { x, .. }
+        | KernelOp::U64ToHandle { x, .. } => check(KernelRegister::U64(x))?,
+        KernelOp::F32ToU32 { x, .. } | KernelOp::F32ToU64 { x, .. } => {
+            check(KernelRegister::F32(x))?
+        }
+        KernelOp::F64ToU32 { x, .. } | KernelOp::F64ToU64 { x, .. } => {
+            check(KernelRegister::F64(x))?
+        }
+        KernelOp::SymbolToU32 { x, .. } => check(KernelRegister::Symbol(x))?,
+        KernelOp::HandleToU64 { x, .. } => check(KernelRegister::Handle(x))?,
+        KernelOp::ConstF32 { .. }
+        | KernelOp::ConstF64 { .. }
+        | KernelOp::ConstU32 { .. }
+        | KernelOp::ConstU64 { .. }
+        | KernelOp::ConstSymbol { .. }
+        | KernelOp::ConstHandle { .. }
+        | KernelOp::ConstMask { .. }
+        | KernelOp::LoadF32 { .. }
+        | KernelOp::LoadF64 { .. }
+        | KernelOp::LoadU32 { .. }
+        | KernelOp::LoadU64 { .. }
+        | KernelOp::LoadSymbol { .. }
+        | KernelOp::LoadHandle { .. }
+        | KernelOp::LoadMask { .. } => {}
+    }
+    Ok(())
+}
+
+/// Structural interning checks full equality after the structural hash, so a
+/// hash collision cannot merge distinct typed programs.
+pub fn intern_kernel_program(program: KernelProgram) -> Rc<KernelProgram> {
+    thread_local! {
+        static PROGRAMS: RefCell<HashMap<KernelProgramId, Vec<Weak<KernelProgram>>>> =
+            RefCell::new(HashMap::new());
+    }
+    let id = program.id();
+    PROGRAMS.with(|programs| {
+        let mut programs = programs.borrow_mut();
+        let bucket = programs.entry(id).or_default();
+        bucket.retain(|candidate| candidate.strong_count() != 0);
+        if let Some(existing) = bucket
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|candidate| candidate.as_ref() == &program)
+        {
+            return existing;
+        }
+        let program = Rc::new(program);
+        bucket.push(Rc::downgrade(&program));
+        program
+    })
+}
 
 #[derive(Debug)]
 pub struct NumProgram {

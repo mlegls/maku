@@ -11,6 +11,7 @@ mod collision;
 mod exec;
 mod render;
 mod slots;
+pub mod kernel;
 
 #[cfg(test)]
 mod tests;
