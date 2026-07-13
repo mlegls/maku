@@ -645,6 +645,69 @@ fn projection_source(
     }
 }
 
+fn projection_output_layout(kernel: &KernelPlan) -> KernelLayout {
+    let mut layout = KernelLayout::default();
+    for output in kernel.program().outputs() {
+        match output.ty() {
+            KernelType::F32 => layout.f32s += 1,
+            KernelType::F64 => layout.f64s += 1,
+            KernelType::U32 => layout.u32s += 1,
+            KernelType::U64 => layout.u64s += 1,
+            KernelType::Symbol => layout.symbols += 1,
+            KernelType::Handle => layout.handles += 1,
+            KernelType::Mask => layout.masks += 1,
+        }
+    }
+    layout
+}
+
+fn projection_output_valid(output: RenderProjectionOutput, layout: KernelLayout) -> bool {
+    output.num < layout.f64s
+        && output.symbol < layout.symbols
+        && output.num_present < layout.masks
+        && output.symbol_present < layout.masks
+}
+
+fn projection_field_inputs_valid(
+    field: RenderProjectionFieldInputs,
+    layout: KernelLayout,
+) -> bool {
+    field.num.map_or(true, |input| input < layout.f64s)
+        && field.symbol.map_or(true, |input| input < layout.symbols)
+        && field
+            .num_present
+            .map_or(true, |input| input < layout.masks)
+        && field
+            .symbol_present
+            .map_or(true, |input| input < layout.masks)
+}
+
+fn projection_default_valid(value: RenderProjectionDefault, layout: KernelLayout) -> bool {
+    match value {
+        RenderProjectionDefault::Num(_) | RenderProjectionDefault::Symbol(_) => true,
+        RenderProjectionDefault::PoseX { input }
+        | RenderProjectionDefault::PoseY { input } => input < layout.f64s,
+        RenderProjectionDefault::PoseTheta { input, has_theta } => {
+            input < layout.f64s && has_theta < layout.masks
+        }
+    }
+}
+
+fn projection_source_valid(value: RenderProjectionSource, layout: KernelLayout) -> bool {
+    match value {
+        RenderProjectionSource::Num(_) | RenderProjectionSource::Symbol(_) => true,
+        RenderProjectionSource::PoseX { input }
+        | RenderProjectionSource::PoseY { input } => input < layout.f64s,
+        RenderProjectionSource::PoseTheta { input, has_theta } => {
+            input < layout.f64s && has_theta < layout.masks
+        }
+        RenderProjectionSource::Field(field) => projection_field_inputs_valid(field, layout),
+        RenderProjectionSource::FieldOr { field, default } => {
+            projection_field_inputs_valid(field, layout)
+                && projection_default_valid(default, layout)
+        }
+    }
+}
 fn collect_projection_columns(
     value: &RowVal,
     world: &mut World,
@@ -781,6 +844,21 @@ pub(crate) fn render_projection_plan(
     for index in extras {
         sources.push(projection_source(&kernel, &fields[index].2, world)?);
     }
+    let geometry = [x, y, theta, scale, alpha, hue];
+    let output_layout = projection_output_layout(&kernel);
+    if !geometry
+        .iter()
+        .copied()
+        .chain(output_fields.iter().map(|field| field.output))
+        .all(|output| projection_output_valid(output, output_layout))
+        || sources.len() != geometry.len() + output_fields.len()
+        || !sources
+            .iter()
+            .copied()
+            .all(|source| projection_source_valid(source, kernel.program().inputs()))
+    {
+        return None;
+    }
     Some(RenderProjectionPlan {
         kernel,
         kind,
@@ -788,7 +866,7 @@ pub(crate) fn render_projection_plan(
         reads_theta,
         columns,
         backend: RenderProjectionBackend { sources },
-        geometry: [x, y, theta, scale, alpha, hue],
+        geometry,
         extras: output_fields,
     })
 }

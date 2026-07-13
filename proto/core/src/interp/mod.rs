@@ -59,7 +59,6 @@ pub use signatures::*;
 pub use schema::*;
 pub use colliders::*;
 pub use coerce::*;
-pub(crate) use engine::{RenderKey, RenderRowFields};
 pub(crate) use lower::*;
 pub use lower::{
     intern_kernel_program, kernel_program_for_num, EaseKind, FloatBinaryOp, FloatCompareOp,
