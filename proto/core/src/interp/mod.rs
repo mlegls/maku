@@ -18,6 +18,11 @@
 //!    way it stops at embedded patterns).
 
 use crate::edn::Form;
+use crate::sim::kernel::{
+    self, FallbackPolicy, IterationDomain, KernelBindings, KernelInputBinding,
+    KernelInputSource, KernelLanes, KernelOutputBinding, KernelOutputTarget, KernelPlan,
+    KernelOutputs, KernelScratch, MaskLane, MergePolicy,
+};
 use crate::fxhash::FxHashMap;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -57,9 +62,10 @@ pub use coerce::*;
 pub(crate) use engine::{RenderKey, RenderRowFields};
 pub(crate) use lower::*;
 pub use lower::{
-    intern_kernel_program, FloatBinaryOp, FloatCompareOp, FloatUnaryOp, IntegerBinaryOp,
-    IntegerCompareOp, KernelInputRef, KernelLayout, KernelOp, KernelProgram, KernelProgramId,
-    KernelRegister, KernelType, KernelValidationError, MaskBinaryOp,
+    intern_kernel_program, kernel_program_for_num, EaseKind, FloatBinaryOp, FloatCompareOp,
+    FloatUnaryOp, IntegerBinaryOp, IntegerCompareOp, KernelInputRef, KernelLayout, KernelOp,
+    KernelProgram, KernelProgramId, KernelRegister, KernelType, KernelValidationError,
+    MaskBinaryOp, NumKernelBridge, NumKernelInputSource,
 };
 pub(crate) use spawn::axis_select_val;
 pub use r#dyn::*;
@@ -2160,181 +2166,430 @@ pub(crate) fn row_predicate(q: &Val, ctx: &Ctx) -> Option<RowPredicate> {
     Some(RowPredicate { tests })
 }
 
-/// Per-query resolved form of a RowTest: symbol AND slot lookups happen
-/// once per query, not once per row — rows then read their store columns
-/// by index. A field or value that was never interned anywhere cannot
-/// match any row (mirrors sym_field_matches_at); a field with no sym
-/// column matches no row either.
-pub(crate) enum ResolvedRowTest {
-    Kind(RowKind),
-    SymEq { slot: usize, value: Symbol },
-    Never,
-    NumCmp { op: CmpOp, lhs: ResolvedRowNum, rhs: ResolvedRowNum },
+#[derive(Clone, Debug)]
+pub(crate) struct FilterPlan {
+    pub predicate: KernelPlan,
+    pub short_circuit_prefix: usize,
 }
 
-/// The `:kind` selector parsed once per query — rows compare a
-/// discriminant instead of the kind's name. `Other` is any keyword that
-/// names no kind: it matches no row (same as the old string compare).
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum RowKind {
-    Pather,
-    Point,
-    Curve,
-    Other,
+#[derive(Default)]
+struct FilterBuilder {
+    ops: Vec<KernelOp>,
+    inputs: KernelLayout,
+    registers: KernelLayout,
+    bindings: KernelBindings,
 }
 
-impl RowKind {
-    fn parse(name: &str) -> RowKind {
-        match name {
-            "pather" => RowKind::Pather,
-            "point" => RowKind::Point,
-            "curve" => RowKind::Curve,
-            _ => RowKind::Other,
-        }
+fn increment_kernel_layout(layout: &mut KernelLayout, ty: KernelType) -> Option<u16> {
+    let index = layout.count(ty);
+    let count = index.checked_add(1)?;
+    match ty {
+        KernelType::F32 => layout.f32s = count,
+        KernelType::F64 => layout.f64s = count,
+        KernelType::U32 => layout.u32s = count,
+        KernelType::U64 => layout.u64s = count,
+        KernelType::Symbol => layout.symbols = count,
+        KernelType::Handle => layout.handles = count,
+        KernelType::Mask => layout.masks = count,
+    }
+    Some(index)
+}
+
+fn input_ref(ty: KernelType, index: u16) -> KernelInputRef {
+    match ty {
+        KernelType::F32 => KernelInputRef::F32(index),
+        KernelType::F64 => KernelInputRef::F64(index),
+        KernelType::U32 => KernelInputRef::U32(index),
+        KernelType::U64 => KernelInputRef::U64(index),
+        KernelType::Symbol => KernelInputRef::Symbol(index),
+        KernelType::Handle => KernelInputRef::Handle(index),
+        KernelType::Mask => KernelInputRef::Mask(index),
     }
 }
 
-pub(crate) enum ResolvedRowNum {
-    Lit(f64), Tau, Tick,
-    ColOr(FieldSlots, Box<ResolvedRowNum>),
-    Add(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
-    Sub(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
-    Mul(Box<ResolvedRowNum>, Box<ResolvedRowNum>),
-}
+impl FilterBuilder {
+    fn reg(&mut self, ty: KernelType) -> Option<u16> {
+        increment_kernel_layout(&mut self.registers, ty)
+    }
 
-impl ResolvedRowNum {
-    /// Whether evaluating this term can return None (a keyword where a
-    /// number is needed — the interpreter would error, so the whole query
-    /// must fall back). A field with no sym column anywhere cannot hold a
-    /// keyword on any row; slot maps are append-only, so this holds for
-    /// the entire read-only scan the resolution serves.
-    fn fallible(&self) -> bool {
-        match self {
-            ResolvedRowNum::Lit(_) | ResolvedRowNum::Tau | ResolvedRowNum::Tick => false,
-            ResolvedRowNum::ColOr(slots, default) => slots.sym.is_some() || default.fallible(),
-            ResolvedRowNum::Add(a, b) | ResolvedRowNum::Sub(a, b) | ResolvedRowNum::Mul(a, b) => {
-                a.fallible() || b.fallible()
+    fn input(&mut self, source: KernelInputSource, ty: KernelType) -> Option<KernelInputRef> {
+        let input = input_ref(ty, increment_kernel_layout(&mut self.inputs, ty)?);
+        self.bindings.inputs.push(KernelInputBinding { input, source });
+        Some(input)
+    }
+
+    fn load(&mut self, input: KernelInputRef) -> Option<u16> {
+        let dst = self.reg(input.ty())?;
+        self.ops.push(match input {
+            KernelInputRef::F32(input) => KernelOp::LoadF32 { dst, input },
+            KernelInputRef::F64(input) => KernelOp::LoadF64 { dst, input },
+            KernelInputRef::U32(input) => KernelOp::LoadU32 { dst, input },
+            KernelInputRef::U64(input) => KernelOp::LoadU64 { dst, input },
+            KernelInputRef::Symbol(input) => KernelOp::LoadSymbol { dst, input },
+            KernelInputRef::Handle(input) => KernelOp::LoadHandle { dst, input },
+            KernelInputRef::Mask(input) => KernelOp::LoadMask { dst, input },
+        });
+        Some(dst)
+    }
+
+    fn direct(&mut self, column: usize, ty: KernelType) -> Option<u16> {
+        let column = u16::try_from(column).ok()?;
+        let input = self.input(KernelInputSource::Direct { column }, ty)?;
+        self.load(input)
+    }
+
+    fn numeric_presence(&mut self, column: usize) -> Option<u16> {
+        let slot = u16::try_from(column).ok()?;
+        let input = self.input(KernelInputSource::State { slot }, KernelType::Mask)?;
+        self.load(input)
+    }
+
+    fn symbol_presence(&mut self, column: usize) -> Option<u16> {
+        let channel = u16::try_from(column).ok()?;
+        let input = self.input(KernelInputSource::Channel { channel }, KernelType::Mask)?;
+        self.load(input)
+    }
+
+    fn numeric_type_guard(&mut self, column: usize) -> Option<()> {
+        let slot = u16::try_from(column).ok()?;
+        self.input(KernelInputSource::State { slot }, KernelType::Symbol)?;
+        Some(())
+    }
+
+    fn tick_axis(&mut self, source: KernelInputSource) -> Option<u16> {
+        let input = self.input(source, KernelType::F64)?;
+        self.load(input)
+    }
+
+    fn const_num(&mut self, value: f64) -> Option<u16> {
+        let dst = self.reg(KernelType::F64)?;
+        self.ops.push(KernelOp::ConstF64 {
+            dst,
+            bits: value.to_bits(),
+        });
+        Some(dst)
+    }
+
+    fn const_u32(&mut self, value: u32) -> Option<u16> {
+        let dst = self.reg(KernelType::U32)?;
+        self.ops.push(KernelOp::ConstU32 { dst, value });
+        Some(dst)
+    }
+
+    fn const_symbol(&mut self, value: Symbol) -> Option<u16> {
+        let dst = self.reg(KernelType::Symbol)?;
+        self.ops.push(KernelOp::ConstSymbol {
+            dst,
+            value: value.0,
+        });
+        Some(dst)
+    }
+
+    fn const_mask(&mut self, value: bool) -> Option<u16> {
+        let dst = self.reg(KernelType::Mask)?;
+        self.ops.push(KernelOp::ConstMask { dst, value });
+        Some(dst)
+    }
+
+    fn mask_and(&mut self, a: u16, b: u16) -> Option<u16> {
+        let dst = self.reg(KernelType::Mask)?;
+        self.ops.push(KernelOp::MaskBinary {
+            op: MaskBinaryOp::And,
+            dst,
+            a,
+            b,
+        });
+        Some(dst)
+    }
+
+    fn lower_num(&mut self, value: &RowNum, world: &mut World) -> Option<u16> {
+        match value {
+            RowNum::Lit(value) => self.const_num(*value),
+            RowNum::Tau => self.tick_axis(KernelInputSource::Axis),
+            RowNum::Tick => self.tick_axis(KernelInputSource::Tick),
+            RowNum::ColOr(name, default) => {
+                let field = world.field_sym(name);
+                let num_slot = world.intern_col_slot(field);
+                let sym_slot = world.intern_sym_field_slot(field);
+                self.numeric_type_guard(sym_slot)?;
+                let value = self.direct(num_slot, KernelType::F64)?;
+                let present = self.numeric_presence(num_slot)?;
+                let default = self.lower_num(default, world)?;
+                let dst = self.reg(KernelType::F64)?;
+                self.ops.push(KernelOp::SelectF64 {
+                    dst,
+                    mask: present,
+                    yes: value,
+                    no: default,
+                });
+                Some(dst)
+            }
+            RowNum::Add(left, right) | RowNum::Sub(left, right) | RowNum::Mul(left, right) => {
+                let a = self.lower_num(left, world)?;
+                let b = self.lower_num(right, world)?;
+                let op = match value {
+                    RowNum::Add(_, _) => FloatBinaryOp::Add,
+                    RowNum::Sub(_, _) => FloatBinaryOp::Sub,
+                    RowNum::Mul(_, _) => FloatBinaryOp::Mul,
+                    _ => unreachable!(),
+                };
+                let dst = self.reg(KernelType::F64)?;
+                self.ops.push(KernelOp::F64Binary { op, dst, a, b });
+                Some(dst)
+            }
+        }
+    }
+
+    fn numeric_compare(&mut self, op: CmpOp, a: u16, b: u16) -> Option<u16> {
+        if matches!(op, CmpOp::Eq) {
+            let difference = self.reg(KernelType::F64)?;
+            self.ops.push(KernelOp::F64Binary {
+                op: FloatBinaryOp::Sub,
+                dst: difference,
+                a,
+                b,
+            });
+            let absolute = self.reg(KernelType::F64)?;
+            self.ops.push(KernelOp::F64Unary {
+                op: FloatUnaryOp::Abs,
+                dst: absolute,
+                x: difference,
+            });
+            let epsilon = self.const_num(1e-9)?;
+            let dst = self.reg(KernelType::Mask)?;
+            self.ops.push(KernelOp::F64Compare {
+                op: FloatCompareOp::Lt,
+                dst,
+                a: absolute,
+                b: epsilon,
+            });
+            return Some(dst);
+        }
+        let op = match op {
+            CmpOp::Lt => FloatCompareOp::Lt,
+            CmpOp::Le => FloatCompareOp::Lte,
+            CmpOp::Gt => FloatCompareOp::Gt,
+            CmpOp::Ge => FloatCompareOp::Gte,
+            CmpOp::Eq => unreachable!(),
+        };
+        let dst = self.reg(KernelType::Mask)?;
+        self.ops.push(KernelOp::F64Compare { op, dst, a, b });
+        Some(dst)
+    }
+
+    fn lower_test(&mut self, test: &RowTest, world: &mut World) -> Option<u16> {
+        match test {
+            RowTest::KwEq { field, value } if field.as_ref() == "kind" => {
+                let expected = match value.as_ref() {
+                    "pather" => 0,
+                    "point" => 1,
+                    "curve" => 2,
+                    _ => return self.const_mask(false),
+                };
+                let actual = self.direct(0, KernelType::U32)?;
+                let expected = self.const_u32(expected)?;
+                let dst = self.reg(KernelType::Mask)?;
+                self.ops.push(KernelOp::U32Compare {
+                    op: IntegerCompareOp::Eq,
+                    dst,
+                    a: actual,
+                    b: expected,
+                });
+                Some(dst)
+            }
+            RowTest::KwEq { field, value } => {
+                let field = world.field_sym(field);
+                let slot = world.intern_sym_field_slot(field);
+                let value = world.field_sym(value);
+                let actual = self.direct(slot, KernelType::Symbol)?;
+                let present = self.symbol_presence(slot)?;
+                let expected = self.const_symbol(value)?;
+                let equal = self.reg(KernelType::Mask)?;
+                self.ops.push(KernelOp::SymbolEq {
+                    dst: equal,
+                    a: actual,
+                    b: expected,
+                });
+                self.mask_and(present, equal)
+            }
+            RowTest::NumCmp { op, lhs, rhs } => {
+                let lhs = self.lower_num(lhs, world)?;
+                let rhs = self.lower_num(rhs, world)?;
+                self.numeric_compare(*op, lhs, rhs)
             }
         }
     }
 }
 
-fn resolve_row_num(value: &RowNum, world: &World) -> ResolvedRowNum {
+fn row_num_fallible(value: &RowNum) -> bool {
     match value {
-        RowNum::Lit(n) => ResolvedRowNum::Lit(*n), RowNum::Tau => ResolvedRowNum::Tau,
-        RowNum::Tick => ResolvedRowNum::Tick,
-        RowNum::ColOr(name, d) => ResolvedRowNum::ColOr(world.field_slots(name), Box::new(resolve_row_num(d, world))),
-        RowNum::Add(a, b) => ResolvedRowNum::Add(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
-        RowNum::Sub(a, b) => ResolvedRowNum::Sub(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
-        RowNum::Mul(a, b) => ResolvedRowNum::Mul(Box::new(resolve_row_num(a, world)), Box::new(resolve_row_num(b, world))),
+        RowNum::Lit(_) | RowNum::Tau | RowNum::Tick => false,
+        RowNum::ColOr(_, _) => true,
+        RowNum::Add(left, right) | RowNum::Sub(left, right) | RowNum::Mul(left, right) => {
+            row_num_fallible(left) || row_num_fallible(right)
+        }
     }
 }
+
+impl RowTest {
+    fn fallible(&self) -> bool {
+        match self {
+            RowTest::KwEq { .. } => false,
+            RowTest::NumCmp { lhs, rhs, .. } => {
+                row_num_fallible(lhs) || row_num_fallible(rhs)
+            }
+        }
+    }
+}
+
 
 impl RowPredicate {
-    pub(crate) fn resolve(&self, world: &World) -> Vec<ResolvedRowTest> {
-        self.tests
-            .iter()
-            .map(|test| match test {
-                RowTest::KwEq { field, value } => {
-                    if &**field == "kind" { return ResolvedRowTest::Kind(RowKind::parse(value)); }
-                    match (world.field_slots(field).sym, world.symbols.lookup(value)) {
-                        (Some(slot), Some(value)) => ResolvedRowTest::SymEq { slot, value },
-                        _ => ResolvedRowTest::Never,
-                    }
-                }
-                RowTest::NumCmp { op, lhs, rhs } => ResolvedRowTest::NumCmp {
-                    op: *op,
-                    lhs: resolve_row_num(lhs, world), rhs: resolve_row_num(rhs, world),
-                },
-            })
-            .collect()
+    pub(crate) fn lower(&self, world: &mut World) -> Option<FilterPlan> {
+        let mut builder = FilterBuilder::default();
+        let mut result = None;
+        for test in &self.tests {
+            let test = builder.lower_test(test, world)?;
+            result = Some(match result {
+                Some(previous) => builder.mask_and(previous, test)?,
+                None => test,
+            });
+        }
+        let result = result?;
+        let mut short_circuit_prefix = self.tests.len();
+        while short_circuit_prefix > 0 && !self.tests[short_circuit_prefix - 1].fallible() {
+            short_circuit_prefix -= 1;
+        }
+        let program = KernelProgram::new(
+            builder.inputs,
+            builder.registers,
+            vec![KernelRegister::Mask(result)],
+            builder.ops,
+        ).ok()?;
+        let program = intern_kernel_program(program);
+        builder.bindings.outputs.push(KernelOutputBinding {
+            output: 0,
+            target: KernelOutputTarget::Driver,
+        });
+        let predicate = KernelPlan::new(
+            program,
+            IterationDomain::EntityRows,
+            builder.bindings,
+            FallbackPolicy::WholePlanInterpreted,
+            MergePolicy::CanonicalRowOrder,
+        ).ok()?;
+        Some(FilterPlan {
+            predicate,
+            short_circuit_prefix,
+        })
     }
 }
 
-impl ResolvedRowTest {
-    fn fallible(&self) -> bool {
-        match self {
-            ResolvedRowTest::Kind(_) | ResolvedRowTest::SymEq { .. } | ResolvedRowTest::Never => false,
-            ResolvedRowTest::NumCmp { lhs, rhs, .. } => lhs.fallible() || rhs.fallible(),
-        }
-    }
-}
-
-/// The smallest index whose suffix is all-infallible: once a test has
-/// failed, tests past this point can neither flip the result nor force
-/// the interpreter fallback, so the row scan may stop early.
-pub(crate) fn infallible_suffix_start(tests: &[ResolvedRowTest]) -> usize {
-    let mut start = tests.len();
-    while start > 0 && !tests[start - 1].fallible() {
-        start -= 1;
-    }
-    start
-}
-
-/// A query that contains a Never test and no fallible test matches no
-/// row and can never trigger the fallback — the scan can be skipped.
-pub(crate) fn resolved_tests_match_nothing(tests: &[ResolvedRowTest], bail_at: usize) -> bool {
-    bail_at == 0 && tests.iter().any(|t| matches!(t, ResolvedRowTest::Never))
-}
-
-fn resolved_row_num(value: &ResolvedRowNum, row: usize, world: &World) -> Option<f64> {
-    Some(match value {
-        ResolvedRowNum::Lit(n) => *n, ResolvedRowNum::Tau => world.entity_tau(row, world.tick),
-        ResolvedRowNum::Tick => world.tick as f64,
-        ResolvedRowNum::ColOr(slots, default) => {
-            if world.sym_field_at_slot(row, slots.sym).is_some() { return None; }
-            match world.col_at_slot(row, slots.num) {
-                Some(value) => value,
-                None => resolved_row_num(default, row, world)?,
-            }
-        }
-        ResolvedRowNum::Add(a, b) | ResolvedRowNum::Sub(a, b) | ResolvedRowNum::Mul(a, b) => {
-            let (left, right) = (resolved_row_num(a, row, world), resolved_row_num(b, row, world));
-            let (left, right) = (left?, right?);
-            match value {
-                ResolvedRowNum::Add(_, _) => left + right,
-                ResolvedRowNum::Sub(_, _) => left - right,
-                ResolvedRowNum::Mul(_, _) => left * right,
-                _ => unreachable!(),
-            }
-        }
-    })
-}
-
-pub(crate) fn resolved_row_tests_match(
-    tests: &[ResolvedRowTest],
-    bail_at: usize,
-    row: usize,
+/// Gather every declared typed lane before executing the callback-free
+/// predicate kernel. A numeric field containing a symbol abandons the plan
+/// before execution, allowing the caller to rerun the entire semantic query
+/// or rule with no partial matches or effects.
+pub(crate) fn execute_filter_plan(
+    plan: &FilterPlan,
     world: &World,
-) -> Option<bool> {
-    let mut all_pass = true;
-    for (k, test) in tests.iter().enumerate() {
-        let passes = match test {
-        ResolvedRowTest::Kind(value) => world.entities.dyn_figure(row).is_some_and(|figure| {
-            let kind = match figure.repr() {
-                FigureDynRepr::Pose(_) if world.entities.is_traced(row) => RowKind::Pather,
-                FigureDynRepr::Pose(_) => RowKind::Point,
-                FigureDynRepr::Curve { .. } => RowKind::Curve,
-            };
-            kind == *value
-        }),
-        ResolvedRowTest::SymEq { slot, value } => {
-            world.sym_field_at_slot(row, Some(*slot)) == Some(*value)
-        }
-            ResolvedRowTest::Never => false,
-            ResolvedRowTest::NumCmp { op, lhs, rhs } => {
-                let (a, b) = (resolved_row_num(lhs, row, world), resolved_row_num(rhs, row, world));
-                let (a, b) = (a?, b?);
-                match op { CmpOp::Lt => a < b, CmpOp::Le => a <= b, CmpOp::Gt => a > b,
-                    CmpOp::Ge => a >= b, CmpOp::Eq => (a - b).abs() < 1e-9 }
+    rows: &mut Vec<usize>,
+) -> bool {
+    rows.clear();
+    let kernel = &plan.predicate;
+    if kernel.domain() != IterationDomain::EntityRows
+        || kernel.fallback() != FallbackPolicy::WholePlanInterpreted
+        || kernel.merge() != MergePolicy::CanonicalRowOrder
+    {
+        return false;
+    }
+    let candidates = (0..world.entities.len())
+        .filter(|&row| world.entities.is_alive(row))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return true;
+    }
+
+    let layout = kernel.program().inputs();
+    let lanes = candidates.len();
+    let mut inputs = KernelLanes {
+        lanes,
+        f32s: vec![0.0; usize::from(layout.f32s) * lanes],
+        f64s: vec![0.0; usize::from(layout.f64s) * lanes],
+        u32s: vec![0; usize::from(layout.u32s) * lanes],
+        u64s: vec![0; usize::from(layout.u64s) * lanes],
+        symbols: vec![0; usize::from(layout.symbols) * lanes],
+        handles: vec![0; usize::from(layout.handles) * lanes],
+        masks: vec![MaskLane::FALSE; usize::from(layout.masks) * lanes],
+    };
+    for binding in &kernel.bindings().inputs {
+        let start = usize::from(binding.input.index()) * lanes;
+        match (binding.input, binding.source) {
+            (KernelInputRef::F64(_), KernelInputSource::Direct { column }) => {
+                for (lane, &row) in candidates.iter().enumerate() {
+                    inputs.f64s[start + lane] =
+                        world.col_at_slot(row, Some(column as usize)).unwrap_or(0.0);
+                }
             }
-        };
-        all_pass &= passes;
-        if !all_pass && k + 1 >= bail_at {
-            return Some(false);
+            (KernelInputRef::F64(_), KernelInputSource::Tick) => {
+                inputs.f64s[start..start + lanes].fill(world.tick as f64);
+            }
+            (KernelInputRef::F64(_), KernelInputSource::Axis) => {
+                for (lane, &row) in candidates.iter().enumerate() {
+                    inputs.f64s[start + lane] = world.entity_tau(row, world.tick);
+                }
+            }
+            (KernelInputRef::U32(_), KernelInputSource::Direct { .. }) => {
+                for (lane, &row) in candidates.iter().enumerate() {
+                    inputs.u32s[start + lane] =
+                        world.entities.dyn_figure(row).map_or(3, |figure| match figure.repr() {
+                            FigureDynRepr::Pose(_) if world.entities.is_traced(row) => 0,
+                            FigureDynRepr::Pose(_) => 1,
+                            FigureDynRepr::Curve { .. } => 2,
+                        });
+                }
+            }
+            (KernelInputRef::Symbol(_), KernelInputSource::Direct { column }) => {
+                for (lane, &row) in candidates.iter().enumerate() {
+                    inputs.symbols[start + lane] = world
+                        .sym_field_at_slot(row, Some(column as usize))
+                        .map_or(0, |value| value.0);
+                }
+            }
+            (KernelInputRef::Symbol(_), KernelInputSource::State { slot }) => {
+                if candidates.iter().any(|&row| {
+                    world.sym_field_at_slot(row, Some(slot as usize)).is_some()
+                }) {
+                    return false;
+                }
+            }
+            (KernelInputRef::Mask(_), KernelInputSource::State { slot }) => {
+                for (lane, &row) in candidates.iter().enumerate() {
+                    inputs.masks[start + lane] = MaskLane::new(
+                        world.col_at_slot(row, Some(slot as usize)).is_some(),
+                    );
+                }
+            }
+            (KernelInputRef::Mask(_), KernelInputSource::Channel { channel }) => {
+                for (lane, &row) in candidates.iter().enumerate() {
+                    inputs.masks[start + lane] = MaskLane::new(
+                        world.sym_field_at_slot(row, Some(channel as usize)).is_some(),
+                    );
+                }
+            }
+            _ => return false,
         }
     }
-    Some(all_pass)
+
+    let mut scratch = KernelScratch::default();
+    let mut outputs = KernelOutputs::default();
+    if kernel::execute(kernel, &inputs, &mut scratch, &mut outputs).is_err() {
+        return false;
+    }
+    for (lane, &row) in candidates.iter().enumerate() {
+        if outputs.masks.get(lane).is_some_and(|mask| mask.get()) {
+            rows.push(row);
+        }
+    }
+    true
 }
 
 fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
@@ -2450,23 +2705,14 @@ fn resolve_prefix_predicate_query(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Vec<usize>, String> {
-    let tests = p.prefix.resolve(world);
-    let bail_at = infallible_suffix_start(&tests);
+    let Some(plan) = p.prefix.lower(world) else {
+        return resolve_predicate_query_fallback(q, ctx, world);
+    };
     let mut prefix_rows = Vec::new();
-    if !resolved_tests_match_nothing(&tests, bail_at) {
-        for i in 0..world.entities.len() {
-            if !world.entities.is_alive(i) {
-                continue;
-            }
-            let Some(matches) = resolved_row_tests_match(&tests, bail_at, i, world) else {
-                // fallible-read bail: the rerun sees the interpreted error
-                // (or lack of one) exactly — no residual has evaluated yet
-                return resolve_predicate_query_fallback(q, ctx, world);
-            };
-            if matches {
-                prefix_rows.push(i);
-            }
-        }
+    if !execute_filter_plan(&plan, world, &mut prefix_rows) {
+        // Typed input gathering bails before kernel execution, and no
+        // residual has evaluated yet: rerun the whole semantic query.
+        return resolve_predicate_query_fallback(q, ctx, world);
     }
     if lower::oracle_enabled() {
         // the residual may have effects and must evaluate exactly once, so
@@ -2503,19 +2749,12 @@ fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<
         // (see PrefixPredicate).
         return resolve_predicate_query_fallback(q, ctx, world);
     };
-    let tests = predicate.resolve(world);
-    let bail_at = infallible_suffix_start(&tests);
+    let Some(plan) = predicate.lower(world) else {
+        return resolve_predicate_query_fallback(q, ctx, world);
+    };
     let mut out = Vec::new();
-    if !resolved_tests_match_nothing(&tests, bail_at) {
-        for i in 0..world.entities.len() {
-            if !world.entities.is_alive(i) {
-                continue;
-            }
-            let Some(matches) = resolved_row_tests_match(&tests, bail_at, i, world) else {
-                return resolve_predicate_query_fallback(q, ctx, world);
-            };
-            if matches { out.push(i); }
-        }
+    if !execute_filter_plan(&plan, world, &mut out) {
+        return resolve_predicate_query_fallback(q, ctx, world);
     }
     if lower::oracle_enabled() {
         let expected = resolve_predicate_query_fallback(q, ctx, world)?;
@@ -4198,6 +4437,53 @@ mod tests {
             let q = evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap();
             assert!(row_predicate(&q, &ctx).is_some(), "{src}");
         }
+    }
+
+    #[test]
+    fn row_predicate_lowers_to_typed_callback_free_filter_plan() {
+        fn intrinsic(form: &Form) -> Form {
+            match form {
+                Form::Sym(name) if name.as_ref() == "value-or" => Form::sym("%value-or"),
+                Form::List(items) => Form::List(items.iter().map(intrinsic).collect()),
+                Form::Vector(items) => Form::Vector(items.iter().map(intrinsic).collect()),
+                other => other.clone(),
+            }
+        }
+        let ctx = Ctx::default();
+        let mut world = World::default();
+        let form = intrinsic(&read_one(
+            "(fn [e] (* (= e.kind :point) (= e.team :enemy) (= (+ (value-or (:hp e) 0) 1) 2)))",
+        ).unwrap());
+        let query = evaluate(
+            &form,
+            &Env::empty(),
+            &mut Ctx::default(),
+            &mut World::default(),
+        ).unwrap();
+        let plan = row_predicate(&query, &ctx)
+            .and_then(|predicate| predicate.lower(&mut world))
+            .expect("recognized predicate should lower");
+        assert_eq!(plan.predicate.domain(), IterationDomain::EntityRows);
+        assert_eq!(plan.predicate.fallback(), FallbackPolicy::WholePlanInterpreted);
+        assert_eq!(plan.predicate.program().outputs(), &[KernelRegister::Mask(
+            plan.predicate.program().outputs()[0].index(),
+        )]);
+        let inputs = &plan.predicate.bindings().inputs;
+        assert!(inputs.iter().any(|binding| binding.input.ty() == KernelType::U32));
+        assert!(inputs.iter().any(|binding| binding.input.ty() == KernelType::Symbol));
+        assert!(inputs.iter().any(|binding| binding.input.ty() == KernelType::F64));
+        assert!(inputs.iter().any(|binding| binding.input.ty() == KernelType::Mask));
+        let ops = plan.predicate.program().ops();
+        assert!(ops.iter().any(|op| matches!(op, KernelOp::SymbolEq { .. })));
+        assert!(ops.iter().any(|op| matches!(op, KernelOp::SelectF64 { .. })));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            KernelOp::F64Unary { op: FloatUnaryOp::Abs, .. }
+        )));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            KernelOp::MaskBinary { op: MaskBinaryOp::And, .. }
+        )));
     }
 
     /// Evaluate a predicate fn source with the REAL prelude macros

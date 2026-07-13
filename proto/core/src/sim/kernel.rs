@@ -6,9 +6,10 @@
 //! a tagged value.
 
 pub use crate::interp::{
-    intern_kernel_program, FloatBinaryOp, FloatCompareOp, FloatUnaryOp, IntegerBinaryOp,
-    IntegerCompareOp, KernelInputRef, KernelLayout, KernelOp, KernelProgram, KernelProgramId,
-    KernelRegister, KernelType, KernelValidationError, MaskBinaryOp,
+    intern_kernel_program, kernel_program_for_num, EaseKind, FloatBinaryOp, FloatCompareOp,
+    FloatUnaryOp, IntegerBinaryOp, IntegerCompareOp, KernelInputRef, KernelLayout, KernelOp,
+    KernelProgram, KernelProgramId, KernelRegister, KernelType, KernelValidationError,
+    MaskBinaryOp, NumKernelBridge, NumKernelInputSource,
 };
 use std::rc::Rc;
 
@@ -578,6 +579,17 @@ fn convert_register<S: Copy, D, F: FnMut(S) -> D>(
         destination[lane] = f(source[lane]);
     }
 }
+#[inline]
+fn ease_f64(kind: EaseKind, value: f64) -> f64 {
+    use std::f64::consts::FRAC_PI_2;
+    let value = value.clamp(0.0, 1.0);
+    match kind {
+        EaseKind::InSine => 1.0 - (value * FRAC_PI_2).cos(),
+        EaseKind::OutSine => (value * FRAC_PI_2).sin(),
+        EaseKind::InOutSine => -(std::f64::consts::PI * value).cos() / 2.0 + 0.5,
+    }
+}
+
 
 fn execute_op(op: KernelOp, inputs: &KernelLanes, scratch: &mut KernelScratch, lanes: usize) {
     match op {
@@ -623,6 +635,11 @@ fn execute_op(op: KernelOp, inputs: &KernelLanes, scratch: &mut KernelScratch, l
             FloatBinaryOp::Min => binary_register(&mut scratch.f32s, dst, a, b, lanes, f32::min),
             FloatBinaryOp::Max => binary_register(&mut scratch.f32s, dst, a, b, lanes, f32::max),
             FloatBinaryOp::Pow => binary_register(&mut scratch.f32s, dst, a, b, lanes, f32::powf),
+            FloatBinaryOp::Mod => binary_register(&mut scratch.f32s, dst, a, b, lanes, f32::rem_euclid),
+            FloatBinaryOp::Quot => binary_register(&mut scratch.f32s, dst, a, b, lanes, |a, b| (a / b).trunc()),
+            FloatBinaryOp::Atan2Degrees => {
+                binary_register(&mut scratch.f32s, dst, a, b, lanes, |y, x| y.atan2(x).to_degrees())
+            }
         },
         KernelOp::F64Binary { op, dst, a, b } => match op {
             FloatBinaryOp::Add => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| a + b),
@@ -632,6 +649,11 @@ fn execute_op(op: KernelOp, inputs: &KernelLanes, scratch: &mut KernelScratch, l
             FloatBinaryOp::Min => binary_register(&mut scratch.f64s, dst, a, b, lanes, f64::min),
             FloatBinaryOp::Max => binary_register(&mut scratch.f64s, dst, a, b, lanes, f64::max),
             FloatBinaryOp::Pow => binary_register(&mut scratch.f64s, dst, a, b, lanes, f64::powf),
+            FloatBinaryOp::Mod => binary_register(&mut scratch.f64s, dst, a, b, lanes, f64::rem_euclid),
+            FloatBinaryOp::Quot => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| (a / b).trunc()),
+            FloatBinaryOp::Atan2Degrees => {
+                binary_register(&mut scratch.f64s, dst, a, b, lanes, |y, x| y.atan2(x).to_degrees())
+            }
         },
         KernelOp::U32Binary { op, dst, a, b } => match op {
             IntegerBinaryOp::Add => binary_register(&mut scratch.u32s, dst, a, b, lanes, u32::wrapping_add),
@@ -657,6 +679,99 @@ fn execute_op(op: KernelOp, inputs: &KernelLanes, scratch: &mut KernelScratch, l
             FloatCompareOp::Gt => compare_register(&scratch.f64s, &mut scratch.masks, dst, a, b, lanes, |a, b| a > b),
             FloatCompareOp::Gte => compare_register(&scratch.f64s, &mut scratch.masks, dst, a, b, lanes, |a, b| a >= b),
         },
+        KernelOp::F64NumericCompare { op, dst, a, b } => match op {
+            FloatCompareOp::Eq => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| {
+                if (a - b).abs() < 1e-9 { 1.0 } else { 0.0 }
+            }),
+            FloatCompareOp::Lt => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| {
+                if a < b { 1.0 } else { 0.0 }
+            }),
+            FloatCompareOp::Lte => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| {
+                if a <= b { 1.0 } else { 0.0 }
+            }),
+            FloatCompareOp::Gt => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| {
+                if a > b { 1.0 } else { 0.0 }
+            }),
+            FloatCompareOp::Gte => binary_register(&mut scratch.f64s, dst, a, b, lanes, |a, b| {
+                if a >= b { 1.0 } else { 0.0 }
+            }),
+        },
+        KernelOp::F64NumericNot { dst, x } => unary_register(&mut scratch.f64s, dst, x, lanes, |x| {
+            if x == 0.0 { 1.0 } else { 0.0 }
+        }),
+        KernelOp::F64Sine { dst, period, amp, x } => {
+            let (before, destination) = destination_slice(&mut scratch.f64s, dst, lanes);
+            let period = register_slice(before, period, lanes);
+            let amp = register_slice(before, amp, lanes);
+            let x = register_slice(before, x, lanes);
+            for lane in 0..lanes {
+                destination[lane] =
+                    amp[lane] * (std::f64::consts::TAU * x[lane] / period[lane]).sin();
+            }
+        }
+        KernelOp::F64Lerp { dst, a, b, ctrl, v1, v2 } => {
+            let (before, destination) = destination_slice(&mut scratch.f64s, dst, lanes);
+            let a = register_slice(before, a, lanes);
+            let b = register_slice(before, b, lanes);
+            let ctrl = register_slice(before, ctrl, lanes);
+            let v1 = register_slice(before, v1, lanes);
+            let v2 = register_slice(before, v2, lanes);
+            for lane in 0..lanes {
+                let r = ((ctrl[lane] - a[lane]) / (b[lane] - a[lane])).clamp(0.0, 1.0);
+                destination[lane] = v1[lane] + r * (v2[lane] - v1[lane]);
+            }
+        }
+        KernelOp::F64Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
+            let (before, destination) = destination_slice(&mut scratch.f64s, dst, lanes);
+            let a1 = register_slice(before, a1, lanes);
+            let b1 = register_slice(before, b1, lanes);
+            let a2 = register_slice(before, a2, lanes);
+            let b2 = register_slice(before, b2, lanes);
+            let ctrl = register_slice(before, ctrl, lanes);
+            let v1 = register_slice(before, v1, lanes);
+            let v2 = register_slice(before, v2, lanes);
+            let v3 = register_slice(before, v3, lanes);
+            for lane in 0..lanes {
+                destination[lane] = if ctrl[lane] < a2[lane] {
+                    let r =
+                        ((ctrl[lane] - a1[lane]) / (b1[lane] - a1[lane])).clamp(0.0, 1.0);
+                    v1[lane] + r * (v2[lane] - v1[lane])
+                } else {
+                    let r =
+                        ((ctrl[lane] - a2[lane]) / (b2[lane] - a2[lane])).clamp(0.0, 1.0);
+                    v2[lane] + r * (v3[lane] - v2[lane])
+                };
+            }
+        }
+        KernelOp::F64Ease { dst, kind, x } => {
+            unary_register(&mut scratch.f64s, dst, x, lanes, |x| ease_f64(kind, x))
+        }
+        KernelOp::F64LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
+            let (before, destination) = destination_slice(&mut scratch.f64s, dst, lanes);
+            let a = register_slice(before, a, lanes);
+            let b = register_slice(before, b, lanes);
+            let ctrl = register_slice(before, ctrl, lanes);
+            let v1 = register_slice(before, v1, lanes);
+            let v2 = register_slice(before, v2, lanes);
+            for lane in 0..lanes {
+                let r = ((ctrl[lane] - a[lane]) / (b[lane] - a[lane])).clamp(0.0, 1.0);
+                destination[lane] = v1[lane] + ease_f64(kind, r) * (v2[lane] - v1[lane]);
+            }
+        }
+        KernelOp::F64Lssht { dst, c, pv, f1, f2 } => {
+            let (before, destination) = destination_slice(&mut scratch.f64s, dst, lanes);
+            let c = register_slice(before, c, lanes);
+            let pv = register_slice(before, pv, lanes);
+            let f1 = register_slice(before, f1, lanes);
+            let f2 = register_slice(before, f2, lanes);
+            for lane in 0..lanes {
+                let c = c[lane];
+                let pv = pv[lane];
+                let _w = 1.0 / (1.0 + (c.abs() * 4.0 * (pv - pv)).exp());
+                let m = (c * f1[lane]).exp() + (c * f2[lane]).exp();
+                destination[lane] = m.ln() / c;
+            }
+        }
         KernelOp::U32Compare { op, dst, a, b } => match op {
             IntegerCompareOp::Eq => compare_register(&scratch.u32s, &mut scratch.masks, dst, a, b, lanes, |a, b| a == b),
             IntegerCompareOp::Lt => compare_register(&scratch.u32s, &mut scratch.masks, dst, a, b, lanes, |a, b| a < b),
@@ -708,7 +823,9 @@ fn execute_op(op: KernelOp, inputs: &KernelLanes, scratch: &mut KernelScratch, l
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interp::{run_lanes, NumOp, NumProgram};
+    use crate::edn::read_all;
+    use crate::interp::{lower_num_form, run_lanes, Env, NumOp, NumProgram};
+    use std::collections::HashMap;
     use std::time::Instant;
 
     fn bindings(inputs: &[KernelInputRef], output_count: usize) -> KernelBindings {
@@ -1002,6 +1119,83 @@ mod tests {
             old_outputs.iter().map(|value| value.to_bits()).collect::<Vec<_>>()
         );
     }
+    #[test]
+    fn num_bridge_preserves_full_f64_op_order_and_input_metadata() {
+        let sources = [
+            "(+ (* 2 t) (- (:x pos) (/ (:y pos) 3)))",
+            "(min (max t 2) (mod t 7))",
+            "(sine 12.94 2 t)",
+            "(lerp 0.3 1.4 t 0 2.6)",
+            "(lerp3 0 1 1 2 t 0 5 9)",
+            "(lerpsmooth eiosine 0 4 t 0 480)",
+            "(+ (< t 3) (sqrt (abs t)))",
+            "(quot (floor (* t 3)) (ceil (+ t 0.1)))",
+            "(einsine (mod t 1))",
+            "(lssht 0.5 t 2 4)",
+        ];
+        let lanes = 31;
+        let tau = (0..lanes).map(|lane| lane as f64 * 0.37 - 2.0).collect::<Vec<_>>();
+        let pos = (0..lanes)
+            .map(|lane| [lane as f64 * 1.3 + 0.5, 5.0 - lane as f64])
+            .collect::<Vec<_>>();
+        let axis = 0.25;
+
+        for source in sources {
+            let form = read_all(source).unwrap().into_iter().next().unwrap();
+            let num = lower_num_form(&form, &Env::empty(), &HashMap::new())
+                .unwrap_or_else(|| panic!("unlowered bridge test source: {source}"));
+            let bridge = kernel_program_for_num(&num).unwrap();
+            let mut f64s = Vec::with_capacity(bridge.inputs.len() * lanes);
+            for input in bridge.inputs.iter().copied() {
+                match input {
+                    NumKernelInputSource::Capture(slot) => {
+                        panic!("unexpected capture {slot} in {source}")
+                    }
+                    NumKernelInputSource::Tick => f64s.extend_from_slice(&tau),
+                    NumKernelInputSource::Axis => f64s.extend(std::iter::repeat_n(axis, lanes)),
+                    NumKernelInputSource::PositionX => {
+                        f64s.extend(pos.iter().map(|position| position[0]))
+                    }
+                    NumKernelInputSource::PositionY => {
+                        f64s.extend(pos.iter().map(|position| position[1]))
+                    }
+                    NumKernelInputSource::Aux(index) => {
+                        panic!("unexpected aux {index} in {source}")
+                    }
+                }
+            }
+            let input_refs = (0..bridge.inputs.len())
+                .map(|input| KernelInputRef::F64(input as u16))
+                .collect::<Vec<_>>();
+            let typed_plan = plan(bridge.program.as_ref().clone(), &input_refs);
+            let mut typed_outputs = KernelOutputs::default();
+            execute(
+                &typed_plan,
+                &KernelLanes { lanes, f64s, ..KernelLanes::default() },
+                &mut KernelScratch::default(),
+                &mut typed_outputs,
+            )
+            .unwrap();
+
+            let mut num_registers = Vec::new();
+            let mut num_outputs = Vec::new();
+            run_lanes(
+                &num,
+                axis,
+                &tau,
+                &pos,
+                &[],
+                &mut num_registers,
+                &mut num_outputs,
+            );
+            assert_eq!(
+                typed_outputs.f64s.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                num_outputs.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                "{source}"
+            );
+        }
+    }
+
 
     /// Manual perf gate: run with
     /// `cargo test -p maku sim::kernel::tests::typed_f64_perf_harness --release -- --ignored --nocapture`.

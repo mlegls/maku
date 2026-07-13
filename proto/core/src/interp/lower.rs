@@ -167,6 +167,9 @@ pub enum FloatBinaryOp {
     Min,
     Max,
     Pow,
+    Mod,
+    Quot,
+    Atan2Degrees,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -227,6 +230,35 @@ pub enum KernelOp {
     U64Binary { op: IntegerBinaryOp, dst: u16, a: u16, b: u16 },
     F32Compare { op: FloatCompareOp, dst: u16, a: u16, b: u16 },
     F64Compare { op: FloatCompareOp, dst: u16, a: u16, b: u16 },
+    /// Compatibility predicates for existing numeric programs. These write
+    /// 0.0/1.0 F64 registers because later NumOps may consume the result as
+    /// ordinary arithmetic; newly typed programs should use `F64Compare`.
+    F64NumericCompare { op: FloatCompareOp, dst: u16, a: u16, b: u16 },
+    F64NumericNot { dst: u16, x: u16 },
+    F64Sine { dst: u16, period: u16, amp: u16, x: u16 },
+    F64Lerp { dst: u16, a: u16, b: u16, ctrl: u16, v1: u16, v2: u16 },
+    F64Lerp3 {
+        dst: u16,
+        a1: u16,
+        b1: u16,
+        a2: u16,
+        b2: u16,
+        ctrl: u16,
+        v1: u16,
+        v2: u16,
+        v3: u16,
+    },
+    F64Ease { dst: u16, kind: EaseKind, x: u16 },
+    F64LerpSmooth {
+        dst: u16,
+        kind: EaseKind,
+        a: u16,
+        b: u16,
+        ctrl: u16,
+        v1: u16,
+        v2: u16,
+    },
+    F64Lssht { dst: u16, c: u16, pv: u16, f1: u16, f2: u16 },
     U32Compare { op: IntegerCompareOp, dst: u16, a: u16, b: u16 },
     U64Compare { op: IntegerCompareOp, dst: u16, a: u16, b: u16 },
     SymbolEq { dst: u16, a: u16, b: u16 },
@@ -273,6 +305,14 @@ impl KernelOp {
             | Self::LoadF64 { dst, .. }
             | Self::F64Unary { dst, .. }
             | Self::F64Binary { dst, .. }
+            | Self::F64NumericCompare { dst, .. }
+            | Self::F64NumericNot { dst, .. }
+            | Self::F64Sine { dst, .. }
+            | Self::F64Lerp { dst, .. }
+            | Self::F64Lerp3 { dst, .. }
+            | Self::F64Ease { dst, .. }
+            | Self::F64LerpSmooth { dst, .. }
+            | Self::F64Lssht { dst, .. }
             | Self::SelectF64 { dst, .. }
             | Self::F32ToF64 { dst, .. }
             | Self::U32ToF64 { dst, .. }
@@ -396,6 +436,7 @@ pub enum KernelValidationError {
     InvalidInput { op: usize, input: KernelInputRef },
     UninitializedRegister { op: usize, register: KernelRegister },
     DestinationOrder { op: usize, destination: KernelRegister, expected: u16 },
+    LayoutOverflow { ty: KernelType, count: usize },
     RegisterLayout { declared: KernelLayout, actual: KernelLayout },
     InvalidOutput { output: usize, register: KernelRegister },
 }
@@ -459,6 +500,47 @@ fn validate_kernel_operands(
         KernelOp::U32Compare { a, b, .. } => {
             check(KernelRegister::U32(a))?;
             check(KernelRegister::U32(b))?;
+        }
+        KernelOp::F64NumericCompare { a, b, .. } => {
+            check(KernelRegister::F64(a))?;
+            check(KernelRegister::F64(b))?;
+        }
+        KernelOp::F64NumericNot { x, .. } => check(KernelRegister::F64(x))?,
+        KernelOp::F64Sine { period, amp, x, .. } => {
+            check(KernelRegister::F64(period))?;
+            check(KernelRegister::F64(amp))?;
+            check(KernelRegister::F64(x))?;
+        }
+        KernelOp::F64Lerp { a, b, ctrl, v1, v2, .. } => {
+            check(KernelRegister::F64(a))?;
+            check(KernelRegister::F64(b))?;
+            check(KernelRegister::F64(ctrl))?;
+            check(KernelRegister::F64(v1))?;
+            check(KernelRegister::F64(v2))?;
+        }
+        KernelOp::F64Lerp3 { a1, b1, a2, b2, ctrl, v1, v2, v3, .. } => {
+            check(KernelRegister::F64(a1))?;
+            check(KernelRegister::F64(b1))?;
+            check(KernelRegister::F64(a2))?;
+            check(KernelRegister::F64(b2))?;
+            check(KernelRegister::F64(ctrl))?;
+            check(KernelRegister::F64(v1))?;
+            check(KernelRegister::F64(v2))?;
+            check(KernelRegister::F64(v3))?;
+        }
+        KernelOp::F64Ease { x, .. } => check(KernelRegister::F64(x))?,
+        KernelOp::F64LerpSmooth { a, b, ctrl, v1, v2, .. } => {
+            check(KernelRegister::F64(a))?;
+            check(KernelRegister::F64(b))?;
+            check(KernelRegister::F64(ctrl))?;
+            check(KernelRegister::F64(v1))?;
+            check(KernelRegister::F64(v2))?;
+        }
+        KernelOp::F64Lssht { c, pv, f1, f2, .. } => {
+            check(KernelRegister::F64(c))?;
+            check(KernelRegister::F64(pv))?;
+            check(KernelRegister::F64(f1))?;
+            check(KernelRegister::F64(f2))?;
         }
         KernelOp::U64Compare { a, b, .. } => {
             check(KernelRegister::U64(a))?;
@@ -679,11 +761,220 @@ pub enum NumOp {
     Atan2 { dst: u16, y: u16, x: u16 },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EaseKind {
     InSine,
     OutSine,
     InOutSine,
+}
+/// Input ordering for the typed metadata shadow of an existing `NumProgram`.
+/// Captures always occupy `0..n_inputs`; source classes used by the program
+/// then appear in this deterministic order: tick, axis, position x,
+/// position y, and auxiliary slots in table order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumKernelInputSource {
+    Capture(u16),
+    Tick,
+    Axis,
+    PositionX,
+    PositionY,
+    Aux(u16),
+}
+
+#[derive(Clone, Debug)]
+pub struct NumKernelBridge {
+    pub program: Rc<KernelProgram>,
+    /// One source descriptor per F64 input, in type-local input order.
+    pub inputs: Vec<NumKernelInputSource>,
+}
+
+fn append_num_kernel_input(
+    inputs: &mut Vec<NumKernelInputSource>,
+    source: NumKernelInputSource,
+) -> Result<u16, KernelValidationError> {
+    let index = u16::try_from(inputs.len()).map_err(|_| KernelValidationError::LayoutOverflow {
+        ty: KernelType::F64,
+        count: inputs.len() + 1,
+    })?;
+    inputs.push(source);
+    Ok(index)
+}
+
+/// Build the validated typed ABI metadata for a numeric program while
+/// retaining `NumProgram`/`run_lanes` as its execution specialization.
+///
+/// Every NumOp maps one-for-one and in order. The returned program may be
+/// structurally interned with another bridge even when its plan bindings
+/// differ (for example Tick versus Axis loads); `inputs` supplies those
+/// driver-owned binding distinctions.
+pub fn kernel_program_for_num(program: &NumProgram) -> Result<NumKernelBridge, KernelValidationError> {
+    let capture_count = u16::try_from(program.n_inputs).map_err(|_| {
+        KernelValidationError::LayoutOverflow {
+            ty: KernelType::F64,
+            count: program.n_inputs,
+        }
+    })?;
+    let mut inputs = (0..capture_count)
+        .map(NumKernelInputSource::Capture)
+        .collect::<Vec<_>>();
+    let tick = program
+        .ops
+        .iter()
+        .any(|op| matches!(op, NumOp::T { .. }))
+        .then(|| append_num_kernel_input(&mut inputs, NumKernelInputSource::Tick))
+        .transpose()?;
+    let axis = program
+        .ops
+        .iter()
+        .any(|op| matches!(op, NumOp::U { .. }))
+        .then(|| append_num_kernel_input(&mut inputs, NumKernelInputSource::Axis))
+        .transpose()?;
+    let position_x = program
+        .ops
+        .iter()
+        .any(|op| matches!(op, NumOp::PosX { .. }))
+        .then(|| append_num_kernel_input(&mut inputs, NumKernelInputSource::PositionX))
+        .transpose()?;
+    let position_y = program
+        .ops
+        .iter()
+        .any(|op| matches!(op, NumOp::PosY { .. }))
+        .then(|| append_num_kernel_input(&mut inputs, NumKernelInputSource::PositionY))
+        .transpose()?;
+    let aux_count = program.aux.as_deref().map_or(0, |tables| tables.slots.len());
+    let aux_base = u16::try_from(inputs.len()).map_err(|_| {
+        KernelValidationError::LayoutOverflow {
+            ty: KernelType::F64,
+            count: inputs.len(),
+        }
+    })?;
+    for index in 0..aux_count {
+        append_num_kernel_input(&mut inputs, NumKernelInputSource::Aux(index as u16))?;
+    }
+
+    let input_count = u16::try_from(inputs.len()).map_err(|_| {
+        KernelValidationError::LayoutOverflow {
+            ty: KernelType::F64,
+            count: inputs.len(),
+        }
+    })?;
+    let register_count = u16::try_from(program.n_regs).map_err(|_| {
+        KernelValidationError::LayoutOverflow {
+            ty: KernelType::F64,
+            count: program.n_regs,
+        }
+    })?;
+    let mut ops = Vec::with_capacity(program.ops.len());
+    for op in program.ops.iter().copied() {
+        ops.push(match op {
+            NumOp::Const { dst, v } => KernelOp::ConstF64 { dst, bits: v.to_bits() },
+            NumOp::Input { dst, slot } => KernelOp::LoadF64 { dst, input: slot },
+            NumOp::T { dst } => KernelOp::LoadF64 { dst, input: tick.expect("T source was collected") },
+            NumOp::U { dst } => KernelOp::LoadF64 { dst, input: axis.expect("U source was collected") },
+            NumOp::PosX { dst } => {
+                KernelOp::LoadF64 { dst, input: position_x.expect("PosX source was collected") }
+            }
+            NumOp::PosY { dst } => {
+                KernelOp::LoadF64 { dst, input: position_y.expect("PosY source was collected") }
+            }
+            NumOp::AuxIn { dst, idx } => KernelOp::LoadF64 {
+                dst,
+                input: aux_base.checked_add(idx).ok_or(KernelValidationError::LayoutOverflow {
+                    ty: KernelType::F64,
+                    count: usize::from(aux_base) + usize::from(idx) + 1,
+                })?,
+            },
+            NumOp::Add { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Add, dst, a, b }
+            }
+            NumOp::Sub { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Sub, dst, a, b }
+            }
+            NumOp::Mul { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Mul, dst, a, b }
+            }
+            NumOp::Div { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Div, dst, a, b }
+            }
+            NumOp::Eq { dst, a, b } => {
+                KernelOp::F64NumericCompare { op: FloatCompareOp::Eq, dst, a, b }
+            }
+            NumOp::Lt { dst, a, b } => {
+                KernelOp::F64NumericCompare { op: FloatCompareOp::Lt, dst, a, b }
+            }
+            NumOp::Gt { dst, a, b } => {
+                KernelOp::F64NumericCompare { op: FloatCompareOp::Gt, dst, a, b }
+            }
+            NumOp::Lte { dst, a, b } => {
+                KernelOp::F64NumericCompare { op: FloatCompareOp::Lte, dst, a, b }
+            }
+            NumOp::Gte { dst, a, b } => {
+                KernelOp::F64NumericCompare { op: FloatCompareOp::Gte, dst, a, b }
+            }
+            NumOp::Neg { dst, x } => KernelOp::F64Unary { op: FloatUnaryOp::Neg, dst, x },
+            NumOp::Not { dst, x } => KernelOp::F64NumericNot { dst, x },
+            NumOp::Abs { dst, x } => KernelOp::F64Unary { op: FloatUnaryOp::Abs, dst, x },
+            NumOp::Floor { dst, x } => KernelOp::F64Unary { op: FloatUnaryOp::Floor, dst, x },
+            NumOp::Ceil { dst, x } => KernelOp::F64Unary { op: FloatUnaryOp::Ceil, dst, x },
+            NumOp::Round { dst, x } => KernelOp::F64Unary { op: FloatUnaryOp::Round, dst, x },
+            NumOp::Sin { dst, x } => {
+                KernelOp::F64Unary { op: FloatUnaryOp::SinDegrees, dst, x }
+            }
+            NumOp::Cos { dst, x } => {
+                KernelOp::F64Unary { op: FloatUnaryOp::CosDegrees, dst, x }
+            }
+            NumOp::Sqrt { dst, x } => KernelOp::F64Unary { op: FloatUnaryOp::Sqrt, dst, x },
+            NumOp::Pow { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Pow, dst, a, b }
+            }
+            NumOp::Min { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Min, dst, a, b }
+            }
+            NumOp::Max { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Max, dst, a, b }
+            }
+            NumOp::Mod { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Mod, dst, a, b }
+            }
+            NumOp::Quot { dst, a, b } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Quot, dst, a, b }
+            }
+            NumOp::Sine { dst, period, amp, x } => KernelOp::F64Sine { dst, period, amp, x },
+            NumOp::Lerp { dst, a, b, ctrl, v1, v2 } => {
+                KernelOp::F64Lerp { dst, a, b, ctrl, v1, v2 }
+            }
+            NumOp::Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 } => {
+                KernelOp::F64Lerp3 { dst, a1, b1, a2, b2, ctrl, v1, v2, v3 }
+            }
+            NumOp::Ease { dst, kind, x } => KernelOp::F64Ease { dst, kind, x },
+            NumOp::LerpSmooth { dst, kind, a, b, ctrl, v1, v2 } => {
+                KernelOp::F64LerpSmooth { dst, kind, a, b, ctrl, v1, v2 }
+            }
+            NumOp::Lssht { dst, c, pv, f1, f2 } => KernelOp::F64Lssht { dst, c, pv, f1, f2 },
+            NumOp::Atan2 { dst, y, x } => {
+                KernelOp::F64Binary { op: FloatBinaryOp::Atan2Degrees, dst, a: y, b: x }
+            }
+        });
+    }
+    let (register_count, outputs, ops) = if ops.is_empty() {
+        (
+            1,
+            vec![KernelRegister::F64(0)],
+            vec![KernelOp::ConstF64 { dst: 0, bits: 0.0_f64.to_bits() }],
+        )
+    } else {
+        (register_count, vec![KernelRegister::F64(program.result)], ops)
+    };
+    let program = KernelProgram::new(
+        KernelLayout { f64s: input_count, ..KernelLayout::default() },
+        KernelLayout { f64s: register_count, ..KernelLayout::default() },
+        outputs,
+        ops,
+    )?;
+    Ok(NumKernelBridge {
+        program: intern_kernel_program(program),
+        inputs,
+    })
 }
 
 struct Builder<'a> {
