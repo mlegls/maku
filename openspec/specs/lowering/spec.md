@@ -1,10 +1,10 @@
 # lowering Specification
 
 ## Purpose
-The compiled-dyn lowering architecture: how per-entity hot loops lower
-to flat NumPrograms behind a narrow executor boundary, and the seams a
-JIT/native tier drops into. Requirements are the invariants; the Design
-section carries the tier plan, milestone state, and platform notes.
+The typed fixed-width lowering architecture: how per-entity hot loops install
+validated `KernelProgram` computations behind domain `KernelPlan` bindings,
+with driver-owned fallback, merge order, and specialized CPU artifacts. The
+same callback-free boundary is the seam future native/wasm/GPU tiers consume.
 ## Requirements
 ### Requirement: The executor boundary is lanes plus scratch
 Batch call sites SHALL hand executors a compiled program, input lanes, and scratch storage — never reaching into op internals — and compiled ops SHALL be total and callback-free. This boundary is the seam a JIT/native tier drops into behind the same signature.
@@ -108,32 +108,21 @@ Macro expansion performed at `deftick` registration SHALL be followed by the sam
 
 ## Design
 
-Moved verbatim from docs/notes/compiled-dyn-design.md (milestone/round
-annotations are historical design-state, superseded by change lifecycle
-going forward).
+The material below line 138 is the non-normative historical compiled-dyn design archive. Its old `NumProgram`, `ProjectorNum`, resolved-row evaluator, and “still open” references describe the route to the cutover, not the current architecture.
 
 ---
 
-# compiled dyn — implementation design
+# typed kernels — landed implementation status
 
-Status: stance REVISED 2026-07 (the pre-migration TODO, git history: "Compile dyn evaluation
-to a flat program"): load-time lowering to the NumProgram IR now, with a
-JIT/native-codegen tier as the planned destination — codegen compiles the
-same IR per distinct program behind the same (program, input lanes,
-scratch) executor boundary, and the IR interpreter loops become the cold
-fallback. The control plane stays interpreted permanently; per-entity hot
-loops (dyn columns, projector bodies, tick rules) are the replacement
-target, dyn first. Interim rules for JIT-readiness: narrow executor
-boundary, total callback-free ops (Interp fallback op = the one
-interpreter re-entry), captures/rand as input slots (per-site program
-sharing), structural interning as the compile cache key, and bit-exact
-semantics across tiers (oracle + replay determinism; per the 2026-07
-scale target the width contract is per storage class — f64 control
-plane, f32 hot columns — see readiness item 5). This doc turns
-the stance into a plan. Profile motivation (aggregate,
-8 representative cards, post entities-where/value-or work): dyn:vel 879ms and
-dyn:closed-pt 846ms self are the top two rows; dyn:frame 410ms is mostly
-dispatch around them.
+Status: LANDED 2026-07. `KernelProgram` is the canonical fixed-width executable identity: type-local F32/F64/U32/U64/Symbol/Handle/Mask register files, validated typed operands, fixed flattened outputs, and structural interning over layouts plus operation order. `KernelPlan` binds a program to motion, dyn-field, entity-filter, render-row, collider-row, or masked-update domains with declared direct/indirect/capture/channel/tick/axis/state inputs, output/presence targets, stale-handle policy, whole-plan fallback, and deterministic merge ownership.
+
+The permanent generic CPU executor is op-major SoA: it decodes each operation outside the lane loop and never constructs an interpreter `Val`. Measured hot paths may install a specialized CPU artifact derived from the same validated program/plan identity. Motion retains the proven `NumProgram::run_lanes` implementation only as its specialized F64 backend through `NumKernelBridge`; it is not a second public/domain IR. Filters, fixed updates, render projection, and collider projection likewise use cached typed-plan artifacts in production and the generic executor as their oracle/reference path.
+
+Every supported compiled surface is callback-free. Drivers resolve all source forms, schemas, symbols, columns, captures, handles, and presence before execution; a missing/stale/mistyped gather abandons the whole plan before publication and reruns the semantic interpreter. Drivers own filtering, compaction, geometry allocation, collision contacts, queued writes, render publication, and canonical row order.
+
+The migration removed the private compiled `ResolvedRowTest`/`ResolvedRowNum`, `ProjectorNum`, and render-row evaluator paths. Semantic `DynNum` and collider expression sources remain for interpreted fallback and cold plan installation, outside executable kernels. All four ignored release oracle card suites and the final interleaved representative/scaled performance gate pass.
+
+## Historical JIT-readiness archive
 
 ## JIT readiness — what must land before a codegen backend starts
 
@@ -142,35 +131,27 @@ deftick row math (predicates, render row values, field writes/bind) —
 exactly the hot-loop set; everything else is control plane and stays
 interpreted. Gaps, in dependency order:
 
-1. **One IR instead of four.** Only motion signals run on NumProgram
-   today; colliders evaluate `ProjectorNum`, queries/rule predicates run
-   `ResolvedRowTest`/`ResolvedRowNum`, render row values have their own
-   resolved-value evaluator, dyn cols have `DynNum`. Extend NumProgram
-   with the input ops those need (slot-resolved entity column loads,
-   sym-field equality, pose/channel/scan-cell reads) and re-express the
-   three recognizers as lowerings onto it. Biggest chunk; without it a
-   JIT covers only motion integrands (~1% post-round-19).
-2. **Input slots + capture vectors** — LANDED round 22 for the motion
-   surface: rand draws and numeric env captures fill per-entity capture
-   vectors over `(%capture i)` marker programs (one program per spawn
-   site; draws consume the RNG in the old substitution order), and
-   programs are structurally interned (the compile-cache key) — sites
-   differing only in captured/drawn values share one program and fuse
-   into one vel-batch group (polar joined the group key). Still open:
-   the same treatment on the other IR surfaces as item 1 lands, and the
-   entity-representation flip (spec id + capture vector replacing
-   per-row node clones).
+1. **One typed kernel contract — LANDED.** Motion/dyn, collider projection,
+   filters/rule predicates, fixed render projection, and masked updates now
+   share structurally interned `KernelProgram` identity and domain
+   `KernelPlan` bindings. Private compiled projector/resolved-row/render
+   evaluators are gone; only semantic fallback/source representations remain.
+2. **Input slots + capture vectors — LANDED.** Rand draws and numeric
+   captures use declared inputs, and program identity excludes per-site
+   values. Sites with the same typed layouts, widths, outputs, and operation
+   order share a program and may batch under compatible plans.
 3. **Totality contract (decided): no Interp fallback op in JIT v1.**
    All-or-nothing classification means every compiled program is total
    and infallible — no interpreter re-entry from native code, no error
    paths or lane masks in kernels. Runtime None-aborts (numeric read
    hitting a keyword-valued sym field) stay at the DRIVER level: abort
    the batch, rerun interpreted.
-4. **Batch call convention at all three surfaces.** The kernel ABI is
-   "N input lanes + scratch → N output lanes"; motion has the seam
-   (`run_lanes`), collider materialization and render row eval still
-   walk per row — their batching rounds build the seam the JIT drops
-   into.
+4. **Batch call convention at all fixed-width surfaces — LANDED.** The
+   generic ABI is typed input-major lanes plus reusable scratch to typed
+   output-major lanes. Motion, dyn fields, filters, render projection,
+   collider projection, and masked updates install compatible plans; CPU
+   specializations preserve that plan identity and keep the generic executor
+   as the oracle/reference implementation.
 5. **Determinism across tiers** (normative surface:
    `openspec/specs/determinism/spec.md`): kernels call shared extern math shims
    (sin/cos/pow/rem_euclid — no platform libm, no fast-math, GPU tiers
@@ -185,9 +166,9 @@ interpreted. Gaps, in dependency order:
    as warmup); macOS hardened runtime needs MAP_JIT handling. REVISED
    2026-07: a wasm host cannot do native codegen, but it CAN instantiate
    a generated wasm module at card load importing the same linear
-   memory — kernels read/write the SoA columns in place. Same
-   NumProgram lowering, second emission target; and since cards are
-   known in advance, that emission can run offline at publish time
+   memory — kernels read/write the SoA columns in place. The same typed
+   `KernelProgram`/`KernelPlan` contract is the second emission target; cards
+   known in advance may compile it offline at publish time.
    (precompiled kernel module shipped with the card). The IR interpreter
    tier stays permanently supported as the universal fallback.
 
@@ -207,10 +188,10 @@ since the milestone-B remainder, per-row interpretation covers the
 rest indefinitely), and the model/ split (orthogonal; if it lands
 first, `Dyn<E>` with E = kernel handle is its natural instantiation).
 
-Sequencing: the planned perf rounds (collider batching, render-row
-batching) build item 4; then IR unification + input slots/interning as
-their own rounds; then a cranelift spike behind the `run_lanes`
-signature with the oracle as the acceptance gate.
+Sequencing status: collider and render batching, typed IR unification,
+input slots/interning, and CPU-specialized plan artifacts have landed. A
+Cranelift or wasm backend now drops behind `KernelProgram`/`KernelPlan` and
+the typed lane/scratch ABI, with the existing oracle as its acceptance gate.
 
 ## Cost anatomy (what the interpreter pays per entity per tick)
 

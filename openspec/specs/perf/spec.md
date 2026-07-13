@@ -80,20 +80,31 @@ rows, interleaved runs):
 - Milestone-B remainder (ClosedPt group pose, AxisSel scatter) is now
   JIT prep more than wall win on this rig (input slots + interning
   landed round 22 at −8%) — see `compiled-dyn-milestone-b`.
-## Current walls (round 23, 2026-07, bare)
+## Current walls (typed-kernel unification, 2026-07, bare)
 
-| case | wall | note |
-|---|---|---|
-| fruit (t03 ex3) 900t | 111.7ms | 5050ms at round 7 — 45x |
-| scaled fruit 12000t | 2.19s | 16.9s at round 15 |
-| reimu_vs_mima | ~120.9ms | −1.8% this round (interleaved A/B) |
-| spell-2 | 19.7ms | |
-| cradle | 47.8ms | |
+The final same-session verdict used five interleaved A/B observations per
+candidate against the pre-change `b11ec85` baseline:
 
-Round 21 = milestone-C SoA render output (render-output-design.md);
-round 22 = input slots + structural interning (capture vectors over
-marker programs) plus the mesh renderer pack (maku-mesh-touhou; player
-extracted to `proto/player`); round 23 = rule-lowering remainder
-(compiled cull rules, and-chain fold, registration-time rewrite of
-deftick expansion output, mixed-predicate prefix prefiltering).
+| case | baseline median | typed-kernel median | delta |
+|---|---:|---:|---:|
+| representative suite aggregate | 373.7ms | 364.8ms | −2.38% |
+| scaled fruit 12000t | 2344.2ms | 2261.9ms | −3.51% |
+
+Both governing cases pass the ±5% threshold. The five representative
+candidate walls were 360.7/360.8/364.8/364.8/365.2ms; the scaled candidate
+walls were 2250.6/2269.9/2261.5/2261.9/2265.4ms.
+
+A current candidate suite run, for standing per-card attribution:
+
+| case | wall |
+|---|---:|
+| fruit (t03 ex3) 900t | 110.7ms |
+| reimu_vs_mima | 126.8ms |
+| spell-2 | 20.6ms |
+| cradle | 49.1ms |
+
+This round lands typed `KernelProgram`/`KernelPlan` execution plus cached CPU
+artifacts for motion, dyn fields, filters, fixed updates, render projection,
+and collider projection. CPU artifacts are derived from validated common
+plans; they do not reintroduce private semantic evaluators.
 

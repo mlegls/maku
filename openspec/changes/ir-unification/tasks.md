@@ -19,7 +19,7 @@
 - [x] 3.1 Migrate existing compiled motion programs to the typed program and motion-plan ABI without changing `DynNode` size or state ownership
 - [x] 3.2 Migrate `DynNum` fixed-width evaluation to dyn-field plans with whole-plan interpreted fallback
 - [x] 3.3 Dual-run migrated motion and dyn-field plans through their former semantic evaluators under `MAKU_LOWER_ORACLE`
-- [ ] 3.4 Remove obsolete numeric compiled representations and call paths after all motion/dyn callers cut over
+- [x] 3.4 Remove obsolete numeric compiled call paths after motion/dyn cutover; retain `NumProgram` only as the specialized F64 CPU backend bridged from canonical `KernelProgram` identity
 
 ## 4. Predicate and Rule Cutover
 
@@ -41,7 +41,15 @@
 ## 6. Verification and Cleanup
 
 - [x] 6.1 Run focused core tests for typed programs, each migrated plan family, deterministic fallback, and stale/optional boundary cases
-- [ ] 6.2 Run the four ignored release oracle card suites with `MAKU_LOWER_ORACLE=1` and resolve every interpreter-versus-kernel mismatch
-- [ ] 6.3 Run interleaved wall-only A/B measurements for the representative and scaled profiles; reject migrations that regress the governing perf thresholds
-- [ ] 6.4 Update lowering design/status text to describe the landed `KernelProgram`/`KernelPlan` boundary and remove superseded `NumProgram`/private-evaluator guidance
-- [ ] 6.5 Confirm no compiled hot-loop path contains an interpreter callback and no supported fixed-width surface retains a private compiled evaluator
+- [x] 6.2 Run the four ignored release oracle card suites with `MAKU_LOWER_ORACLE=1` and resolve every interpreter-versus-kernel mismatch
+- [x] 6.3 Run interleaved wall-only A/B measurements for the representative and scaled profiles; reject migrations that regress the governing perf thresholds
+- [x] 6.4 Update lowering design/status text to describe the landed `KernelProgram`/`KernelPlan` boundary, including the retained specialized F64 backend, and remove superseded private-evaluator guidance
+- [x] 6.5 Confirm no compiled hot-loop path contains an interpreter callback and no supported fixed-width surface retains a private compiled evaluator
+
+## Completion Evidence
+
+- Typed executor/lowering: `sim::kernel::tests` 7 passed; `interp::lower::tests` 19 passed.
+- Migrated surfaces: `compiled_` 8, `dyn_` 10, `collider_` 23, `projection_` 3, `masked_update` 2, and the stale-handle boundary 1 all passed; compiled/update oracle reruns also passed.
+- Release oracle corpus: `translations_run`, `tutorial_cards_run`, `reimu_vs_mima_plays`, and `duel_card_plays` each passed in release mode with `MAKU_LOWER_ORACLE=1`.
+- Five-pair wall-only A/B against `b11ec85`: representative median 373.7→364.8ms (−2.38%); scaled fruit median 2344.2→2261.9ms (−3.51%).
+- Audit: executable `KernelProgram`/`KernelPlan` data contains only fixed-width typed operations, layouts, bindings, and policies. No `Val`, `Form`, `Env`, or interpreter callback is stored in a kernel. The obsolete `ResolvedRowTest`/`ResolvedRowNum`, `ProjectorNum`, and private render-row evaluator paths are absent. Remaining `DynNum`/collider expressions are semantic fallback and cold installation sources; `NumProgram` is the typed motion plan's specialized F64 CPU backend.

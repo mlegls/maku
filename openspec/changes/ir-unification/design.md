@@ -28,17 +28,19 @@ The governing contracts are `openspec/specs/lowering/spec.md`, `openspec/specs/d
 
 ## Decisions
 
-### 1. Generalize `NumProgram` into a typed `KernelProgram`
+### 1. Make `KernelProgram` the typed contract and retain `NumProgram` as an F64 CPU specialization
 
-A kernel program is a topologically ordered, register-addressed computation. Every input, register, and output has a fixed backend-portable type. The initial set is:
+A kernel program is the canonical, topologically ordered, register-addressed computation. Every input, register, and output has a fixed backend-portable type:
 
 ```text
-F32 | F64 | U32 | U64 | Mask
+F32 | F64 | U32 | U64 | Symbol | Handle | Mask
 ```
 
-`U32` covers interned symbols, row ids, small enum tags, and offsets. Generation-safe handles use either a `U64` canonical packing or two explicitly bound integer lanes; the implementation must choose one representation and keep stale-handle validation in declared ops/inputs. `Mask` is the backend predicate type and may be bit-packed in storage while remaining a logical lane value in the program.
+Symbols use `u32` storage, generation-safe handles use a distinct `Handle` register file with `u64` lane storage, and masks use a logical one-byte lane in the permanent SoA executor. Program identity covers the complete typed layouts, flattened output descriptors, and operation order.
 
-Alternative: keep float-only `NumProgram` and leave symbol/handle/presence work in resolved evaluators. Rejected because it preserves the evaluator split and prevents a render/rule kernel from compiling as one unit.
+The pre-existing `NumProgram` lowerer and `run_lanes` implementation remain as the optimized F64 CPU backend for motion programs. `kernel_program_for_num` builds the canonical typed program and declared input bridge; motion plans carry that typed identity while dispatching the proven numeric backend. `NumProgram` is therefore an executor specialization, not a second domain plan ABI or a representation available to predicates, rules, render projection, collider projection, or dyn-field drivers.
+
+Alternative: keep float-only `NumProgram` as the cross-domain contract and leave symbol/handle/presence work in resolved evaluators. Rejected because it preserves the semantic evaluator split and prevents a render/rule kernel from compiling as one unit.
 
 Alternative: use interpreter `Val` registers. Rejected because boxed/tagged dynamic values prevent total callback-free kernels and transfer poorly to SIMD, wasm, and GPU backends.
 
@@ -142,18 +144,19 @@ Each migration keeps its old semantic evaluator available for all-or-nothing fal
 - **[Risk] Early GPU concerns overcomplicate the CPU IR.** → Require backend-portable fixed-width values and explicit bindings, but add GPU-only orchestration only in `gpu-kernel-backend` when measured.
 - **[Risk] Type checking and kernel lowering duplicate some resolution work.** → Give `language-type-checking` ownership of ergonomic source types and diagnostics, keep `KernelProgram` ownership limited to executable fixed-width lanes, and permit shared resolved annotations later without making either track depend on the other.
 
-## Migration Plan
+## Landed Migration
 
-- Introduce typed program metadata and typed executor paths alongside the current numeric path.
-- Dual-run each migrated surface against its existing evaluator under `MAKU_LOWER_ORACLE`.
-- Migrate one domain plan family per coherent change-set and retain whole-plan interpreted fallback.
-- Remove each private compiled evaluator only after its corpus coverage and focused tests pass through the common program.
-- Keep rollback local: disabling a plan family restores the existing interpreted evaluator without changing card or storage semantics.
-- After all target surfaces use the common ABI, `jit-native-codegen` and `gpu-kernel-backend` may add executors without changing source semantics.
+- `KernelProgram` construction validates typed layouts, operands, outputs, and structural identity; `KernelPlan` construction validates every declared input/output binding before execution.
+- Motion keeps the specialized F64 `NumProgram::run_lanes` CPU backend behind a `NumKernelBridge`, while motion grouping and cache identity use the typed program/plan contract.
+- Dyn fields, filters, fixed render rows, collider scalar projection, and fixed updates install domain plans over typed programs. Their CPU artifacts are derived and cached from those plans; the generic SoA executor remains the oracle/reference path where a specialized artifact is faster.
+- Drivers gather or resolve all inputs before publishing output, own whole-plan fallback, and preserve canonical row/update/render/collider order. Variable geometry and collision contact generation remain driver-owned.
+- `MAKU_LOWER_ORACLE=1` dual-runs every migrated surface against its semantic interpreter path without double-applying effects.
+- Obsolete private compiled evaluators (`ResolvedRowTest`/`ResolvedRowNum`, `ProjectorNum`, and the private compiled render-row evaluator) were removed. Semantic `DynNum` and collider source expressions remain only to support interpreted fallback and cold plan installation.
+- Final interleaved wall-only measurements passed the governing ±5% gate, and all four ignored release oracle card suites passed.
 
-## Open Questions
+## Landed Decisions
 
-- Canonical handle lane representation: packed `U64` versus explicit row/generation lanes.
-- Whether the first implementation uses typed register metadata or type-specific op variants.
-- Whether multi-output programs expose output registers directly or explicit store ops to bound columns.
-- Which reductions deserve reusable plan templates after the fixed-output migrations are measured.
+- Handles use a distinct typed register/input/output class backed by `u64` lanes; stale generation policy stays explicit in indirect plan bindings.
+- Registers and operations are type-specific, with no tagged interpreter value in a lane.
+- Programs expose fixed flattened output-register descriptors; plans bind each descriptor to a column, state, presence, or driver target.
+- Reductions, compaction, variable allocation, contacts, and effects remain explicit driver topology rather than ordinary kernel operations.
