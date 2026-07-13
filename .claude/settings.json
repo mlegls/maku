@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun run /Users/mlegls/dev/harness-continue/src/main.ts hook claude",
+            "command": "hc hook claude",
             "timeout": 1200
           }
         ]
