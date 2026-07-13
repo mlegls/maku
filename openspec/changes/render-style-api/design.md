@@ -2,7 +2,9 @@
 
 `maku_mesh_touhou::TouhouMesh` currently consumes the public ordered render frame and returns reused `MeshFrame { vertices, indices, spans }` buffers plus one generated disc/ring atlas. `StyleTable` is three callbacks/values (`palette`, `dot_radius`, `px_per_unit`); dot geometry always emits a palette-tinted disc plus white outline, nonzero hue bypasses the injected palette through `maku::host::style_rgb_hued`, `variant` and point `theta` are ignored, and beam width is hardcoded. The macroquad host assumes every span uses the same atlas/material. `proto/core/src/web.rs` independently repeats palette/radius rendering instead of consuming the pack.
 
-The engine boundary is already settled by `openspec/specs/render-rows/spec.md`: mesh renderers are optional hosts over an ordered typed frame, style vocabulary is pack/library policy, and engine transport contains no texture/material semantics. The recent per-kind schema work provides stable `:sprite` and `:beam` layouts without requiring another core change.
+The current package also collapses three concerns: Touhou's semantic schema/style vocabulary, reusable sprite/ribbon geometry algorithms, and backend submission contracts. This change keeps one vertical `mesh-touhou` package but makes those boundaries explicit. The host-facing API is a controlled Touhou façade; internal kind handlers compile semantic rows/batches into primitive recipes and append to one shared output. This is not evidence yet for a separately versioned universal renderer crate.
+
+The engine boundary is already settled by `openspec/specs/render-rows/spec.md`: mesh renderers are optional hosts over an ordered typed frame, style vocabulary is pack/library policy, and engine transport contains no texture/material semantics. The recent per-kind schema work provides stable `:sprite` and `:beam` layouts without requiring another core change. `openspec/changes/ir-unification/design.md` and `openspec/changes/gpu-kernel-backend/design.md` additionally require fixed render projection to remain visible as typed plans/columns; pack modularity must not force semantic row reconstruction or make one module equal one physical GPU dispatch.
 
 ### Danmokou evidence and lessons
 
@@ -21,25 +23,53 @@ Maku should adopt data-owned profiles, palette ramps, material separation, direc
 
 **Goals:**
 
-- Host-defined palettes, sprite families/variants, texture regions, beam looks, and alpha/additive materials.
-- A stock profile that reproduces current disc/outline and beam behavior as data.
+- A genre-facing Touhou pack API for palettes, sprite families/variants, texture regions, layered beam looks, and alpha/additive materials.
+- Batch-aware kind handlers over stable `:sprite` and `:beam` schemas, backed by reusable sprite/ribbon processors and one shared output arena/command stream.
+- A stock profile that reproduces current disc/outline and beam behavior as compiled data.
 - Compact instanced point output and indexed variable geometry behind one ordered draw-command stream.
 - Opaque, stable resource/material ids suitable for native and wasm hosts.
-- Directional sprites, palette-ramp recoloring, additive glow layers, and multiple textures without engine changes.
-- Explicit profile validation and unknown-style behavior.
-- Steady-state buffer reuse and no per-row string/Rc allocation.
+- Primitive effect surfaces and validated adapters for local effects such as sprite or beam halos without hardcoding named effects into primitive processors.
+- Explicit profile/schema validation, unknown-style behavior, and custom-pipeline compatibility against fixed layouts.
+- Steady-state buffer reuse, no per-row string/Rc allocation, and retained batch/plan structure for future CPU/SIMD/GPU execution.
 
 **Non-Goals:**
 
 - Changing engine render kinds, schemas, or emission-order semantics.
+- One package or physical dispatch per render kind; handlers are logical composition boundaries over shared execution/output state.
 - Global z/render-queue sorting in the mesh pack.
-- GPU texture/shader creation or asset I/O in Rust geometry code.
+- Group/offscreen effects, screen-space bloom, color grading, or render-target orchestration; those belong to a host compositor.
+- GPU texture/shader creation, asset I/O, or GPU mesh-kernel implementation in this change.
+- A guarantee that a whole tick compiles to one heterogeneous GPU kernel.
 - Arbitrary material-specific vertex/instance layouts in v1.
-- A universal mesh API for non-Touhou packs.
+- Extracting a universal mesh crate before a second concrete render pack establishes demonstrated commonality.
 - Moving the pack into `proto/core` or making core depend on it.
 - DMK-compatible style-string parsing.
 
 ## Decisions
+
+### Treat `mesh-touhou` as a pack façade over internal primitive processors
+
+The public cold API speaks Touhou policy: schema bindings, `(family, variant, color)` styles, palette ramps, beam active/warning state, fallbacks, and resources. Profile construction compiles that configuration to numeric ids, cached schema bindings, and ordinary sprite/ribbon recipes. The hot API consumes the engine frame and exposes only fixed buffers, resource/material manifests, and ordered commands.
+
+Internally, a sprite handler and beam handler bind compatible stable schemas and call sprite-instance and ribbon processors. The pack, not either processor, owns the frame buffers, resource registry, and command builder. A handler may support multiple kinds and may compose several processors; a primitive processor may be reused by several handlers. Module boundaries therefore do not imply separate frames or submissions.
+
+```text
+RenderFrame
+    -> bound kind handler
+    -> compiled primitive recipe
+    -> shared sprite/ribbon emitters
+    -> one MeshFrame + ordered command stream
+```
+
+Alternative: expose the primitive API directly as the normal host API. Rejected because hosts using the Touhou pack should configure Touhou semantics and receive Touhou validation rather than manually reproduce its schema mapping. Alternative: extract a generic crate now. Rejected because one pack cannot establish which palette, effect, recipe, or ABI concepts are genuinely cross-pack.
+
+### Bind schemas once and preserve batches and planning information
+
+At load/profile binding, each supported kind validates required field names/kinds and records column indices against stable `RenderSchema` identity. A compatible `RenderBatch` is read in place; it is never expanded merely to cross a handler boundary. Rows and batches call the same resolved emitters.
+
+Handlers expose fixed recipe cardinality and destination layouts where known; ribbons retain an explicit sizing/emission seam for variable path output. This permits later CPU, SIMD, or GPU planners to fuse compatible work or schedule specialized passes. It does not require one kernel per module or one heterogeneous kernel per tick. The useful GPU objective is resident typed buffers and one planned command submission, not an artificially universal shader.
+
+Alternative: opaque row-at-a-time renderer traits. Rejected because they discard the column transport, stable schema bindings, fixed-output planning, and GPU-residency opportunities established by `render-rows` and the kernel changes.
 
 ### 1. Replace `StyleTable` with immutable validated `TouhouProfile`
 
@@ -117,13 +147,17 @@ pub struct SpriteLayer {
 }
 ```
 
-`OrientationPolicy` is radial/ignore-theta or directional/use-theta. The stock disc and white outline are two layers over the generated atlas. A glow is an additional layer referencing an additive material. A custom sprite sheet is another texture region. Layer order is preserved within the row; no global style sorting occurs.
+`OrientationPolicy` is radial/ignore-theta or directional/use-theta. The stock disc and white outline are two layers over the generated atlas. A glow, shadow, or outline is an additional layer referencing a compatible material. A custom sprite sheet is another texture region. Layer order is preserved within the row; no global style sorting occurs.
 
-Alternative: one style equals one texture/material. Rejected because the current look already needs fill plus outline and glow/additive composition should not require card-level duplicate rows.
+The sprite processor exports an effect surface—standard source layouts plus layer duplication, scale/offset, color/alpha binding, material replacement, and insertion order—not a list of named effects. A pack-level effect adapter such as a soft halo declares the capabilities it needs and compiles to ordinary layers during profile construction. Missing channels require rejection or a later versioned standard layout, never an arbitrary payload.
 
-### 5. Beam styles are separate profile data
+Alternative: one style equals one texture/material. Rejected because the current look already needs fill plus outline and glow/additive composition should not require card-level duplicate rows. Alternative: `supports_glow`/`supports_shadow` flags on the primitive. Rejected because named-effect enumeration couples an open effect vocabulary to the geometry implementation.
 
-`BeamStyle` declares material/texture region, active and warning base widths, alpha multipliers, and join/cap policy supported by the pack. The row's schema-provided `width` multiplies the profile width; `active` chooses active versus warning appearance. The existing hardcoded 6px/1.5px values become stock-profile defaults.
+### 5. Beam styles are separate layered profile data
+
+`BeamStyle` declares ordered `RibbonLayer`s. Each layer owns a material/texture region, width and alpha multipliers, active and warning base policy, and supported join/cap policy. The row's schema-provided `width` multiplies every resolved layer width; `active` chooses active versus warning appearance. The existing hardcoded 6px/1.5px values become stock-profile defaults.
+
+This gives ribbons the same compositional local-effect model as sprites. A soft beam glow can compile to a wider additive ribbon followed by the body ribbon. The ribbon processor exports duplication, width scaling, material replacement, tint/alpha, UV, and insertion operations; an effect adapter declares which it requires. It does not claim that a sprite shader automatically consumes strip vertices.
 
 Variable polyline points remain indexed strip geometry. More advanced tiled/animated lasers require a later bounded beam-layout extension, not an arbitrary shader callback.
 
@@ -190,13 +224,15 @@ pub enum TextureSource {
 }
 ```
 
-Exact owned/borrowed storage may vary, but the contract is: the pack exposes stable ids and optional builtin bytes; hosts load/upload external resources and create pipelines. `MaterialId` in a frame is an index into the immutable profile manifest. Alpha and additive blend modes are standard descriptors; custom pipeline keys let a host substitute shaders that consume the standard v1 instance/vertex ABI.
+Exact owned/borrowed storage may vary, but the contract is: the pack exposes stable ids and optional builtin bytes; hosts load/upload external resources and create pipelines. `MaterialId` in a frame is an index into the immutable profile manifest. Alpha and additive blend modes are standard descriptors; custom pipeline keys let a host substitute shaders that consume the declared standard v1 instance/vertex ABI. Compatibility is checked from the primitive/source-layout contract, not from a claim that one shader applies to every topology.
+
+Effects have explicit scope. Material/layer effects and primitive-coupled geometry effects compile into recipes before the hot path. Group/offscreen effects need bounds, intermediate targets, and command grouping; whole-frame effects such as bloom need a render graph. Those scopes remain host compositor policy rather than primitive flags or hidden draw queues in this pack.
 
 Materials requiring additional per-instance attributes are out of v1. Add a versioned standard stream or a separate renderer pack after a concrete schema requires it; do not reserve a permanently bloated generic payload.
 
 ### 8. Preserve zero-allocation steady state
 
-`TouhouMesh::build` clears and reuses every frame vector. Schema caches resolve relevant column indices once per stable `Rc<RenderSchema>`. Symbol-to-style/palette caches retain interned/shared keys without `Rc::from` per row. Hue/ramp results memoize on resolved ids and hue bucket. Building returns a borrow valid until the next build, as today.
+`TouhouMesh::build` clears and reuses every shared frame vector. Schema caches resolve relevant column indices once per stable `Rc<RenderSchema>`. Symbol-to-style/palette caches retain interned/shared keys without `Rc::from` per row. Hue/ramp results memoize on resolved ids and hue bucket. Effect adapters have already compiled to immutable primitive recipes. Building returns a borrow valid until the next build, as today.
 
 Strict unknown-style errors occur only on first resolution; fallback mode resolves once to explicit fallback ids. Profile/resource mutation during build is prohibited.
 
@@ -214,23 +250,32 @@ The default `TouhouProfile` owns stock family radii, palette shades, generated d
 
 ## Risks / Trade-offs
 
+- **[Risk] Logical handler modules become per-row callbacks or physical dispatch boundaries.** → Bind schemas once, consume batches directly, share output/planning state, and keep module composition independent from CPU/GPU scheduling.
+- **[Risk] Capability descriptors become a generic effect engine.** → Limit v1 to concrete sprite/ribbon operations and fixed layouts needed by this pack; named semantic effects compile in pack policy and unsupported channels fail validation.
 - **[Risk] Multiple fixed sprite layouts complicate hosts.** → Three typed buffers avoid forcing recolor bandwidth onto fixed/tint-only bullets and remain directly representable as native slices and wasm typed-array views; v1 admits no arbitrary layouts.
-- **[Risk] Material changes can create many draw commands.** → Preserve correctness first, coalesce adjacent compatible commands, and design stock profiles/atlases so common family/color variation stays one material.
+- **[Risk] Layered ribbons and materials create many draw commands.** → Preserve correctness first, coalesce adjacent compatible commands, and design stock recipes/atlases so common variation stays on few materials.
 - **[Risk] Custom textures use incompatible dimensions/UVs.** → Validate known resources at profile construction and make external resource metadata part of host registration.
 - **[Risk] Strict unknown-style failures occur mid-frame.** → Resolve/cache at first occurrence, offer explicit fallback policy, and expose diagnostics so hosts can preflight representative cards.
 - **[Risk] Macroquad lacks efficient instancing.** → Keep the pack output instanced; the macroquad adapter may expand/chunk as a compatibility host without forcing every host to pay that cost.
 - **[Risk] Web wrapper relocation breaks consumers.** → Perform a clean host-level cutover with focused wasm API tests; do not leave duplicate palette/render paths.
-- **[Risk] Internal style layers appear to reorder rows.** → Layers stay inside each row's command position and no global sort occurs.
-- **[Risk] The API grows into a generic material engine.** → Keep a fixed Touhou sprite/strip ABI and opaque host pipeline keys; new arbitrary attributes require concrete evidence and a versioned follow-up.
+- **[Risk] Internal style/effect layers appear to reorder rows.** → Layers stay inside each row's command position and no global sort occurs.
+- **[Risk] Future GPU work is constrained by the host façade.** → Compile semantics to numeric recipes, retain typed batch bindings and explicit output cardinality/layouts, and permit multiple specialized resident dispatches rather than requiring one universal kernel.
+- **[Risk] The API grows into a generic material engine.** → Keep a fixed Touhou sprite/strip ABI and opaque host pipeline keys; new arbitrary attributes or render-graph scopes require concrete evidence and a versioned follow-up.
 
 ## Migration Plan
 
-1. Add profile/resource/material types and a stock profile that reproduces current outputs.
-2. Replace `StyleTable` lookup and fix hue resolution to use the selected profile.
-3. Add layered sprite resolution and directional transforms while retaining the old expanded-output path under tests.
-4. Introduce sprite instances and ordered draw commands; migrate macroquad through a compatibility expansion adapter.
-5. Migrate beam width/style configuration and indexed draw commands.
-6. Add custom texture, tint, dynamic-recolor, additive material, fallback, and profile-validation fixtures.
+1. Establish the pack/profile, schema-binding, primitive-recipe, capability, resource/material, and shared-output types inside `mesh-touhou`; do not extract a generic crate.
+2. Build a stock profile that compiles current dots and beams to ordered sprite/ribbon layers and reproduces current outputs.
+3. Replace `StyleTable` lookup, fix hue resolution, and bind `:sprite`/`:beam` rows and batches to cached handlers.
+4. Add layered sprite/ribbon resolution and compatible local-effect fixtures while retaining the old expanded-output path under tests.
+5. Introduce sprite instances, indexed ribbons, and one shared ordered command stream; migrate macroquad through a compatibility expansion adapter.
+6. Add custom texture, tint, dynamic-recolor, additive material, effect-capability, fallback, schema-binding, and profile-validation fixtures.
 7. Add the host-level wasm wrapper and typed-array/resource manifest, then delete core's duplicate Touhou web flattening.
 8. Move stock palette/radius policy out of core and remove `StyleTable`, the single-atlas API, and bare `Span` after all consumers cut over.
+
+## Open Questions
+
+- Whether the eventual second render pack demonstrates enough identical sprite/ribbon/resource contracts to justify extraction into a shared crate; this change deliberately leaves the seam internal.
+- Which host compositor API should later represent grouped offscreen effects and emissive/bloom passes; primitive recipe flags are explicitly not the answer.
+- Whether future GPU mesh compilation consumes GPU-resident render columns directly or uses host-provided device handles; preserve planning information here and decide orchestration with measured backend work.
 

@@ -1,31 +1,38 @@
-## 1. Profile and resource contract
+## 1. Pack, profile, and schema contracts
 
-- [ ] 1.1 Add typed ids, palette shades, texture sources/regions, sampler/blend descriptors, material descriptors, sprite/beam styles, orientation policy, layer color bindings, unknown-style policy, and `TouhouProfile` builder types in `proto/mesh-touhou`.
-- [ ] 1.2 Implement profile validation for duplicate keys, dangling ids, material primitive/layout compatibility, finite positive dimensions, known texture-region bounds, and complete explicit fallbacks.
-- [ ] 1.3 Re-express the generated disc/ring atlas, stock palettes, family radii, two-layer dot recipe, beam widths, and alpha material as `TouhouProfile::stock()` data.
-- [ ] 1.4 Replace `StyleTable` and direct core palette/radius calls with profile-owned cached `(family, variant)` and color resolution, including deterministic hue/alpha shade resolution and strict/fallback diagnostics.
+- [ ] 1.1 Organize `proto/mesh-touhou` around a genre-facing pack, immutable `TouhouProfile`, schema bindings, shared output arena, resource registry, and internal sprite/ribbon processors without extracting a generic crate.
+- [ ] 1.2 Add typed ids, palette shades, texture sources/regions, sampler/blend descriptors, material descriptors, sprite recipes, layered beam recipes, orientation policy, layer color bindings, unknown-style policy, and primitive capability descriptors.
+- [ ] 1.3 Implement profile validation for duplicate keys, dangling ids, material primitive/layout compatibility, effect capability requirements, finite positive dimensions, known texture-region bounds, and complete explicit fallbacks.
+- [ ] 1.4 Bind declared `:sprite` and `:beam` schema identities once to batch-aware handlers, validating required field names/kinds and compiling cold semantic configuration to stable numeric ids and primitive recipes.
+- [ ] 1.5 Re-express the generated disc/ring atlas, stock palettes, family radii, two-layer dots, layered beam widths, and alpha materials as `TouhouProfile::stock()` data.
+- [ ] 1.6 Replace `StyleTable` and direct core palette/radius calls with profile-owned cached `(family, variant)` and color resolution, deterministic hue/alpha shade resolution, and strict/fallback diagnostics.
 
-## 2. Ordered geometry ABI
+## 2. Shared primitive output and local effects
 
-- [ ] 2.1 Add basic, tinted, and two-endpoint-recolor sprite instance structs; indexed strip vertices; versioned material/resource manifest views; source-layout-aware `DrawCommand`; and reusable `MeshFrame` buffers.
-- [ ] 2.2 Implement ordered sprite-layer expansion into the matching fixed instance buffers, including UV regions, size multipliers, alpha/color bindings, additive materials, radial orientation, directional `theta`, and layer angle offsets.
-- [ ] 2.3 Implement adjacent-only draw-command coalescing that requires identical material/source layout and contiguous backing ranges, preserving nonadjacent transparent command order.
-- [ ] 2.4 Migrate polyline/beam output to indexed draw commands and profile beam styles, applying active/warning policy and multiplying profile thickness by row `width`.
-- [ ] 2.5 Update render-batch expansion and schema/style caches so batch and row paths use the same emitters without per-row string/Rc allocation.
+- [ ] 2.1 Add basic, tinted, and two-endpoint-recolor sprite instance structs; indexed strip vertices; versioned primitive/material/resource manifest views; source-layout-aware `DrawCommand`; and one reusable pack-owned `MeshFrame`.
+- [ ] 2.2 Implement ordered sprite recipe emission into shared fixed-layout buffers, including UV regions, size multipliers, alpha/color bindings, radial orientation, directional `theta`, and layer angle offsets.
+- [ ] 2.3 Implement ordered layered ribbon emission, including per-layer material/texture, width and alpha multipliers, active/warning policy, joins/caps, and row `width` scaling.
+- [ ] 2.4 Implement primitive effect-surface validation and compile compatible sprite/ribbon adapters such as additive halos into ordinary ordered recipe layers; reject missing channels and arbitrary custom payloads.
+- [ ] 2.5 Implement adjacent-only command coalescing across the shared stream, requiring identical material/source layout and contiguous ranges while preserving cross-handler frame order.
+- [ ] 2.6 Update row and batch paths to use the same bound handlers and primitive emitters without batch expansion or per-row string/Rc allocation.
+- [ ] 2.7 Keep fixed batch bindings, compiled recipe cardinality, source layouts, and variable-ribbon sizing seams explicit for future CPU/SIMD/GPU execution planning without implementing a GPU mesher in this change.
 
 ## 3. Native and web host cutover
 
-- [ ] 3.1 Update `proto/player` to resolve the cold resource/material manifest and submit ordered instance/indexed commands; isolate any macroquad point-instance expansion/chunking in the player adapter rather than the mesh pack.
+- [ ] 3.1 Update `proto/player` to resolve the shared cold resource/material manifest and submit the pack's ordered instance/indexed commands; isolate macroquad point-instance expansion or chunking in the adapter.
 - [ ] 3.2 Turn the existing `proto/web` directory into a workspace Rust host crate depending on core and `mesh-touhou`, and update `proto/web/build.sh` to build that crate.
-- [ ] 3.3 Move the wasm-bindgen engine/render wrapper above core, export zero-copy typed views for all fixed instance buffers, vertices, indices, and packed commands, and export the cold texture/material manifest plus builtin RGBA resource bytes.
-- [ ] 3.4 Update the JavaScript web renderer to resolve opaque resource/pipeline ids, upload builtin or registered external textures, configure declared blend/sampler state, and submit the ordered commands without JSON geometry copies.
-- [ ] 3.5 Delete core's Touhou-specific web mesh flattening and stock palette/hue/radius helpers after all native/web call sites use `TouhouProfile`; leave core with pack-neutral host APIs only.
+- [ ] 3.3 Move the wasm-bindgen engine/render wrapper above core and export zero-copy typed views for all fixed instance buffers, vertices, indices, packed commands, and builtin resource bytes.
+- [ ] 3.4 Update the JavaScript renderer to resolve opaque resource/pipeline ids, upload builtin or registered external textures, configure declared blend/sampler state, and submit the shared ordered stream without JSON geometry copies.
+- [ ] 3.5 Keep group/offscreen and frame effects in the host compositor; document that compatible custom pipeline keys consume standard pack layouts and do not inject arbitrary attributes.
+- [ ] 3.6 Delete core's Touhou-specific web flattening and stock palette/hue/radius helpers after all native/web call sites use the pack; leave core with pack-neutral host APIs only.
 
 ## 4. Behavioral verification
 
-- [ ] 4.1 Add profile-validation and unknown-style tests covering every rejected reference/invariant, strict errors, explicit fallbacks, and cache invalidation on profile replacement.
-- [ ] 4.2 Add stock-compatibility fixtures covering family sizes, palette/hue/alpha colors, fill/outline ordering, active/warning beam widths, beam row-width scaling, and custom texture/material registration.
-- [ ] 4.3 Add fixed-instance-layout tests proving fixed/tint styles do not populate recolor buffers, directional/radial `theta` behavior, additive layered commands, and material/layout mismatch rejection.
-- [ ] 4.4 Add row-versus-batch byte-equivalence tests for every instance buffer, indexed geometry, ids, and command order, including the `A, B, A` non-coalescing boundary.
-- [ ] 4.5 Add an allocation-counting warmed-build test that covers schema, style, palette, hue, layered sprite, beam, and command paths within reserved capacities.
-- [ ] 4.6 Add focused native and wasm host smoke tests that resolve every emitted resource/material, submit mixed sprite/beam frames in order, and verify exported typed-view bounds remain valid until the next build.
+- [ ] 4.1 Add profile, schema-binding, material/layout, and effect-capability validation tests covering every rejected invariant, strict errors, explicit fallbacks, and cache invalidation on profile replacement.
+- [ ] 4.2 Add stock-compatibility fixtures covering family sizes, palette/hue/alpha colors, fill/outline ordering, active/warning beam layers, row-width scaling, and custom texture/material registration.
+- [ ] 4.3 Add fixed-instance-layout tests proving fixed/tint styles do not populate recolor buffers, directional/radial `theta` behavior, compatible sprite halos, layered beam halos, and missing-channel rejection.
+- [ ] 4.4 Add row-versus-batch byte-equivalence tests for every instance buffer, indexed geometry, ids, and commands, proving compatible batches are consumed without row expansion.
+- [ ] 4.5 Add mixed-handler ordering tests covering sprite A, beam B, sprite A; adjacent-only coalescing; and one shared resource registry/output arena.
+- [ ] 4.6 Add an allocation-counting warmed-build test covering schema bindings, style/palette/hue caches, compiled recipe dispatch, layered sprites, layered ribbons, and shared commands.
+- [ ] 4.7 Add execution-planning tests proving fixed sprite output cardinality is discoverable from a bound batch/recipe and variable ribbon sizing remains a separate deterministic pass.
+- [ ] 4.8 Add focused native and wasm smoke tests resolving every emitted resource/material, submitting mixed sprite/beam frames in order, and verifying typed-view bounds remain valid until the next build.
