@@ -457,6 +457,7 @@ impl Sim {
                 let first = sent.order.first().cloned().ok_or("no defpattern")?;
                 card.patterns.extend(sent.patterns);
                 card.defs.extend(sent.defs);
+                card.render_kinds.extend(sent.render_kinds);
                 card.tick_rules.extend(sent.tick_rules);
                 return Sim::from_pattern(&card, &first);
             }
@@ -501,8 +502,8 @@ impl Sim {
         // load_card's defchannel rule), and the task body is the fragment's
         // trailing action forms — or the first sent pattern when there are
         // none (live-swapped bare defpatterns auto-play).
-        const DEF_HEADS: [&str; 8] =
-            ["def", "defn", "defmacro", "defpattern", "defcollider", "defchannel", "deftick", "defrender-kind"];
+        const DEF_HEADS: [&str; 9] =
+            ["def", "defn", "defmacro", "defpattern", "defcollider", "defchannel", "deftick", "defrender-kind", "render-adapt"];
         let head_in = |form: &Form, heads: &[&str]| {
             matches!(form, Form::List(items)
                 if matches!(items.first(), Some(Form::Sym(s)) if heads.contains(&s.as_ref())))
@@ -522,6 +523,7 @@ impl Sim {
                     card.streams.push((name, init));
                 }
                 card.stream_forms.extend(sent.stream_forms);
+                card.render_kinds.extend(sent.render_kinds);
                 card.tick_rules.extend(sent.tick_rules);
                 self.ctx.sig.defs = Rc::new(card.defs.clone());
                 self.ctx.patterns = Rc::new(card.patterns.clone());
