@@ -81,7 +81,7 @@ impl Sim {
             let Some(value) = world.sym_field_resolved_at(i, key).map(Rc::<str>::from) else {
                 continue;
             };
-            if let Err(err) = world.render_field_check(key, RenderFieldKind::Sym) {
+            if let Err(err) = world.render_field_check("default", key, RenderFieldKind::Sym) {
                 debug_assert!(false, "{err}");
                 continue;
             }
@@ -95,6 +95,7 @@ impl Sim {
             return;
         }
         out.push(RenderItem::Row(Rc::new(RenderRow {
+            kind: Rc::from("default"),
             data: data.clone(),
             nums: Vec::new(),
             syms: syms.to_vec(),

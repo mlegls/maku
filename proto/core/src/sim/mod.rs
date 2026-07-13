@@ -1319,15 +1319,16 @@ impl Sim {
                     };
                     let mut rc = self.render_scratch.take_row();
                     let rendered = Rc::get_mut(&mut rc).expect("pooled render row is uniquely owned");
+                    rendered.kind = plan.kind.clone();
                     rendered.data = data;
                     for (key, value) in &plan.extras {
                         match self.eval_compiled_row_val(value, row, pose) {
                             Val::Num(n) => {
-                                render_field_checked(&mut self.world, key, RenderFieldKind::Num, &mut checked)?;
+                                render_field_checked(&mut self.world, &plan.kind, key, RenderFieldKind::Num, &mut checked)?;
                                 rendered.nums.push(((*key).clone(), n));
                             }
                             Val::Kw(sym) => {
-                                render_field_checked(&mut self.world, key, RenderFieldKind::Sym, &mut checked)?;
+                                render_field_checked(&mut self.world, &plan.kind, key, RenderFieldKind::Sym, &mut checked)?;
                                 rendered.syms.push(((*key).clone(), sym));
                             }
                             Val::Nothing => {}
@@ -1513,11 +1514,11 @@ impl Sim {
         for (key, value) in &plan.extras {
             match value {
                 ResolvedRowVal::Num(v) => {
-                    self.world.render_field_check_staged(key, RenderFieldKind::Num, &mut pending).ok()?;
+                    self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Num, &mut pending).ok()?;
                     cols.push(((*key).clone(), RenderFieldKind::Num, Column::Num(NumColumn::Const(*v))));
                 }
                 ResolvedRowVal::Kw(k) => {
-                    self.world.render_field_check_staged(key, RenderFieldKind::Sym, &mut pending).ok()?;
+                    self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Sym, &mut pending).ok()?;
                     cols.push(((*key).clone(), RenderFieldKind::Sym, Column::SymConst(k.clone())));
                 }
                 value => {
@@ -1569,7 +1570,7 @@ impl Sim {
                         // no column (no row would have carried it)
                         Fill::Empty => {}
                         Fill::Nums(vals, mask, all) => {
-                            self.world.render_field_check_staged(key, RenderFieldKind::Num, &mut pending).ok()?;
+                            self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Num, &mut pending).ok()?;
                             let col = if all {
                                 Column::Num(NumColumn::Rows(vals))
                             } else {
@@ -1578,7 +1579,7 @@ impl Sim {
                             cols.push(((*key).clone(), RenderFieldKind::Num, col));
                         }
                         Fill::Syms(vals) => {
-                            self.world.render_field_check_staged(key, RenderFieldKind::Sym, &mut pending).ok()?;
+                            self.world.render_field_check_staged(&plan.kind, key, RenderFieldKind::Sym, &mut pending).ok()?;
                             cols.push(((*key).clone(), RenderFieldKind::Sym, Column::Syms(vals)));
                         }
                     }
@@ -1597,8 +1598,9 @@ impl Sim {
             }
         };
         drop(memo);
-        self.world.render_field_commit(&pending);
+        self.world.render_field_commit(&plan.kind, &pending);
         Some(Rc::new(RenderBatch {
+            kind: plan.kind.clone(),
             schema,
             len: rows.len(),
             x,
@@ -1940,6 +1942,7 @@ fn collect_cull_rows(v: &Val, world: &World, out: &mut Vec<usize>) {
 }
 
 struct CompiledRowPlan<'a> {
+    kind: Rc<str>,
     x: Option<&'a ResolvedRowVal>,
     y: Option<&'a ResolvedRowVal>,
     theta: Option<&'a ResolvedRowVal>,
@@ -1969,6 +1972,7 @@ impl<'a> CompiledRowPlan<'a> {
     }
 
     fn from_fields(fields: &'a [(&'a Rc<str>, RenderKey, ResolvedRowVal)]) -> Option<CompiledRowPlan<'a>> {
+        let mut kind = None;
         let mut shape = None;
         let mut x = None;
         let mut y = None;
@@ -1986,6 +1990,7 @@ impl<'a> CompiledRowPlan<'a> {
         };
         for (key, slot, value) in fields {
             match slot {
+                RenderKey::Kind => set_first(&mut kind, value),
                 RenderKey::Shape => set_first(&mut shape, value),
                 RenderKey::X => set_first(&mut x, value),
                 RenderKey::Y => set_first(&mut y, value),
@@ -2006,7 +2011,13 @@ impl<'a> CompiledRowPlan<'a> {
         if !matches!(kw.as_ref(), "point" | "dot") {
             return None;
         }
+        let kind = match kind {
+            None => Rc::from("default"),
+            Some(ResolvedRowVal::Kw(kind)) => kind.clone(),
+            Some(_) => return None,
+        };
         Some(CompiledRowPlan {
+            kind,
             x,
             y,
             theta: theta.or(facing),
@@ -2023,6 +2034,7 @@ impl<'a> CompiledRowPlan<'a> {
 /// accepted pair cannot conflict later in the pass.
 fn render_field_checked(
     world: &mut World,
+    render_kind: &str,
     key: &Rc<str>,
     kind: RenderFieldKind,
     checked: &mut Vec<(Rc<str>, RenderFieldKind)>,
@@ -2031,7 +2043,7 @@ fn render_field_checked(
     if checked.iter().any(|(k, seen)| *seen == kind && (Rc::ptr_eq(k, key) || k == key)) {
         return Ok(());
     }
-    world.render_field_check(key, kind)?;
+    world.render_field_check(render_kind, key, kind)?;
     checked.push((key.clone(), kind));
     Ok(())
 }

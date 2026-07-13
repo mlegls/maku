@@ -353,6 +353,7 @@ fn curve_samples_options(v: Val) -> Result<(f64, f64), String> {
 
 #[derive(Default)]
 pub(crate) struct RenderRowFields {
+    kind: Option<Val>,
     shape: Option<Val>,
     x: Option<Val>,
     y: Option<Val>,
@@ -372,6 +373,7 @@ pub(crate) struct RenderRowFields {
 /// resolve keys once at lowering so the per-row push skips the name match.
 #[derive(Clone, Copy)]
 pub(crate) enum RenderKey {
+    Kind,
     Shape,
     X,
     Y,
@@ -390,6 +392,7 @@ pub(crate) enum RenderKey {
 impl RenderKey {
     pub(crate) fn from_name(name: &str) -> RenderKey {
         match name {
+            "kind" => RenderKey::Kind,
             "shape" => RenderKey::Shape,
             "x" => RenderKey::X,
             "y" => RenderKey::Y,
@@ -415,6 +418,7 @@ impl RenderRowFields {
     /// `key` is only cloned for extras; named slots drop it.
     pub(crate) fn push_slot(&mut self, slot: RenderKey, key: &Rc<str>, value: Val) {
         match slot {
+            RenderKey::Kind => set_first(&mut self.kind, value),
             RenderKey::Shape => set_first(&mut self.shape, value),
             RenderKey::X => set_first(&mut self.x, value),
             RenderKey::Y => set_first(&mut self.y, value),
@@ -445,6 +449,11 @@ impl RenderRowFields {
         sig: &SigEnv,
         checked: Option<&mut Vec<(Rc<str>, RenderFieldKind)>>,
     ) -> Result<RenderRow, String> {
+        let row_kind = match self.kind {
+            None => Rc::from("default"),
+            Some(Val::Kw(kind)) => kind,
+            Some(_) => return Err("render: :kind must be a keyword".into()),
+        };
         let shape_value = self.shape.ok_or("render: missing :shape")?;
         let shape = match &shape_value {
             Val::Kw(k) => k.clone(),
@@ -482,7 +491,7 @@ impl RenderRowFields {
             }
             other => return Err(format!("render: unsupported shape :{}", other)),
         };
-        let mut row = RenderRow::plain(data);
+        let mut row = RenderRow::of_kind(row_kind.clone(), data);
         let num_count = self.extras.iter().filter(|(_, v)| matches!(v, Val::Num(_))).count();
         let sym_count = self.extras.iter().filter(|(_, v)| matches!(v, Val::Kw(_))).count();
         row.nums.reserve_exact(num_count);
@@ -493,11 +502,11 @@ impl RenderRowFields {
                 if memo.iter().any(|(k, seen)| *seen == kind && k == key) {
                     return Ok(());
                 }
-                world.render_field_check(key, kind)?;
+                world.render_field_check(&row_kind, key, kind)?;
                 memo.push((key.clone(), kind));
                 return Ok(());
             }
-            world.render_field_check(key, kind)
+            world.render_field_check(&row_kind, key, kind)
         };
         for (key, v) in self.extras {
             match v {

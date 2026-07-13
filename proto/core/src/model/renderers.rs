@@ -13,6 +13,8 @@ pub enum RenderData {
 /// keyed fields. Field vocabulary is card/host policy, not core semantics.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderRow {
+    /// Schema/host dispatch identity, separate from keyed columns.
+    pub kind: Rc<str>,
     pub data: RenderData,
     pub nums: Vec<(Rc<str>, f64)>,
     pub syms: Vec<(Rc<str>, Rc<str>)>,
@@ -20,7 +22,11 @@ pub struct RenderRow {
 
 impl RenderRow {
     pub fn plain(data: RenderData) -> RenderRow {
-        RenderRow { data, nums: Vec::new(), syms: Vec::new() }
+        RenderRow { kind: Rc::from("default"), data, nums: Vec::new(), syms: Vec::new() }
+    }
+
+    pub fn of_kind(kind: Rc<str>, data: RenderData) -> RenderRow {
+        RenderRow { kind, data, nums: Vec::new(), syms: Vec::new() }
     }
 
     pub fn num(&self, key: &str) -> Option<f64> {
@@ -77,6 +83,7 @@ pub enum Column {
 /// exactly; `RenderRow` remains the semantic reference form.
 #[derive(Debug, PartialEq)]
 pub struct RenderBatch {
+    pub kind: Rc<str>,
     pub schema: Rc<RenderSchema>,
     pub len: usize,
     pub x: NumColumn,
@@ -90,7 +97,7 @@ pub struct RenderBatch {
 
 impl RenderBatch {
     pub fn expand_row(&self, i: usize) -> RenderRow {
-        let mut row = RenderRow::plain(RenderData::Point {
+        let mut row = RenderRow::of_kind(self.kind.clone(), RenderData::Point {
             x: self.x.at(i),
             y: self.y.at(i),
             theta: self.theta.at(i),

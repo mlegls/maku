@@ -994,8 +994,8 @@ pub struct World {
     /// the current tick, in draw order: interpreted rows one at a time,
     /// compiled point-rule passes as column batches.
     pub render_rows: Vec<crate::model::RenderItem>,
-    /// Accreted schema for open host-facing render row fields.
-    pub render_schema: FxHashMap<FieldName, RenderFieldKind>,
+    /// Accreted schemas for open host-facing render row fields, scoped by kind.
+    pub render_schema: FxHashMap<FieldName, FxHashMap<FieldName, RenderFieldKind>>,
     /// Card-defined standing rules over row domains, run once per tick.
     pub standing_rules: Vec<StandingRule>,
     /// Current-tick collision domain facts, rebuilt by the collision pass.
@@ -1399,15 +1399,21 @@ impl World {
 
     /// Register/verify a render row field. Exact-kind merge: a key means one
     /// type everywhere; a conflict is an error, not a coercion.
-    pub fn render_field_check(&mut self, name: &str, kind: RenderFieldKind) -> Result<(), String> {
+    pub fn render_field_check(&mut self, render_kind: &str, name: &str, kind: RenderFieldKind) -> Result<(), String> {
+        let render_kind_field = self.field_sym(render_kind);
         let field = self.field_sym(name);
-        match self.render_schema.get(&field).copied() {
+        let schema = self.render_schema.entry(render_kind_field).or_default();
+        match schema.get(&field).copied() {
             Some(prior) if prior != kind => {
-                Err(format!("render: field :{name} is {kind:?} here but {prior:?} elsewhere"))
+                if render_kind == "default" {
+                    Err(format!("render: field :{name} is {kind:?} here but {prior:?} elsewhere"))
+                } else {
+                    Err(format!("render :{render_kind}: field :{name} is {kind:?} here but {prior:?} elsewhere"))
+                }
             }
             Some(_) => Ok(()),
             None => {
-                self.render_schema.insert(field, kind);
+                schema.insert(field, kind);
                 Ok(())
             }
         }
@@ -1421,14 +1427,17 @@ impl World {
     /// growth is not observable to cards.)
     pub fn render_field_check_staged(
         &mut self,
+        render_kind: &str,
         name: &str,
         kind: RenderFieldKind,
         pending: &mut Vec<(FieldName, RenderFieldKind)>,
     ) -> Result<(), String> {
+        let render_kind_field = self.field_sym(render_kind);
         let field = self.field_sym(name);
         let prior = self
             .render_schema
-            .get(&field)
+            .get(&render_kind_field)
+            .and_then(|schema| schema.get(&field))
             .copied()
             .or_else(|| pending.iter().find(|(f, _)| *f == field).map(|(_, k)| *k));
         match prior {
@@ -1443,9 +1452,11 @@ impl World {
         }
     }
 
-    pub fn render_field_commit(&mut self, pending: &[(FieldName, RenderFieldKind)]) {
+    pub fn render_field_commit(&mut self, render_kind: &str, pending: &[(FieldName, RenderFieldKind)]) {
+        let render_kind_field = self.field_sym(render_kind);
+        let schema = self.render_schema.entry(render_kind_field).or_default();
         for (field, kind) in pending {
-            self.render_schema.insert(*field, *kind);
+            schema.insert(*field, *kind);
         }
     }
 

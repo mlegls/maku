@@ -1657,6 +1657,24 @@
     }
 
     #[test]
+    fn render_field_kinds_are_scoped_per_render_kind() {
+        const CARD: &str = r#"
+(deftick
+  (seq
+    (render {:kind :beam :shape :point :width 3})
+    (render {:kind :banner :shape :point :width :wide})))
+(defpattern p [] (wait 1))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let rows = sim.render();
+        assert_eq!(&*rows[0].kind, "beam");
+        assert_eq!(rows[0].num("width"), Some(3.0));
+        assert_eq!(&*rows[1].kind, "banner");
+        assert_eq!(rows[1].sym("width"), Some("wide"));
+    }
+
+    #[test]
     fn deftick_render_emits_polyline_row() {
         const CARD: &str = r#"
 (deftick
