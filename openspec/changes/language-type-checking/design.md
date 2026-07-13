@@ -133,6 +133,14 @@ Messages name source types and source fields, never Rust enums or kernel registe
 
 The checker reads the same collected entity-field, render-kind, host-channel, collider/projector, and definition signatures used by load-time validation. It must not create a parallel registry with different merge/default rules. Owning semantics stay in `openspec/specs/language/spec.md`, `openspec/specs/render-rows/spec.md`, and `openspec/specs/load-time-schema/spec.md`.
 
+### 9. Final checked versus dynamic boundary
+
+The implemented checker owns ordinary source inference and the boundaries whose types are authoritative at load time: builtin/action signatures, spawn slots, projector fields, render rows, entity-view query predicates, host channels, and known entity-field accesses. It records typed nodes in a path-indexed side table; the interpreter continues to execute the original forms.
+
+Enforced loading rejects only a `ProvenViolation`. Unknown callees, variadic callback shapes, keyword-led clauses, undeclared open render rows, host-supplied channel values, unresolved recursive types, and accesses whose entity schema is unavailable are reported as `Unchecked` or `CheckerLimitation` and retain their existing runtime validation. Dynamic numeric expressions may lift through pure source functions, but backend coverage and executable storage shape are never checker validity conditions.
+
+The signature registry is the sole checker adapter for interpreter-dispatched vocabulary, while render/projector/entity schema checks read the collected runtime declarations rather than maintaining parallel merge or default logic. Corpus verification found no semantic ambiguity requiring a governing-spec change; the intentionally dynamic cases above are staged rather than rejected.
+
 ## Risks / Trade-offs
 
 - **[Risk] Checker rejects valid dynamic idioms.** → Stage enforcement, retain an explicit unchecked state, and gate load errors on statically proven violations plus corpus parity.
