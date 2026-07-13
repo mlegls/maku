@@ -83,6 +83,7 @@ pub struct WorldFields {
     pub sym_slots: FxHashMap<FieldName, usize>,
     pub sym_names: Vec<FieldName>,
     pub sym_values: Vec<Vec<Option<Symbol>>>,
+    pub sym_nonempty: Vec<usize>,
     pub handle_names: Vec<FieldName>,
 }
 
@@ -990,9 +991,6 @@ pub struct World {
     /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
     pub symbols: SymbolTable,
-    /// Non-reused scope for source-to-plan memoization. Clones get a fresh
-    /// scope because their append-only symbol/field layouts may diverge.
-    pub(crate) filter_cache_identity: Rc<()>,
     /// Ephemeral host-facing render output emitted by tick/render rules for
     /// the current tick, in draw order: interpreted rows one at a time,
     /// compiled point-rule passes as column batches.
@@ -1021,7 +1019,6 @@ impl Clone for World {
             rng: self.rng,
             fields: self.fields.clone(),
             symbols: self.symbols.clone(),
-            filter_cache_identity: Rc::new(()),
             render_rows: self.render_rows.clone(),
             render_schema: self.render_schema.clone(),
             declared_render_schemas: self.declared_render_schemas.clone(),
@@ -1136,7 +1133,6 @@ impl World {
             rng: 0x9e37_79b9_7f4a_7c15,
             fields: WorldFields::default(),
             symbols: SymbolTable::default(),
-            filter_cache_identity: Rc::new(()),
             render_rows: Vec::new(),
             render_schema: FxHashMap::default(),
             declared_render_schemas: FxHashMap::default(),
@@ -1214,8 +1210,17 @@ impl World {
                 values.reserve_exact(max_entities - values.capacity());
             }
         }
-        for values in &mut self.fields.sym_values {
+        for (values, nonempty) in self
+            .fields
+            .sym_values
+            .iter_mut()
+            .zip(&mut self.fields.sym_nonempty)
+        {
             if max_entities < values.len() {
+                *nonempty -= values[max_entities..]
+                    .iter()
+                    .filter(|value| value.is_some())
+                    .count();
                 values.truncate(max_entities);
             }
             if values.capacity() < max_entities {
@@ -1516,6 +1521,7 @@ impl World {
         let slot = self.fields.sym_names.len();
         self.fields.sym_names.push(field);
         self.fields.sym_values.push(Vec::new());
+        self.fields.sym_nonempty.push(0);
         self.fields.sym_slots.insert(field, slot);
         slot
     }
@@ -1544,6 +1550,10 @@ impl World {
         self.fields.sym_values.get(slot?)?.get(i).copied().flatten()
     }
 
+    pub(crate) fn sym_field_slot_is_materialized(&self, slot: usize) -> bool {
+        self.fields.sym_nonempty.get(slot).is_some_and(|count| *count != 0)
+    }
+
     pub fn col_at_slot(&self, i: usize, slot: Option<usize>) -> Option<f64> {
         self.entities.get(i)?;
         self.fields.num_values.get(slot?)?.get(i).copied().flatten()
@@ -1558,13 +1568,18 @@ impl World {
         if values.len() <= i {
             values.resize(i + 1, None);
         }
+        if values[i].is_none() {
+            self.fields.sym_nonempty[slot] += 1;
+        }
         values[i] = Some(value);
     }
 
     pub fn sym_field_clear_at(&mut self, i: usize, field: FieldName) {
         let Some(slot) = self.sym_field_slot(field) else { return };
         if let Some(value) = self.fields.sym_values[slot].get_mut(i) {
-            *value = None;
+            if value.take().is_some() {
+                self.fields.sym_nonempty[slot] -= 1;
+            }
         }
     }
 
@@ -1583,9 +1598,16 @@ impl World {
     }
 
     fn clear_sym_fields_at(&mut self, row: usize) {
-        for values in &mut self.fields.sym_values {
+        for (values, nonempty) in self
+            .fields
+            .sym_values
+            .iter_mut()
+            .zip(&mut self.fields.sym_nonempty)
+        {
             if let Some(value) = values.get_mut(row) {
-                *value = None;
+                if value.take().is_some() {
+                    *nonempty -= 1;
+                }
             }
         }
     }

@@ -23,9 +23,8 @@ use crate::sim::kernel::{
     KernelInputSource, KernelLanes, KernelOutputBinding, KernelOutputTarget, KernelPlan,
     KernelOutputs, KernelScratch, MaskLane, MergePolicy,
 };
-use crate::fxhash::{FxHashMap, FxHasher};
+use crate::fxhash::FxHashMap;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -411,33 +410,7 @@ impl Env {
         self.0.as_ref().map_or(0, |rc| Rc::as_ptr(rc) as usize)
     }
     pub fn bind(&self, name: Rc<str>, val: Val) -> Env {
-        Env(Some(Rc::new(EnvNode {
-            name,
-            val,
-            next: self.clone(),
-        })))
-    }
-    fn shadow_hash(&self) -> u64 {
-        let mut state = FxHasher::default();
-        let mut current = &self.0;
-        while let Some(node) = current {
-            node.name.hash(&mut state);
-            current = &node.next.0;
-        }
-        state.finish()
-    }
-    fn same_shadow_chain(&self, other: &Env) -> bool {
-        let (mut left, mut right) = (&self.0, &other.0);
-        loop {
-            match (left, right) {
-                (Some(left_node), Some(right_node)) if left_node.name == right_node.name => {
-                    left = &left_node.next.0;
-                    right = &right_node.next.0;
-                }
-                (None, None) => return true,
-                _ => return false,
-            }
-        }
+        Env(Some(Rc::new(EnvNode { name, val, next: self.clone() })))
     }
     pub fn lookup(&self, name: &str) -> Option<Val> {
         let mut cur = &self.0;
@@ -490,11 +463,6 @@ pub struct SigEnv {
     /// and set per row from the spawn-captured map (signal time); never
     /// snapshotted.
     pub overrides: Option<Rc<FxHashMap<u64, u64>>>,
-    /// Structurally keyed typed predicate plans. `SigEnv` clones share this
-    /// load/session cache; the immutable environment's shadow set and the
-    /// canonical form tree identify equivalent query lowering requests.
-    pub(crate) filter_plans:
-        Rc<std::cell::RefCell<FxHashMap<FilterPlanCacheKey, Vec<CachedFilterPlan>>>>,
 }
 
 impl Default for SigEnv {
@@ -507,7 +475,6 @@ impl Default for SigEnv {
             streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             host_streams: Rc::new(std::cell::RefCell::new(HashMap::new())),
             producers: Rc::new(std::cell::RefCell::new(Vec::new())),
-            filter_plans: Rc::new(std::cell::RefCell::new(FxHashMap::default())),
             overrides: None,
         }
     }
@@ -2206,171 +2173,10 @@ pub(crate) struct FilterPlan {
     artifact: Rc<CpuFilterArtifact>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct FilterPlanCacheKey {
-    source: u64,
-    shadows: u64,
-    world: usize,
-    defs: usize,
-    prefix: bool,
-}
-
-pub(crate) struct CachedFilterPlan {
-    params: Rc<[Form]>,
-    source: Form,
-    env: Env,
-    _world: Rc<()>,
-    _defs: Rc<HashMap<String, Form>>,
-    plan: Rc<FilterPlan>,
-}
-
-fn hash_filter_source(form: &Form, state: &mut FxHasher) {
-    match form {
-        Form::Num(value) => {
-            0u8.hash(state);
-            value.to_bits().hash(state);
-        }
-        Form::Str(value) => {
-            1u8.hash(state);
-            value.hash(state);
-        }
-        Form::Sym(value) => {
-            2u8.hash(state);
-            value.hash(state);
-        }
-        Form::Kw(value) => {
-            3u8.hash(state);
-            value.hash(state);
-        }
-        Form::Bool(value) => {
-            4u8.hash(state);
-            value.hash(state);
-        }
-        Form::List(items) | Form::Vector(items) => {
-            (if matches!(form, Form::List(_)) { 5u8 } else { 6u8 }).hash(state);
-            items.len().hash(state);
-            for item in items.iter() {
-                hash_filter_source(item, state);
-            }
-        }
-        Form::Map(items) => {
-            7u8.hash(state);
-            items.len().hash(state);
-            for (key, value) in items.iter() {
-                hash_filter_source(key, state);
-                hash_filter_source(value, state);
-            }
-        }
-    }
-}
-
-fn filter_source_identity(params: &[Form], body: &Form) -> u64 {
-    let mut state = FxHasher::default();
-    params.len().hash(&mut state);
-    for param in params {
-        hash_filter_source(param, &mut state);
-    }
-    hash_filter_source(body, &mut state);
-    state.finish()
-}
-
-fn filter_plan_cache_parts<'a>(
-    query: &'a Val,
-    world: &World,
-    defs: usize,
-    prefix: bool,
-) -> Option<(FilterPlanCacheKey, &'a Rc<[Form]>, &'a Form, &'a Env)> {
-    let Val::Fn { params, body, env } = query else {
-        return None;
-    };
-    let [body] = &body[..] else {
-        return None;
-    };
-    Some((
-        FilterPlanCacheKey {
-            source: filter_source_identity(params, body),
-            shadows: env.shadow_hash(),
-            world: Rc::as_ptr(&world.filter_cache_identity) as usize,
-            defs,
-            prefix,
-        },
-        params,
-        body,
-        env,
-    ))
-}
-
-fn cached_filter_plan(
-    query: &Val,
-    ctx: &Ctx,
-    world: &World,
-    prefix: bool,
-) -> Option<Rc<FilterPlan>> {
-    let (key, params, body, env) = filter_plan_cache_parts(
-        query,
-        world,
-        Rc::as_ptr(&ctx.sig.defs) as usize,
-        prefix,
-    )?;
-    let plan = ctx.sig
-        .filter_plans
-        .borrow()
-        .get(&key)
-        .and_then(|bucket| {
-            bucket
-                .iter()
-                .find(|cached| {
-                    cached.params.as_ref() == params.as_ref()
-                        && cached.source == *body
-                        && cached.env.same_shadow_chain(env)
-                })
-        })
-        .map(|cached| cached.plan.clone());
-    plan
-}
-
-fn cache_filter_plan(
-    query: &Val,
-    ctx: &Ctx,
-    world: &World,
-    prefix: bool,
-    plan: &Rc<FilterPlan>,
-) {
-    let Some((key, params, body, env)) = filter_plan_cache_parts(
-        query,
-        world,
-        Rc::as_ptr(&ctx.sig.defs) as usize,
-        prefix,
-    ) else {
-        return;
-    };
-    let mut plans = ctx.sig.filter_plans.borrow_mut();
-    let bucket = plans.entry(key).or_default();
-    if let Some(cached) = bucket
-        .iter_mut()
-        .find(|cached| {
-            cached.params.as_ref() == params.as_ref()
-                && cached.source == *body
-                && cached.env.same_shadow_chain(env)
-        })
-    {
-        cached.plan = plan.clone();
-        return;
-    }
-    bucket.push(CachedFilterPlan {
-        params: params.clone(),
-        source: body.clone(),
-        env: env.clone(),
-        _world: world.filter_cache_identity.clone(),
-        _defs: ctx.sig.defs.clone(),
-        plan: plan.clone(),
-    });
-}
 
 #[derive(Clone, Debug)]
 struct CpuFilterArtifact {
     tests: Vec<CpuFilterTest>,
-    short_circuit_prefix: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -2415,6 +2221,32 @@ enum CpuFilterNum {
     Mul(Box<CpuFilterNum>, Box<CpuFilterNum>),
 }
 
+impl CpuFilterNum {
+    fn fallible(&self, world: &World) -> bool {
+        match self {
+            Self::Lit(_) | Self::Tau | Self::Tick => false,
+            Self::ColOr(slots, default) => {
+                slots
+                    .sym
+                    .is_some_and(|slot| world.sym_field_slot_is_materialized(slot))
+                    || default.fallible(world)
+            }
+            Self::Add(left, right) | Self::Sub(left, right) | Self::Mul(left, right) => {
+                left.fallible(world) || right.fallible(world)
+            }
+        }
+    }
+}
+
+impl CpuFilterTest {
+    fn fallible(&self, world: &World) -> bool {
+        match self {
+            Self::Kind(_) | Self::SymEq { .. } | Self::Never => false,
+            Self::NumCmp { lhs, rhs, .. } => lhs.fallible(world) || rhs.fallible(world),
+        }
+    }
+}
+
 fn lower_cpu_filter_num(value: &RowNum, world: &World) -> CpuFilterNum {
     match value {
         RowNum::Lit(value) => CpuFilterNum::Lit(*value),
@@ -2440,7 +2272,7 @@ fn lower_cpu_filter_num(value: &RowNum, world: &World) -> CpuFilterNum {
 }
 
 impl CpuFilterArtifact {
-    fn lower(predicate: &RowPredicate, world: &World, short_circuit_prefix: usize) -> Self {
+    fn lower(predicate: &RowPredicate, world: &World) -> Self {
         let tests = predicate
             .tests
             .iter()
@@ -2460,16 +2292,23 @@ impl CpuFilterArtifact {
                     rhs: lower_cpu_filter_num(rhs, world),
                 },
             })
-            .collect();
-        Self {
-            tests,
-            short_circuit_prefix,
-        }
+            .collect::<Vec<_>>();
+        Self { tests }
     }
 
+    fn short_circuit_prefix(&self, world: &World) -> usize {
+        let mut prefix = self.tests.len();
+        while prefix > 0 && !self.tests[prefix - 1].fallible(world) {
+            prefix -= 1;
+        }
+        prefix
+    }
+
+    #[inline]
     fn execute(&self, world: &World, rows: &mut Vec<usize>) -> bool {
         rows.clear();
-        if self.short_circuit_prefix == 0
+        let short_circuit_prefix = self.short_circuit_prefix(world);
+        if short_circuit_prefix == 0
             && self
                 .tests
                 .iter()
@@ -2483,7 +2322,7 @@ impl CpuFilterArtifact {
             }
             match cpu_filter_tests_match(
                 &self.tests,
-                self.short_circuit_prefix,
+                short_circuit_prefix,
                 row,
                 world,
             ) {
@@ -2499,6 +2338,7 @@ impl CpuFilterArtifact {
     }
 }
 
+#[inline]
 fn cpu_filter_num(value: &CpuFilterNum, row: usize, world: &World) -> Option<f64> {
     Some(match value {
         CpuFilterNum::Lit(value) => *value,
@@ -2531,6 +2371,7 @@ fn cpu_filter_num(value: &CpuFilterNum, row: usize, world: &World) -> Option<f64
     })
 }
 
+#[inline]
 fn cpu_filter_tests_match(
     tests: &[CpuFilterTest],
     short_circuit_prefix: usize,
@@ -2830,29 +2671,13 @@ impl FilterBuilder {
     }
 }
 
-fn row_num_fallible(value: &RowNum) -> bool {
-    match value {
-        RowNum::Lit(_) | RowNum::Tau | RowNum::Tick => false,
-        RowNum::ColOr(_, _) => true,
-        RowNum::Add(left, right) | RowNum::Sub(left, right) | RowNum::Mul(left, right) => {
-            row_num_fallible(left) || row_num_fallible(right)
-        }
-    }
-}
-
-impl RowTest {
-    fn fallible(&self) -> bool {
-        match self {
-            RowTest::KwEq { .. } => false,
-            RowTest::NumCmp { lhs, rhs, .. } => {
-                row_num_fallible(lhs) || row_num_fallible(rhs)
-            }
-        }
-    }
-}
 
 
 impl RowPredicate {
+    fn execute_cpu(&self, world: &World, rows: &mut Vec<usize>) -> bool {
+        CpuFilterArtifact::lower(self, world).execute(world, rows)
+    }
+
     pub(crate) fn lower(&self, world: &mut World) -> Option<FilterPlan> {
         let mut builder = FilterBuilder::default();
         let mut result = None;
@@ -2864,10 +2689,6 @@ impl RowPredicate {
             });
         }
         let result = result?;
-        let mut short_circuit_prefix = self.tests.len();
-        while short_circuit_prefix > 0 && !self.tests[short_circuit_prefix - 1].fallible() {
-            short_circuit_prefix -= 1;
-        }
         let program = KernelProgram::new(
             builder.inputs,
             builder.registers,
@@ -2886,8 +2707,8 @@ impl RowPredicate {
             FallbackPolicy::WholePlanInterpreted,
             MergePolicy::CanonicalRowOrder,
         ).ok()?;
-        let artifact =
-            Rc::new(CpuFilterArtifact::lower(self, world, short_circuit_prefix));
+        let artifact = Rc::new(CpuFilterArtifact::lower(self, world));
+        let short_circuit_prefix = artifact.short_circuit_prefix(world);
         Some(FilterPlan {
             predicate,
             short_circuit_prefix,
@@ -2916,16 +2737,7 @@ pub(crate) fn execute_filter_plan(
     world: &World,
     rows: &mut Vec<usize>,
 ) -> bool {
-    let kernel = &plan.predicate;
-    if kernel.domain() != IterationDomain::EntityRows
-        || kernel.fallback() != FallbackPolicy::WholePlanInterpreted
-        || kernel.merge() != MergePolicy::CanonicalRowOrder
-    {
-        rows.clear();
-        return false;
-    }
-    let artifact = &plan.artifact;
-    let accepted = artifact.execute(world, rows);
+    let accepted = plan.artifact.execute(world, rows);
     if lower::oracle_enabled() {
         let mut expected = Vec::new();
         let generic_accepted = execute_filter_plan_generic(plan, world, &mut expected);
@@ -3060,6 +2872,28 @@ fn execute_filter_plan_generic(
     })
 }
 
+fn execute_query_predicate(
+    predicate: &RowPredicate,
+    world: &mut World,
+    rows: &mut Vec<usize>,
+) -> bool {
+    let accepted = predicate.execute_cpu(world, rows);
+    if lower::oracle_enabled() {
+        let mut expected = Vec::new();
+        let generic_accepted = predicate
+            .lower(world)
+            .is_some_and(|plan| execute_filter_plan_generic(&plan, world, &mut expected));
+        assert_eq!(
+            accepted, generic_accepted,
+            "query filter fallback decision disagrees with generic kernel"
+        );
+        if accepted {
+            assert_eq!(*rows, expected, "query filter rows disagree with generic kernel");
+        }
+    }
+    accepted
+}
+
 fn sf_matches(items: &[Form], env: &Env) -> Result<Val, String> {
     if items.len() < 3 || items.len() % 2 == 0 {
         return Err("matches: expected field/value pairs".into());
@@ -3173,19 +3007,10 @@ fn resolve_prefix_predicate_query(
     ctx: &mut Ctx,
     world: &mut World,
 ) -> Result<Vec<usize>, String> {
-    let plan = if let Some(plan) = cached_filter_plan(q, ctx, world, true) {
-        plan
-    } else {
-        let Some(plan) = p.prefix.lower(world).map(Rc::new) else {
-            return resolve_predicate_query_fallback(q, ctx, world);
-        };
-        cache_filter_plan(q, ctx, world, true, &plan);
-        plan
-    };
     let mut prefix_rows = Vec::new();
-    if !execute_filter_plan(&plan, world, &mut prefix_rows) {
-        // Typed input gathering bails before kernel execution, and no
-        // residual has evaluated yet: rerun the whole semantic query.
+    if !execute_query_predicate(&p.prefix, world, &mut prefix_rows) {
+        // The fused CPU scan clears speculative rows before returning a
+        // mistype bail, and no residual has evaluated: rerun the whole query.
         return resolve_predicate_query_fallback(q, ctx, world);
     }
     if lower::oracle_enabled() {
@@ -3214,27 +3039,18 @@ fn resolve_prefix_predicate_query(
 }
 
 fn resolve_predicate_query(q: &Val, ctx: &mut Ctx, world: &mut World) -> Result<Vec<usize>, String> {
-    let plan = if let Some(plan) = cached_filter_plan(q, ctx, world, false) {
-        plan
-    } else {
-        let Some(predicate) = row_predicate(q, ctx) else {
-            if let Some(prefix) = row_predicate_prefix(q, ctx) {
-                return resolve_prefix_predicate_query(q, &prefix, ctx, world);
-            }
-            // Mixed `*` products deliberately fall back as a whole; a split
-            // there would change the error and effect surface of the residual
-            // (see PrefixPredicate).
-            return resolve_predicate_query_fallback(q, ctx, world);
-        };
-        let Some(plan) = predicate.lower(world).map(Rc::new) else {
-            return resolve_predicate_query_fallback(q, ctx, world);
-        };
-        cache_filter_plan(q, ctx, world, false, &plan);
-        plan
+    let Some(predicate) = row_predicate(q, ctx) else {
+        if let Some(prefix) = row_predicate_prefix(q, ctx) {
+            return resolve_prefix_predicate_query(q, &prefix, ctx, world);
+        }
+        // Mixed `*` products deliberately fall back as a whole; a split
+        // there would change the error and effect surface of the residual
+        // (see PrefixPredicate).
+        return resolve_predicate_query_fallback(q, ctx, world);
     };
 
     let mut out = Vec::new();
-    if !execute_filter_plan(&plan, world, &mut out) {
+    if !execute_query_predicate(&predicate, world, &mut out) {
         return resolve_predicate_query_fallback(q, ctx, world);
     }
     if lower::oracle_enabled() {
@@ -4967,55 +4783,6 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn filter_plan_cache_checks_collisions_and_world_scope() {
-        let ctx = Ctx::default();
-        let query_a = predicate("(fn [e] (= e.team :enemy))");
-        let query_b = predicate("(fn [e] (= e.team :player))");
-        let mut world = World::default();
-        let plan_a = Rc::new(
-            row_predicate(&query_a, &ctx)
-                .and_then(|predicate| predicate.lower(&mut world))
-                .expect("predicate should lower"),
-        );
-
-        let defs = Rc::as_ptr(&ctx.sig.defs) as usize;
-        let (key_b, _, _, _) =
-            filter_plan_cache_parts(&query_b, &world, defs, false).unwrap();
-        let (_, params_a, body_a, env_a) =
-            filter_plan_cache_parts(&query_a, &world, defs, false).unwrap();
-        ctx.sig
-            .filter_plans
-            .borrow_mut()
-            .entry(key_b)
-            .or_default()
-            .push(CachedFilterPlan {
-                params: params_a.clone(),
-                source: body_a.clone(),
-                env: env_a.clone(),
-                _world: world.filter_cache_identity.clone(),
-                _defs: ctx.sig.defs.clone(),
-                plan: plan_a.clone(),
-            });
-        assert!(
-            cached_filter_plan(&query_b, &ctx, &world, false).is_none(),
-            "a hash-bucket collision must not reuse another predicate"
-        );
-
-        cache_filter_plan(&query_a, &ctx, &world, false, &plan_a);
-        let cached = cached_filter_plan(&query_a, &ctx, &world, false).unwrap();
-        assert!(Rc::ptr_eq(&cached, &plan_a));
-        let wrong_param = predicate("(fn [x] (= e.team :enemy))");
-        assert!(
-            cached_filter_plan(&wrong_param, &ctx, &world, false).is_none(),
-            "function parameters are part of predicate recognition"
-        );
-        let cloned_world = world.clone();
-        assert!(
-            cached_filter_plan(&query_a, &ctx, &cloned_world, false).is_none(),
-            "a cloned world has independently evolving field slots"
-        );
-    }
 
     /// Evaluate a predicate fn source with the REAL prelude macros
     /// expanded first — the same expansion `sf_deftick` performs at rule
