@@ -18,7 +18,7 @@ until scoped-channel-overrides' working tree lands.
 
 ## 4. First consumer
 
-- [ ] 4.1 Touhou lib declares its kinds (`:sprite` over point geometry with family/color/variant/scale; the beam polyline kind); mesh-touhou negotiates for them and reads declared schemas instead of probe-and-default (keep ignore/default for undeclared kinds).
+- [x] 4.1 Touhou lib declares its kinds (`:sprite` over point geometry with family/color/variant/scale; the beam polyline kind); mesh-touhou negotiates for them and reads declared schemas instead of probe-and-default (keep ignore/default for undeclared kinds).
 
 ## 5. Gates and sync
 

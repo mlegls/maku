@@ -78,11 +78,18 @@
       0
       (if (> ctx.t (+ warn active)) 0 fill))))
 
+(defrender-kind :sprite
+  {:geometry :point
+   :fields {:family :sym :color :sym :variant :sym :scale :num}})
+(defrender-kind :beam
+  {:geometry :polyline
+   :fields {:width :num :hue :num :family :sym :color :sym :variant :sym}})
+
 ;; Stock Touhou/DMK sprite row. Visual knobs are ordinary flat entity fields.
 (deftick
   (map (fn [e]
          (let [p (:pos e)]
-           (render {:shape :point
+           (render {:kind :sprite :shape :point
                     :x (:x p)
                     :y (:y p)
                     :theta (default e.facing (:th p))
@@ -134,7 +141,7 @@
 ;; that hits).
 (deftick
   (map (fn [e]
-         (render {:shape (curve-samples e)
+         (render {:kind :beam :shape (curve-samples e)
                   :width (default e.width 1) :active 1
                   :hue (default e.hue 0)
                   :family e.family :color e.color :variant e.variant}))
@@ -149,18 +156,18 @@
                res (default e.resolution 0.1)
                w (default e.width 1)]
            (if (>= frac 1)
-             (render {:shape (curve-samples e {:u-max u-max :resolution res})
+             (render {:kind :beam :shape (curve-samples e {:u-max u-max :resolution res})
                       :width w :active 1
                       :family e.family :color e.color :variant e.variant})
              (if (< frac 0.000001)
-               (render {:shape (curve-samples e {:u-max u-max :resolution res})
+               (render {:kind :beam :shape (curve-samples e {:u-max u-max :resolution res})
                         :width w :active 0
                         :family e.family :color e.color :variant e.variant})
                (seq
-                 (render {:shape (curve-samples e {:u-max u-max :resolution res})
+                 (render {:kind :beam :shape (curve-samples e {:u-max u-max :resolution res})
                           :width w :active 0
                           :family e.family :color e.color :variant e.variant})
-                 (render {:shape (curve-samples e {:u-max (* frac u-max) :resolution res})
+                 (render {:kind :beam :shape (curve-samples e {:u-max (* frac u-max) :resolution res})
                           :width w :active 1
                           :family e.family :color e.color :variant e.variant}))))))
        (entities-where (fn [e] (* (= e.render :beam) (= e.kind :curve))))))

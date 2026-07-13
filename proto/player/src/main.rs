@@ -241,7 +241,7 @@ async fn main() {
         if !provided.iter().any(|n| n == m) { provided.push(m.to_string()); }
     }
     app.inst.host_channels = Some(provided);
-    app.inst.render_kinds = Some(vec!["default".into(), "sprite".into(), "beam".into()]);
+    app.inst.render_kinds = Some(TouhouMesh::RENDER_KINDS.iter().map(|k| (*k).into()).collect());
     if card_path.is_empty() {
         app.inst.set_status(format!("no card — listening on 127.0.0.1:{}", PORT));
     } else {

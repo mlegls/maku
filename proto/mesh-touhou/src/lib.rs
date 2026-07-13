@@ -13,9 +13,9 @@
 //! - Polyline rows: ribbon quads per segment (4 verts each), sampling
 //!   the disc-center texel; width 6px-equivalent when `:active`, else
 //!   1.5px at 0.45·alpha, via `StyleTable.px_per_unit`.
-//! - `theta` is unused (dots are radially symmetric); unknown schema
-//!   columns are ignored; missing `family`/`color` fall back to
-//!   defaults. Draw order is frame order; batches and rows produce
+//! - `theta` is unused (dots are radially symmetric). Declared `:sprite`
+//!   and `:beam` rows use negotiated layouts; undeclared kinds retain the
+//!   legacy ignore/default behavior. Draw order is frame order; batches and rows produce
 //!   identical geometry for equivalent content (tested).
 //!
 //! Steady-state costs: schema column indices cached per `Rc::ptr_eq`
@@ -83,6 +83,8 @@ pub struct TouhouMesh {
 }
 
 impl TouhouMesh {
+    pub const RENDER_KINDS: [&'static str; 3] = ["default", "sprite", "beam"];
+
     pub fn new(style: StyleTable) -> Self {
         Self {
             style,
@@ -141,6 +143,11 @@ impl TouhouMesh {
     }
 
     fn push_batch(&mut self, batch: &RenderBatch) {
+        // Compiled Touhou batches are the declared point kind. Other named
+        // kinds are not guessed into point geometry; `:default` stays legacy.
+        if batch.kind.as_ref() != "sprite" && batch.kind.as_ref() != "default" {
+            return;
+        }
         let cache = self.schema_cache(&batch.schema);
         for i in 0..batch.len {
             let family = sym_at(cache.family.and_then(|n| batch.cols.get(n)), i).unwrap_or("");
@@ -334,6 +341,7 @@ mod tests {
 
     fn batch(with_syms: bool) -> Rc<RenderBatch> {
         Rc::new(RenderBatch {
+            kind: Rc::from("default"),
             schema: schema(with_syms),
             len: 2,
             x: NumColumn::Rows(vec![1.0, 3.0]),
@@ -375,6 +383,7 @@ mod tests {
     #[test]
     fn row_and_batch_geometry_match() {
         let row = RenderRow {
+            kind: Rc::from("default"),
             data: RenderData::Point {
                 x: 1.0,
                 y: 2.0,
@@ -390,6 +399,7 @@ mod tests {
             ],
         };
         let one = RenderBatch {
+            kind: Rc::from("default"),
             schema: schema(true),
             len: 1,
             x: NumColumn::Const(1.0),
