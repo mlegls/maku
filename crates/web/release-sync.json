@@ -40,6 +40,8 @@
     { "source": "cards/translations/020_gsrepeat.maku", "target": "cards/translations/020_gsrepeat.maku", "role": "card" },
     { "source": "cards/translations/040_spread.maku", "target": "cards/translations/040_spread.maku", "role": "card" },
     { "source": "cards/translations/060_polar.maku", "target": "cards/translations/060_polar.maku", "role": "card" },
+    { "source": "cards/translations/NOTES.md", "target": "cards/translations/NOTES.md", "role": "working-record" },
+    { "source": "cards/translations/SCANNED.md", "target": "cards/translations/SCANNED.md", "role": "working-record" },
 
     { "source": "cards/tutorials/t01.maku", "target": "cards/tutorials/t01.maku", "role": "tutorial-card" },
     { "source": "cards/tutorials/t02.maku", "target": "cards/tutorials/t02.maku", "role": "tutorial-card" },
