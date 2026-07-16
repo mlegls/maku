@@ -30,10 +30,10 @@
 
 ## 5. Refresh neen.ink
 
-- [ ] 5.1 In the neen.ink repository, record the Maku upstream release/source revision and replace legacy `dots()`/`beams()` wasm protocol code with the synchronized render-pack runtime while preserving site-owned drawer/modal/navigation UI.
-- [ ] 5.2 Synchronize the declared libraries, cards, showcase, tutorials, and manifest; remove stale compatibility forms and outdated rendering prose in the downstream copy.
-- [ ] 5.3 Add neen.ink project-route/browser smoke tests covering JS imports, wasm MIME/loading, revision identity, card/library load, mixed frame drawing, and tutorial routing.
-- [ ] 5.4 Build and test the downstream site, commit its refresh separately, and record both upstream and downstream commit ids in the release manifest or integration record.
+- [x] 5.1 In the neen.ink repository, record the Maku upstream release/source revision and replace legacy `dots()`/`beams()` wasm protocol code with the synchronized render-pack runtime while preserving site-owned drawer/modal/navigation UI.
+- [x] 5.2 Synchronize the declared libraries, cards, showcase, tutorials, and manifest; remove stale compatibility forms and outdated rendering prose in the downstream copy.
+- [x] 5.3 Add neen.ink project-route/browser smoke tests covering JS imports, wasm MIME/loading, revision identity, card/library load, mixed frame drawing, and tutorial routing.
+- [x] 5.4 Build and test the downstream site, commit its refresh separately, and record both upstream and downstream commit ids in the release manifest or integration record.
 - [ ] 5.5 Deploy with the previous artifact retained, run production smoke checks at the public Maku routes, and roll back on identity/load/render/tutorial failure.
 
 ## 6. Final Documentation and Demo Verification
