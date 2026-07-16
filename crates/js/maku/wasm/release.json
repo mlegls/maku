@@ -5,14 +5,14 @@
   "npm_package": "@mlegls/maku",
   "npm_version": "0.1.0",
   "frame_abi_version": 1,
-  "source_revision": "development",
+  "source_revision": "e192bcba3698080a92be60c5e305b84231acd7f2",
   "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
   "wasm_pack": "wasm-pack 0.15.0",
   "bun": "1.3.14",
   "artifacts": {
     "crates/web/static/pkg/maku_bg.wasm": {
-      "bytes": 1580509,
-      "sha256": "575af8ef81928821869bf5bd970d6f962b5b2da015e0d1a048170622a82caade"
+      "bytes": 1580581,
+      "sha256": "0ecaaf9d974bc280e8d62805472512ebfb51046ccf323a73d1769722a7980393"
     },
     "crates/web/static/pkg/maku.js": {
       "bytes": 26588,
@@ -87,8 +87,8 @@
       "sha256": "7856f25a7f5930ed645d58ef73bb9aac80446eeaea3cd82cedb91ea5066b0759"
     },
     "crates/js/maku/wasm/maku_bg.wasm": {
-      "bytes": 1580509,
-      "sha256": "575af8ef81928821869bf5bd970d6f962b5b2da015e0d1a048170622a82caade"
+      "bytes": 1580581,
+      "sha256": "0ecaaf9d974bc280e8d62805472512ebfb51046ccf323a73d1769722a7980393"
     },
     "crates/js/maku/wasm/maku_bg.wasm.d.ts": {
       "bytes": 4687,
