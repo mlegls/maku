@@ -5221,6 +5221,55 @@ mod tests {
     }
 
     #[test]
+    fn legacy_and_dense_motion_state_are_step_equivalent() {
+        let Val::DynPose(d) = ev("(vel c[4 -2])") else { panic!() };
+        let mut schema = MotionStateSchema::default();
+        collect_pose_state(&d, &mut schema);
+        let schema = Rc::new(schema);
+        assert_eq!(schema.n2_keys.len(), 1);
+
+        let sig = SigEnv::default();
+        let dt = 1.0 / DEFAULT_TICK_RATE;
+        let mut legacy_state = MotionState::default();
+        let mut dense_state = MotionState::default();
+        let mut dense_n2 = None;
+
+        for tick in 0..120 {
+            let tau = tick as f64 * dt;
+            step_motion(d.node(), tau, dt, &mut legacy_state, &sig).unwrap();
+
+            let readers = MotionReaders::for_row_n2(schema.clone(), [dense_n2, None]);
+            let mut next_n2 = None;
+            let mut ignore_dyn = |_, _| {};
+            let mut ignore_val = |_, _| {};
+            let mut write_n2 = |_, value| next_n2 = Some(value);
+            let mut step = MotionStepCtx {
+                state: &mut dense_state,
+                sig: &sig,
+                world: None,
+                readers: &readers,
+                tick_rate: DEFAULT_TICK_RATE,
+                mirror_legacy: false,
+                write_n2: &mut write_n2,
+                write_dyn: &mut ignore_dyn,
+                write_val: &mut ignore_val,
+            };
+            step_motion_in(d.node(), tau, dt, &mut step).unwrap();
+            dense_n2 = next_n2;
+
+            let legacy_pose = dyn_pose(&d, tau + dt, &legacy_state, &sig).unwrap();
+            let dense_readers = MotionReaders::for_row_n2(schema.clone(), [dense_n2, None]);
+            let dense_pose = dyn_pose_in(
+                &d,
+                tau + dt,
+                MotionEvalCtx::new(&dense_state, &sig, &dense_readers),
+            ).unwrap();
+            assert_eq!(legacy_pose, dense_pose, "tick {tick}");
+        }
+        assert!(dense_state.is_empty(), "dense execution must not depend on legacy map cells");
+    }
+
+    #[test]
     fn homing_vel_channel_read_compiles() {
         // the census shape's channel half: heading toward a live channel.
         // The b component lowers to an aux program (ChanX/ChanY + Atan2);

@@ -1065,3 +1065,27 @@ fn import_target(line: &str) -> Option<&str> {
     let rest = rest.trim_start();
     (rest.is_empty() || rest.starts_with(';')).then_some(path)
 }
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    #[test]
+    fn implicit_explicit_and_reexpanded_prelude_are_idempotent() {
+        let local = "(defpattern local [] (wait 1))\n";
+        let implicit = expand_src(local).unwrap();
+        let explicit = expand_src(&format!("(import \"prelude\")\n{local}")).unwrap();
+        assert_eq!(read_all(&implicit).unwrap(), read_all(&explicit).unwrap());
+        assert_eq!(implicit.matches(PRELUDE_SENTINEL).count(), 1);
+        assert_eq!(explicit.matches(PRELUDE_SENTINEL).count(), 1);
+        assert_eq!(expand_src(&implicit).unwrap(), implicit);
+
+        let traced_implicit = expand_src_traced(local).unwrap();
+        let traced_explicit = expand_src_traced(&format!("(import \"prelude\")\n{local}")).unwrap();
+        assert_eq!(read_all(&traced_implicit.text).unwrap(), read_all(&traced_explicit.text).unwrap());
+        assert_eq!(traced_implicit.text, implicit);
+        assert_eq!(expand_src_traced(&traced_implicit.text).unwrap().text, implicit);
+        assert!(traced_explicit.segments.iter().any(|segment| segment.source.as_ref() == PRELUDE_KEY));
+        assert!(traced_explicit.segments.iter().any(|segment| segment.source.as_ref() == "<card>"));
+    }
+}

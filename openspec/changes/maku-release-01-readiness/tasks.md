@@ -12,7 +12,7 @@
 - [x] 2.2 Scan all repository `.maku` files, library sources, documentation snippets, Rust-embedded cards, and web-demo fixtures; add a repeatable corpus check for selected forms.
 - [x] 2.3 Migrate repository consumers and docs from `value-or` and selected old Touhou `spawn-*` aliases to canonical forms, then remove those unused aliases and update focused tests/diagnostics.
 - [x] 2.4 Audit direct `:facing`/`:opacity`/`:pts` render compatibility separately from valid genre-library metadata, remove only selected direct aliases, and preserve canonical library behavior in tests.
-- [ ] 2.5 Add differential coverage for canonical `pather`, motion-state fallback, prelude import idempotence, and projector-context rejection; retain their required implementation paths and document why they are not alias cleanup.
+- [x] 2.5 Add differential coverage for canonical `pather`, motion-state fallback, prelude import idempotence, and projector-context rejection; retain their required implementation paths and document why they are not alias cleanup.
 - [ ] 2.6 Run the complete card/tutorial/translation corpus and release ignored oracle suites after compatibility removal.
 
 ## 3. Define Package Assets and Public API

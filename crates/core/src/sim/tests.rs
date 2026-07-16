@@ -1960,20 +1960,45 @@
     }
 
     #[test]
-    fn stock_dot_traced_entities_emit_point_rows_per_sample() {
+    fn pather_trace_matches_pose_history_window_and_stock_render() {
         const CARD: &str = r#"
 (defpattern p []
-  (spawn (pather 1 (linear c[1 0]))))
+  (spawn (pather 0.025 (linear c[1 0]))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        for _ in 0..5 {
+        let mut history = Vec::new();
+        for _ in 0..8 {
+            sim.step().unwrap();
+            history.push(sim.world.entities.latest_sampled_pose(0, sim.tick()).unwrap());
+        }
+        let trace = sim.world.entities.trace_samples(0).to_vec();
+        assert_eq!(trace, history[history.len() - 4..]);
+
+        let rendered = sim.render().into_iter().filter_map(|row| match row.data {
+            RenderData::Point { x, y, .. } => Some((x, y)),
+            _ => None,
+        }).collect::<Vec<_>>();
+        let expected = trace.iter().map(|pose| (pose.x, pose.y)).collect::<Vec<_>>();
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn pather_trace_backs_pose_capsule_collision() {
+        const CARD: &str = r#"
+(defpattern p []
+  (par
+    (spawn (pather 0.1 (linear c[1 0]))
+           (capsule-chain-collider {:layer :trail :r 0.05}))
+    (spawn (pose c[0.02 0])
+           (circle-collider {:layer :body :r 0.05}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..4 {
             sim.step().unwrap();
         }
-        let points = sim.render()
-            .into_iter()
-            .filter(|r| matches!(r.data, RenderData::Point { .. }))
-            .count();
-        assert!(points >= 2, "expected one stock dot row per trace sample, got {points}");
+        let trail = sim.world.symbols.intern("trail");
+        let body = sim.world.symbols.intern("body");
+        assert!(!sim.world.collision_index.query(trail, body).is_empty());
     }
 
     #[test]
@@ -2165,8 +2190,8 @@
     #[test]
     fn circle_collider_accepts_dynamic_radius() {
         const CARD: &str = r#"
-(defcollider expanding-collider [e ctx]
-  (circle-collider {:layer :expanding :r m"ctx.t"}))
+(defcollider expanding-collider [subject clock]
+  (circle-collider {:layer :expanding :r m"clock.t"}))
 (deftick
   (map (fn [[a b]]
          (if (< (if (nothing? (:hit a)) 0 (:hit a)) 1)
@@ -2223,9 +2248,9 @@
     #[test]
     fn cond_controls_projector_output() {
         const CARD: &str = r#"
-(defcollider appears-after [e ctx]
+(defcollider appears-after [subject clock]
   (cond
-    (> ctx.t 0.5) (circle-collider {:layer :appears :r 0.1})
+    (> clock.t 0.5) (circle-collider {:layer :appears :r 0.1})
     :else (circle-collider {:layer :cold :r 0.01})))
 (deftick
   (map (fn [[a b]]
