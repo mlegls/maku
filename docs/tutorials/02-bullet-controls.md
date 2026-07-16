@@ -4,7 +4,7 @@ Runnable companion: **`cards/tutorials/t02.maku`** — press the number keys
 to run each example.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t02.maku
+cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t02.maku
 ```
 
 Tutorial 1 created bullets; this one changes them mid-flight. There are

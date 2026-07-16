@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t07.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t07.maku
+cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t07.maku
 ```
 
 This tutorial builds up to one skill: making a *complex shape* of

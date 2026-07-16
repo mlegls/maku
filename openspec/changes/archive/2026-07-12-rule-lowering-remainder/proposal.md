@@ -20,5 +20,5 @@ Lowering-internal; oracle-gated.
 
 ## Impact
 
-- `proto/core/src/interp/{rulelower,rewrite}.rs`, `sim/exec.rs`.
+- `crates/core/src/interp/{rulelower,rewrite}.rs`, `sim/exec.rs`.
 - Governing: `openspec/specs/lowering/spec.md`; walls in `openspec/specs/perf/spec.md`.

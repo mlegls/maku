@@ -1,7 +1,7 @@
 # Tasks
 
 Sequencing: hold implementation until scoped-channel-overrides' working tree
-lands — cards/lib is compile-time embedded, so these edits rebuild its test
+lands — crates/core/lib is compile-time embedded, so these edits rebuild its test
 corpus mid-flight.
 
 ## 1. Lib
@@ -17,4 +17,4 @@ corpus mid-flight.
 
 ## 3. Gates
 
-- [x] 3.1 `cargo test --release --manifest-path proto/core/Cargo.toml` plus the 4 ignored oracle card suites (lib edits change every embedded card). Commit each coherent change-set.
+- [x] 3.1 `cargo test --release --manifest-path crates/core/Cargo.toml` plus the 4 ignored oracle card suites (lib edits change every embedded card). Commit each coherent change-set.

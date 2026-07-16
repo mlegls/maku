@@ -248,7 +248,7 @@ phase-token semantics, rediscovered at the right grain.
 dissolution: hp was already a column and invuln a deadline column — what
 remained *engine* was the defaulting (team→collider sets, hp 1, the
 died-trigger synthesis) and one verb (`invuln`). All of it is now card
-code in cards/lib/touhou.maku: `spawn` knows only dyn + explicit meta,
+code in crates/core/lib/touhou.maku: `spawn` knows only dyn + explicit meta,
 and `bullet`/`shot`/`enemy` are macros prepending a
 defaults map (macros, not defns, so the caller's literal meta keeps its
 unevaluated signal tags; `spawn` itself grew per-key multi-map merge as

@@ -18,6 +18,6 @@ Collision-internal; layer routing semantics unchanged.
 
 ## Impact
 
-- `proto/core/src/sim/collision.rs`.
+- `crates/core/src/sim/collision.rs`.
 - Benefits from `f32-hot-columns`; a blocking-laser geometry class (`blocking-lasers`) should fit this design.
 - `gpu-kernel-backend` may execute bounded fixed collider projection, but initial GPU support does not own collision streaming/contact generation.

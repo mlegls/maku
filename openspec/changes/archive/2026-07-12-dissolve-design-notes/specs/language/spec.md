@@ -73,7 +73,7 @@ Functions SHALL broadcast elementwise over arrays; shorter arrays cycle within a
 - **THEN** the manip is a no-op rather than affecting the new occupant
 
 ### Requirement: The engine ships no genre defaults
-Genre vocabulary (bullet/enemy/player templates, hit/graze/shot rules, hp-death rules, phase templates) SHALL be library card code (`cards/lib/`, compile-time embedded, imported by bare name), not engine primitives. The core surface is a semantic kernel; surface vocabulary is lib macros over it, and optimization SHALL recognize macro expansion shapes, never names.
+Genre vocabulary (bullet/enemy/player templates, hit/graze/shot rules, hp-death rules, phase templates) SHALL be library card code (`crates/core/lib/`, compile-time embedded, imported by bare name), not engine primitives. The core surface is a semantic kernel; surface vocabulary is lib macros over it, and optimization SHALL recognize macro expansion shapes, never names.
 
 #### Scenario: Hand-written expansion
 - **WHEN** card code hand-writes the exact form a lib macro would expand to

@@ -13,7 +13,7 @@ Each gets a verdict for the core-vs-lib stratification (TODO.md):
 - **INTRINSIC** — stays a pure builtin: deterministic-math contract or
   macro-layer support that lib code cannot provide.
 - **LIB** — expressible today in `.maku` over more generic primitives;
-  should move to `cards/lib/prelude.maku` (hot ones may keep a
+  should move to `crates/core/lib/prelude.maku` (hot ones may keep a
   compiler-recognized lowering later).
 - **LIB-AFTER(x)** — expressible once prerequisite x exists.
 - **DROP/MERGE** — redundant surface.

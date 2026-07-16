@@ -1,12 +1,12 @@
 # The debug player
 
-`proto/player` is the reference host: a sim+render **server** (the
+`crates/player` is the reference host: a sim+render **server** (the
 sclang/scsynth split). Editor clients are thin
-send-a-form-to-a-socket shims; `proto/editors/danmaku.nvim` is the reference
+send-a-form-to-a-socket shims; `crates/editors/danmaku.nvim` is the reference
 client (see its README for mappings).
 
 ```
-cargo run --manifest-path proto/Cargo.toml -p maku-player -- [card.maku [pattern]]
+cargo run --manifest-path crates/Cargo.toml -p maku-player -- [card.maku [pattern]]
 ```
 
 With no card argument the player starts empty and waits for clients.
@@ -57,14 +57,14 @@ contract lives in `openspec/specs/session/spec.md`.
 
 The host layers the stock player rig (the `player-rig` standard-library
 shim; the implementation lives with the Touhou conventions in
-`cards/lib/touhou.maku`)
+`crates/core/lib/touhou.maku`)
 into every fresh timeline via the command tape — swap in your own rig
 live with the editor. The status line shows tick, entity count, graze, hits, lives.
 
 ## The web host
 
-`proto/web` compiles `core` to wasm (`wasm-pack build --target web`, or
-`proto/web/build.sh serve`) and runs the same `Instance` in the browser:
+`crates/web` compiles `core` to wasm (`wasm-pack build --target web`, or
+`crates/web/build.sh serve`) and runs the same `Instance` in the browser:
 canvas renderer over flat f32 buffers, keyboard/mouse → `Inputs`, cards
 fetched into a virtual filesystem (import expansion runs in core), and an
 eval box speaking the wire protocol (`run`/`swap`/`add`). Same controls,

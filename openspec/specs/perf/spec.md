@@ -29,7 +29,7 @@ A landed perf round SHALL update this spec's `## Current walls` section with sam
 ## Measurement rig
 
 - Bare walls: `MAKU_WALL_ONLY=1 cargo run --release --example profile`
-  (workspace at `proto/`; add `--manifest-path proto/core/Cargo.toml`
+  (workspace at `crates/`; add `--manifest-path crates/core/Cargo.toml`
   when not cd'd there). The flat profiler's own bookkeeping is ~18% on
   dense cards, so wall-only mode is the number that counts.
 - No args runs the card suite (paths are CARGO_MANIFEST_DIR-relative).

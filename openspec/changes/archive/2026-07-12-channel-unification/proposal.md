@@ -17,5 +17,5 @@ Missing host channels such as `$wind` fail mid-run instead of at load. Decided: 
 
 ## Impact
 
-- `proto/core/src/sim/channels.rs`, interp scoping, card loading.
+- `crates/core/src/sim/channels.rs`, interp scoping, card loading.
 - Unblocks/subsumes: `scoped-channel-overrides`, the cell half of `pattern-embedding-adapters`, and the schema-pass half of `render-schema-per-kind`.

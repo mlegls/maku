@@ -29,4 +29,4 @@ _None — `openspec/specs/` is empty; no existing requirements change._
 - `openspec/changes/` — ~15–25 new backlog changes (proposal stubs).
 - `openspec/config.yaml` — project context filled in.
 - `docs/notes/perf-campaign.md` — new; receives the rig/methodology/walls documentation.
-- No engine code changes; `proto/` untouched.
+- No engine code changes; `crates/` untouched.

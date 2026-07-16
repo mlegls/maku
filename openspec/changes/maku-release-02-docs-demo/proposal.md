@@ -23,7 +23,7 @@ Maku's tutorials, host documentation, and deployed neen.ink demo describe an old
 
 ## Impact
 
-- `docs/`, package READMEs, `proto/web/static`, JavaScript/wasm release artifacts, tutorial prose, cards selected for the showcase, and host/render integration examples.
+- `docs/`, package READMEs, `crates/web/static`, JavaScript/wasm release artifacts, tutorial prose, cards selected for the showcase, and host/render integration examples.
 - Coordinated downstream work in the separate neen.ink repository; the Maku repository owns the versioned artifact and sync contract, while the site repository owns its customized UI and deployment.
 - Existing planning stubs `openspec/changes/host-api-docs/` and `openspec/changes/language-reference/` become superseded rather than parallel sources of work.
 - Documentation cites settled behavior from `openspec/specs/language/spec.md`, `openspec/specs/session/spec.md`, `openspec/specs/render-rows/spec.md`, and `openspec/specs/mesh-renderer-api/spec.md`.

@@ -18,5 +18,5 @@ Docs + tooling; no engine semantics.
 
 ## Impact
 
-- `docs/`, `proto/core/src/host.rs`, web host.
+- `docs/`, `crates/core/src/host.rs`, web host.
 - Tutorial/site direction: tutorials t01-t09, tbosses, tstages are ported; future doc work focuses on the tutorial site, reader view, and host API docs. Tutorials stay standalone (DMK mapping only in `docs/from-dmk.md`).

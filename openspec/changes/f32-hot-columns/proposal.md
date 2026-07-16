@@ -20,6 +20,6 @@ Numeric-width contract change; determinism spec restated over f32 widths.
 ## Impact
 
 - Gate: run the card corpus with f32 columns against the f64 interpreter via MAKU_LOWER_ORACLE and read the measured drift — the oracle is the precision meter, not a guess.
-- Related: f32 narrowing inside the mesh pack (`proto/mesh-touhou`) is a small independent slice.
+- Related: f32 narrowing inside the mesh pack (`crates/mesh-touhou`) is a small independent slice.
 - Sequencing: typed width support in `KernelProgram` may land independently, but the physical f32 migration must land before `gpu-kernel-backend`; the GPU change consumes the resulting dense f32 buffers rather than defining another width policy.
 - Governing: scale-target decision (this stub + `openspec/specs/perf/spec.md`), `openspec/specs/lowering/spec.md` determinism contract.

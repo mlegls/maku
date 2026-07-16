@@ -18,6 +18,6 @@
 
 ## 4. Migration and gates
 
-- [x] 4.1 Migrate cell users: `cards/tutorials/t05.maku`, `cards/translations/ph_boss2_spell2.maku`, stdlib `defchannel`s in `cards/lib/touhou.maku`; update tutorial prose (docs/tutorials) where it teaches cells.
+- [x] 4.1 Migrate cell users: `cards/tutorials/t05.maku`, `cards/translations/ph_boss2_spell2.maku`, stdlib `defchannel`s in `crates/core/lib/touhou.maku`; update tutorial prose (docs/tutorials) where it teaches cells.
 - [x] 4.2 Update the `## Reference` section of `openspec/specs/language/spec.md` (§3 injected signals / cells) to the unified stream model at archive time.
-- [x] 4.3 Gates: `cargo test --release --manifest-path proto/core/Cargo.toml` plus the 4 ignored oracle card suites with `MAKU_LOWER_ORACLE=1`; commit each coherent change-set.
+- [x] 4.3 Gates: `cargo test --release --manifest-path crates/core/Cargo.toml` plus the 4 ignored oracle card suites with `MAKU_LOWER_ORACLE=1`; commit each coherent change-set.

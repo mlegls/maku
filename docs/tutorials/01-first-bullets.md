@@ -5,7 +5,7 @@ pattern in that card. Start the player and press the number keys (or click
 the menu in the web host) to run each one:
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t01.maku
+cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t01.maku
 ```
 
 ## One bullet

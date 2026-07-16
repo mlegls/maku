@@ -10,7 +10,7 @@ on the round-21 sample (~8% of step, attributed to `evaluate_list_inner`) is
 the residue of the standing-rule surface:
 
 - **Cull rules** — `(map (fn [e] (cull e)) (entities-where pred))` (beam
-  end-of-life, enemy hp≤0 in `cards/lib/touhou.maku`). Their predicates
+  end-of-life, enemy hp≤0 in `crates/core/lib/touhou.maku`). Their predicates
   already pass `row_predicate` (the `default`/`col-or` calls are inlined to
   `%value-or` by the round-7 load-time rewrite), but the form as a whole has
   no compiled path, so every tick re-evaluates the `map`/`fn`/`entities-where`

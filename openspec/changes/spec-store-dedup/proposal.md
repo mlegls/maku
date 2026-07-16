@@ -16,5 +16,5 @@ Storage-internal.
 
 ## Impact
 
-- `proto/core/src/interp/specs.rs`, spawn path.
+- `crates/core/src/interp/specs.rs`, spawn path.
 - Round-22 structural interning already fuses per-ring vel groups; this extends sharing to the rest of the spec. Likely folds into `entity-representation-flip` at pick-up.

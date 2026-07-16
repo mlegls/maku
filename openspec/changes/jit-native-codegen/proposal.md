@@ -27,7 +27,7 @@ None.
 ## Impact
 
 - Blocked on `ir-unification`: the stopping condition is one typed, interned, input-slotted program/plan ABI running all supported fixed-width hot surfaces through the IR-loop executor with oracle coverage.
-- Kernel execution and driver seams in `proto/core/src/interp/lower.rs` and `proto/core/src/sim/`; codegen modules and build dependencies to be designed at pick-up.
+- Kernel execution and driver seams in `crates/core/src/interp/lower.rs` and `crates/core/src/sim/`; codegen modules and build dependencies to be designed at pick-up.
 - Platform policy includes macOS hardened-runtime `MAP_JIT` handling and generated wasm for wasm hosts.
 - Governing contracts: `openspec/specs/lowering/spec.md` and `openspec/specs/determinism/spec.md`.
 - GPU execution remains a separate `gpu-kernel-backend` change because buffer residency, dispatch, compaction, and readback have different prerequisites and acceptance criteria.

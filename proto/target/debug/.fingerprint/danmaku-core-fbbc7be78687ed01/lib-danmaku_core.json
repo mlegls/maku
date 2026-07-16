@@ -1,1 +1,0 @@
-{"rustc":9783247635632824192,"features":"[]","declared_features":"[]","target":2875341197526784439,"profile":13102132197713293438,"path":2995440285629810167,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"debug/.fingerprint/danmaku-core-fbbc7be78687ed01/dep-lib-danmaku_core","checksum":false}}],"rustflags":["--cfg","tokio_unstable"],"config":2069994364910194474,"compile_kind":0}

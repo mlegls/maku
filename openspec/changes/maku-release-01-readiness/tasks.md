@@ -1,7 +1,7 @@
 ## 1. Stabilize the Repository Baseline
 
-- [ ] 1.1 Replace stale `ProjectorNum` use in `proto/core/examples/dbg.rs` with the landed IR/projector API and make workspace all-target checks pass.
-- [ ] 1.2 Remove tracked files under ignored build-output directories and add a regression check that rejects newly tracked compiler products.
+- [x] 1.1 Replace stale `ProjectorNum` use in `crates/core/examples/dbg.rs` with the landed IR/projector API and make workspace all-target checks pass.
+- [x] 1.2 Rename the obsolete `proto/` Rust workspace root to `crates/`, update all live repository paths, remove tracked files under ignored build-output directories, and add a regression check that rejects newly tracked compiler products.
 - [ ] 1.3 Declare the Rust toolchain/MSRV and document platform linker/tool prerequisites without baking one developer machine's paths into published packages.
 - [ ] 1.4 Add checked-in fast and release check entry points covering Rust workspace/all-target tests, wasm target checks, JavaScript checks, and clean-tree verification.
 - [ ] 1.5 Add CI jobs using those entry points, with ignored oracle/card suites and artifact verification in an explicit release lane.
@@ -17,7 +17,7 @@
 
 ## 3. Define Package Assets and Public API
 
-- [ ] 3.1 Move or establish canonical standard-library sources within the `maku` package root and update engine/web/card loading so package builds never read above the extracted crate.
+- [x] 3.1 Move canonical standard-library sources from `cards/lib/` to `crates/core/lib/` and update engine/web/card loading so package builds never read above the extracted crate.
 - [ ] 3.2 Add a freshness check for any generated or served copies of canonical library/card assets.
 - [ ] 3.3 Inventory public Rust exports and classify supported facade/render/session contracts versus unstable interpreter, storage, lowering, and backend internals.
 - [ ] 3.4 Narrow module visibility or mark unavoidable implementation exports explicitly unstable, and add external smoke crates/examples that use only the supported facade.

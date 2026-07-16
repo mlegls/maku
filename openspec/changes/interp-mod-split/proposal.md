@@ -4,7 +4,7 @@ Backlog stub — design/specs/tasks are generated when this is picked up.
 
 ## Why
 
-`proto/core/src/interp/mod.rs` still contains eval plus the specials table and will keep growing with vocabulary work (engineering debt).
+`crates/core/src/interp/mod.rs` still contains eval plus the specials table and will keep growing with vocabulary work (engineering debt).
 
 ## What Changes
 
@@ -16,4 +16,4 @@ None (pure code organization).
 
 ## Impact
 
-- `proto/core/src/interp/`; no behavior change; cheap to do opportunistically alongside another interp round.
+- `crates/core/src/interp/`; no behavior change; cheap to do opportunistically alongside another interp round.

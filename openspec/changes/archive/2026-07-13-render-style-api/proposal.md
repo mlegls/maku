@@ -2,7 +2,7 @@
 
 ## Why
 
-`proto/mesh-touhou` currently hardcodes one generated disc/ring atlas, core-owned palette/radius functions, white outlines, alpha-only material behavior, and expanded quad vertices. It also conflates Touhou schema/style policy, reusable sprite/ribbon geometry, and backend submission, making customization difficult and obscuring how another genre pack could reuse the implementation without adopting Touhou vocabulary.
+`crates/mesh-touhou` currently hardcodes one generated disc/ring atlas, core-owned palette/radius functions, white outlines, alpha-only material behavior, and expanded quad vertices. It also conflates Touhou schema/style policy, reusable sprite/ribbon geometry, and backend submission, making customization difficult and obscuring how another genre pack could reuse the implementation without adopting Touhou vocabulary.
 
 ## What Changes
 
@@ -17,7 +17,7 @@
 - Replace bare index `Span`s with ordered draw commands over shared sprite-instance or indexed-geometry ranges. Only adjacent compatible commands coalesce.
 - Honor point `theta` for directional styles and row `width` for beam styles; radial stock styles may explicitly ignore orientation.
 - Make texture upload, shader creation, blend/sampler state, render-target management, and material-id resolution host responsibilities. The pack exposes optional builtin RGBA resources and external resource keys but owns no GPU objects.
-- Define a wasm-friendly buffer/resource ABI in a `proto/web` host crate above core. Native and web hosts consume the same pack-owned streams and manifest.
+- Define a wasm-friendly buffer/resource ABI in a `crates/web` host crate above core. Native and web hosts consume the same pack-owned streams and manifest.
 - Preserve row/batch equivalence, zero steady-state allocation, and future execution-plan visibility. The architecture may later lower compatible projection/primitive work to GPU compute without promising one heterogeneous kernel per tick.
 - Move stock Touhou palette/radius data out of core host policy into the default profile.
 - Do not extract a generic renderer crate in this change. A second concrete pack should establish which primitive/resource contracts are genuinely reusable before extraction.
@@ -34,8 +34,8 @@ None.
 
 ## Impact
 
-- `proto/mesh-touhou/src/lib.rs`, its internal module organization, tests, and the macroquad player adapter.
-- The existing `proto/web` directory becomes a host-level wasm crate/adapter depending on both core and `mesh-touhou`; `proto/core` remains unaware of the pack.
-- Stock palette/radius helpers in `proto/core/src/host.rs` and duplicate web rendering in `proto/core/src/web.rs` migrate to host/profile ownership.
-- Touhou render vocabulary remains library/package policy in `cards/lib/touhou.maku`; the pack binds its declared `:sprite` and `:beam` schemas to handlers.
+- `crates/mesh-touhou/src/lib.rs`, its internal module organization, tests, and the macroquad player adapter.
+- The existing `crates/web` directory becomes a host-level wasm crate/adapter depending on both core and `mesh-touhou`; `crates/core` remains unaware of the pack.
+- Stock palette/radius helpers in `crates/core/src/host.rs` and duplicate web rendering in `crates/core/src/web.rs` migrate to host/profile ownership.
+- Touhou render vocabulary remains library/package policy in `crates/core/lib/touhou.maku`; the pack binds its declared `:sprite` and `:beam` schemas to handlers.
 - Governing boundaries remain `openspec/specs/render-rows/spec.md`, `openspec/specs/load-time-schema/spec.md`, `openspec/changes/ir-unification/design.md`, `openspec/changes/gpu-kernel-backend/design.md`, and `openspec/changes/gameplay-out-of-core/proposal.md`.

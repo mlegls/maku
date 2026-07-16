@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t04.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t04.maku
+cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t04.maku
 ```
 
 Bullets so far have been points. This tutorial covers the two extended

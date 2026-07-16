@@ -12,7 +12,11 @@ The repository SHALL provide one documented release-check entry point that verif
 - **THEN** it invokes the same checked-in commands used by CI rather than undocumented machine-local steps
 
 ### Requirement: Reproducible toolchain and source tree
-The workspace SHALL declare its Rust toolchain or MSRV policy and the tool versions needed to reproduce wasm/JavaScript artifacts. Build output directories MUST NOT contain tracked compiler products, and generated files MUST have either a deterministic no-diff freshness check or a release-only artifact policy.
+The Cargo workspace SHALL live under the durable `crates/` repository root, declare its Rust toolchain or MSRV policy, and declare the tool versions needed to reproduce wasm/JavaScript artifacts. Build output directories MUST NOT contain tracked compiler products, and generated files MUST have either a deterministic no-diff freshness check or a release-only artifact policy.
+
+#### Scenario: Obsolete prototype path remains
+- **WHEN** live build scripts, CI, examples, editor integrations, or public documentation are scanned
+- **THEN** they resolve the workspace under `crates/` and contain no operational dependency on `proto/`
 
 #### Scenario: Generated wasm glue is stale
 - **WHEN** the checked-in JavaScript glue does not match a rebuild with the declared toolchain and source revision

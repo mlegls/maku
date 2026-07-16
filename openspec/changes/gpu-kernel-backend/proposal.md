@@ -28,6 +28,6 @@ None.
 ## Impact
 
 - Blocked on `ir-unification`, `f32-hot-columns`, and the dense spec/program identity needed from `entity-representation-flip`.
-- Kernel buffers and drivers in `proto/core/src/sim/`, typed program definitions/executors, web/native host capability negotiation, and backend-specific shader/module generation.
+- Kernel buffers and drivers in `crates/core/src/sim/`, typed program definitions/executors, web/native host capability negotiation, and backend-specific shader/module generation.
 - Governing contracts: `openspec/specs/lowering/spec.md`, `openspec/specs/determinism/spec.md`, `openspec/specs/session/spec.md`, and `openspec/specs/perf/spec.md`.
 - Collision contact streaming and variable-length render geometry remain separate domain-backend work.

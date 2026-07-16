@@ -1,6 +1,6 @@
 ## Context
 
-`proto/core/src/interp/lower.rs` already lowers a subset of motion expressions to an interned register program and executes it through scalar and lane-oriented IR loops. Other per-row surfaces retain private representations: collider fields use `ProjectorNum`, row predicates and values use resolved-row enums/evaluators, and numeric dyn columns use `DynNum`. The fragmentation prevents structural interning, capture/input sharing, batching, and future code generation from applying uniformly.
+`crates/core/src/interp/lower.rs` already lowers a subset of motion expressions to an interned register program and executes it through scalar and lane-oriented IR loops. Other per-row surfaces retain private representations: collider fields use `ProjectorNum`, row predicates and values use resolved-row enums/evaluators, and numeric dyn columns use `DynNum`. The fragmentation prevents structural interning, capture/input sharing, batching, and future code generation from applying uniformly.
 
 At the hot-loop boundary, source strings, maps, lists, lexical environments, and actions have already been resolved away. Supported values are fixed-width machine data: f32/f64 numbers, interned `Symbol` ids, handles, row ids/offsets, masks, and flattened fixed-width aggregates. Variable-shape figures, collection topology, and effects still need domain-specific orchestration.
 

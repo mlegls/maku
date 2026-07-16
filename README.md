@@ -16,8 +16,8 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/tutorials/` | learn the language from scratch — runnable companions in `cards/tutorials/` |
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `openspec/` | specs (settled contracts + design), changes (all open work — `openspec list`) |
-| `proto/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
-| `proto/js/maku/` | publishable browser package wrapping the wasm host |
+| `crates/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
+| `crates/js/maku/` | publishable browser package wrapping the wasm host |
 | `cards/` | playable cards — start with `reimu_vs_mima.maku` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
 | `dmk-corpus/` | the upstream DMK scripts translated (MIT) |
@@ -26,16 +26,16 @@ replays, rewind, and live code-swap are exact by construction.
 
 ```sh
 # play the demo fight: WASD move, Shift focus, X bomb
-cargo run --manifest-path proto/Cargo.toml -p maku-player -- cards/reimu_vs_mima.maku
+cargo run --manifest-path crates/Cargo.toml -p maku-player -- cards/reimu_vs_mima.maku
 
 # tests (52: conformance corpus + gameplay + session/scrubbing)
-cargo test --manifest-path proto/Cargo.toml -p maku
+cargo test --manifest-path crates/Cargo.toml -p maku
 ```
 
 Live editing: the player is a server (`docs/player.md`); install
-`proto/editors/danmaku.nvim` and evaluate forms into the running game
+`crates/editors/danmaku.nvim` and evaluate forms into the running game
 (`<localleader>e` operator — run/swap/layer, all scrub-safe).
 
-Browser: `proto/web/build.sh serve` then open
-`http://localhost:8000/proto/web/static/` — the same engine as wasm, same
+Browser: `crates/web/build.sh serve` then open
+`http://localhost:8000/crates/web/static/` — the same engine as wasm, same
 controls, plus an in-page eval box speaking the wire protocol.

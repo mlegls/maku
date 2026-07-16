@@ -14,7 +14,7 @@
 ## 3. Tests and gates
 
 - [x] 3.1 Unit tests: extent scoping (callee resolution, set! isolation, nesting/shadowing, extent exit without restore), spawn capture outliving the body, def'd-dyn-spawned-inside-extent (read-time resolution, not construction-time), stream-handle aliasing, bind!/export! inside an extent, override of an injected channel with the base still refreshing.
-- [x] 3.2 Card-level test exercising `with` + lowered live reads under MAKU_LOWER_ORACLE=1; full gate: `cargo test --release --manifest-path proto/core/Cargo.toml` plus the 4 ignored oracle card suites. Commit each coherent change-set.
+- [x] 3.2 Card-level test exercising `with` + lowered live reads under MAKU_LOWER_ORACLE=1; full gate: `cargo test --release --manifest-path crates/core/Cargo.toml` plus the 4 ignored oracle card suites. Commit each coherent change-set.
 
 ## 4. Spec sync (archive time)
 

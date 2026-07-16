@@ -181,7 +181,7 @@ Kind handlers and primitive processors SHALL retain batch column bindings, fixed
 - **THEN** it may use a distinct ribbon sizing and emission pass without changing shared command ordering
 
 ### Requirement: Native and wasm host integration
-Native and wasm hosts SHALL consume the same pack-owned material/resource ids, fixed instance layouts, indexed geometry, and ordered commands. A wasm host wrapper SHALL live above core, depend on both core and the Touhou pack, expose typed-array views into the engine module's linear memory, and expose the cold material/texture manifest. `proto/core` SHALL remain unaware of Touhou resources and SHALL NOT retain a duplicate palette/radius mesh-flattening path.
+Native and wasm hosts SHALL consume the same pack-owned material/resource ids, fixed instance layouts, indexed geometry, and ordered commands. A wasm host wrapper SHALL live above core, depend on both core and the Touhou pack, expose typed-array views into the engine module's linear memory, and expose the cold material/texture manifest. `crates/core` SHALL remain unaware of Touhou resources and SHALL NOT retain a duplicate palette/radius mesh-flattening path.
 
 #### Scenario: Web frame submission
 - **WHEN** JavaScript requests a rendered frame from the wasm host wrapper

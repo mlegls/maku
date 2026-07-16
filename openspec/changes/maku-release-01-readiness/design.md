@@ -35,9 +35,13 @@ Rename the unpublished `maku-mesh-touhou` package and directory references to `m
 
 The documented supported surface is the host facade, input/event/session contracts required by hosts, render transport/schema types, and the Touhou profile/frame ABI. Interpreter and simulation implementation modules are made private where practical; any symbol that must remain public for current crate boundaries is explicitly documented as unstable and excluded from compatibility promises. Package tests compile representative external consumers against only the supported facade.
 
+### Give the Cargo workspace a durable repository home
+
+Rename the obsolete `proto/` workspace root to `crates/`. It is the root of several publishable Rust crates, not one prototype package. All checked-in commands, CI, examples, editor integrations, documentation, and active planning references use `crates/`; `crates/target/` remains ignored and no compiler products are tracked.
+
 ### Make packaged assets crate-local and singular
 
-Canonical standard-library sources needed by `include_str!` or runtime initialization live inside the `maku` package root and are listed by `cargo package`. Repository cards and browser manifests consume the same source or a generated copy guarded by a no-diff check. Package builds MUST NOT read above the extracted package root.
+Canonical standard-library sources needed by `include_str!` live at `crates/core/lib/` inside the `maku` package root and are listed by `cargo package`. Repository cards and browser manifests consume that same source or a generated copy guarded by a no-diff check. Package builds MUST NOT read above the extracted package root.
 
 ### One release check is the local/CI authority
 
@@ -62,10 +66,10 @@ Rust package versions, wasm-bindgen glue, wasm bytes, JavaScript wrapper, render
 
 ## Migration Plan
 
-1. Repair all-target compilation and repository hygiene without changing package names.
+1. Rename the Rust workspace root from `proto/` to `crates/`, move the inlined standard library to `crates/core/lib/`, and repair all-target compilation and repository hygiene without changing package names.
 2. Add toolchain policy and authoritative check scripts; establish a green baseline.
 3. Complete compatibility inventory, migrate repository sources, and remove selected aliases with corpus tests.
-4. Move packaged assets and narrow/document the public facade.
+4. Verify packaged assets and narrow/document the public facade.
 5. Rename the Touhou package and update dependency/version metadata.
 6. Verify each extracted crate in publication order, then rebuild wasm/npm artifacts from those versions.
 7. Record the coherent release revision consumed by documentation and downstream demo work.

@@ -20,5 +20,5 @@ Lowering-internal; likely no user-facing spec changes (oracle-gated equivalence)
 
 ## Impact
 
-- `proto/core/src/interp/{lower,motion,spawn}.rs`, `proto/core/src/sim/mod.rs`.
+- `crates/core/src/interp/{lower,motion,spawn}.rs`, `crates/core/src/sim/mod.rs`.
 - Governing design + status: `openspec/specs/lowering/spec.md` ("JIT readiness" gap list). Methodology: `openspec/specs/perf/spec.md`.

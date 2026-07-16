@@ -3,7 +3,7 @@
 Runnable companion: **`cards/tutorials/t06.maku`**.
 
 ```sh
-cargo run --release --manifest-path proto/Cargo.toml -p maku-player -- cards/tutorials/t06.maku
+cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t06.maku
 ```
 
 Every card so far was one pattern firing forever. Real fights have
@@ -91,7 +91,7 @@ options over `states` (`ex4-phases`):
 | `(finally …)` tail | core `(finally body cleanup…)` — cleanup on *every* exit path: gate, timeout, goto |
 
 That table is the whole feature. `phases` is a macro in
-`cards/lib/touhou.maku` — about thirty lines of clause-walking you can
+`crates/core/lib/touhou.maku` — about thirty lines of clause-walking you can
 read, and the desugared output is exactly the `ex1` shapes. If your
 game means something different by "phase", you write a different macro;
 the engine has no opinion.

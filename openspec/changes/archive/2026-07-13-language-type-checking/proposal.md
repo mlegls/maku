@@ -27,7 +27,7 @@ None.
 
 ## Impact
 
-- Parser/form source spans, import/macro expansion provenance, definition environments, builtin signatures, and load-time schema resolution in `proto/core/src/interp/`.
+- Parser/form source spans, import/macro expansion provenance, definition environments, builtin signatures, and load-time schema resolution in `crates/core/src/interp/`.
 - Semantic type/elaboration modules should remain frontend-owned rather than living in kernel/codegen modules.
 - Governing language meaning remains `openspec/specs/language/spec.md`; render and schema boundaries remain governed by `openspec/specs/render-rows/spec.md` and `openspec/specs/load-time-schema/spec.md`.
 - Independent of `ir-unification`; either track may land first, and neither is an implementation prerequisite for the other.

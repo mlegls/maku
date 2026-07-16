@@ -28,7 +28,7 @@ None.
 
 ## Impact
 
-- Code-structure/design reassessment across `proto/core/src/{model,interp,sim}/`; semantics unchanged.
+- Code-structure/design reassessment across `crates/core/src/{model,interp,sim}/`; semantics unchanged.
 - Sequenced after the kernel-plan boundary in `ir-unification` is concrete enough to test ownership against real consumers, and after the relevant `evolve-followups` re-expression for any dyn nodes considered stable.
 - Coordinated with `language-type-checking`, `entity-representation-flip`, and `pose-figure-unification`, but no longer a prerequisite for native/GPU code generation.
 - Governing semantics remain in `openspec/specs/language/spec.md`; this change must not create a second semantic authority.

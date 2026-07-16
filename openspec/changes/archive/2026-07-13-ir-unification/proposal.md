@@ -27,7 +27,7 @@ None.
 
 ## Impact
 
-- `proto/core/src/interp/lower.rs` and the private evaluator/recognizer paths in `interp/{dyn,projectors,rulelower,sem,specs}.rs` and `interp/mod.rs`.
-- Kernel drivers and batch executors in `proto/core/src/sim/`.
+- `crates/core/src/interp/lower.rs` and the private evaluator/recognizer paths in `interp/{dyn,projectors,rulelower,sem,specs}.rs` and `interp/mod.rs`.
+- Kernel drivers and batch executors in `crates/core/src/sim/`.
 - Governing contracts: `openspec/specs/lowering/spec.md`, `openspec/specs/determinism/spec.md`, and `openspec/specs/language/spec.md`.
 - Unblocks `jit-native-codegen` and a separate GPU kernel backend without compiling the action/control plane.

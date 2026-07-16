@@ -2,7 +2,7 @@
 
 ## Context
 
-Three accretions in `cards/lib/touhou.maku`, all library card code (no core
+Three accretions in `crates/core/lib/touhou.maku`, all library card code (no core
 changes): family→hitbox data, spellcard-shaped phase sugar, and the `col-or`
 alias. Ground truth as of pick-up:
 
@@ -25,7 +25,7 @@ alias. Ground truth as of pick-up:
   round is not findable in the archive; treating alias-dissolution as the
   decision.
 
-Timing: `cards/lib/` is compile-time embedded into proto/core, so these
+Timing: `crates/core/lib/` is compile-time embedded into crates/core, so these
 edits rebuild the core test corpus — implementation waits until the
 scoped-channel-overrides working tree lands, to keep its test loop clean.
 

@@ -1,6 +1,6 @@
 ## Context
 
-The existing `proto/core/examples/profile.rs` measures simulation wall time for representative cards, and `openspec/specs/perf/spec.md` governs interleaved A/B optimization evidence. It does not provide deterministic scale sweeps, browser automation, renderer staging, memory results, or a machine-readable schema. Native and web hosts also have very different draw adapters: Macroquad currently expands instances for compatibility, while Canvas loops over sprites and ribbon triangles. Comparing only aggregate frame time would conflate engine, pack, adapter, rasterizer, and presentation behavior.
+The existing `crates/core/examples/profile.rs` measures simulation wall time for representative cards, and `openspec/specs/perf/spec.md` governs interleaved A/B optimization evidence. It does not provide deterministic scale sweeps, browser automation, renderer staging, memory results, or a machine-readable schema. Native and web hosts also have very different draw adapters: Macroquad currently expands instances for compatibility, while Canvas loops over sprites and ribbon triangles. Comparing only aggregate frame time would conflate engine, pack, adapter, rasterizer, and presentation behavior.
 
 The current hosts run a 120 Hz fixed simulation and normally present at 60 Hz without interpolation. One displayed frame usually advances two ticks and builds one latest-state render frame, but catch-up frames can advance more. Benchmarking must measure that actual cadence rather than multiplying an average tick.
 

@@ -4,7 +4,7 @@ Backlog stub — design/specs/tasks are generated when this is picked up.
 
 ## Why
 
-Recurring Touhou/DMK vocabulary is repeated at call sites or missing from `cards/lib/touhou.maku`.
+Recurring Touhou/DMK vocabulary is repeated at call sites or missing from `crates/core/lib/touhou.maku`.
 
 ## What Changes
 
@@ -18,5 +18,5 @@ Lib-only; no core changes.
 
 ## Impact
 
-- `cards/lib/touhou.maku` and card call sites.
+- `crates/core/lib/touhou.maku` and card call sites.
 - Stance: `openspec/specs/language/spec.md` (stdlib section). Spellcard templates benefit from `states-return-routing`.

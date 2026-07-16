@@ -9,23 +9,23 @@ node = "24"
 
 [tasks.test]
 description = "Core release test suite"
-run = "cargo test --release --manifest-path proto/core/Cargo.toml"
+run = "cargo test --release --manifest-path crates/core/Cargo.toml"
 
 [tasks.test-oracle]
 description = "Unit + card suites under the lowering oracle (MAKU_LOWER_ORACLE=1)"
 run = [
-  "MAKU_LOWER_ORACLE=1 cargo test --release --manifest-path proto/core/Cargo.toml",
-  "MAKU_LOWER_ORACLE=1 cargo test --release --manifest-path proto/core/Cargo.toml -- --ignored",
+  "MAKU_LOWER_ORACLE=1 cargo test --release --manifest-path crates/core/Cargo.toml",
+  "MAKU_LOWER_ORACLE=1 cargo test --release --manifest-path crates/core/Cargo.toml -- --ignored",
 ]
 
 [tasks.test-mesh]
 description = "Touhou mesh crate tests"
-run = "cargo test --release -p maku-mesh-touhou --manifest-path proto/Cargo.toml"
+run = "cargo test --release -p maku-mesh-touhou --manifest-path crates/Cargo.toml"
 
 [tasks.web]
 description = "Build the wasm package and editor bundle"
-run = "proto/web/build.sh"
+run = "crates/web/build.sh"
 
 [tasks.serve]
 description = "Build and serve the web host on :8000"
-run = "proto/web/build.sh serve"
+run = "crates/web/build.sh serve"

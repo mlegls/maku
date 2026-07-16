@@ -17,5 +17,5 @@ Core/lib boundary cleanup.
 
 ## Impact
 
-- `proto/core/src/interp/engine.rs`, `host.rs`, `cards/lib/touhou.maku`.
+- `crates/core/src/interp/engine.rs`, `host.rs`, `crates/core/lib/touhou.maku`.
 - Related stance: `openspec/specs/language/spec.md` (stdlib section).
