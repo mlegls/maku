@@ -294,6 +294,14 @@ export class Maku {
      * @param {number} index
      * @returns {number}
      */
+    material_mag_filter(index) {
+        const ret = wasm.maku_material_mag_filter(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
     material_min_filter(index) {
         const ret = wasm.maku_material_min_filter(this.__wbg_ptr, index);
         return ret >>> 0;

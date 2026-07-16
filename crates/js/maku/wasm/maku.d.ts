@@ -73,6 +73,7 @@ export class Maku {
     material_fixed_color(index: number): number;
     material_key(index: number): string;
     material_layout(index: number): number;
+    material_mag_filter(index: number): number;
     material_min_filter(index: number): number;
     material_pipeline(index: number): string;
     material_texture(index: number): number;
@@ -166,6 +167,7 @@ export interface InitOutput {
     readonly maku_material_fixed_color: (a: number, b: number) => number;
     readonly maku_material_key: (a: number, b: number) => [number, number];
     readonly maku_material_layout: (a: number, b: number) => number;
+    readonly maku_material_mag_filter: (a: number, b: number) => number;
     readonly maku_material_min_filter: (a: number, b: number) => number;
     readonly maku_material_pipeline: (a: number, b: number) => [number, number];
     readonly maku_material_texture: (a: number, b: number) => number;

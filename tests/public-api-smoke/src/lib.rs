@@ -6,6 +6,20 @@ mod tests {
     use std::rc::Rc;
 
     #[test]
+    fn documented_language_cards_load_through_the_supported_host() {
+        const REFERENCE: &str = include_str!("../../../cards/docs/language-reference.maku");
+        for pattern in ["reference-ring", "reference-low-level", "reference-render-kind"] {
+            let mut instance = Instance::new(None);
+            instance.set_render_kinds(["sprite", "beam", "orb"]);
+            instance.add_file("language-reference.maku", REFERENCE);
+            instance.boot("language-reference.maku".into(), Some(pattern.into()));
+            assert!(instance.running(), "{pattern}: {}", instance.status());
+            instance.advance(Inputs::default());
+            assert!(instance.running(), "{pattern}: {}", instance.status());
+        }
+    }
+
+    #[test]
     fn supported_facade_builds_a_touhou_frame() {
         let mut instance = Instance::new(None);
         instance.set_render_kinds(TouhouMesh::RENDER_KINDS.iter().copied());

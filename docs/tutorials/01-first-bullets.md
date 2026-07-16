@@ -33,7 +33,9 @@ Reading outside-in:
 - `(linear p[2 -90])` is straight-line motion. `p[r θ]` is a polar
   coordinate literal: speed 2, heading −90° (straight down). Angles are in
   degrees everywhere; time is in seconds.
-- The style record `{:family … :color … :variant …}` picks the sprite.
+- The style record carries semantic family, color, and variant axes. The
+  host-selected Touhou profile maps those axes to sprite resources and
+  orientation; core does not own a palette or sprite table.
 
 Polar and cartesian literals are two spellings of the same value:
 `p[2 -90]` equals `c[0 -2]`, so `ex2` fires the identical bullet with

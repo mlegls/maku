@@ -1,5 +1,7 @@
-// Interactive browser host: card/tutorial picker, editable vfs source, wasm
-// simulation loop, canvas renderer, and the debug wire protocol.
+// Interactive browser host: card/tutorial picker, editable VFS source, wasm
+// simulation loop, Canvas2D compatibility renderer, and debug wire protocol.
+// This adapter consumes the ordered render-pack ABI; it is not a WebGPU or
+// engine-throughput benchmark.
 import initMaku, { createMaku } from '../../js/maku/dist/index.js';
 import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
@@ -100,9 +102,13 @@ async function resolveRenderManifest() {
       key: maku.material_key(i), pipeline: maku.material_pipeline(i),
       texture: maku.material_texture(i), layout: maku.material_layout(i),
       blend: maku.material_blend(i), fixedColor: maku.material_fixed_color(i),
-      filter: maku.material_min_filter(i),
+      minFilter: maku.material_min_filter(i), magFilter: maku.material_mag_filter(i),
       addressU: maku.material_address_u(i), addressV: maku.material_address_v(i),
     });
+    const material = materials.at(-1);
+    if (material.minFilter !== material.magFilter) {
+      throw new Error(`Canvas2D cannot represent distinct min/mag filters for material '${material.key}'`);
+    }
   }
   renderManifest = { textures, materials };
 }
@@ -645,7 +651,7 @@ function drawRenderPack() {
     if (!material) throw new Error(`unresolved render material ${commands[c]}`);
     const tag = commands[c + 1], start = commands[c + 2], count = commands[c + 3];
     ctx.globalCompositeOperation = material.blend === 2 ? 'lighter' : material.blend === 3 ? 'screen' : 'source-over';
-    ctx.imageSmoothingEnabled = material.filter !== 0;
+    ctx.imageSmoothingEnabled = material.magFilter !== 0;
     if (tag <= 2) {
       const view = views[tag], stride = strides[tag];
       for (let i = start; i < start + count; i++) {

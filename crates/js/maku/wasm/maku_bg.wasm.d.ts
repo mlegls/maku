@@ -33,6 +33,7 @@ export const maku_material_count: (a: number) => number;
 export const maku_material_fixed_color: (a: number, b: number) => number;
 export const maku_material_key: (a: number, b: number) => [number, number];
 export const maku_material_layout: (a: number, b: number) => number;
+export const maku_material_mag_filter: (a: number, b: number) => number;
 export const maku_material_min_filter: (a: number, b: number) => number;
 export const maku_material_pipeline: (a: number, b: number) => [number, number];
 export const maku_material_texture: (a: number, b: number) => number;

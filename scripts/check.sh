@@ -24,6 +24,7 @@ run_fast() {
 run_fast
 
 if [ "$mode" = release ]; then
+  scripts/check-docs.sh
   MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml
   MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml -- --ignored
   scripts/check-generated.sh

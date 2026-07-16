@@ -43,6 +43,7 @@ identity but must grow artifact hashes and the selected synchronization unit.
 
 The coordinated downstream copy is `~/dev/neen-ink/projects/maku`.
 
+<!-- compatibility-migration -->
 - `main.js` still calls the removed `dots()` and `beams()` protocol.
 - `pkg/` is an older wasm/wrapper unit without release identity checks.
 - `cards/`, `tutorials/`, and `from-dmk.md` are divergent copies rather than a

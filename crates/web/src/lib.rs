@@ -1,7 +1,8 @@
-//! wasm bindings over host::Instance — the browser is just another
-//! host: input devices → Inputs, a fixed-timestep loop, a canvas renderer
-//! over flat f32 buffers, and command_line as the transport. Cards arrive
-//! through the vfs (fetched by the page; import expansion runs in core).
+//! Wasm bindings over the supported `host::Instance` facade and the Touhou
+//! render pack. The browser supplies inputs on a fixed-timestep loop, consumes
+//! ordered fixed-layout sprite/ribbon buffers through Canvas2D or another
+//! adapter, and uses `command_line` for live tooling. Cards arrive through the
+//! VFS; import expansion remains engine-owned.
 
 use js_sys::{Uint32Array, Uint8Array};
 use maku::host::Instance;
@@ -310,6 +311,12 @@ impl Maku {
     pub fn material_min_filter(&self, index: usize) -> u32 {
         use maku_render_touhou::TextureFilter::*;
         self.mesh.profile().materials().get(index).map(|v| match v.sampler.min_filter {
+            Nearest => 0, Linear => 1,
+        }).unwrap_or(u32::MAX)
+    }
+    pub fn material_mag_filter(&self, index: usize) -> u32 {
+        use maku_render_touhou::TextureFilter::*;
+        self.mesh.profile().materials().get(index).map(|v| match v.sampler.mag_filter {
             Nearest => 0, Linear => 1,
         }).unwrap_or(u32::MAX)
     }

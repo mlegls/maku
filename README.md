@@ -11,8 +11,11 @@ replays, rewind, and live code-swap are exact by construction.
 
 | path | contents |
 |---|---|
-| `openspec/specs/language/spec.md` | **the language spec** (authoritative) |
-| `docs/player.md` | the debug player: wire protocol, session/scrubbing, controls |
+| `docs/README.md` | documentation map by audience and version |
+| `docs/language-reference.md` | card-author lookup reference; capability specs remain authoritative |
+| `docs/host-api.md` | supported Rust embedding lifecycle |
+| `docs/renderer-api.md` | BYO transport, Touhou pack, Canvas2D, and WebGPU-ready ABI |
+| `docs/player.md` | debug player: wire protocol, session/scrubbing, controls |
 | `docs/tutorials/` | learn the language from scratch — runnable companions in `cards/tutorials/` |
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `openspec/` | specs (settled contracts + design), changes (all open work — `openspec list`) |
@@ -28,7 +31,7 @@ replays, rewind, and live code-swap are exact by construction.
 # play the demo fight: WASD move, Shift focus, X bomb
 cargo run --manifest-path crates/Cargo.toml -p maku-player -- cards/reimu_vs_mima.maku
 
-# tests (52: conformance corpus + gameplay + session/scrubbing)
+# core conformance, gameplay, and session/scrubbing tests
 cargo test --manifest-path crates/Cargo.toml -p maku
 ```
 
@@ -37,8 +40,9 @@ Live editing: the player is a server (`docs/player.md`); install
 (`<localleader>e` operator — run/swap/layer, all scrub-safe).
 
 Browser: `crates/web/build.sh serve` then open
-`http://localhost:8000/crates/web/static/` — the same engine as wasm, same
-controls, plus an in-page eval box speaking the wire protocol.
+`http://localhost:8000/crates/web/static/` — the same engine as wasm, with a
+Canvas2D compatibility adapter, the same controls, and an in-page eval box
+speaking the wire protocol.
 
 ## Development toolchain
 

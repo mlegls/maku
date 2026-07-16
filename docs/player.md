@@ -63,13 +63,15 @@ live with the editor. The status line shows tick, entity count, graze, hits, liv
 
 ## The web host
 
-`crates/web` compiles `core` to wasm (`wasm-pack build --target web`, or
-`crates/web/build.sh serve`) and runs the same `Instance` in the browser:
-canvas renderer over flat f32 buffers, keyboard/mouse → `Inputs`, cards
-fetched into a virtual filesystem (import expansion runs in core), and an
-eval box speaking the wire protocol (`run`/`swap`/`add`). Same controls,
-same scrubbing (the range slider is the timeline), same colors — the
-palette lives in `core::host`.
+`crates/web` compiles the supported host facade to wasm (`crates/web/build.sh
+serve`) and runs the same `Instance` in the browser. It builds the ordered
+fixed-layout frame from `maku-render-touhou` and draws it with the bundled
+**Canvas2D compatibility adapter**. Keyboard/mouse values become `Inputs`,
+cards are fetched into a virtual filesystem, and the eval box speaks the same
+wire protocol (`run`/`swap`/`add`). Touhou palettes, sprite dimensions,
+ribbons, materials, and resources belong to the selected `TouhouProfile`, not
+core. Canvas2D results are not native, WebGPU, or engine-only throughput
+measurements; see [`renderer-api.md`](renderer-api.md).
 
 ## Bindings panel (native player)
 

@@ -1,0 +1,35 @@
+;; Runnable whole-card examples used by docs/language-reference.md.
+(import "touhou")
+
+(defpattern reference-ring []
+  (for [i 8 :every 0.15]
+    (bullet
+      ((rot (* 15 i)) (circle 12 (linear p[2 0])))
+      {:style {:family :gem
+               :color [:red :orange :yellow]
+               :variant :w}})))
+
+(defpattern reference-low-level []
+  (spawn
+    (linear p[2 -90])
+    (circle-collider {:layer :damage :r 0.12})
+    {:team :enemy :hp 3}))
+
+(defrender-kind :orb
+  {:geometry :point
+   :fields {:family :sym :color :sym :size :num}})
+
+(defpattern reference-render-kind []
+  (spawn (linear c[1 0])
+         {:render :orb :family :orb :color :red :size 1.2}))
+
+(deftick
+  (map
+    (fn [e]
+      (when (= e.render :orb)
+        (render {:kind :orb :shape :point
+                 :x e.pos.x :y e.pos.y :theta e.pos.th
+                 :scale (default e.size 1) :alpha 1 :hue 0
+                 :family e.family :color e.color
+                 :size (default e.size 1)})))
+    (entities-where (fn [e] (= e.render :orb)))))

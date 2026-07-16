@@ -6,20 +6,20 @@
 
 ## 2. Write Canonical Public Documentation
 
-- [ ] 2.1 Write the lookup-oriented language reference for settled syntax, values, dynamics/actions, entities, rules, state, channels/inputs, rendering, errors, and determinism, with runnable canonical examples.
-- [ ] 2.2 Write `docs/host-api.md` around `Instance` construction/loading, negotiation, advancement, inputs/channels/events, render-frame lifetime, session replay/scrub, errors, and shutdown using only supported package APIs.
-- [ ] 2.3 Update player, web, package, and render-pack guides for profile-owned Touhou policy, ordered typed transport, BYO renderers, material/resources, and host-owned GPU lifetime.
-- [ ] 2.4 Update tutorials and migration prose that still imply core-owned palettes, radii, sprites, dots, or beams; keep planned language features clearly separate from current behavior.
-- [ ] 2.5 Add compile/run/syntax checks for Rust, JavaScript, and `.maku` documentation examples against the declared release artifact.
+- [x] 2.1 Write the lookup-oriented language reference for settled syntax, values, dynamics/actions, entities, rules, state, channels/inputs, rendering, errors, and determinism, with runnable canonical examples.
+- [x] 2.2 Write `docs/host-api.md` around `Instance` construction/loading, negotiation, advancement, inputs/channels/events, render-frame lifetime, session replay/scrub, errors, and shutdown using only supported package APIs.
+- [x] 2.3 Update player, web, package, and render-pack guides for profile-owned Touhou policy, ordered typed transport, BYO renderers, material/resources, and host-owned GPU lifetime.
+- [x] 2.4 Update tutorials and migration prose that still imply core-owned palettes, radii, sprites, dots, or beams; keep planned language features clearly separate from current behavior.
+- [x] 2.5 Add compile/run/syntax checks for Rust, JavaScript, and `.maku` documentation examples against the declared release artifact.
 
 ## 3. Complete the Upstream Web Artifact
 
-- [ ] 3.1 Export complete material sampler metadata, including separate minimum and maximum filters, and add wasm ABI tests for every manifest field needed by Canvas and WebGPU adapters.
-- [ ] 3.2 Add release/frame ABI identity checks across wasm, bindgen glue, JavaScript wrapper, and renderer initialization.
+- [x] 3.1 Export complete material sampler metadata, including separate minimum and maximum filters, and add wasm ABI tests for every manifest field needed by Canvas and WebGPU adapters.
+- [x] 3.2 Add release/frame ABI identity checks across wasm, bindgen glue, JavaScript wrapper, and renderer initialization.
 - [ ] 3.3 Create the deterministic render-pack showcase card/profile covering style axes, orientation, layered active/warning ribbons, and explicit fallback diagnostics.
 - [ ] 3.4 Update the upstream Canvas frontend to consume the current ordered render-pack ABI for the showcase and label it as Canvas2D rather than generic wasm/WebGPU throughput.
 - [ ] 3.5 Add browser smoke coverage for loading libraries/cards, advancing, building a mixed frame, resolving every material/resource, drawing ordered sprite/ribbon commands, and opening docs routes.
-- [ ] 3.6 Document the fixed WebGPU-compatible frame layouts, upload/copy lifetime, shader/material contract, ordered submission, and distinction from GPU simulation without implementing the adapter.
+- [x] 3.6 Document the fixed WebGPU-compatible frame layouts, upload/copy lifetime, shader/material contract, ordered submission, and distinction from GPU simulation without implementing the adapter.
 
 ## 4. Produce a Downstream Sync Unit
 

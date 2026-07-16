@@ -52,10 +52,11 @@ rotation — `((rot m"-120 + 30 * t") …)` — makes a sweeping beam. There is
 no separate "rotating laser" concept; it's the same `rot` you already
 know.
 
-`:warn` and `:active` are not special vocabulary — they are entity fields
-like `:hp` or `:hitbox`, read each tick by the laser's collider and
-renderer (library code in `touhou.maku`). Override them, animate them, or
-write your own beam rules over the same fields.
+`:warn` and `:active` are ordinary entity fields like `:hp` or `:hitbox`.
+`touhou.maku` owns the gameplay lifecycle and emits semantic beam rows; the
+host-selected Touhou profile turns those rows into warning/active ribbon
+layers and materials. Override the fields, animate them, or write your own
+beam rules and renderer policy over the same transport.
 
 ## Shaped lasers
 
@@ -78,9 +79,9 @@ it writhe (`ex3-shaped`):
 ```
 
 Useful mental model: the shape traces where a bullet with that motion
-would fly; the beam is all of those positions at once. `:width` scales
-both the drawn thickness and the hitbox; `:resolution` is a sampling
-hint for rendering; a signal-valued `:u-max` grows or shrinks the beam
+would fly; the beam is all of those positions at once. With the stock Touhou library and render profile, `:width` scales both drawn
+thickness and hitbox. `:resolution` is a geometry sampling hint, and a
+signal-valued `:u-max` grows or shrinks the beam
 over time. The map on `(curve ...)` seeds the same entity fields the
 spawn meta does — writing geometry keys at the figure and lifecycle keys
 at the spawn is convention, not a rule, and a field on the figure wins

@@ -62,6 +62,7 @@ console.log('tick', maku.tick(), 'draw commands', draws.length / maku.draw_comma
             'lives', maku.lives(), 'graze', maku.graze());
 if (draws.length === 0) throw new Error('nothing rendered');
 if (maku.material_count() === 0 || maku.texture_count() === 0) throw new Error('missing render manifest');
+validateRenderManifest(maku);
 
 // wire protocol: hot-eval + scrub
 maku.command('(run (spawn (circle 6 (linear c[1 0]))))');
@@ -72,7 +73,43 @@ if (maku.tick() !== 100 || !maku.paused()) throw new Error('seek failed');
 console.log('wire protocol + scrub OK — timeline', maku.timeline().join('/'));
 console.log('WASM SMOKE PASS');
 
+function validateRenderManifest(maku) {
+  for (let i = 0; i < maku.texture_count(); i++) {
+    if (!maku.texture_key(i)) throw new Error(`texture ${i} has no key`);
+    const width = maku.texture_width(i), height = maku.texture_height(i);
+    const bytes = maku.texture_bytes(i), externalKey = maku.texture_external_key(i);
+    if (width || height) {
+      if (!width || !height || bytes.length !== width * height * 4) {
+        throw new Error(`builtin texture ${i} has invalid dimensions/bytes`);
+      }
+    } else if (!externalKey || bytes.length) {
+      throw new Error(`external texture ${i} has invalid source metadata`);
+    }
+  }
+  for (let i = 0; i < maku.material_count(); i++) {
+    const fields = {
+      key: maku.material_key(i), pipeline: maku.material_pipeline(i),
+      texture: maku.material_texture(i), layout: maku.material_layout(i),
+      blend: maku.material_blend(i), fixedColor: maku.material_fixed_color(i),
+      minFilter: maku.material_min_filter(i), magFilter: maku.material_mag_filter(i),
+      addressU: maku.material_address_u(i), addressV: maku.material_address_v(i),
+    };
+    if (!fields.key || !fields.pipeline) throw new Error(`material ${i} has no key/pipeline`);
+    if (fields.texture >= maku.texture_count()) throw new Error(`material ${i} texture out of bounds`);
+    if (fields.layout > 3 || fields.blend > 3
+        || fields.minFilter > 1 || fields.magFilter > 1
+        || fields.addressU > 2 || fields.addressV > 2) {
+      throw new Error(`material ${i} has invalid enum metadata: ${JSON.stringify(fields)}`);
+    }
+  }
+}
+
 function validateFrameViews(maku) {
+  if (maku.basic_sprite_stride() !== 40 || maku.tinted_sprite_stride() !== 44
+      || maku.recolor_sprite_stride() !== 48 || maku.strip_vertex_stride() !== 20
+      || maku.draw_command_stride() !== 8) {
+    throw new Error('frame ABI v1 stride mismatch');
+  }
   const basic = maku.basic_sprites(), tinted = maku.tinted_sprites();
   const recolor = maku.recolor_sprites(), vertices = maku.strip_vertices();
   const indices = maku.strip_indices(), draws = maku.draw_commands();
@@ -87,6 +124,9 @@ function validateFrameViews(maku) {
   for (let i = 0; i < draws.length; i += commandStride) {
     const material = draws[i], tag = draws[i + 1], start = draws[i + 2], count = draws[i + 3];
     if (material >= maku.material_count()) throw new Error('draw material out of bounds');
+    if (tag > 3 || maku.material_layout(material) !== tag) {
+      throw new Error('draw source/material layout mismatch');
+    }
     if (tag < 3 && start + count > counts[tag]) throw new Error('sprite view range out of bounds');
     if (tag === 3 && (start + count > vertexCount || draws[i + 4] + draws[i + 5] > indices.length)) {
       throw new Error('indexed view range out of bounds');
