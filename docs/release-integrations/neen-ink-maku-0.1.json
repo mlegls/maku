@@ -9,5 +9,7 @@
   "downstream_player_url": "https://neen.ink/projects/maku/play.html",
   "downstream_tutorial_url": "https://neen.ink/projects/maku/tutorials.html",
   "renderer": "Canvas2D compatibility adapter",
-  "status": "built-and-route-smoked-locally; production-deployment-pending"
+  "deployed_at": "2026-07-16T23:18:00Z",
+  "rollback_artifact": "/home/mlegls/neen-maku-rollbacks/20260716T231745Z-before-1ca1758.tar.gz",
+  "status": "production-smoke-passed"
 }

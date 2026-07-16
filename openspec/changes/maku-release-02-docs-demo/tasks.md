@@ -34,10 +34,10 @@
 - [x] 5.2 Synchronize the declared libraries, cards, showcase, tutorials, and manifest; remove stale compatibility forms and outdated rendering prose in the downstream copy.
 - [x] 5.3 Add neen.ink project-route/browser smoke tests covering JS imports, wasm MIME/loading, revision identity, card/library load, mixed frame drawing, and tutorial routing.
 - [x] 5.4 Build and test the downstream site, commit its refresh separately, and record both upstream and downstream commit ids in the release manifest or integration record.
-- [ ] 5.5 Deploy with the previous artifact retained, run production smoke checks at the public Maku routes, and roll back on identity/load/render/tutorial failure.
+- [x] 5.5 Deploy with the previous artifact retained, run production smoke checks at the public Maku routes, and roll back on identity/load/render/tutorial failure.
 
 ## 6. Final Documentation and Demo Verification
 
-- [ ] 6.1 Run all documentation example checks, upstream browser smoke tests, package link checks, and strict OpenSpec validation.
-- [ ] 6.2 Verify that deployed docs/demo versions agree, no legacy dots/beams protocol remains, and Canvas/WebGPU/compute-backend terminology is accurate.
-- [ ] 6.3 Confirm the old documentation stubs are no longer active sources of duplicate work and publish the canonical URLs/revision for benchmark reports.
+- [x] 6.1 Run all documentation example checks, upstream browser smoke tests, package link checks, and strict OpenSpec validation.
+- [x] 6.2 Verify that deployed docs/demo versions agree, no legacy dots/beams protocol remains, and Canvas/WebGPU/compute-backend terminology is accurate.
+- [x] 6.3 Confirm the old documentation stubs are no longer active sources of duplicate work and publish the canonical URLs/revision for benchmark reports.
