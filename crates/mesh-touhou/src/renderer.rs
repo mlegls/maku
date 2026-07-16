@@ -1,6 +1,6 @@
 use crate::color::{alpha_byte, with_hue_alpha};
 use crate::*;
-use maku::model::{Column, RenderBatch, RenderData, RenderFieldKind, RenderItem, RenderRow, RenderSchema};
+use maku::render::{Column, RenderBatch, RenderData, RenderFieldKind, RenderItem, RenderRow, RenderSchema};
 use std::fmt;
 use std::rc::Rc;
 

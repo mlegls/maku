@@ -1046,7 +1046,7 @@ pub struct StoredEvent {
     pub pos: Option<(f64, f64)>,
 }
 
-/// Append-only event log with a global index origin: entries[i] has global
+/// Append-only event log with a global index origin: `entries[i]` has global
 /// index base + i. The front may be pruned (display history only — restores
 /// truncate the TAIL, never read the pruned front).
 #[derive(Default)]

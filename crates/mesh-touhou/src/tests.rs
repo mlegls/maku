@@ -1,7 +1,7 @@
 use super::*;
 use maku::host::Instance;
-use maku::model::{Column, NumColumn, RenderBatch, RenderData, RenderFieldKind, RenderItem, RenderRow, RenderSchema};
-use maku::sim::Inputs;
+use maku::render::{Column, NumColumn, RenderBatch, RenderData, RenderFieldKind, RenderItem, RenderRow, RenderSchema};
+use maku::host::Inputs;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -402,7 +402,7 @@ fn source_layouts_are_sparse_and_planning_is_visible() {
 fn stock_profile_renders_a_real_declared_touhou_card() {
     let card = format!("{}/../../cards/tutorials/t03.maku", env!("CARGO_MANIFEST_DIR"));
     let mut inst = Instance::new(None);
-    inst.render_kinds = Some(TouhouMesh::RENDER_KINDS.iter().map(|v| (*v).into()).collect());
+    inst.set_render_kinds(TouhouMesh::RENDER_KINDS.iter().copied());
     inst.boot(card, Some("ex3-fruit-colors".into()));
     for _ in 0..300 { inst.advance(Inputs::default()); }
     assert!(inst.running(), "{}", inst.status());

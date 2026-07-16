@@ -27,7 +27,7 @@ enum ProgCmd {
 
 pub struct Session {
     pub sim: Option<Sim>,
-    /// tape[t] stepped the sim t → t+1.
+    /// `tape[t]` stepped the sim from `t` to `t + 1`.
     pub tape: Vec<Inputs>,
     /// Periodic snapshots, ascending by tick.
     pub snaps: Vec<(u64, Sim)>,

@@ -1,0 +1,11 @@
+[package]
+name = "maku-public-api-smoke"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+maku = { path = "../../crates/core" }
+maku-mesh-touhou = { path = "../../crates/mesh-touhou" }
+
+[workspace]

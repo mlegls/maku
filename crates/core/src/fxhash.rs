@@ -6,7 +6,6 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 pub type FxBuildHasher = BuildHasherDefault<FxHasher>;
 pub type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
-pub type FxHashSet<T> = std::collections::HashSet<T, FxBuildHasher>;
 
 const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
 

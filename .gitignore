@@ -1,6 +1,6 @@
 .clj-kondo/
 .lsp/
 AGENTS.md
-crates/target/
+target/
 crates/web/static/pkg/
 node_modules/

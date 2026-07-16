@@ -72,7 +72,7 @@ impl NumColumn {
 #[derive(Debug, PartialEq)]
 pub enum Column {
     Num(NumColumn),
-    /// Per-row nums with presence: value at i is valid iff mask[i].
+    /// Per-row nums with presence: value at `i` is valid iff `mask[i]`.
     NumOpt(Vec<f64>, Vec<bool>),
     SymConst(Rc<str>),
     Syms(Vec<Option<Rc<str>>>),

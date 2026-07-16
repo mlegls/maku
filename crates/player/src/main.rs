@@ -32,8 +32,7 @@
 //!   (pause) (resume)
 
 use maku::host::Instance;
-use maku::interp::Val;
-use maku::sim::Inputs;
+use maku::host::Inputs;
 use maku_mesh_touhou::{
     AddressMode, BlendMode, DrawSource, MaterialDesc, MaterialId, MeshFrame, TextureFilter,
     TextureSource, TouhouMesh, TouhouProfile,
@@ -442,9 +441,9 @@ async fn main() {
         // expand_src: the rig shim imports its defs ((import "touhou")),
         // and raw source would hand the sim a literal import form
         Some(
-            maku::edn::expand_src(&format!(
+            maku::source::expand_src(&format!(
                 "{}\n(player-rig)",
-                maku::edn::stdlib("player-rig").unwrap()
+                maku::source::stdlib("player-rig").unwrap()
             ))
             .expect("player-rig import expansion"),
         )
@@ -461,8 +460,8 @@ async fn main() {
     for m in ["player", "nearest-enemy"] {
         if !provided.iter().any(|n| n == m) { provided.push(m.to_string()); }
     }
-    app.inst.host_channels = Some(provided);
-    app.inst.render_kinds = Some(TouhouMesh::RENDER_KINDS.iter().map(|k| (*k).into()).collect());
+    app.inst.set_host_channels(provided);
+    app.inst.set_render_kinds(TouhouMesh::RENDER_KINDS.iter().copied());
     if card_path.is_empty() {
         app.inst.set_status(format!("no card — listening on 127.0.0.1:{}", PORT));
     } else {
@@ -581,7 +580,7 @@ async fn main() {
                 provided.push(m.to_string());
             }
         }
-        app.inst.host_channels = Some(provided);
+        app.inst.set_host_channels(provided);
 
         // fixed-timestep sim (design.md §4: variable dt never reaches the sim)
         if !app.inst.paused() {
@@ -622,11 +621,11 @@ async fn main() {
         }
         // player marker at the $player channel (derived from a piloted rig,
         // or the mouse): true hitbox dot + graze ring
-        let (pmx, pmy) = match app.inst.channel("player") {
-            Some(Val::Pose(p)) => {
-                (cx + p.x as f32 * PIXELS_PER_UNIT, cy - p.y as f32 * PIXELS_PER_UNIT)
+        let (pmx, pmy) = match app.inst.channel_point("player") {
+            Some((x, y)) => {
+                (cx + x as f32 * PIXELS_PER_UNIT, cy - y as f32 * PIXELS_PER_UNIT)
             }
-            _ => (mx, my),
+            None => (mx, my),
         };
         draw_circle_lines(pmx, pmy, 0.35 * PIXELS_PER_UNIT, 1.0, Color::new(1.0, 1.0, 1.0, 0.25));
         draw_circle_lines(pmx, pmy, 8.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.8));
@@ -662,8 +661,8 @@ async fn main() {
                 for (name, col) in
                     [("player", Color::new(1.0, 1.0, 1.0, 0.9)), ("nearest-enemy", ORANGE)]
                 {
-                    if let Some(Val::Pose(p)) = app.inst.channel(name) {
-                        let (sx, sy) = to_screen(p.x, p.y);
+                    if let Some((x, y)) = app.inst.channel_point(name) {
+                        let (sx, sy) = to_screen(x, y);
                         draw_line(sx - 10.0, sy, sx + 10.0, sy, 1.5, col);
                         draw_line(sx, sy - 10.0, sx, sy + 10.0, 1.5, col);
                         draw_circle_lines(sx, sy, 6.0, 1.5, col);
@@ -679,10 +678,9 @@ async fn main() {
                     app.inst.entity_count(),
                     app.inst.graze(),
                     app.inst.player_hits(),
-                    match app.inst.channel("lives") {
-                        Some(Val::Num(n)) => format!("{}", n),
-                        _ => "-".into(),
-                    },
+                    app.inst.channel_num("lives")
+                        .map(|n| format!("{}", n))
+                        .unwrap_or_else(|| "-".into()),
                     if app.inst.paused() { "[paused]" } else { "" }
                 ),
                 12.0,

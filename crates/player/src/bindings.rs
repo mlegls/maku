@@ -5,7 +5,7 @@
 //! produced. Axis pairs sharing a stem (`foo-x`/`foo-y`) are vector-
 //! normalized, matching the classic movement contract.
 
-use maku::sim::Inputs;
+use maku::host::Inputs;
 use macroquad::prelude::*;
 
 #[derive(Clone, Copy, PartialEq)]

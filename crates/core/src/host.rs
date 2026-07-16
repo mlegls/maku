@@ -9,29 +9,32 @@
 //! scrubbing) sits underneath and stays reachable for advanced hosts.
 
 use crate::edn::{expand_card, expand_card_with, read_all, Form};
-use crate::interp::{load_card, Event, Val, DEFAULT_TICK_RATE};
+use crate::interp::{load_card, Val, DEFAULT_TICK_RATE};
 use crate::model::RenderRow;
 use crate::session::Session;
-use crate::sim::{Inputs, Sim};
+use crate::sim::Sim;
+
+pub use crate::interp::Event;
+pub use crate::sim::Inputs;
 
 pub struct Instance {
     card_path: String,
     card_src: String,
     pattern: Option<String>,
     patterns: Vec<String>,
-    /// The scrubbable timeline; public for advanced hosts (timeline UIs).
-    pub session: Session,
+    /// The scrubbable timeline is owned behind this facade.
+    session: Session,
     paused: bool,
     status: String,
     /// Virtual filesystem for hosts without one (wasm): path â card text.
     /// When set, loads and import expansion read from here, not the fs.
-    pub vfs: Option<std::collections::HashMap<String, String>>,
+    vfs: Option<std::collections::HashMap<String, String>>,
     /// Channels this host provides (bindings, mocks). When set, loads
     /// verify the card's (from-host ...) manifest against it â a missing
     /// channel fails the load before tick 0 (specs/load-time-schema).
-    pub host_channels: Option<Vec<String>>,
+    host_channels: Option<Vec<String>>,
     /// Render kinds this host understands. None keeps permissive legacy loading.
-    pub render_kinds: Option<Vec<String>>,
+    render_kinds: Option<Vec<String>>,
 }
 
 /// Timeline info for scrub UIs.
@@ -63,6 +66,30 @@ impl Instance {
     }
 
     // -- card management ------------------------------------------------
+
+    /// Add or replace one source in the virtual filesystem used by wasm and
+    /// other hosts without native filesystem access.
+    pub fn add_file(&mut self, path: impl Into<String>, source: impl Into<String>) {
+        self.vfs.get_or_insert_with(Default::default).insert(path.into(), source.into());
+    }
+
+    /// Declare channel names supplied by this host for load-time verification.
+    pub fn set_host_channels<I, S>(&mut self, channels: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.host_channels = Some(channels.into_iter().map(Into::into).collect());
+    }
+
+    /// Declare render kinds understood by the selected renderer.
+    pub fn set_render_kinds<I, S>(&mut self, kinds: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.render_kinds = Some(kinds.into_iter().map(Into::into).collect());
+    }
 
     /// Read the card from disk (expanding imports) and refresh the pattern
     /// menu. Does NOT play.
@@ -237,8 +264,8 @@ impl Instance {
         }
     }
 
-    /// Dispatch one wire command form (see docs/player.md for the protocol).
-    pub fn command(&mut self, form: &Form) {
+    /// Dispatch one parsed wire command form.
+    fn command(&mut self, form: &Form) {
         let Form::List(items) = form else {
             self.status = "bad command (expected list)".into();
             return;
@@ -403,11 +430,30 @@ impl Instance {
         self.session.sim.as_ref().and_then(|sim| sim.declared_render_schema(kind))
     }
 
+    /// Numeric channel value, if the channel currently holds a number.
+    pub fn channel_num(&self, name: &str) -> Option<f64> {
+        match self.session.sim.as_ref()?.channel_val(name)? {
+            Val::Num(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Point-valued channel as `(x, y)`, if present.
+    pub fn channel_point(&self, name: &str) -> Option<(f64, f64)> {
+        match self.session.sim.as_ref()?.channel_val(name)? {
+            Val::Pose(value) => Some((value.x, value.y)),
+            _ => None,
+        }
+    }
+
+    /// Unstable raw channel value for internal tooling.
+    #[doc(hidden)]
     pub fn channel(&self, name: &str) -> Option<Val> {
         self.session.sim.as_ref().and_then(|s| s.channel_val(name))
     }
 
     /// Debug/tooling: the pattern-scoped control cells (not game contract).
+    #[doc(hidden)]
     pub fn cells(&self) -> Vec<(String, Val)> {
         self.session.sim.as_ref().map(|s| s.cells_snapshot()).unwrap_or_default()
     }

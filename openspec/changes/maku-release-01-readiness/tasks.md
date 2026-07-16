@@ -13,15 +13,15 @@
 - [x] 2.3 Migrate repository consumers and docs from `value-or` and selected old Touhou `spawn-*` aliases to canonical forms, then remove those unused aliases and update focused tests/diagnostics.
 - [x] 2.4 Audit direct `:facing`/`:opacity`/`:pts` render compatibility separately from valid genre-library metadata, remove only selected direct aliases, and preserve canonical library behavior in tests.
 - [x] 2.5 Add differential coverage for canonical `pather`, motion-state fallback, prelude import idempotence, and projector-context rejection; retain their required implementation paths and document why they are not alias cleanup.
-- [ ] 2.6 Run the complete card/tutorial/translation corpus and release ignored oracle suites after compatibility removal.
+- [x] 2.6 Run the complete card/tutorial/translation corpus and release ignored oracle suites after compatibility removal.
 
 ## 3. Define Package Assets and Public API
 
 - [x] 3.1 Move canonical standard-library sources from `cards/lib/` to `crates/core/lib/` and update engine/web/card loading so package builds never read above the extracted crate.
 - [x] 3.2 Add a freshness check for any generated or served copies of canonical library/card assets.
-- [ ] 3.3 Inventory public Rust exports and classify supported facade/render/session contracts versus unstable interpreter, storage, lowering, and backend internals.
-- [ ] 3.4 Narrow module visibility or mark unavoidable implementation exports explicitly unstable, and add external smoke crates/examples that use only the supported facade.
-- [ ] 3.5 Add crate-level and public-boundary documentation sufficient for docs.rs while preserving the fixed render frame ABI and dependency direction.
+- [x] 3.3 Inventory public Rust exports and classify supported facade/render/session contracts versus unstable interpreter, storage, lowering, and backend internals.
+- [x] 3.4 Narrow module visibility or mark unavoidable implementation exports explicitly unstable, and add external smoke crates/examples that use only the supported facade.
+- [x] 3.5 Add crate-level and public-boundary documentation sufficient for docs.rs while preserving the fixed render frame ABI and dependency direction.
 
 ## 4. Prepare Publishable Packages
 

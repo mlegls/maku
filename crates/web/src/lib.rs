@@ -5,8 +5,7 @@
 
 use js_sys::{Uint32Array, Uint8Array};
 use maku::host::Instance;
-use maku::interp::Val;
-use maku::sim::Inputs;
+use maku::host::Inputs;
 use maku_mesh_touhou::{
     DrawSource, TextureSource, TouhouMesh, TouhouProfile, FRAME_ABI_VERSION,
 };
@@ -23,7 +22,7 @@ unsafe fn byte_view<T>(values: &[T]) -> Uint8Array {
 
 #[wasm_bindgen(js_name = stdlibSource)]
 pub fn stdlib_source(name: &str) -> Option<String> {
-    maku::edn::stdlib(name).map(str::to_owned)
+    maku::source::stdlib(name).map(str::to_owned)
 }
 
 #[wasm_bindgen]
@@ -38,9 +37,9 @@ pub struct Maku {
 impl Maku {
     #[wasm_bindgen(constructor)]
     pub fn new(rig: Option<String>) -> Maku {
-        let rig = rig.map(|source| maku::edn::expand_src(&source).unwrap_or(source));
+        let rig = rig.map(|source| maku::source::expand_src(&source).unwrap_or(source));
         let mut inst = Instance::new(rig);
-        inst.render_kinds = Some(vec!["default".into(), "sprite".into(), "beam".into()]);
+        inst.set_render_kinds(["default", "sprite", "beam"]);
         Maku {
             inst,
             pending: Inputs::default(),
@@ -51,10 +50,7 @@ impl Maku {
 
     /// Register a card file in the virtual filesystem (path → text).
     pub fn add_file(&mut self, path: String, text: String) {
-        self.inst
-            .vfs
-            .get_or_insert_with(Default::default)
-            .insert(path, text);
+        self.inst.add_file(path, text);
     }
 
     pub fn boot(&mut self, path: String, pattern: Option<String>) {
@@ -137,10 +133,7 @@ impl Maku {
 
     /// Lives column via the $lives channel; -1 when absent.
     pub fn lives(&self) -> f64 {
-        match self.inst.channel("lives") {
-            Some(Val::Num(n)) => n,
-            _ => -1.0,
-        }
+        self.inst.channel_num("lives").unwrap_or(-1.0)
     }
 
     pub fn iframes(&self) -> bool {
@@ -158,18 +151,15 @@ impl Maku {
 
     /// [x, y] of a point-valued channel ($player, $boss, …), or empty.
     pub fn channel_vec(&self, name: &str) -> Vec<f32> {
-        match self.inst.channel(name) {
-            Some(Val::Pose(p)) => vec![p.x as f32, p.y as f32],
-            _ => Vec::new(),
-        }
+        self.inst
+            .channel_point(name)
+            .map(|(x, y)| vec![x as f32, y as f32])
+            .unwrap_or_default()
     }
 
     /// Numeric channel ($lives, $boss-hp, $graze, …); NaN when absent.
     pub fn channel_num(&self, name: &str) -> f64 {
-        match self.inst.channel(name) {
-            Some(Val::Num(n)) => n,
-            _ => f64::NAN,
-        }
+        self.inst.channel_num(name).unwrap_or(f64::NAN)
     }
 
     /// [x, y]* of alive entities carrying a column (:pilot, :boss, or any
