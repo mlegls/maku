@@ -2,7 +2,7 @@
 
 - [x] 1.1 Replace stale `ProjectorNum` use in `crates/core/examples/dbg.rs` with the landed IR/projector API and make workspace all-target checks pass.
 - [x] 1.2 Rename the obsolete `proto/` Rust workspace root to `crates/`, update all live repository paths, remove tracked files under ignored build-output directories, and add a regression check that rejects newly tracked compiler products.
-- [ ] 1.3 Declare the Rust toolchain/MSRV and document platform linker/tool prerequisites without baking one developer machine's paths into published packages.
+- [x] 1.3 Declare the Rust toolchain/MSRV and document platform linker/tool prerequisites without baking one developer machine's paths into published packages.
 - [ ] 1.4 Add checked-in fast and release check entry points covering Rust workspace/all-target tests, wasm target checks, JavaScript checks, and clean-tree verification.
 - [ ] 1.5 Add CI jobs using those entry points, with ignored oracle/card suites and artifact verification in an explicit release lane.
 

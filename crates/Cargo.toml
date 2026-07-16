@@ -4,3 +4,4 @@ members = ["core", "player", "mesh-touhou", "web"]
 
 [workspace.package]
 edition = "2021"
+rust-version = "1.97"

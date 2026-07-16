@@ -16,7 +16,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/tutorials/` | learn the language from scratch — runnable companions in `cards/tutorials/` |
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `openspec/` | specs (settled contracts + design), changes (all open work — `openspec list`) |
-| `crates/` | Rust prototype: `core` (interpreter/sim/session/host), `player` (macroquad host), `web` (wasm/canvas host), `editors/danmaku.nvim` |
+| `crates/` | Rust workspace: `core` (engine/session/host), `mesh-touhou` (render pack), `player` (Macroquad host), `web` (wasm/Canvas host), `editors/danmaku.nvim` |
 | `crates/js/maku/` | publishable browser package wrapping the wasm host |
 | `cards/` | playable cards — start with `reimu_vs_mima.maku` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
@@ -39,3 +39,16 @@ Live editing: the player is a server (`docs/player.md`); install
 Browser: `crates/web/build.sh serve` then open
 `http://localhost:8000/crates/web/static/` — the same engine as wasm, same
 controls, plus an in-page eval box speaking the wire protocol.
+
+## Development toolchain
+
+The release toolchain is pinned in `rust-toolchain.toml` and `mise.toml`:
+Rust 1.97 (the initial MSRV), Bun 1.3.14, Node 24.18.0, and wasm-pack
+0.15.0. Run commands through `mise` or install matching versions manually.
+The wasm target is installed by the Rust toolchain declaration.
+
+Native player builds require the platform C/graphics toolchain used by
+Macroquad. On macOS, install Xcode Command Line Tools; `crates/.cargo/config.toml`
+selects the system Apple C driver to avoid incompatible third-party `ld64`
+versions earlier in `PATH`. Linux hosts need their distribution's C compiler,
+X11, OpenGL, and audio development packages.

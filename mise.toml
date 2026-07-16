@@ -1,11 +1,11 @@
 # Project toolchain. Global runtimes live in ~/.config/mise/config.toml;
 # everything the build and the OpenSpec workflow need is pinned here.
 [tools]
-rust = { version = "stable", targets = "wasm32-unknown-unknown" }
-bun = "latest"
-node = "24"
-"cargo:wasm-pack" = "latest"
-"npm:@fission-ai/openspec" = "latest"
+rust = { version = "1.97.0", targets = "wasm32-unknown-unknown" }
+bun = "1.3.14"
+node = "24.18.0"
+"cargo:wasm-pack" = "0.15.0"
+"npm:@fission-ai/openspec" = "1.6.0"
 
 [tasks.test]
 description = "Core release test suite"
