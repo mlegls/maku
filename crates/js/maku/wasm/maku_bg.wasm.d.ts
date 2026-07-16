@@ -2,6 +2,8 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_maku_free: (a: number, b: number) => void;
+export const frameAbiVersion: () => number;
+export const makuVersion: () => [number, number];
 export const maku_add_file: (a: number, b: number, c: number, d: number, e: number) => void;
 export const maku_basic_sprite_stride: (a: number) => number;
 export const maku_basic_sprites: (a: number) => any;
@@ -61,10 +63,11 @@ export const maku_timeline: (a: number) => [number, number];
 export const maku_tinted_sprite_stride: (a: number) => number;
 export const maku_tinted_sprites: (a: number) => any;
 export const maku_toggle_pause: (a: number) => void;
+export const sourceRevision: () => [number, number];
 export const stdlibSource: (a: number, b: number) => [number, number];
 export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __externref_table_dealloc: (a: number) => void;
-export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_start: () => void;

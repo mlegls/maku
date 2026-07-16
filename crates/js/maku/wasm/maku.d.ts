@@ -122,6 +122,12 @@ export class Maku {
     toggle_pause(): void;
 }
 
+export function frameAbiVersion(): number;
+
+export function makuVersion(): string;
+
+export function sourceRevision(): string;
+
 export function stdlibSource(name: string): string | undefined;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -129,6 +135,8 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_maku_free: (a: number, b: number) => void;
+    readonly frameAbiVersion: () => number;
+    readonly makuVersion: () => [number, number];
     readonly maku_add_file: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly maku_basic_sprite_stride: (a: number) => number;
     readonly maku_basic_sprites: (a: number) => any;
@@ -188,12 +196,13 @@ export interface InitOutput {
     readonly maku_tinted_sprite_stride: (a: number) => number;
     readonly maku_tinted_sprites: (a: number) => any;
     readonly maku_toggle_pause: (a: number) => void;
+    readonly sourceRevision: () => [number, number];
     readonly stdlibSource: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

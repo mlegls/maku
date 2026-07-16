@@ -20,6 +20,27 @@ unsafe fn byte_view<T>(values: &[T]) -> Uint8Array {
     unsafe { Uint8Array::view(bytes) }
 }
 
+pub const MAKU_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SOURCE_REVISION: &str = match option_env!("MAKU_SOURCE_REVISION") {
+    Some(value) => value,
+    None => "development",
+};
+
+#[wasm_bindgen(js_name = makuVersion)]
+pub fn maku_version() -> String {
+    MAKU_VERSION.into()
+}
+
+#[wasm_bindgen(js_name = frameAbiVersion)]
+pub fn frame_abi_version() -> u32 {
+    FRAME_ABI_VERSION
+}
+
+#[wasm_bindgen(js_name = sourceRevision)]
+pub fn source_revision() -> String {
+    SOURCE_REVISION.into()
+}
+
 #[wasm_bindgen(js_name = stdlibSource)]
 pub fn stdlib_source(name: &str) -> Option<String> {
     maku::source::stdlib(name).map(str::to_owned)

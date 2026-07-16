@@ -3,12 +3,34 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import initMaku, { createMaku } from '../../js/maku/dist/index.js';
+import initMaku, {
+  assertRuntimeIdentity,
+  createMaku,
+  releaseIdentity,
+} from '../../js/maku/dist/index.js';
 import { CARD_FILES } from './manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
 await initMaku({ moduleOrPath: readFileSync(join(here, '../../js/maku/wasm/maku_bg.wasm')) });
+const release = JSON.parse(readFileSync(join(here, '../../js/maku/wasm/release.json'), 'utf8'));
+const identity = releaseIdentity();
+if (identity.makuVersion !== release.maku_version
+    || identity.frameAbiVersion !== release.frame_abi_version
+    || identity.sourceRevision !== release.source_revision) {
+  throw new Error(`release identity mismatch: ${JSON.stringify({ identity, release })}`);
+}
+for (const mismatch of [
+  { ...identity, makuVersion: 'mixed-wrapper' },
+  { ...identity, frameAbiVersion: identity.frameAbiVersion + 1 },
+]) {
+  try {
+    assertRuntimeIdentity(mismatch);
+    throw new Error('mixed release identity was accepted');
+  } catch (error) {
+    if (!String(error).includes('loaded wasm')) throw error;
+  }
+}
 
 const maku = createMaku();
 for (const f of CARD_FILES) {

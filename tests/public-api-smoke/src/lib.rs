@@ -14,12 +14,20 @@ mod tests {
             r#"
 (import "touhou")
 (defpattern smoke []
-  (bullet (pose c[1 2]) {:style {:family :orb :color :red}}))
+  (par
+    (bullet (pose c[1 2]) {:style {:family :orb :color :red}})
+    (laser ((pose c[0 1]) ((rot -90) (curve {:u-max 2})))
+           {:warn 1 :active 2 :style {:family :laser :color :blue}})))
 "#,
         );
         instance.boot("smoke.maku".into(), Some("smoke".into()));
-        instance.advance(Inputs::default());
+        let mut inputs = Inputs::default();
+        inputs.set_vec2("player", 1.0, 2.0);
+        for _ in 0..3 {
+            instance.advance(inputs.clone());
+        }
         assert!(instance.running(), "{}", instance.status());
+        assert_eq!(instance.channel_point("player"), Some((1.0, 2.0)));
 
         let mut pack = TouhouMesh::new(Rc::new(TouhouProfile::stock()));
         for kind in TouhouMesh::RENDER_KINDS {
@@ -28,7 +36,23 @@ mod tests {
             }
         }
         let frame = instance.render_frame();
-        assert!(frame.iter().any(|item| matches!(item, RenderItem::Row(_) | RenderItem::Batch(_))));
-        assert!(!pack.build(&frame).unwrap().draws.is_empty());
+        assert!(
+            frame.iter().any(|item| matches!(item, RenderItem::Row(_) | RenderItem::Batch(_))),
+            "{}; entities={}", instance.status(), instance.entity_count()
+        );
+        let built = pack.build(&frame).unwrap();
+        assert!(!built.draws.is_empty());
+        assert!(!built.vertices.is_empty());
+        assert!(built.basic_sprites.len() + built.tinted_sprites.len() + built.recolor_sprites.len() > 0);
+
+        let mut unsupported = Instance::new(None);
+        unsupported.set_render_kinds(["default"]);
+        unsupported.add_file("smoke.maku", "(import \"touhou\")\n(defpattern p [] (bullet (pose c[0 0])))");
+        unsupported.boot("smoke.maku".into(), Some("p".into()));
+        assert!(!unsupported.running());
+        assert!(
+            unsupported.status().contains("render kind"),
+            "{}", unsupported.status()
+        );
     }
 }

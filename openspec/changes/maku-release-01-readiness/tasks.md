@@ -29,16 +29,16 @@
 - [x] 4.2 Add workspace-shared version, edition, MSRV, license, repository, homepage/documentation, keywords/categories, and package README metadata as appropriate.
 - [x] 4.3 Add compatible versions to every local path dependency and verify registry-normalized dependency graphs and publication order.
 - [x] 4.4 Define intentional package include/exclude contents for engine, render pack, player, and web host; keep editor/site-only files out of Rust archives unless explicitly required.
-- [ ] 4.5 Check crates.io name availability/ownership and document whether `maku-web` is registry-facing or solely a wasm/npm artifact producer.
-- [ ] 4.6 Run `cargo package --list` and isolated extracted-package build/test verification for each package in dependency order.
-- [ ] 4.7 Run crates.io publication dry-runs with no workspace-owned metadata, external-file, or path-without-version warnings.
+- [x] 4.5 Check crates.io name availability/ownership and document whether `maku-web` is registry-facing or solely a wasm/npm artifact producer.
+- [x] 4.6 Run `cargo package --list` and isolated extracted-package build/test verification for each package in dependency order.
+- [x] 4.7 Run crates.io publication dry-runs with no workspace-owned metadata, external-file, or path-without-version warnings.
 
 ## 5. Version Browser Artifacts and Host Boundaries
 
-- [ ] 5.1 Define and emit a browser release identity containing package versions, source revision, frame ABI, and wasm/JavaScript tool versions.
-- [ ] 5.2 Make wasm-bindgen glue and JavaScript wrapper compatibility fail early on mixed release/frame ABI versions.
-- [ ] 5.3 Add deterministic generated-binding freshness verification or move generated bindings to a release-only producer with an equivalent clean-checkout test.
-- [ ] 5.4 Add focused native player and wasm host tests for input forwarding, errors, mixed frame construction, manifest resolution, typed-view bounds, and resource lifetime.
+- [x] 5.1 Define and emit a browser release identity containing package versions, source revision, frame ABI, and wasm/JavaScript tool versions.
+- [x] 5.2 Make wasm-bindgen glue and JavaScript wrapper compatibility fail early on mixed release/frame ABI versions.
+- [x] 5.3 Add deterministic generated-binding freshness verification or move generated bindings to a release-only producer with an equivalent clean-checkout test.
+- [x] 5.4 Add focused native player and wasm host tests for input forwarding, errors, mixed frame construction, manifest resolution, typed-view bounds, and resource lifetime.
 
 ## 6. Final Release-Readiness Verification
 

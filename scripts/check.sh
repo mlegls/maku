@@ -26,8 +26,9 @@ run_fast
 if [ "$mode" = release ]; then
   MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml
   MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml -- --ignored
-  crates/web/build.sh
+  scripts/check-generated.sh
   (cd crates/web/static && bun smoke.mjs)
+  scripts/check-packages.sh
 
   # Release verification starts and ends on committed inputs. Generated
   # browser files must therefore reproduce without a diff.

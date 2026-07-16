@@ -1,0 +1,8 @@
+{
+  "maku_version": "0.1.0",
+  "frame_abi_version": 1,
+  "source_revision": "development",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "wasm_pack": "wasm-pack 0.15.0",
+  "bun": "1.3.14"
+}

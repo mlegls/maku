@@ -1,5 +1,5 @@
 {
-  "name": "maku",
+  "name": "@mlegls/maku",
   "version": "0.1.0",
   "description": "Browser bindings for the Maku danmaku pattern engine.",
   "type": "module",

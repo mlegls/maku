@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Deterministic 2D danmaku pattern language and host engine"
 documentation = "https://docs.rs/maku"
 readme = "README.md"
-include = ["src/**", "lib/**", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**", "lib/**", "examples/**", "Cargo.toml", "README.md", "LICENSE"]
 keywords = ["danmaku", "bullet-hell", "gamedev", "simulation"]
 categories = ["game-engines", "simulation"]
 

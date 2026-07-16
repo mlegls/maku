@@ -561,6 +561,46 @@ export class Maku {
 if (Symbol.dispose) Maku.prototype[Symbol.dispose] = Maku.prototype.free;
 
 /**
+ * @returns {number}
+ */
+export function frameAbiVersion() {
+    const ret = wasm.frameAbiVersion();
+    return ret >>> 0;
+}
+
+/**
+ * @returns {string}
+ */
+export function makuVersion() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.makuVersion();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * @returns {string}
+ */
+export function sourceRevision() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.sourceRevision();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * @param {string} name
  * @returns {string | undefined}
  */

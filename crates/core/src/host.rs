@@ -561,8 +561,12 @@ mod tests {
             "(defpattern __host-player-rig [] (player-rig))\n{}",
             crate::edn::stdlib("touhou").unwrap()
         );
+        let card = "../../cards/translations/130_bowap.maku";
+        if !std::path::Path::new(card).exists() {
+            return; // repository-level integration fixture is not in the crate archive
+        }
         let mut inst = Instance::new(Some(rig));
-        inst.boot("../../cards/translations/130_bowap.maku".into(), None);
+        inst.boot(card.into(), None);
         assert!(inst.running(), "{}", inst.status());
         assert!(inst.patterns().len() >= 2, "menu populated");
 
