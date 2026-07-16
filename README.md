@@ -39,9 +39,11 @@ Live editing: the player is a server (`docs/player.md`); install
 `crates/editors/danmaku.nvim` and evaluate forms into the running game
 (`<localleader>e` operator — run/swap/layer, all scrub-safe).
 
-Browser: `crates/web/build.sh serve` then open
-`http://localhost:8000/crates/web/static/` — the same engine as wasm, with a
-Canvas2D compatibility adapter, the same controls, and an in-page eval box
+Browser: use the public [neen.ink Maku player](https://neen.ink/projects/maku/play.html)
+or browse the [interactive tutorials](https://neen.ink/projects/maku/tutorials.html).
+For local development, run `crates/web/build.sh serve` and open
+`http://localhost:8000/crates/web/static/`. Both use the same wasm engine and
+Canvas2D compatibility adapter, with the same controls and an in-page eval box
 speaking the wire protocol.
 
 ## Development toolchain
