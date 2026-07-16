@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mlegls/maku/bench/schema/v1/result.schema.json",
+  "title": "Maku benchmark result envelope v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "series", "run_id", "captured_at", "source", "fixture", "stage", "environment", "policy", "correctness", "counters", "memory", "cold_setup", "samples", "summaries", "outcome"],
+  "$defs": {
+    "duration": { "type": ["number", "null"], "minimum": 0 },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit", "count", "median", "p95", "p99", "max"],
+      "properties": { "unit": { "enum": ["ns", "bytes", "count", "ms"] }, "count": { "type": "integer", "minimum": 0 }, "median": { "type": "number" }, "p95": { "type": "number" }, "p99": { "type": "number" }, "max": { "type": "number" } }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": 1 },
+    "series": { "type": "string" }, "run_id": { "type": "string" }, "captured_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["revision", "dirty", "workload_schema", "result_schema", "generator", "expanded_source_sha256"],
+      "properties": {
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "dirty": { "type": "boolean" },
+        "workload_schema": { "const": 1 }, "result_schema": { "const": 1 }, "generator": { "type": "string" },
+        "expanded_source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "input_tape_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "fixture": {
+      "type": "object", "additionalProperties": false, "required": ["id", "family", "workload_sha256", "seed"],
+      "properties": { "id": { "type": "string" }, "family": { "type": "string" }, "workload_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "seed": { "type": "integer", "minimum": 0 }, "parameters": { "type": "object" } }
+    },
+    "stage": {
+      "type": "object", "additionalProperties": false, "required": ["executor", "tier", "adapter"],
+      "properties": {
+        "executor": { "enum": ["interpreter-native", "interpreter-wasm", "ir-native", "jit-native", "gpu"] },
+        "tier": { "enum": ["simulation-only", "byo-transport", "touhou-pack", "host-draw"] },
+        "adapter": { "enum": ["none", "native-macroquad-compat", "web-canvas2d", "web-webgpu"] }
+      }
+    },
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["environment_id", "os", "arch", "cpu", "memory_bytes", "build_profile", "tool_versions", "power"],
+      "properties": {
+        "environment_id": { "type": "string" }, "os": { "type": "string" }, "arch": { "type": "string" }, "cpu": { "type": "string" }, "gpu": { "type": ["string", "null"] }, "memory_bytes": { "type": "integer", "minimum": 1 },
+        "browser": { "type": ["object", "null"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } }, "required": ["name", "version"], "additionalProperties": false },
+        "display": { "type": ["object", "null"], "properties": { "width_css": { "type": "integer" }, "height_css": { "type": "integer" }, "dpr": { "type": "number" } }, "required": ["width_css", "height_css", "dpr"], "additionalProperties": false },
+        "build_profile": { "enum": ["release", "release-debug"] }, "rustflags": { "type": "string" }, "tool_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "power": { "type": "object", "additionalProperties": false, "required": ["source", "low_power_mode"], "properties": { "source": { "enum": ["ac", "battery", "unknown"] }, "low_power_mode": { "type": ["boolean", "null"] }, "notes": { "type": "string" } }
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false, "required": ["tick_hz", "presentation_hz", "warmup_ticks", "sample_frames", "sample_batches", "percentile_method", "wall_mode"],
+      "properties": { "tick_hz": { "const": 120 }, "presentation_hz": { "const": 60 }, "warmup_ticks": { "type": "integer", "minimum": 0 }, "sample_frames": { "type": "integer", "minimum": 1 }, "sample_batches": { "type": "integer", "minimum": 1 }, "percentile_method": { "const": "nearest-rank" }, "wall_mode": { "enum": ["instrumented", "minimal"] }, "elapsed_clamp_ms": { "type": ["number", "null"] } }
+    },
+    "correctness": {
+      "type": "object", "additionalProperties": false, "required": ["valid", "state_digest", "expected", "observed", "errors"],
+      "properties": { "valid": { "type": "boolean" }, "state_digest": { "type": "string", "pattern": "^[0-9a-f]{16,64}$" }, "expected": { "type": "object" }, "observed": { "type": "object" }, "errors": { "type": "array", "items": { "type": "string" } } }
+    },
+    "counters": {
+      "type": "object", "additionalProperties": false,
+      "required": ["live_entities", "render_lanes", "sprite_instances", "beam_segments", "vertices", "indices", "triangles", "draw_commands", "collider_projections", "active_query_pairs", "collision_candidates", "contacts", "rules", "predicate_matches", "rule_actions"],
+      "properties": {
+        "live_entities": { "type": "integer", "minimum": 0 }, "render_lanes": { "type": "integer", "minimum": 0 },
+        "sprite_instances": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "beam_segments": { "type": "integer", "minimum": 0 }, "vertices": { "type": "integer", "minimum": 0 }, "indices": { "type": "integer", "minimum": 0 }, "triangles": { "type": "integer", "minimum": 0 }, "draw_commands": { "type": "integer", "minimum": 0 },
+        "collider_projections": { "type": "integer", "minimum": 0 }, "active_query_pairs": { "type": "integer", "minimum": 0 }, "collision_candidates": { "type": "integer", "minimum": 0 }, "contacts": { "type": "integer", "minimum": 0 },
+        "rules": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }, "predicate_matches": { "type": "integer", "minimum": 0 }, "rule_actions": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "memory": {
+      "type": "object", "additionalProperties": false, "required": ["rss_start_bytes", "rss_peak_bytes", "wasm_start_bytes", "wasm_peak_bytes", "allocations", "allocated_bytes"],
+      "properties": { "rss_start_bytes": { "type": ["integer", "null"], "minimum": 0 }, "rss_peak_bytes": { "type": ["integer", "null"], "minimum": 0 }, "wasm_start_bytes": { "type": ["integer", "null"], "minimum": 0 }, "wasm_peak_bytes": { "type": ["integer", "null"], "minimum": 0 }, "allocations": { "type": ["integer", "null"], "minimum": 0 }, "allocated_bytes": { "type": ["integer", "null"], "minimum": 0 } }
+    },
+    "cold_setup": {
+      "type": "object", "additionalProperties": false, "required": ["load_ns", "schema_bind_ns", "resource_setup_ns"],
+      "properties": { "load_ns": { "$ref": "#/$defs/duration" }, "schema_bind_ns": { "$ref": "#/$defs/duration" }, "resource_setup_ns": { "$ref": "#/$defs/duration" } }
+    },
+    "samples": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["batch", "frame", "ticks", "simulation_ns", "transport_ns", "pack_build_ns", "host_overhead_ns", "adapter_submission_ns", "completion_ns", "presentation_ns", "elapsed_clamped_ns", "memory_bytes"],
+        "properties": { "batch": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 0 }, "ticks": { "type": "integer", "minimum": 0 }, "simulation_ns": { "$ref": "#/$defs/duration" }, "transport_ns": { "$ref": "#/$defs/duration" }, "pack_build_ns": { "$ref": "#/$defs/duration" }, "host_overhead_ns": { "$ref": "#/$defs/duration" }, "adapter_submission_ns": { "$ref": "#/$defs/duration" }, "completion_ns": { "$ref": "#/$defs/duration" }, "presentation_ns": { "$ref": "#/$defs/duration" }, "elapsed_clamped_ns": { "$ref": "#/$defs/duration" }, "memory_bytes": { "type": ["integer", "null"], "minimum": 0 } }
+      }
+    },
+    "summaries": { "type": "object", "additionalProperties": { "$ref": "#/$defs/summary" } },
+    "headroom": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "properties": { "period_ms": { "type": "number" }, "byo_ms": { "$ref": "#/$defs/summary" }, "bundled_draw_ms": { "$ref": "#/$defs/summary" }, "end_to_end_ms": { "$ref": "#/$defs/summary" } },
+      "required": ["period_ms", "byo_ms", "bundled_draw_ms", "end_to_end_ms"]
+    },
+    "outcome": {
+      "type": "object", "additionalProperties": false, "required": ["status", "last_successful_plateau", "failure_class", "message"],
+      "properties": { "status": { "enum": ["success", "invalid", "bounded-failure"] }, "last_successful_plateau": { "type": ["integer", "null"], "minimum": 0 }, "failure_class": { "type": ["string", "null"] }, "message": { "type": ["string", "null"] } }
+    }
+  }
+}

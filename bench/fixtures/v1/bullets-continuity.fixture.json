@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/bullets-continuity.expanded.maku",
+  "expanded_source_sha256": "505bfbbfe4a8a66195b16a6211bfdfb531675bbe691c36e4234be01290512cfe",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 128,
+    "render_lanes": 128,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "bullets-continuity",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/bullets-continuity.json",
+  "workload_sha256": "fd4f4fac25a396645e8fed1ebd2a801cf4a81cd66f5f947e3837b857ef84bf0e"
+}

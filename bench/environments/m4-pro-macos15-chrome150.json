@@ -1,0 +1,52 @@
+{
+  "environment_schema_version": 1,
+  "environment_id": "m4-pro-macos15-chrome150",
+  "captured_at": "2026-07-16T00:00:00Z",
+  "host": {
+    "os": "macOS 15.6.1 (24G90)",
+    "arch": "arm64",
+    "model": "Mac16,8",
+    "cpu": "Apple M4 Pro, 14 cores (10 performance, 4 efficiency)",
+    "gpu": "Apple M4 Pro, 20 GPU cores, Metal 3",
+    "memory_bytes": 25769803776
+  },
+  "display": {
+    "native_width_px": 3024,
+    "native_height_px": 1964,
+    "viewport_width_css": 1512,
+    "viewport_height_css": 982,
+    "dpr": 2,
+    "external_displays": 0
+  },
+  "browser": {
+    "name": "Google Chrome",
+    "version": "150.0.7871.115",
+    "profile": "fresh explicit benchmark profile",
+    "launch_flags": []
+  },
+  "power": {
+    "source": "ac",
+    "adapter_watts": 96,
+    "battery_percent": 100,
+    "low_power_mode": false,
+    "high_power_mode": false,
+    "thermal_warning": false
+  },
+  "build": {
+    "profile": "release",
+    "rustflags": "--cfg tokio_unstable",
+    "presentation": "120 Hz fixed simulation, 60 Hz displayed-frame target, no interpolation",
+    "canvas_resolution": "1512x982 CSS pixels at DPR 2",
+    "native_vsync": true
+  },
+  "tools": {
+    "rust": "1.97.0",
+    "cargo": "1.97.0",
+    "bun": "1.3.14",
+    "node": "24.18.0",
+    "wasm-pack": "0.15.0",
+    "xcode": "16.4",
+    "apple_clang": "17.0.0"
+  },
+  "privacy": "Serial numbers, UUIDs, account names, and environment secrets are intentionally omitted."
+}

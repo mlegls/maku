@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/bullets-1m.expanded.maku",
+  "expanded_source_sha256": "e2bbc0b6dd13d7a4e4607d7f110d3a02ebe2eb74eb86fdb2fbf91648b57ff054",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 1000000,
+    "render_lanes": 1000000,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "bullets-1m",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/bullets-1m.json",
+  "workload_sha256": "6f3755caca93ab9dad291db2b730ba0ed4dd1318de800b38917a9fc7a3029662"
+}

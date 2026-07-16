@@ -205,6 +205,45 @@ impl Sim {
         out
     }
 
+    /// A deterministic digest of the observable benchmark state.
+    ///
+    /// This is intentionally outside timed benchmark stages. It includes the
+    /// tick, live entity count, and canonical expanded render rows, making the
+    /// digest independent of whether transport selected row or batch storage.
+    #[doc(hidden)]
+    pub fn benchmark_digest(&mut self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = crate::fxhash::FxHasher::default();
+        self.tick().hash(&mut hasher);
+        self.world.entities.len().hash(&mut hasher);
+        let mut rows = Vec::new();
+        for item in self.render_frame() {
+            item.expand_into(&mut rows);
+        }
+        rows.len().hash(&mut hasher);
+        for row in rows {
+            row.kind.as_ref().hash(&mut hasher);
+            match row.data {
+                RenderData::None => 0_u8.hash(&mut hasher),
+                RenderData::Point { x, y, theta, scale, alpha, hue } => {
+                    1_u8.hash(&mut hasher);
+                    for value in [x, y, theta, scale, alpha, hue] { value.to_bits().hash(&mut hasher); }
+                }
+                RenderData::Polyline { points, active } => {
+                    2_u8.hash(&mut hasher);
+                    active.hash(&mut hasher);
+                    points.len().hash(&mut hasher);
+                    for (x, y) in points { x.to_bits().hash(&mut hasher); y.to_bits().hash(&mut hasher); }
+                }
+            }
+            row.nums.len().hash(&mut hasher);
+            for (key, value) in row.nums { key.as_ref().hash(&mut hasher); value.to_bits().hash(&mut hasher); }
+            row.syms.len().hash(&mut hasher);
+            for (key, value) in row.syms { key.as_ref().hash(&mut hasher); value.as_ref().hash(&mut hasher); }
+        }
+        hasher.finish()
+    }
+
     /// Compat: the frame expanded to rows — exactly the pre-batch output.
     pub fn render(&mut self) -> Vec<RenderRow> {
         let mut out = Vec::new();

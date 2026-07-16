@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "id": "bullets-100k",
+  "description": "Static point-render bullet plateau at 100,000 entities",
+  "family": "bullet-scale",
+  "seed": 12648430,
+  "generator_version": "maku-bench-generator-v1",
+  "cadence": {
+    "tick_hz": 120,
+    "presentation_hz": 60,
+    "warmup_ticks": 120,
+    "sample_frames": 120,
+    "ticks_per_frame": 2,
+    "sample_batches": 30
+  },
+  "entities": {
+    "plateau": 100000,
+    "capacity": 101024
+  },
+  "motion": {
+    "shape": "static",
+    "speed": 0,
+    "bounded": true
+  },
+  "render": {
+    "shape": "point-basic",
+    "layers": 1,
+    "family": "circle",
+    "variant": "w",
+    "color": "red"
+  },
+  "collision": {
+    "geometry": "none",
+    "query_pairs": 0,
+    "active_layers": 0,
+    "contact_density": "none",
+    "contact_fraction": 0
+  },
+  "rules": {
+    "class": "none",
+    "count": 0,
+    "match_rate": "none",
+    "match_fraction": 0
+  },
+  "input_tape": [],
+  "expect": {
+    "live_entities": 100000,
+    "render_lanes": 100000,
+    "contacts_per_tick": 0,
+    "rule_matches_per_tick": 0,
+    "rule_actions_per_tick": 0
+  }
+}

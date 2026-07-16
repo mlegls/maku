@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "player", "render-touhou", "web"]
+members = ["bench", "core", "player", "render-touhou", "web"]
 
 [workspace.package]
 version = "0.1.0"

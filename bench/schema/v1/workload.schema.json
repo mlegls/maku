@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mlegls/maku/bench/schema/v1/workload.schema.json",
+  "title": "Maku benchmark workload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "family", "seed", "cadence", "entities", "motion", "render", "collision", "rules", "input_tape", "expect"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "description": { "type": "string" },
+    "family": { "enum": ["bullet-scale", "collision", "rules", "corner", "continuity"] },
+    "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "generator_version": { "type": "string", "default": "maku-bench-generator-v1" },
+    "cadence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tick_hz", "presentation_hz", "warmup_ticks", "sample_frames", "ticks_per_frame"],
+      "properties": {
+        "tick_hz": { "const": 120 }, "presentation_hz": { "const": 60 },
+        "warmup_ticks": { "type": "integer", "minimum": 0 },
+        "sample_frames": { "type": "integer", "minimum": 1 },
+        "ticks_per_frame": { "type": "integer", "minimum": 1 },
+        "sample_batches": { "type": "integer", "minimum": 1, "default": 30 }
+      }
+    },
+    "entities": {
+      "type": "object", "additionalProperties": false, "required": ["plateau"],
+      "properties": { "plateau": { "type": "integer", "minimum": 0, "maximum": 1000000 }, "capacity": { "type": "integer", "minimum": 1 } }
+    },
+    "motion": {
+      "type": "object", "additionalProperties": false, "required": ["shape"],
+      "properties": { "shape": { "enum": ["static", "linear", "polar", "composed"] }, "speed": { "type": "number" }, "bounded": { "type": "boolean", "default": true } }
+    },
+    "render": {
+      "type": "object", "additionalProperties": false, "required": ["shape", "layers"],
+      "properties": {
+        "shape": { "enum": ["none", "point-basic", "point-tinted", "point-recolor", "ribbon"] },
+        "layers": { "type": "integer", "minimum": 0, "maximum": 16 },
+        "family": { "type": "string" }, "variant": { "type": "string" }, "color": { "type": "string" }
+      }
+    },
+    "collision": {
+      "type": "object", "additionalProperties": false, "required": ["geometry", "query_pairs", "contact_density"],
+      "properties": {
+        "geometry": { "enum": ["none", "circle", "capsule-chain"] },
+        "query_pairs": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "active_layers": { "type": "integer", "minimum": 0, "maximum": 128 },
+        "contact_density": { "enum": ["none", "sparse", "controlled", "dense"] },
+        "contact_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "capsule_segments": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "rules": {
+      "type": "object", "additionalProperties": false, "required": ["class", "count", "match_rate"],
+      "properties": {
+        "class": { "enum": ["none", "filter-only", "render-only", "masked-update", "effect-action"] },
+        "count": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "match_rate": { "enum": ["none", "half", "all"] },
+        "match_fraction": { "type": "number", "enum": [0, 0.5, 1] }
+      }
+    },
+    "input_tape": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["tick", "channels"],
+        "properties": { "tick": { "type": "integer", "minimum": 0 }, "channels": { "type": "object", "additionalProperties": { "type": "number" } } }
+      }
+    },
+    "expect": {
+      "type": "object", "additionalProperties": false, "required": ["live_entities", "render_lanes"],
+      "properties": {
+        "live_entities": { "type": "integer", "minimum": 0 }, "render_lanes": { "type": "integer", "minimum": 0 },
+        "contacts_per_tick": { "type": "integer", "minimum": 0 }, "rule_matches_per_tick": { "type": "integer", "minimum": 0 },
+        "rule_actions_per_tick": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "continuity": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "card": { "type": "string" }, "pattern": { "type": "string" }, "ticks": { "type": "integer", "minimum": 1 } }
+    }
+  }
+}

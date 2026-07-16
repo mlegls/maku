@@ -1,14 +1,14 @@
 ## 1. Define Benchmark Contracts
 
-- [ ] 1.1 Define and version the declarative workload schema for entity plateau, motion/render shape, collider geometry/layers/query pairs/contact density, and `deftick` rule class/count/match rate.
-- [ ] 1.2 Define and version the common native/browser result envelope, raw sample records, stage/backend identities, environment metadata, correctness digest, counters, and memory fields.
-- [ ] 1.3 Specify warm-up, sampling, percentile, frame-budget, catch-up/clamping, allocation/memory, and failure-recording policy consistent with `openspec/specs/perf/spec.md`.
-- [ ] 1.4 Select and record the first reference native/browser hardware, OS, browser, resolution/DPR, power, build, and presentation configurations.
+- [x] 1.1 Define and version the declarative workload schema for entity plateau, motion/render shape, collider geometry/layers/query pairs/contact density, and `deftick` rule class/count/match rate.
+- [x] 1.2 Define and version the common native/browser result envelope, raw sample records, stage/backend identities, environment metadata, correctness digest, counters, and memory fields.
+- [x] 1.3 Specify warm-up, sampling, percentile, frame-budget, catch-up/clamping, allocation/memory, and failure-recording policy consistent with `openspec/specs/perf/spec.md`.
+- [x] 1.4 Select and record the first reference native/browser hardware, OS, browser, resolution/DPR, power, build, and presentation configurations.
 
 ## 2. Build Deterministic Workloads
 
-- [ ] 2.1 Implement deterministic fixture generation with fixed source hash, seed, input tape, tick intervals, expected counters, and stable expanded-card output.
-- [ ] 2.2 Add bullet-count one-axis fixtures at continuity, 1k, 10k, 100k, and attempted 1M plateaus with controlled motion and render shape.
+- [x] 2.1 Implement deterministic fixture generation with fixed source hash, seed, input tape, tick intervals, expected counters, and stable expanded-card output.
+- [x] 2.2 Add bullet-count one-axis fixtures at continuity, 1k, 10k, 100k, and attempted 1M plateaus with controlled motion and render shape.
 - [ ] 2.3 Add collider fixtures varying circle/capsule-chain geometry, active layer/query pairs, and no/sparse/controlled/dense contact rates at normal and ceiling scales.
 - [ ] 2.4 Add `deftick` fixtures varying filter-only, render-only, masked-update, and effect/action rules at 0%, approximately 50%, and 100% match rates.
 - [ ] 2.5 Add representative corner fixtures and retain historical representative cards/fruit profiling as continuity cases.
