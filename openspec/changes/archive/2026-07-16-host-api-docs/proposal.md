@@ -1,5 +1,10 @@
 # Host API docs and tooling follow-ups
 
+> Superseded on 2026-07-16 by `maku-release-02-docs-demo`. This incomplete
+> backlog stub was archived without syncing deltas; its documentation scope is
+> implemented and governed there. Signal plotting and tick-rate policy remain
+> separate future work.
+
 Backlog stub — design/specs/tasks are generated when this is picked up.
 
 ## Why

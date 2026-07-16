@@ -1,8 +1,8 @@
 ## 1. Consolidate Documentation Scope
 
-- [ ] 1.1 Reconcile this change with the active `host-api-docs` and `language-reference` stubs, record that their scope is superseded here, and archive or otherwise retire the duplicate active entries without syncing incomplete deltas.
-- [ ] 1.2 Inventory current docs, README/API examples, upstream web prose, neen.ink copies, and stale core-owned renderer descriptions against the release package/version decisions.
-- [ ] 1.3 Define the canonical document map, audience, governing capability links, example validation method, and release/source-version presentation.
+- [x] 1.1 Reconcile this change with the active `host-api-docs` and `language-reference` stubs, record that their scope is superseded here, and archive or otherwise retire the duplicate active entries without syncing incomplete deltas.
+- [x] 1.2 Inventory current docs, README/API examples, upstream web prose, neen.ink copies, and stale core-owned renderer descriptions against the release package/version decisions.
+- [x] 1.3 Define the canonical document map, audience, governing capability links, example validation method, and release/source-version presentation.
 
 ## 2. Write Canonical Public Documentation
 

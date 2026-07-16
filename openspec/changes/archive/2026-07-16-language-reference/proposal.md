@@ -1,5 +1,9 @@
 # User-facing language reference/guide
 
+> Superseded on 2026-07-16 by `maku-release-02-docs-demo`. This incomplete
+> backlog stub was archived without syncing deltas; the canonical language
+> reference is implemented and governed by that release change.
+
 Backlog stub — design/specs/tasks are generated when this is picked up.
 
 ## Why
