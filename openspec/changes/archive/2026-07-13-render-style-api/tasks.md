@@ -1,6 +1,6 @@
 ## 1. Pack, profile, and schema contracts
 
-- [x] 1.1 Organize `crates/mesh-touhou` around a genre-facing pack, immutable `TouhouProfile`, schema bindings, shared output arena, resource registry, and internal sprite/ribbon processors without extracting a generic crate.
+- [x] 1.1 Organize `crates/render-touhou` around a genre-facing pack, immutable `TouhouProfile`, schema bindings, shared output arena, resource registry, and internal sprite/ribbon processors without extracting a generic crate.
 - [x] 1.2 Add typed ids, palette shades, texture sources/regions, sampler/blend descriptors, material descriptors, sprite recipes, layered beam recipes, orientation policy, layer color bindings, unknown-style policy, and primitive capability descriptors.
 - [x] 1.3 Implement profile validation for duplicate keys, dangling ids, material primitive/layout compatibility, effect capability requirements, finite positive dimensions, known texture-region bounds, and complete explicit fallbacks.
 - [x] 1.4 Bind declared `:sprite` and `:beam` schema identities once to batch-aware handlers, validating required field names/kinds and compiling cold semantic configuration to stable numeric ids and primitive recipes.
@@ -20,7 +20,7 @@
 ## 3. Native and web host cutover
 
 - [x] 3.1 Update `crates/player` to resolve the shared cold resource/material manifest and submit the pack's ordered instance/indexed commands; isolate macroquad point-instance expansion or chunking in the adapter.
-- [x] 3.2 Turn the existing `crates/web` directory into a workspace Rust host crate depending on core and `mesh-touhou`, and update `crates/web/build.sh` to build that crate.
+- [x] 3.2 Turn the existing `crates/web` directory into a workspace Rust host crate depending on core and `render-touhou`, and update `crates/web/build.sh` to build that crate.
 - [x] 3.3 Move the wasm-bindgen engine/render wrapper above core and export zero-copy typed views for all fixed instance buffers, vertices, indices, packed commands, and builtin resource bytes.
 - [x] 3.4 Update the JavaScript renderer to resolve opaque resource/pipeline ids, upload builtin or registered external textures, configure declared blend/sampler state, and submit the shared ordered stream without JSON geometry copies.
 - [x] 3.5 Keep group/offscreen and frame effects in the host compositor; document that compatible custom pipeline keys consume standard pack layouts and do not inject arbitrary attributes.

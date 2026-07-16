@@ -2,7 +2,7 @@
 mod tests {
     use maku::host::{Inputs, Instance};
     use maku::render::RenderItem;
-    use maku_mesh_touhou::{TouhouMesh, TouhouProfile};
+    use maku_render_touhou::{TouhouMesh, TouhouProfile};
     use std::rc::Rc;
 
     #[test]

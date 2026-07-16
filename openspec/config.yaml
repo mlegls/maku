@@ -2,7 +2,7 @@ schema: spec-driven
 
 context: |
   Maku: a deterministic 2D danmaku (bullet-pattern) language + engine
-  prototype. Rust workspace at crates/ (core, player, mesh-touhou);
+  prototype. Rust workspace at crates/ (core, player, render-touhou);
   cards (programs) in cards/. Decision homes: openspec/specs/ capability
   specs are the settled-truth authority (language semantics live in
   specs/language, lowering invariants in specs/lowering, etc.); target

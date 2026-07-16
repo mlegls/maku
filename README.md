@@ -16,7 +16,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/tutorials/` | learn the language from scratch — runnable companions in `cards/tutorials/` |
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `openspec/` | specs (settled contracts + design), changes (all open work — `openspec list`) |
-| `crates/` | Rust workspace: `core` (engine/session/host), `mesh-touhou` (render pack), `player` (Macroquad host), `web` (wasm/Canvas host), `editors/danmaku.nvim` |
+| `crates/` | Rust workspace: `core` (engine/session/host), `render-touhou` (render pack), `player` (Macroquad host), `web` (wasm/Canvas host), `editors/danmaku.nvim` |
 | `crates/js/maku/` | publishable browser package wrapping the wasm host |
 | `cards/` | playable cards — start with `reimu_vs_mima.maku` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |

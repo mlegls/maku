@@ -1,8 +1,8 @@
 ## Context
 
-`maku_mesh_touhou::TouhouMesh` currently consumes the public ordered render frame and returns reused `MeshFrame { vertices, indices, spans }` buffers plus one generated disc/ring atlas. `StyleTable` is three callbacks/values (`palette`, `dot_radius`, `px_per_unit`); dot geometry always emits a palette-tinted disc plus white outline, nonzero hue bypasses the injected palette through `maku::host::style_rgb_hued`, `variant` and point `theta` are ignored, and beam width is hardcoded. The macroquad host assumes every span uses the same atlas/material. `crates/core/src/web.rs` independently repeats palette/radius rendering instead of consuming the pack.
+`maku_render_touhou::TouhouMesh` currently consumes the public ordered render frame and returns reused `MeshFrame { vertices, indices, spans }` buffers plus one generated disc/ring atlas. `StyleTable` is three callbacks/values (`palette`, `dot_radius`, `px_per_unit`); dot geometry always emits a palette-tinted disc plus white outline, nonzero hue bypasses the injected palette through `maku::host::style_rgb_hued`, `variant` and point `theta` are ignored, and beam width is hardcoded. The macroquad host assumes every span uses the same atlas/material. `crates/core/src/web.rs` independently repeats palette/radius rendering instead of consuming the pack.
 
-The current package also collapses three concerns: Touhou's semantic schema/style vocabulary, reusable sprite/ribbon geometry algorithms, and backend submission contracts. This change keeps one vertical `mesh-touhou` package but makes those boundaries explicit. The host-facing API is a controlled Touhou façade; internal kind handlers compile semantic rows/batches into primitive recipes and append to one shared output. This is not evidence yet for a separately versioned universal renderer crate.
+The current package also collapses three concerns: Touhou's semantic schema/style vocabulary, reusable sprite/ribbon geometry algorithms, and backend submission contracts. This change keeps one vertical `render-touhou` package but makes those boundaries explicit. The host-facing API is a controlled Touhou façade; internal kind handlers compile semantic rows/batches into primitive recipes and append to one shared output. This is not evidence yet for a separately versioned universal renderer crate.
 
 The engine boundary is already settled by `openspec/specs/render-rows/spec.md`: mesh renderers are optional hosts over an ordered typed frame, style vocabulary is pack/library policy, and engine transport contains no texture/material semantics. The recent per-kind schema work provides stable `:sprite` and `:beam` layouts without requiring another core change. `openspec/changes/ir-unification/design.md` and `openspec/changes/gpu-kernel-backend/design.md` additionally require fixed render projection to remain visible as typed plans/columns; pack modularity must not force semantic row reconstruction or make one module equal one physical GPU dispatch.
 
@@ -47,7 +47,7 @@ Maku should adopt data-owned profiles, palette ramps, material separation, direc
 
 ## Decisions
 
-### Treat `mesh-touhou` as a pack façade over internal primitive processors
+### Treat `render-touhou` as a pack façade over internal primitive processors
 
 The public cold API speaks Touhou policy: schema bindings, `(family, variant, color)` styles, palette ramps, beam active/warning state, fallbacks, and resources. Profile construction compiles that configuration to numeric ids, cached schema bindings, and ordinary sprite/ribbon recipes. The hot API consumes the engine frame and exposes only fixed buffers, resource/material manifests, and ordered commands.
 
@@ -238,7 +238,7 @@ Strict unknown-style errors occur only on first resolution; fallback mode resolv
 
 ### 9. Wasm integration lives in the existing `crates/web` host directory above core
 
-`mesh-touhou` already depends on core, so core cannot depend back on the pack. `crates/web` becomes a workspace crate in addition to retaining its static/editor assets and build script; its Rust library depends on both core and `mesh-touhou`, owns `Instance` plus `TouhouMesh`, builds once per render frame, and exports typed-array views over sprites, strip vertices, indices, and packed draw commands in the same wasm linear memory. It also exports the cold material/texture manifest and builtin resource bytes. `crates/web/build.sh` builds this host crate rather than core directly.
+`render-touhou` already depends on core, so core cannot depend back on the pack. `crates/web` becomes a workspace crate in addition to retaining its static/editor assets and build script; its Rust library depends on both core and `render-touhou`, owns `Instance` plus `TouhouMesh`, builds once per render frame, and exports typed-array views over sprites, strip vertices, indices, and packed draw commands in the same wasm linear memory. It also exports the cold material/texture manifest and builtin resource bytes. `crates/web/build.sh` builds this host crate rather than core directly.
 
 JavaScript maps material/pipeline/resource ids to WebGL/WebGPU objects and performs draw calls. Rust geometry remains in the same wasm module as the engine; a second wasm module would add memory sharing/copying without an ownership benefit. Existing direct palette/radius flattening in `crates/core/src/web.rs` moves through this host-level clean cutover; core keeps only pack-neutral APIs and the host crate owns wasm-bindgen surface types.
 
@@ -264,7 +264,7 @@ The default `TouhouProfile` owns stock family radii, palette shades, generated d
 
 ## Migration Plan
 
-1. Establish the pack/profile, schema-binding, primitive-recipe, capability, resource/material, and shared-output types inside `mesh-touhou`; do not extract a generic crate.
+1. Establish the pack/profile, schema-binding, primitive-recipe, capability, resource/material, and shared-output types inside `render-touhou`; do not extract a generic crate.
 2. Build a stock profile that compiles current dots and beams to ordered sprite/ribbon layers and reproduces current outputs.
 3. Replace `StyleTable` lookup, fix hue resolution, and bind `:sprite`/`:beam` rows and batches to cached handlers.
 4. Add layered sprite/ribbon resolution and compatible local-effect fixtures while retaining the old expanded-output path under tests.

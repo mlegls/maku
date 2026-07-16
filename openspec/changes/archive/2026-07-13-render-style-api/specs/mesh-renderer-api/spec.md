@@ -185,7 +185,7 @@ Native and wasm hosts SHALL consume the same pack-owned material/resource ids, f
 
 #### Scenario: Core dependency direction
 - **WHEN** the workspace dependency graph is inspected after migration
-- **THEN** the host wrapper depends on core and `mesh-touhou`, while core does not depend on either the wrapper or mesh pack
+- **THEN** the host wrapper depends on core and `render-touhou`, while core does not depend on either the wrapper or mesh pack
 
 ### Requirement: Stock Touhou policy ownership
 The default Touhou profile SHALL own the stock palette shades, family radii, generated disc/ring texture resource, sprite and layered beam recipes, and material descriptors needed to reproduce the current prototype look. Core SHALL NOT export Touhou-specific palette, hue, or bullet-radius policy after native and web consumers migrate.

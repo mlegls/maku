@@ -2,11 +2,11 @@
 
 ## Why
 
-`crates/mesh-touhou` currently hardcodes one generated disc/ring atlas, core-owned palette/radius functions, white outlines, alpha-only material behavior, and expanded quad vertices. It also conflates Touhou schema/style policy, reusable sprite/ribbon geometry, and backend submission, making customization difficult and obscuring how another genre pack could reuse the implementation without adopting Touhou vocabulary.
+`crates/render-touhou` currently hardcodes one generated disc/ring atlas, core-owned palette/radius functions, white outlines, alpha-only material behavior, and expanded quad vertices. It also conflates Touhou schema/style policy, reusable sprite/ribbon geometry, and backend submission, making customization difficult and obscuring how another genre pack could reuse the implementation without adopting Touhou vocabulary.
 
 ## What Changes
 
-- Recast `mesh-touhou` as a genre-facing render pack: its host API owns Touhou schema bindings, palettes, bullet/beam styles, resources, fallbacks, and validation, while internal batch-aware sprite and ribbon processors own geometry generation.
+- Recast `render-touhou` as a genre-facing render pack: its host API owns Touhou schema bindings, palettes, bullet/beam styles, resources, fallbacks, and validation, while internal batch-aware sprite and ribbon processors own geometry generation.
 - Replace callback-based `StyleTable` with an immutable, validated `TouhouProfile`. Keep Maku's existing authored axes separate: `family + variant` select a recipe, `color` selects palette data, and row `hue`/`alpha` modify resolved colors.
 - Compile cold semantic configuration into numeric schema bindings, style ids, primitive recipes, materials, and resources. The hot path consumes rows or typed batches without reinterpreting genre configuration or forcing batch expansion.
 - Give the pack one shared reusable output arena and one ordered draw-command stream across all kind handlers. Internal module boundaries do not imply separate frames, submissions, or material stores.
@@ -34,8 +34,8 @@ None.
 
 ## Impact
 
-- `crates/mesh-touhou/src/lib.rs`, its internal module organization, tests, and the macroquad player adapter.
-- The existing `crates/web` directory becomes a host-level wasm crate/adapter depending on both core and `mesh-touhou`; `crates/core` remains unaware of the pack.
+- `crates/render-touhou/src/lib.rs`, its internal module organization, tests, and the macroquad player adapter.
+- The existing `crates/web` directory becomes a host-level wasm crate/adapter depending on both core and `render-touhou`; `crates/core` remains unaware of the pack.
 - Stock palette/radius helpers in `crates/core/src/host.rs` and duplicate web rendering in `crates/core/src/web.rs` migrate to host/profile ownership.
 - Touhou render vocabulary remains library/package policy in `crates/core/lib/touhou.maku`; the pack binds its declared `:sprite` and `:beam` schemas to handlers.
 - Governing boundaries remain `openspec/specs/render-rows/spec.md`, `openspec/specs/load-time-schema/spec.md`, `openspec/changes/ir-unification/design.md`, `openspec/changes/gpu-kernel-backend/design.md`, and `openspec/changes/gameplay-out-of-core/proposal.md`.

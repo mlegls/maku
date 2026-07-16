@@ -33,7 +33,7 @@
 
 use maku::host::Instance;
 use maku::host::Inputs;
-use maku_mesh_touhou::{
+use maku_render_touhou::{
     AddressMode, BlendMode, DrawSource, MaterialDesc, MaterialId, MeshFrame, TextureFilter,
     TextureSource, TouhouMesh, TouhouProfile,
 };
@@ -162,7 +162,7 @@ fn resolve_pipeline(desc: &MaterialDesc) -> Result<Material, String> {
         pipeline_params: PipelineParams { color_blend: blend, alpha_blend: blend, ..Default::default() },
         ..Default::default()
     };
-    let recolor = desc.layout == maku_mesh_touhou::SourceLayout::RecolorSprite;
+    let recolor = desc.layout == maku_render_touhou::SourceLayout::RecolorSprite;
     let backend = unsafe { get_internal_gl().quad_context.info().backend };
     let shader = match backend {
         Backend::OpenGl => ShaderSource::Glsl {
@@ -265,7 +265,7 @@ fn draw_frame(frame: &MeshFrame, resources: &RenderResources, cx: f32, cy: f32) 
 }
 
 fn draw_sprite_instances<'a>(
-    instances: impl Iterator<Item = (&'a maku_mesh_touhou::BasicSpriteInstance, [u8; 4], [f32; 4])>,
+    instances: impl Iterator<Item = (&'a maku_render_touhou::BasicSpriteInstance, [u8; 4], [f32; 4])>,
     texture: &Texture2D,
     cx: f32,
     cy: f32,

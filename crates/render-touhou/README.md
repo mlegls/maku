@@ -1,6 +1,6 @@
 # Touhou render pack
 
-`maku-mesh-touhou` is a genre-facing host package, not an engine renderer or a
+`maku-render-touhou` is a genre-facing host package, not an engine renderer or a
 universal mesh abstraction. Hosts configure Touhou palettes, family/variant
 recipes, local layers, materials, and resources through `TouhouProfile`. The
 hot path binds stable render schemas, consumes rows or typed batches, and emits

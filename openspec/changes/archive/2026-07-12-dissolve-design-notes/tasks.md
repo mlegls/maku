@@ -12,7 +12,7 @@
 
 - [x] 3.1 Archive this change (installs `language`/`lowering`/`perf`, updates `work-tracking`).
 - [x] 3.2 Post-archive spec sections: Purposes for the three new specs; `language ## Reference` = docs/language.md verbatim (header noting it includes [decide] sections; requirements are the current-truth anchor) + `## Rationale` distilled from docs/design.md's durable conclusions + intrinsics criteria; `lowering ## Design` from compiled-dyn-design.md (tier plan, JIT gaps, milestone state, platform notes); `perf ## Rig`, `## Current walls`, `## Remaining levers`, draw-path A/B from perf-campaign.md; `evolve-semantics ## Design` from evolve-design.md; `render-rows ## Design` (+ host API + parallelism prose) from render-output-design.md. Validate all specs.
-- [x] 3.3 mesh-renderer-spec.md's behavior summary → `crates/mesh-touhou` crate doc comment; verify pack tests still pass.
+- [x] 3.3 mesh-renderer-spec.md's behavior summary → `crates/render-touhou` crate doc comment; verify pack tests still pass.
 
 ## 4. Deletions and reference flips
 

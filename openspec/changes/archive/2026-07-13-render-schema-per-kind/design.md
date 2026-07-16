@@ -9,7 +9,7 @@ change:
 - Cross-card key poisoning: an imported card's `:width` sym claims the key
   world-wide, breaking another rule's numeric `:width` — the "one kind per
   key" contract has no scope.
-- No contract at the pack boundary: mesh packs (mesh-touhou is the live
+- No contract at the pack boundary: mesh packs (render-touhou is the live
   case) ignore unknown columns and default missing ones — a card whose rows
   a pack can't meaningfully draw loads fine and renders wrong, the exact
   failure mode the host-channel manifest and style registry already solve at
@@ -36,7 +36,7 @@ declaration is what makes them declarable.
 - A builtin rename/pick adapter for composing cards/packs with conflicting
   field conventions.
 - A declared sprite-batch kind in the touhou lib as the first consumer,
-  negotiated by mesh-touhou.
+  negotiated by render-touhou.
 
 **Non-Goals:**
 
@@ -88,7 +88,7 @@ keep working against strict hosts.
 
 Negotiation gives packs stable identity: schema per declared kind is fixed
 at load (no "settling"), so `Rc::ptr_eq` layout caches key off declarations,
-and mesh-touhou's silent ignore/default behavior becomes a checked contract
+and render-touhou's silent ignore/default behavior becomes a checked contract
 for declared kinds.
 
 ### 4. The rename/pick adapter is registration-time key rewriting
@@ -106,7 +106,7 @@ boundary.
 ### 5. Sprite-batch = a declared kind over Point, not new geometry
 
 The touhou lib declares `:sprite` (point geometry + family/color/variant
-fields it already emits); mesh-touhou negotiates for it and drops its
+fields it already emits); render-touhou negotiates for it and drops its
 guess-and-default column probing for declared batches. This proves the whole
 machinery on the live pack with zero new transport: instancing payload is
 exactly what Point batches already carry as typed columns, and f32 packing
@@ -140,7 +140,7 @@ current consumer needs card-authored triangles.
 2. `defrender-kind` in the load pass; declared-kind validation.
 3. `verify_render_kinds` + manifest lint; native player + wasm host wire it.
 4. `render-adapt`.
-5. Touhou lib declares `:sprite` / beam polyline kind; mesh-touhou
+5. Touhou lib declares `:sprite` / beam polyline kind; render-touhou
    negotiates and reads declared schemas.
 6. Gates: core suite + oracle card suites; render-rows spec sync at archive.
 

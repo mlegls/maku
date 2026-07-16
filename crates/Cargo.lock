@@ -202,19 +202,19 @@ name = "maku"
 version = "0.1.0"
 
 [[package]]
-name = "maku-mesh-touhou"
-version = "0.1.0"
-dependencies = [
- "maku",
-]
-
-[[package]]
 name = "maku-player"
 version = "0.1.0"
 dependencies = [
  "macroquad",
  "maku",
- "maku-mesh-touhou",
+ "maku-render-touhou",
+]
+
+[[package]]
+name = "maku-render-touhou"
+version = "0.1.0"
+dependencies = [
+ "maku",
 ]
 
 [[package]]
@@ -223,7 +223,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "maku",
- "maku-mesh-touhou",
+ "maku-render-touhou",
  "wasm-bindgen",
 ]
 

@@ -6,6 +6,6 @@ publish = false
 
 [dependencies]
 maku = { path = "../../crates/core" }
-maku-mesh-touhou = { path = "../../crates/mesh-touhou" }
+maku-render-touhou = { path = "../../crates/render-touhou" }
 
 [workspace]

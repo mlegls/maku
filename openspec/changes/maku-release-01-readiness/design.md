@@ -1,6 +1,6 @@
 ## Context
 
-The workspace contains four packages with sound architectural dependency direction, but packaging was not previously a constraint. `maku` embeds standard-library sources from outside its package root, dependent packages use path-only requirements, package metadata is incomplete, and all-target compilation exposes stale IR cleanup. The repository also tracks historical build products and generated wasm outputs without a reproducible freshness gate. The current package name `maku-mesh-touhou` predates the settled description of that crate as a backend-neutral Touhou render pack.
+The workspace contains four packages with sound architectural dependency direction, but packaging was not previously a constraint. `maku` embeds standard-library sources from outside its package root, dependent packages use path-only requirements, package metadata is incomplete, and all-target compilation exposes stale IR cleanup. The repository also tracks historical build products and generated wasm outputs without a reproducible freshness gate. The unpublished package name `maku-mesh-touhou` predates the settled description of that crate as a backend-neutral Touhou render pack.
 
 The language and render contracts are already stable enough to form the supported boundary (`openspec/specs/language/spec.md`, `openspec/specs/render-rows/spec.md`, `openspec/specs/mesh-renderer-api/spec.md`). Entity storage, interpreter representation, lowering implementation, and backend selection remain intentionally changeable.
 
@@ -29,7 +29,7 @@ An outer feature-gated host crate was considered. It either creates a dependency
 
 ### Name genre policy explicitly
 
-Rename the unpublished `maku-mesh-touhou` package and directory references to `maku-render-touhou`. The crate is a Touhou render pack that emits instances, meshes, resources, materials, and ordered commands; it is neither a universal renderer nor a GPU backend. Future genre packs publish separately. Shared primitives are extracted only after a second pack proves the abstraction; a future umbrella can re-export optional packs without owning their implementations.
+Rename the unpublished `maku-mesh-touhou` package and `mesh-touhou` directory references to `maku-render-touhou` and `render-touhou`. The crate is a Touhou render pack that emits instances, meshes, resources, materials, and ordered commands; it is neither a universal renderer nor a GPU backend. Future genre packs publish separately. Shared primitives are extracted only after a second pack proves the abstraction; a future umbrella can re-export optional packs without owning their implementations.
 
 ### Support a narrow facade while permitting explicit unstable internals
 

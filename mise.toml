@@ -28,7 +28,7 @@ run = [
 
 [tasks.test-mesh]
 description = "Touhou mesh crate tests"
-run = "cargo test --release -p maku-mesh-touhou --manifest-path crates/Cargo.toml"
+run = "cargo test --release -p maku-render-touhou --manifest-path crates/Cargo.toml"
 
 [tasks.web]
 description = "Build the wasm package and editor bundle"
