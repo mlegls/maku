@@ -44,5 +44,5 @@
 
 - [ ] 6.1 Run the authoritative fast and release checks from a clean checkout and confirm no tracked/generated drift remains.
 - [ ] 6.2 Build all package archives, wasm/npm artifacts, docs.rs surfaces, and supported external examples from declared versions only.
-- [ ] 6.3 Record the coherent pre-release version/source revision and migration notes consumed by the docs/demo change.
+- [x] 6.3 Record the coherent pre-release version/source revision and migration notes consumed by the docs/demo change.
 - [ ] 6.4 Run strict OpenSpec validation and confirm package/API decisions remain compatible with `render-rows`, `mesh-renderer-api`, determinism, and lowering contracts.
