@@ -26,9 +26,9 @@
 ## 4. Prepare Publishable Packages
 
 - [x] 4.1 Rename package/code/document references from `maku-mesh-touhou`/`mesh-touhou` to `maku-render-touhou`/`render-touhou` atomically, without extracting a generic renderer crate.
-- [ ] 4.2 Add workspace-shared version, edition, MSRV, license, repository, homepage/documentation, keywords/categories, and package README metadata as appropriate.
-- [ ] 4.3 Add compatible versions to every local path dependency and verify registry-normalized dependency graphs and publication order.
-- [ ] 4.4 Define intentional package include/exclude contents for engine, render pack, player, and web host; keep editor/site-only files out of Rust archives unless explicitly required.
+- [x] 4.2 Add workspace-shared version, edition, MSRV, license, repository, homepage/documentation, keywords/categories, and package README metadata as appropriate.
+- [x] 4.3 Add compatible versions to every local path dependency and verify registry-normalized dependency graphs and publication order.
+- [x] 4.4 Define intentional package include/exclude contents for engine, render pack, player, and web host; keep editor/site-only files out of Rust archives unless explicitly required.
 - [ ] 4.5 Check crates.io name availability/ownership and document whether `maku-web` is registry-facing or solely a wasm/npm artifact producer.
 - [ ] 4.6 Run `cargo package --list` and isolated extracted-package build/test verification for each package in dependency order.
 - [ ] 4.7 Run crates.io publication dry-runs with no workspace-owned metadata, external-file, or path-without-version warnings.

@@ -1,8 +1,20 @@
 [package]
 name = "maku"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Deterministic 2D danmaku pattern language and host engine"
+documentation = "https://docs.rs/maku"
+readme = "README.md"
+include = ["src/**", "lib/**", "Cargo.toml", "README.md", "LICENSE"]
+keywords = ["danmaku", "bullet-hell", "gamedev", "simulation"]
+categories = ["game-engines", "simulation"]
 
 [lib]
 crate-type = ["rlib"]
+
+[package.metadata.docs.rs]
+all-features = true

@@ -1,10 +1,22 @@
 [package]
 name = "maku-player"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Native Macroquad player and reference host for Maku"
+documentation = "https://docs.rs/maku-player"
+readme = "README.md"
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
+keywords = ["danmaku", "bullet-hell", "gamedev"]
+categories = ["games"]
 
 [dependencies]
-maku = { path = "../core" }
+maku = { version = "0.1.0", path = "../core" }
 macroquad = "0.4"
-maku-render-touhou = { path = "../render-touhou" }
+maku-render-touhou = { version = "0.1.0", path = "../render-touhou" }
+
+[package.metadata.docs.rs]
+all-features = true

@@ -3,5 +3,9 @@ resolver = "2"
 members = ["core", "player", "render-touhou", "web"]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.97"
+license = "MIT"
+repository = "https://github.com/mlegls/maku"
+homepage = "https://github.com/mlegls/maku"

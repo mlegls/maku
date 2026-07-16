@@ -1,8 +1,20 @@
 [package]
 name = "maku-render-touhou"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Backend-neutral Touhou-style render pack for the Maku engine"
+documentation = "https://docs.rs/maku-render-touhou"
+readme = "README.md"
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
+keywords = ["danmaku", "bullet-hell", "rendering", "touhou"]
+categories = ["game-engines", "rendering"]
 
 [dependencies]
-maku = { path = "../core" }
+maku = { version = "0.1.0", path = "../core" }
+
+[package.metadata.docs.rs]
+all-features = true
