@@ -7,6 +7,14 @@ node = "24.18.0"
 "cargo:wasm-pack" = "0.15.0"
 "npm:@fission-ai/openspec" = "1.6.0"
 
+[tasks.check]
+description = "Fast local/CI validation"
+run = "scripts/check.sh fast"
+
+[tasks.release-check]
+description = "Complete release validation, including oracle and generated artifacts"
+run = "scripts/check.sh release"
+
 [tasks.test]
 description = "Core release test suite"
 run = "cargo test --release --manifest-path crates/core/Cargo.toml"

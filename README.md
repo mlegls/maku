@@ -52,3 +52,8 @@ Macroquad. On macOS, install Xcode Command Line Tools; `crates/.cargo/config.tom
 selects the system Apple C driver to avoid incompatible third-party `ld64`
 versions earlier in `PATH`. Linux hosts need their distribution's C compiler,
 X11, OpenGL, and audio development packages.
+
+`scripts/check.sh fast` is the normal local and pull-request gate.
+`scripts/check.sh release` adds the lowering oracle, ignored card suites,
+wasm artifact rebuild/smoke test, and clean-tree verification. The same entry
+points are exposed as `mise run check` and `mise run release-check`.
