@@ -4,7 +4,11 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
-crates/web/build.sh
+# Reproduce the snapshot's declared source identity. Release artifact commits
+# conventionally point at their immediate implementation baseline, avoiding a
+# self-referential commit hash while keeping rebuilds deterministic.
+source_revision=$(jq -r '.source_revision' crates/js/maku/wasm/release.json)
+MAKU_SOURCE_REVISION="$source_revision" crates/web/build.sh
 bun scripts/check-web-release.mjs
 
 tracked='crates/js/maku/dist crates/js/maku/wasm crates/web/static/maku-codemirror.js'
