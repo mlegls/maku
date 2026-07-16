@@ -279,7 +279,7 @@ fn rewrite_render_form(form: &Form, adapter: &RenderAdapter) -> Form {
                         _ => None,
                     }).unwrap_or("default");
                     if source == adapter.from.as_ref() {
-                        let structural = |k: &str| matches!(k, "shape" | "kind" | "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity" | "hue" | "points" | "pts" | "active");
+                        let structural = |k: &str| matches!(k, "shape" | "kind" | "x" | "y" | "theta" | "scale" | "alpha" | "hue" | "points" | "active");
                         let mut picked = Vec::new();
                         for (key, value) in fields.iter() {
                             let Form::Kw(key) = key else { continue };

@@ -16,7 +16,7 @@ pub(crate) fn rewrite_card(card: &mut Card) {
     rewrite_card_forms(card, &empty);
 
     // fixpoint: inlining a trivial defn's body can make its wrappers
-    // trivial in turn (col-or over value-or), so recollect until the
+    // trivial in turn (col-or over %value-or), so recollect until the
     // trivial set stops growing — bounded by the number of defs
     let mut trivial = collect_trivial_defs(&card.defs);
     loop {

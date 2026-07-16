@@ -1689,10 +1689,9 @@ fn render_field_type(decl: &RenderKindDecl, field: &str) -> Option<Type> {
 
 fn builtin_render_field_type(field: &str) -> Option<Type> {
     match field {
-        "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity" | "hue"
-        | "active" => Some(Type::Num),
+        "x" | "y" | "theta" | "scale" | "alpha" | "hue" | "active" => Some(Type::Num),
         "shape" => Some(Type::Unknown),
-        "points" | "pts" => Some(Type::Array(Box::new(Type::Pose))),
+        "points" => Some(Type::Array(Box::new(Type::Pose))),
         _ => None,
     }
 }

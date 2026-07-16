@@ -340,14 +340,12 @@ pub(crate) struct RenderRowFields {
     x: Option<Val>,
     y: Option<Val>,
     theta: Option<Val>,
-    facing: Option<Val>,
     scale: Option<Val>,
     alpha: Option<Val>,
-    opacity: Option<Val>,
     hue: Option<Val>,
     points: Option<Val>,
-    pts: Option<Val>,
     active: Option<Val>,
+    retired_alias: Option<(&'static str, &'static str)>,
     extras: Vec<(Rc<str>, Val)>,
 }
 
@@ -405,15 +403,21 @@ impl RenderRowFields {
             RenderKey::X => set_first(&mut self.x, value),
             RenderKey::Y => set_first(&mut self.y, value),
             RenderKey::Theta => set_first(&mut self.theta, value),
-            RenderKey::Facing => set_first(&mut self.facing, value),
+            RenderKey::Facing => self.set_retired_alias(":facing", ":theta"),
             RenderKey::Scale => set_first(&mut self.scale, value),
             RenderKey::Alpha => set_first(&mut self.alpha, value),
-            RenderKey::Opacity => set_first(&mut self.opacity, value),
+            RenderKey::Opacity => self.set_retired_alias(":opacity", ":alpha"),
             RenderKey::Hue => set_first(&mut self.hue, value),
             RenderKey::Points => set_first(&mut self.points, value),
-            RenderKey::Pts => set_first(&mut self.pts, value),
+            RenderKey::Pts => self.set_retired_alias(":pts", ":points"),
             RenderKey::Active => set_first(&mut self.active, value),
             RenderKey::Extra => self.extras.push((key.clone(), value)),
+        }
+    }
+
+    fn set_retired_alias(&mut self, alias: &'static str, canonical: &'static str) {
+        if self.retired_alias.is_none() {
+            self.retired_alias = Some((alias, canonical));
         }
     }
 
@@ -431,6 +435,9 @@ impl RenderRowFields {
         sig: &SigEnv,
         checked: Option<&mut Vec<(Rc<str>, RenderFieldKind)>>,
     ) -> Result<RenderRow, String> {
+        if let Some((alias, canonical)) = self.retired_alias {
+            return Err(format!("render: removed field {alias}; use {canonical}"));
+        }
         let row_kind = match self.kind {
             None => Rc::from("default"),
             Some(Val::Kw(kind)) => kind,
@@ -450,15 +457,15 @@ impl RenderRowFields {
             "point" | "dot" => RenderData::Point {
                 x: self.x.map(|v| v.num()).transpose()?.unwrap_or(0.0),
                 y: self.y.map(|v| v.num()).transpose()?.unwrap_or(0.0),
-                theta: self.theta.or(self.facing).map(|v| v.num()).transpose()?.unwrap_or(0.0),
+                theta: self.theta.map(|v| v.num()).transpose()?.unwrap_or(0.0),
                 scale: self.scale.map(|v| v.num()).transpose()?.unwrap_or(1.0),
-                alpha: self.alpha.or(self.opacity).map(|v| v.num()).transpose()?.unwrap_or(1.0),
+                alpha: self.alpha.map(|v| v.num()).transpose()?.unwrap_or(1.0),
                 hue: self.hue.map(|v| v.num()).transpose()?.unwrap_or(0.0),
             },
             "polyline" => {
                 let points = match &shape_value {
                     Val::CurveSamples(samples) => sample_curve_shape(samples, world, sig)?,
-                    _ => match self.points.or(self.pts) {
+                    _ => match self.points {
                         Some(Val::Arr(items)) => items
                             .iter()
                             .cloned()

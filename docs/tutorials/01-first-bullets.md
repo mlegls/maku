@@ -12,7 +12,10 @@ cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tu
 
 The examples import `"touhou"` for its bullet templates: `bullet`
 wraps the bare `spawn` primitive with the hostile-bullet defaults.
-The old `spawn-*` macro names remain as aliases.
+Use the canonical `bullet`, `shot`, `enemy`, `boss`, and `player` templates.
+<!-- compatibility-migration -->
+Pre-release `spawn-bullet` and related `spawn-*` aliases are no longer part of
+the library API.
 
 ```clojure
 (import "touhou")

@@ -1,0 +1,107 @@
+# Pre-0.1 compatibility audit. `disposition = "remove"` entries are enforced
+# by scripts/check-compatibility.sh; retained entries name canonical semantics
+# whose implementation happens to include migration-era backing.
+
+[[form]]
+name = "value-or"
+kind = "source-alias"
+canonical = "default"
+disposition = "remove"
+definition = "crates/core/lib/prelude.maku"
+migration = "Replace (value-or x fallback) with (default x fallback)."
+
+[[form]]
+name = "spawn-bullet"
+kind = "library-alias"
+canonical = "bullet"
+disposition = "remove"
+definition = "crates/core/lib/touhou.maku"
+migration = "Replace spawn-bullet with bullet."
+
+[[form]]
+name = "spawn-shot"
+kind = "library-alias"
+canonical = "shot"
+disposition = "remove"
+definition = "crates/core/lib/touhou.maku"
+migration = "Replace spawn-shot with shot."
+
+[[form]]
+name = "spawn-enemy"
+kind = "library-alias"
+canonical = "enemy"
+disposition = "remove"
+definition = "crates/core/lib/touhou.maku"
+migration = "Replace spawn-enemy with enemy."
+
+[[form]]
+name = "spawn-boss"
+kind = "library-alias"
+canonical = "boss"
+disposition = "remove"
+definition = "crates/core/lib/touhou.maku"
+migration = "Replace spawn-boss with boss."
+
+[[form]]
+name = "spawn-player"
+kind = "library-alias"
+canonical = "player"
+disposition = "remove"
+definition = "crates/core/lib/touhou.maku"
+migration = "Replace spawn-player with player."
+
+[[form]]
+name = "direct-render-facing"
+kind = "render-row-alias"
+canonical = ":theta"
+disposition = "remove"
+definition = "crates/core/src/interp/engine.rs"
+migration = "Use :theta in direct render rows; :facing remains valid entity metadata translated by the Touhou library."
+
+[[form]]
+name = "direct-render-opacity"
+kind = "render-row-alias"
+canonical = ":alpha"
+disposition = "remove"
+definition = "crates/core/src/interp/engine.rs"
+migration = "Use :alpha in direct render rows; :opacity remains valid entity metadata translated by the Touhou library."
+
+[[form]]
+name = "direct-render-pts"
+kind = "render-row-alias"
+canonical = ":points"
+disposition = "remove"
+definition = "crates/core/src/interp/engine.rs"
+migration = "Use :points in direct polyline render rows."
+
+[[form]]
+name = "pather-trace-cache"
+kind = "implementation-backing"
+canonical = "pather"
+disposition = "retain"
+definition = "crates/core/src/interp/world.rs"
+migration = "None; trace retention is required by canonical pather rendering and collision semantics."
+
+[[form]]
+name = "motion-state-fallback"
+kind = "implementation-backing"
+canonical = "stateful motion evaluation"
+disposition = "retain"
+definition = "crates/core/src/interp/motion.rs"
+migration = "Retain until direct and dense motion entry points have migrated and remain differentially equivalent."
+
+[[form]]
+name = "prelude-import-idempotence"
+kind = "language-infrastructure"
+canonical = "implicit/explicit prelude import"
+disposition = "retain"
+definition = "crates/core/src/edn.rs"
+migration = "None; include-once and re-expansion idempotence are canonical behavior."
+
+[[form]]
+name = "unscoped-projector-context-rejection"
+kind = "language-guardrail"
+canonical = "bound defcollider entity/context parameters"
+disposition = "retain"
+definition = "crates/core/src/interp/projectors.rs"
+migration = "Move entity/context reads inside a declared projector scope."

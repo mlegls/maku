@@ -2,8 +2,8 @@ const FORM_WORDS = new Set([
   'def', 'defn', 'defmacro', 'defpattern', 'defcell', 'defchannel',
   'bind-channel!', 'export', 'import', 'fn', 'let', 'if', 'when', 'unless',
   'seq', 'par', 'fork', 'finally', 'wait', 'wait-for', 'until', 'race',
-  'states', 'goto', 'phases', 'spawn', 'spawn-bullet', 'spawn-shot',
-  'spawn-enemy', 'spawn-boss', 'dotimes', 'for', 'move', 'pose', 'linear',
+  'states', 'goto', 'phases', 'spawn', 'bullet', 'shot',
+  'enemy', 'boss', 'dotimes', 'for', 'move', 'pose', 'linear',
   'circle', 'polar', 'rot', 'aim', 'style', 'collider', 'contact',
 ]);
 

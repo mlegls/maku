@@ -187,7 +187,6 @@
            :damage ~(damage-value* metas 1)
            :hitbox ~(primary-hitbox-radius* metas 0.12)}
           ~@metas))
-(defmacro spawn-bullet [dyn & metas] `(bullet ~dyn ~@metas))
 
 ;; hostile beam spawn: the laser-ness (colliders, beam look, lifecycle
 ;; fields) lives at the spawn boundary; the figure inside is a plain curve.
@@ -214,7 +213,6 @@
           {:render :touhou-sprite
            :team :player :damage ~(damage-value* metas 1)}
           ~@metas))
-(defmacro spawn-shot [dyn & metas] `(shot ~dyn ~@metas))
 
 ;; enemy: shootable, one hp unless told otherwise, dies at zero
 (defmacro enemy [dyn & metas]
@@ -223,7 +221,6 @@
           {:render :touhou-sprite
            :team :enemy :hp 1}
           ~@metas))
-(defmacro spawn-enemy [dyn & metas] `(enemy ~dyn ~@metas))
 
 (defn hp-of [b] (default (:hp b) 0))
 
@@ -251,7 +248,6 @@
            ;; the machine fires from wherever the boss is NOW — the anchor
            ;; is the live entity, so :root moves carry the fire with them
            (in-frame boss-main (seq ~@machine)))))))
-(defmacro spawn-boss [chan dyn meta & machine] `(boss ~chan ~dyn ~meta ~@machine))
 
 ;; ---------------------------------------------------------------------
 ;; Contacts are card code. The engine now detects overlaps between opaque
@@ -303,7 +299,6 @@
      (let [player-main (nth player 0)]
        (seq
          (bind! $player (:pos player-main))))))
-(defmacro spawn-player [dyn & metas] `(player ~dyn ~@metas))
 
 (defn touhou-player-motion [speed focus_speed]
   (clamp c[-3.8 -4.4] c[3.8 4.4]

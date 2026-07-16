@@ -1422,8 +1422,8 @@ impl World {
                 fields.insert(field, *field_kind);
             }
             let cols = decl.fields.iter().filter(|(name, _)| !matches!(name.as_ref(),
-                "x" | "y" | "theta" | "facing" | "scale" | "alpha" | "opacity"
-                | "hue" | "points" | "pts" | "active" | "shape" | "kind"))
+                "x" | "y" | "theta" | "scale" | "alpha" | "hue" | "points"
+                | "active" | "shape" | "kind"))
                 .cloned().collect();
             let schema = Rc::new(crate::model::RenderSchema { cols });
             if let Some((geometry, prior)) = self.declared_render_schemas.get(&kind) {

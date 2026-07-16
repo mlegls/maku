@@ -50,7 +50,7 @@ export const TUTORIALS = [
   },
   {
     title: '06 Bosses',
-    detail: 'states, phases, spawn-boss',
+    detail: 'states, phases, boss',
     path: 'cards/tutorials/t06.maku',
     doc: 'docs/tutorials/06-bosses.md',
   },

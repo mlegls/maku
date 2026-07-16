@@ -57,8 +57,6 @@
 ;; falsy (0 included), `default` only on missing. The engine recognizes
 ;; the inlined shape as the %value-or intrinsic.
 (defn default [x d] (if (nothing? x) d x))
-;; compat alias (same body so it hits the same intrinsic)
-(defn value-or [x d] (if (nothing? x) d x))
 (defn set-col [e col v] (change-col e col (fn [_] v)))
 
 (defn rand-int [a b] (floor (rand a b)))

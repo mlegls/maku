@@ -66,7 +66,7 @@
         assert_eq!(a.syms, b.syms);
     }
 
-    fn eval_with_card(card_src: &str, expr_src: &str) -> Val {
+    fn eval_result_with_card(card_src: &str, expr_src: &str) -> Result<Val, String> {
         let expanded = crate::edn::expand_src(card_src).unwrap();
         let forms = crate::edn::read_all(&expanded).unwrap();
         let card = load_card(&forms).unwrap();
@@ -75,7 +75,11 @@
         ctx.patterns = Rc::new(card.patterns.clone());
         ctx.macros = Rc::new(card.macros.clone());
         let expr = crate::edn::read_one(expr_src).unwrap();
-        evaluate(&expr, &Env::empty(), &mut ctx, &mut World::default()).unwrap()
+        evaluate(&expr, &Env::empty(), &mut ctx, &mut World::default())
+    }
+
+    fn eval_with_card(card_src: &str, expr_src: &str) -> Val {
+        eval_result_with_card(card_src, expr_src).unwrap()
     }
 
     fn loaded_def(card_src: &str, name: &str) -> Form {
@@ -100,13 +104,32 @@
     }
 
     #[test]
-    fn rewrite_value_or_call_preserves_results() {
-        let card = "(defn use-value-or [x d] (value-or x d))";
-        let rewritten = loaded_def(card, "use-value-or");
+    fn removed_compatibility_names_report_canonical_replacements() {
+        let retired = [
+            ("value-or", "default"), // compatibility-rejection
+            ("spawn-bullet", "bullet"), // compatibility-rejection
+            ("spawn-shot", "shot"), // compatibility-rejection
+            ("spawn-enemy", "enemy"), // compatibility-rejection
+            ("spawn-boss", "boss"), // compatibility-rejection
+            ("spawn-player", "player"), // compatibility-rejection
+        ];
+        for (name, replacement) in retired {
+            let error = eval_result_with_card("", &format!("({name})")).unwrap_err();
+            assert_eq!(
+                error,
+                format!("removed compatibility name '{name}'; use '{replacement}'")
+            );
+        }
+    }
+
+    #[test]
+    fn rewrite_default_call_preserves_results() {
+        let card = "(defn use-default [x d] (default x d))";
+        let rewritten = loaded_def(card, "use-default");
         assert!(form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "not rewritten: {}", rewritten);
 
-        assert!(matches!(eval_with_card(card, "(use-value-or (channel $missing) 7)"), Val::Num(n) if n == 7.0));
-        assert!(matches!(eval_with_card(card, "(use-value-or 3 7)"), Val::Num(n) if n == 3.0));
+        assert!(matches!(eval_with_card(card, "(use-default (channel $missing) 7)"), Val::Num(n) if n == 7.0));
+        assert!(matches!(eval_with_card(card, "(use-default 3 7)"), Val::Num(n) if n == 3.0));
     }
 
     #[test]
@@ -151,10 +174,10 @@
         assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "shadowed nothing? rewritten: {}", rewritten);
         assert!(matches!(eval_with_card(shadow_nothing, "(shadow-nothing (channel $missing))"), Val::Nothing));
 
-        let shadow_value_or = "(defn shadow-value-or []\n  (let [value-or (fn [x d] d)] (value-or 3 9)))";
-        let rewritten = loaded_def(shadow_value_or, "shadow-value-or");
-        assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "shadowed value-or inlined: {}", rewritten);
-        assert!(matches!(eval_with_card(shadow_value_or, "(shadow-value-or)"), Val::Num(n) if n == 9.0));
+        let shadow_default = "(defn shadow-default []\n  (let [default (fn [x d] d)] (default 3 9)))";
+        let rewritten = loaded_def(shadow_default, "shadow-default");
+        assert!(!form_contains_head(&rewritten, VALUE_OR_INTRINSIC), "shadowed default inlined: {}", rewritten);
+        assert!(matches!(eval_with_card(shadow_default, "(shadow-default)"), Val::Num(n) if n == 9.0));
 
         let top_level_nothing = "(defn nothing? [x] 0)\n(defn top-level [x] (if (nothing? x) 1 x))";
         let rewritten = loaded_def(top_level_nothing, "top-level");
@@ -1209,10 +1232,10 @@
          (let [p (:pos e)]
            (render {:shape :point
                     :x (:x p) :y (:y p)
-                    :theta (value-or e.facing (:th p))
-                    :scale (value-or e.scale 1)
-                    :alpha (value-or e.opacity 1)
-                    :hue (value-or e.hue 0)
+                    :theta (default e.facing (:th p))
+                    :scale (default e.scale 1)
+                    :alpha (default e.opacity 1)
+                    :hue (default e.hue 0)
                     :family e.family :color e.color :variant e.variant})))
        (entities-where (fn [e] (* (= e.render :sprite) (= e.kind :point))))))
 (defpattern p []
@@ -1242,7 +1265,7 @@
          (let [p (:pos e)]
            (emit :render {:kind :bullet :shape :point
                           :x (:x p) :y (:y p) :theta (:th p)
-                          :scale (value-or (:size e) 1)
+                          :scale (default (:size e) 1)
                           :family :orb :color (:color e)})))
        (entities-where (fn [e] (= e.render :sprite)))))
 (defpattern p [] (spawn (pose c[1 2]) {:render :sprite :color :red :size 2}))
@@ -1333,7 +1356,7 @@
   (map (fn [e]
          (let [p (:pos e)]
            (emit :render {:shape :point :x (:x p) :y (:y p)
-                          :scale (value-or (:size e) 1)
+                          :scale (default (:size e) 1)
                           :color (:color e)})))
        (entities-where (fn [e] (= e.render :sprite)))))
 "#;
@@ -1385,7 +1408,7 @@
         const CARD: &str = r#"
 (deftick
   (map (fn [e] (cull e))
-       (entities-where (fn [e] (* (= e.team :enemy) (<= (value-or e.hp 1) 0))))))
+       (entities-where (fn [e] (* (= e.team :enemy) (<= (default e.hp 1) 0))))))
 (defpattern p []
   (par
     (spawn (pose c[0 0]) {:team :enemy :hp 0})
@@ -1538,7 +1561,7 @@
         const CARD: &str = r#"
 (deftick
   (map (fn [e]
-         (emit :render {:shape :point :tag (value-or (:tag e) 5)}))
+         (emit :render {:shape :point :tag (default (:tag e) 5)}))
        (entities-where (fn [e] (= e.render :sprite)))))
 (defpattern p [] (spawn (pose c[0 0]) {:render :sprite :tag :kept}))
 "#;
@@ -1557,7 +1580,7 @@
            (emit :render {:kind :bullets :shape :point
                           :x (:x p)
                           :y (:y p)
-                          :scale (value-or (:size e) 1)
+                          :scale (default (:size e) 1)
                           :color (:color e)
                           :tag (:tag e)})))
        (entities-where (fn [e] (= e.render :sprite)))))
@@ -1632,10 +1655,10 @@
            (emit :render {:shape :point
                     :x (:x p)
                     :y (:y p)
-                    :theta (value-or e.facing (:th p))
-                    :scale (value-or e.scale 1)
-                    :alpha (value-or e.opacity 1)
-                    :hue (value-or e.hue 0)
+                    :theta (default e.facing (:th p))
+                    :scale (default e.scale 1)
+                    :alpha (default e.opacity 1)
+                    :hue (default e.hue 0)
                     :family e.family
                     :color e.color
                     :variant e.variant})))
@@ -1667,7 +1690,7 @@
         const CARD: &str = r#"
 (deftick
   (map (fn [e] (cull e))
-       (entities-where (fn [e] (<= (value-or (:hp e) 1) 0)))))
+       (entities-where (fn [e] (<= (default (:hp e) 1) 0)))))
 (defpattern p [] (spawn (pose c[0 0]) {:hp :full}))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
@@ -1680,7 +1703,7 @@
         const CARD: &str = r#"
 (deftick
   (map (fn [e] (cull e))
-       (entities-where (fn [e] (<= (value-or (:hp e) 1) 0)))))
+       (entities-where (fn [e] (<= (default (:hp e) 1) 0)))))
 (defpattern p []
   (par
     (spawn (pose c[0 0]) {:hp 0})
@@ -1701,7 +1724,7 @@
         const CARD: &str = r#"
 (deftick
   (map (fn [e] (cull e))
-       (entities-where (fn [e] (= (+ (value-or (:hp e) 0) 0) 0)))))
+       (entities-where (fn [e] (= (+ (default (:hp e) 0) 0) 0)))))
 (defpattern p []
   (par
     (spawn (pose c[0 0]) {:hp 0.0000000005})
@@ -1720,7 +1743,7 @@
         const CARD: &str = r#"
 (deftick
   (map (fn [e] (emit :render {:shape :point :x 1}))
-       (entities-where (fn [e] (> (value-or (:size e) 0) 10)))))
+       (entities-where (fn [e] (> (default (:size e) 0) 10)))))
 (defpattern p []
   (par
     (spawn (pose c[0 0]) {:size 50})
@@ -1793,28 +1816,21 @@
     }
 
     #[test]
-    fn literal_render_map_alias_precedence() {
-        const FACING: &str = r#"
-(deftick (render {:shape :point :facing 45}))
-(defpattern p [] (wait 1))
-"#;
-        let mut sim = Sim::load(FACING, Some("p")).unwrap();
-        sim.step().unwrap();
-        let RenderData::Point { theta, .. } = sim.render()[0].data else {
-            panic!("render should emit one point row");
-        };
-        assert!((theta - 45.0).abs() < 1e-9, "theta: {theta}");
-
-        const THETA_WINS: &str = r#"
-(deftick (render {:shape :point :facing 45 :theta 90}))
-(defpattern p [] (wait 1))
-"#;
-        let mut sim = Sim::load(THETA_WINS, Some("p")).unwrap();
-        sim.step().unwrap();
-        let RenderData::Point { theta, .. } = sim.render()[0].data else {
-            panic!("render should emit one point row");
-        };
-        assert!((theta - 90.0).abs() < 1e-9, "theta: {theta}");
+    fn direct_render_map_aliases_report_canonical_fields() {
+        let cases = [
+            ("(deftick (render {:shape :point :facing 45}))", ":facing", ":theta"),
+            ("(deftick (render {:shape :point :opacity 0.5}))", ":opacity", ":alpha"),
+            ("(deftick (render {:shape :polyline :pts [c[0 0] c[1 1]]}))", ":pts", ":points"),
+        ];
+        for (rule, alias, canonical) in cases {
+            let card = format!("{rule}\n(defpattern p [] (wait 1))");
+            let mut sim = Sim::load(&card, Some("p")).unwrap();
+            let error = sim.step().unwrap_err();
+            assert!(
+                error.contains(&format!("removed field {alias}; use {canonical}")),
+                "{alias}: {error}"
+            );
+        }
     }
 
     #[test]
@@ -3101,7 +3117,7 @@
     (seq
       (export! $phase)
       (let [target (enemy (pose c[0 2]) {:hp 2 :hitbox 0.3})]
-        (bind! $target-hp (value-or (:hp (nth target 0)) 0)))
+        (bind! $target-hp (default (:hp (nth target 0)) 0)))
       (shot (in-frame (pose c[0 0]) (vel c[0 4])) {:damage 1})
       (wait-for (<= $target-hp 1))
       (set! $phase 2)
@@ -4319,7 +4335,7 @@
   (let [bs (spawn (pose c[0 0]) {:hp 10})]
     (let [b (first bs)]
       (seq
-        (change-col b :hp (fn [hp] (- (value-or hp 0) 3)))
+        (change-col b :hp (fn [hp] (- (default hp 0) 3)))
         (change-col b :hp (fn [hp] (- hp 4)))))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
@@ -4787,7 +4803,7 @@ fn prelude_and_or_short_circuit() {
 ;; presence semantics: keywords are truthy, so or defaults sym reads
 (defchannel $kw (if (or (get {:a 1} :missing) 0) 1 0))
 (defchannel $kwor (if (or :red 0) 1 0))
-;; default (nee value-or) is nothing-coalescing: 0 passes through
+;; default (nee default) is nothing-coalescing: 0 passes through
 (defchannel $zero (default 0 9))
 (defchannel $missing (default (get {:a 1} :missing) 9))
 (defpattern p [] (spawn (pose c[0 0]) {:tag :x}))

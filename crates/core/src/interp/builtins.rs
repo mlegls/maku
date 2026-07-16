@@ -208,5 +208,11 @@ pub(crate) fn builtin_with_tick_rate(name: &str, args: &[Val], tick_rate: f64) -
     if let Some(r) = language::builtin(name, args)? {
         return Ok(r);
     }
+    if let Some(replacement) = super::retired_name_replacement(name) {
+        return Err(format!(
+            "removed compatibility name '{}'; use '{}'",
+            name, replacement
+        ));
+    }
     Err(format!("unknown function '{}'", name))
 }

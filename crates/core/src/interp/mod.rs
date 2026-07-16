@@ -570,6 +570,18 @@ impl Default for Ctx {
 // ---------------------------------------------------------------------------
 // Expression evaluation.
 
+fn retired_name_replacement(name: &str) -> Option<&'static str> {
+    match name {
+        "value-or" => Some("default"), // compatibility-rejection
+        "spawn-bullet" => Some("bullet"), // compatibility-rejection
+        "spawn-shot" => Some("shot"), // compatibility-rejection
+        "spawn-enemy" => Some("enemy"), // compatibility-rejection
+        "spawn-boss" => Some("boss"), // compatibility-rejection
+        "spawn-player" => Some("player"), // compatibility-rejection
+        _ => None,
+    }
+}
+
 pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Result<Val, String> {
     match form {
         Form::Num(n) => Ok(Val::Num(*n)),
@@ -618,6 +630,12 @@ pub fn evaluate(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Res
                 }
                 if is_builtin(name) {
                     return Ok(Val::Builtin(s.clone()));
+                }
+                if let Some(replacement) = retired_name_replacement(name) {
+                    return Err(format!(
+                        "removed compatibility name '{}'; use '{}'",
+                        name, replacement
+                    ));
                 }
                 Err(format!("unresolved symbol '{}'", name))
             }
@@ -4716,7 +4734,7 @@ mod tests {
     fn row_predicate_recognizes_numeric_comparisons() {
         fn intrinsic(form: &Form) -> Form {
             match form {
-                Form::Sym(name) if name.as_ref() == "value-or" => Form::sym("%value-or"),
+                Form::Sym(name) if name.as_ref() == "default" => Form::sym("%value-or"),
                 Form::List(items) => Form::List(items.iter().map(intrinsic).collect()),
                 Form::Vector(items) => Form::Vector(items.iter().map(intrinsic).collect()),
                 other => other.clone(),
@@ -4724,10 +4742,10 @@ mod tests {
         }
         let ctx = Ctx::default();
         for src in [
-            "(fn [e] (* (= e.team :enemy) (<= (value-or (:hp e) 1) 0)))",
-            "(fn [e] (* (= e.team :player-body) (<= (value-or (:lives e) 1) 0) (< (value-or (:game-over-fired e) 0) 1)))",
-            "(fn [e] (* (= e.kind :curve) (> (:t e) (+ (value-or (:warn e) 0) (value-or (:active e) inf)))))",
-            "(fn [e] (= (value-or (:hp e) 0) 1))",
+            "(fn [e] (* (= e.team :enemy) (<= (default (:hp e) 1) 0)))",
+            "(fn [e] (* (= e.team :player-body) (<= (default (:lives e) 1) 0) (< (default (:game-over-fired e) 0) 1)))",
+            "(fn [e] (* (= e.kind :curve) (> (:t e) (+ (default (:warn e) 0) (default (:active e) inf)))))",
+            "(fn [e] (= (default (:hp e) 0) 1))",
         ] {
             let form = intrinsic(&read_one(src).unwrap());
             let q = evaluate(&form, &Env::empty(), &mut Ctx::default(), &mut World::default()).unwrap();
@@ -4739,7 +4757,7 @@ mod tests {
     fn row_predicate_lowers_to_typed_callback_free_filter_plan() {
         fn intrinsic(form: &Form) -> Form {
             match form {
-                Form::Sym(name) if name.as_ref() == "value-or" => Form::sym("%value-or"),
+                Form::Sym(name) if name.as_ref() == "default" => Form::sym("%value-or"),
                 Form::List(items) => Form::List(items.iter().map(intrinsic).collect()),
                 Form::Vector(items) => Form::Vector(items.iter().map(intrinsic).collect()),
                 other => other.clone(),
@@ -4748,7 +4766,7 @@ mod tests {
         let ctx = Ctx::default();
         let mut world = World::default();
         let form = intrinsic(&read_one(
-            "(fn [e] (* (= e.kind :point) (= e.team :enemy) (= (+ (value-or (:hp e) 0) 1) 2)))",
+            "(fn [e] (* (= e.kind :point) (= e.team :enemy) (= (+ (default (:hp e) 0) 1) 2)))",
         ).unwrap());
         let query = evaluate(
             &form,

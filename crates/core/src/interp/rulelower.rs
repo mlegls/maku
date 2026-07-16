@@ -737,10 +737,8 @@ pub(crate) fn render_projection_plan(
     let mut x = None;
     let mut y = None;
     let mut theta = None;
-    let mut facing = None;
     let mut scale = None;
     let mut alpha = None;
-    let mut opacity = None;
     let mut hue = None;
     let mut extras = Vec::new();
     let set_first = |slot: &mut Option<usize>, index| {
@@ -755,13 +753,12 @@ pub(crate) fn render_projection_plan(
             RenderKey::X => set_first(&mut x, index),
             RenderKey::Y => set_first(&mut y, index),
             RenderKey::Theta => set_first(&mut theta, index),
-            RenderKey::Facing => set_first(&mut facing, index),
             RenderKey::Scale => set_first(&mut scale, index),
             RenderKey::Alpha => set_first(&mut alpha, index),
-            RenderKey::Opacity => set_first(&mut opacity, index),
             RenderKey::Hue => set_first(&mut hue, index),
-            // Variable-size geometry stays on the semantic render path.
-            RenderKey::Points | RenderKey::Pts | RenderKey::Active => return None,
+            // Retired aliases and variable-size geometry stay on the semantic
+            // path, where aliases produce their migration diagnostic.
+            RenderKey::Facing | RenderKey::Opacity | RenderKey::Points | RenderKey::Pts | RenderKey::Active => return None,
             RenderKey::Extra => extras.push(index),
         }
     }
@@ -786,9 +783,9 @@ pub(crate) fn render_projection_plan(
     let geometry_values = [
         (x, 0.0),
         (y, 0.0),
-        (theta.or(facing), 0.0),
+        (theta, 0.0),
         (scale, 1.0),
-        (alpha.or(opacity), 1.0),
+        (alpha, 1.0),
         (hue, 0.0),
     ];
     let mut builder = RenderProjectionBuilder::default();

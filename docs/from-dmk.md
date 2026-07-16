@@ -12,7 +12,10 @@ decode notes.
 
 ## Firing (Tutorial 1)
 
-The old `spawn-*` macro names remain as aliases.
+<!-- compatibility-migration -->
+Pre-release `spawn-bullet`, `spawn-shot`, `spawn-enemy`, `spawn-boss`, and
+`spawn-player` spellings were removed. Use `bullet`, `shot`, `enemy`, `boss`,
+and `player`.
 
 | DMK | here |
 |---|---|

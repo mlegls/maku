@@ -14,6 +14,7 @@ esac
 run_fast() {
   scripts/check-source-tree.sh
   scripts/check-stdlib-assets.sh
+  bun scripts/check-compatibility.mjs
   cargo test --workspace --all-targets --manifest-path crates/Cargo.toml
   cargo check --workspace --target wasm32-unknown-unknown --manifest-path crates/Cargo.toml
   (cd crates/js/maku && bun run check)
