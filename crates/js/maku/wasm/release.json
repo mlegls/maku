@@ -63,20 +63,24 @@
       "sha256": "e4d8b30cd765ebedbecadfbfbe5fb92ecea31e941a624957d3cf4a01e9e08c17"
     },
     "crates/web/static/maku-highlight.js": {
-      "bytes": 4859,
-      "sha256": "0f8b4a95cdc24a1e4950f3be0807051c96933290b4aca564da9f568c00acdc70"
+      "bytes": 4936,
+      "sha256": "369158c7e5dc7382a5d22ec02cbd4ecccbda821344f3d2fc6de3fc7a02304abb"
     },
     "crates/web/static/maku-codemirror.js": {
-      "bytes": 735748,
-      "sha256": "c6517ee416629e3c2e018ebd01386a4e7970efa287c2d1beef04f0d95747fbb0"
+      "bytes": 735837,
+      "sha256": "508be96982e06039e2ace37142f051fefea8725d32545af4796661541b584e08"
     },
     "crates/web/release-sync.json": {
-      "bytes": 5031,
-      "sha256": "0b6484019716fa29f7582648b44b767685799906bee0d989657acdcdcb0c2d54"
+      "bytes": 5344,
+      "sha256": "1ce2ad197cac8032ed503284b082c5722314ed30716e746022684f100b41e64a"
     },
     "crates/js/maku/package.json": {
       "bytes": 798,
       "sha256": "4f0d2342774cb900491d858588b43f3cf21b4b05161fc8fb6cfea5868fcb7ecc"
+    },
+    "crates/js/maku/README.md": {
+      "bytes": 1602,
+      "sha256": "949b6f9df493837d0b52abe254369a8d34448aa6e7f3ef7c76814f84b5c6494a"
     },
     "crates/js/maku/wasm/maku.js": {
       "bytes": 26588,
@@ -93,6 +97,10 @@
     "crates/js/maku/wasm/maku_bg.wasm.d.ts": {
       "bytes": 4687,
       "sha256": "bbb12a374b53d4f723c6baa64eadca34bfcff7413b20c8c3605680e0d439a509"
+    },
+    "crates/js/maku/wasm/README.md": {
+      "bytes": 680,
+      "sha256": "9fd02a3af8c876b327abf7ce45daf4a49a383c3c65c0209533bd1ae8bdbeec19"
     },
     "crates/core/lib/prelude.maku": {
       "bytes": 6806,

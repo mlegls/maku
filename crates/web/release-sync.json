@@ -10,7 +10,9 @@
   ],
   "files": [
     { "source": "crates/web/static/canvas-renderer.js", "target": "canvas-renderer.js", "role": "runtime" },
+    { "source": "crates/web/static/maku-highlight.js", "target": "maku-highlight.js", "role": "runtime" },
     { "source": "crates/js/maku/package.json", "target": "pkg/package.json", "role": "runtime" },
+    { "source": "crates/js/maku/README.md", "target": "pkg/README.md", "role": "documentation" },
     { "source": "crates/js/maku/dist/index.js", "target": "pkg/dist/index.js", "role": "runtime" },
     { "source": "crates/js/maku/dist/index.d.ts", "target": "pkg/dist/index.d.ts", "role": "runtime" },
     { "source": "crates/js/maku/wasm/maku.js", "target": "pkg/wasm/maku.js", "role": "runtime" },
@@ -18,6 +20,7 @@
     { "source": "crates/js/maku/wasm/maku_bg.wasm", "target": "pkg/wasm/maku_bg.wasm", "role": "runtime" },
     { "source": "crates/js/maku/wasm/maku_bg.wasm.d.ts", "target": "pkg/wasm/maku_bg.wasm.d.ts", "role": "runtime" },
     { "source": "crates/js/maku/wasm/release.json", "target": "pkg/wasm/release.json", "role": "identity" },
+    { "source": "crates/js/maku/wasm/README.md", "target": "pkg/wasm/README.md", "role": "documentation" },
 
     { "source": "crates/core/lib/prelude.maku", "target": "cards/lib/prelude.maku", "role": "library" },
     { "source": "crates/core/lib/touhou.maku", "target": "cards/lib/touhou.maku", "role": "library" },
