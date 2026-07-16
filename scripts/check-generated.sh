@@ -5,6 +5,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 crates/web/build.sh
+bun scripts/check-web-release.mjs
 
 tracked='crates/js/maku/dist crates/js/maku/wasm crates/web/static/maku-codemirror.js'
 # shellcheck disable=SC2086

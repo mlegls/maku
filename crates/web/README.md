@@ -29,9 +29,11 @@ Holding a JavaScript typed-array view does not pin wasm memory.
 
 ## Renderer ownership
 
-The bundled `static/main.js` frontend is a **Canvas2D compatibility adapter**.
-It consumes the same ordered command and material/resource manifest as other
-hosts. It is not a WebGPU implementation or an engine-throughput benchmark.
+The reusable `static/canvas-renderer.js` module is a **Canvas2D compatibility
+adapter** over the ordered frame ABI. `static/main.js` supplies page UI, input,
+and card-selection policy through that narrow adapter. Canvas2D consumes the
+same command and material/resource manifest as other hosts; it is not a WebGPU
+implementation or an engine-throughput benchmark.
 
 A WebGPU host can map the fixed records to vertex/index layouts, but must copy
 used wasm ranges into host-owned GPU buffers, create textures/samplers/pipelines,

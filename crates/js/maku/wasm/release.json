@@ -1,8 +1,234 @@
 {
   "maku_version": "0.1.0",
+  "render_pack_version": "0.1.0",
+  "web_host_version": "0.1.0",
+  "npm_package": "@mlegls/maku",
+  "npm_version": "0.1.0",
   "frame_abi_version": 1,
   "source_revision": "development",
   "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
   "wasm_pack": "wasm-pack 0.15.0",
-  "bun": "1.3.14"
+  "bun": "1.3.14",
+  "artifacts": {
+    "crates/web/static/pkg/maku_bg.wasm": {
+      "bytes": 1580509,
+      "sha256": "575af8ef81928821869bf5bd970d6f962b5b2da015e0d1a048170622a82caade"
+    },
+    "crates/web/static/pkg/maku.js": {
+      "bytes": 26588,
+      "sha256": "e29c316ac56265e847f643ccc888f4776e84586e98d0e3e1f6e65e208c6c2c28"
+    },
+    "crates/web/static/pkg/maku.d.ts": {
+      "bytes": 10202,
+      "sha256": "7856f25a7f5930ed645d58ef73bb9aac80446eeaea3cd82cedb91ea5066b0759"
+    },
+    "crates/web/static/pkg/maku_bg.wasm.d.ts": {
+      "bytes": 4687,
+      "sha256": "bbb12a374b53d4f723c6baa64eadca34bfcff7413b20c8c3605680e0d439a509"
+    },
+    "crates/js/maku/dist/index.js": {
+      "bytes": 1560,
+      "sha256": "8d244cc3a8c68e3b4f6a09ae27fe0fdf987e1c6ff4ce0e06ea4ce590e42ee914"
+    },
+    "crates/js/maku/dist/index.d.ts": {
+      "bytes": 939,
+      "sha256": "4615efae357d9d39c4514435875d61d4eba842a1ea352c34b26e8a89191f4483"
+    },
+    "crates/web/static/main.js": {
+      "bytes": 20639,
+      "sha256": "3fdc5e07e5a8f28cf4d5cd7ce6740ff35089bfea8b8130fe3b555d97886262e3"
+    },
+    "crates/web/static/canvas-renderer.js": {
+      "bytes": 9228,
+      "sha256": "f84476f10ccced04666fe9f41ee473f73bc06c8c5f7f6f4b7ef7f81f2f028321"
+    },
+    "crates/web/static/manifest.js": {
+      "bytes": 3252,
+      "sha256": "724d16278e54d4e2f82eac950759ed989d966f222f31c6ce650a2dfd60981a80"
+    },
+    "crates/web/static/index.html": {
+      "bytes": 11646,
+      "sha256": "f582f948405078225633725b12c8711cf62ff577528dee35c0a8cab735567f9e"
+    },
+    "crates/web/static/tutorials.html": {
+      "bytes": 3046,
+      "sha256": "5909d87364b10e9c09bb72fa5fa64c9341654ed0459c577b2e143ea375ced518"
+    },
+    "crates/web/static/reader.js": {
+      "bytes": 1318,
+      "sha256": "0378290e87ef94f4847a8242db2d5fca69cc50e9cf79d57f748abddb03c07e7a"
+    },
+    "crates/web/static/markdown.js": {
+      "bytes": 2755,
+      "sha256": "e4d8b30cd765ebedbecadfbfbe5fb92ecea31e941a624957d3cf4a01e9e08c17"
+    },
+    "crates/web/static/maku-highlight.js": {
+      "bytes": 4859,
+      "sha256": "0f8b4a95cdc24a1e4950f3be0807051c96933290b4aca564da9f568c00acdc70"
+    },
+    "crates/web/static/maku-codemirror.js": {
+      "bytes": 735748,
+      "sha256": "c6517ee416629e3c2e018ebd01386a4e7970efa287c2d1beef04f0d95747fbb0"
+    },
+    "crates/web/release-sync.json": {
+      "bytes": 5031,
+      "sha256": "0b6484019716fa29f7582648b44b767685799906bee0d989657acdcdcb0c2d54"
+    },
+    "crates/js/maku/package.json": {
+      "bytes": 798,
+      "sha256": "4f0d2342774cb900491d858588b43f3cf21b4b05161fc8fb6cfea5868fcb7ecc"
+    },
+    "crates/js/maku/wasm/maku.js": {
+      "bytes": 26588,
+      "sha256": "e29c316ac56265e847f643ccc888f4776e84586e98d0e3e1f6e65e208c6c2c28"
+    },
+    "crates/js/maku/wasm/maku.d.ts": {
+      "bytes": 10202,
+      "sha256": "7856f25a7f5930ed645d58ef73bb9aac80446eeaea3cd82cedb91ea5066b0759"
+    },
+    "crates/js/maku/wasm/maku_bg.wasm": {
+      "bytes": 1580509,
+      "sha256": "575af8ef81928821869bf5bd970d6f962b5b2da015e0d1a048170622a82caade"
+    },
+    "crates/js/maku/wasm/maku_bg.wasm.d.ts": {
+      "bytes": 4687,
+      "sha256": "bbb12a374b53d4f723c6baa64eadca34bfcff7413b20c8c3605680e0d439a509"
+    },
+    "crates/core/lib/prelude.maku": {
+      "bytes": 6806,
+      "sha256": "8ee987701c2c12808572163aedeb64a6d0c7119cc0ce1f45491c9beb2d0abfb8"
+    },
+    "crates/core/lib/touhou.maku": {
+      "bytes": 18492,
+      "sha256": "33525ea706d07db9f8f9a323f00f05760e5ec2c02f8753df8dacca21676295da"
+    },
+    "crates/core/lib/player-rig.maku": {
+      "bytes": 149,
+      "sha256": "c860094e449cfd6b187ced670d5c1baa8b4c760a59058bde83343435d689bd34"
+    },
+    "cards/render-pack-showcase.maku": {
+      "bytes": 1696,
+      "sha256": "b654cbf7fa844d04f3a0f8534c50cda572ab481fe9984317e7c58aaf5b827093"
+    },
+    "cards/reimu_vs_mima.maku": {
+      "bytes": 4559,
+      "sha256": "4c6c4942216a820b8d661c1c9c17b46f246f0ba5138d745c9dd6ae7c382965cc"
+    },
+    "cards/coop.maku": {
+      "bytes": 3237,
+      "sha256": "f653d2ebd549acb86bfe6c26e98639d0a6714f905957274b2ea64ccd8d4fecfb"
+    },
+    "cards/duel.maku": {
+      "bytes": 1345,
+      "sha256": "4e9b96519542f4465ff9d7bfb55a01cfe8ad6e9412791e67c2ff438c37786371"
+    },
+    "cards/translations/ph_boss2_spell2.maku": {
+      "bytes": 10470,
+      "sha256": "4a1f82ae55c594875cd3578b58a7a2b0a107af3abaaa8cf1e23ff67123badb7f"
+    },
+    "cards/translations/player_homing.maku": {
+      "bytes": 8207,
+      "sha256": "112ce0f44a374d7222fbf52fe488c84675aa6adf908fecb5fbb2544ab51e8d61"
+    },
+    "cards/translations/130_bowap.maku": {
+      "bytes": 4997,
+      "sha256": "a0b54aa9fa989aa4d4e6adb3aa5de1e0e076d691e395b26ded9592c4b4a3f48e"
+    },
+    "cards/translations/200_cradle.maku": {
+      "bytes": 6280,
+      "sha256": "e226ae37051497ca56cccb0a626936597eaa683f2efb4fec5736404f49b649ef"
+    },
+    "cards/translations/080_aimed.maku": {
+      "bytes": 5766,
+      "sha256": "4e859348be62fdf358fa241f92852f8dd8985348a7807ce190495b196eed7f6f"
+    },
+    "cards/translations/070_dynamic_lasers.maku": {
+      "bytes": 5309,
+      "sha256": "9bfcf8c7a25b84c55ebd84c31cb3e06f8cdbfe9b2e3c52c5d73871cb491e619a"
+    },
+    "cards/translations/110_exploding_stars.maku": {
+      "bytes": 5549,
+      "sha256": "e30fb61826da37d21dc03d70c9c3602f4388a9b5b7c3e8e586317d64c0727e8e"
+    },
+    "cards/translations/020_gsrepeat.maku": {
+      "bytes": 3337,
+      "sha256": "6292bb3a165983e625f3d7a6d2167112f966faa3e9d1e03d00cbca874754332f"
+    },
+    "cards/translations/040_spread.maku": {
+      "bytes": 4190,
+      "sha256": "5a1b69de28c47a9951570b01dfb92cb09edcae4139c3618588e04ef66b6108d2"
+    },
+    "cards/translations/060_polar.maku": {
+      "bytes": 3616,
+      "sha256": "d4525031b7fad32510201e31d23074c0f6d0fa1bc48a9759402ce24c8d7eb1fc"
+    },
+    "cards/tutorials/t01.maku": {
+      "bytes": 3684,
+      "sha256": "4524c8cbe961a8db3ac707a1affde5c8cd4b85af702ca00b5ba723d4a9ee5a39"
+    },
+    "cards/tutorials/t02.maku": {
+      "bytes": 3036,
+      "sha256": "02c6f511da23434c6519ba80b445df9be4138f4cc3937fe95ea95fd3a16b3566"
+    },
+    "cards/tutorials/t03.maku": {
+      "bytes": 5846,
+      "sha256": "3bcf3f4a0847e74cbd2a1f45f7dab2b236de57f4f55a27eae803f8f1e20c0ff0"
+    },
+    "cards/tutorials/t04.maku": {
+      "bytes": 5589,
+      "sha256": "6ac999bfbd6a1ba11f81006fb5f6d8694972d0840dc56710928a195e56caedd2"
+    },
+    "cards/tutorials/t05.maku": {
+      "bytes": 3822,
+      "sha256": "6cd878edac2a5f88d97b2a1dadd1af2258e9c74fc5cf442b7fb9618c611b766b"
+    },
+    "cards/tutorials/t06.maku": {
+      "bytes": 4340,
+      "sha256": "57141c409ed8bb725752158cc6e52a6031afc55c4951cc32763f9951fff7a56c"
+    },
+    "cards/tutorials/t07.maku": {
+      "bytes": 3208,
+      "sha256": "6c11f0ffcdd51db96a8a6c0530ebf1949feaf38a4917382a36d604c8b66e97e9"
+    },
+    "cards/tutorials/t08.maku": {
+      "bytes": 3899,
+      "sha256": "ce9673bc915f142724916470802b0b0adc49df11680167ad2e032262f905948b"
+    },
+    "docs/tutorials/01-first-bullets.md": {
+      "bytes": 5775,
+      "sha256": "e7c3e26c31ae768f85446c3d19ae0d88ad671fcfcb1f8853c8d6ff26937689fb"
+    },
+    "docs/tutorials/02-bullet-controls.md": {
+      "bytes": 4941,
+      "sha256": "83303ac80f345057a9a9aee5c46bc5a86a94b05ff2de931355e0a571733cb386"
+    },
+    "docs/tutorials/03-two-spells.md": {
+      "bytes": 9349,
+      "sha256": "34b47296600c651223ec69fa2a7fad09d18355c66ececf51fcace4f5c3ea9c03"
+    },
+    "docs/tutorials/04-pathers-and-lasers.md": {
+      "bytes": 7986,
+      "sha256": "77e68858d360f2dea439fdb4813ee6434f64ab81544d4ec38bc776c54136524b"
+    },
+    "docs/tutorials/05-channels.md": {
+      "bytes": 6005,
+      "sha256": "176cf8f82a7f528786885e2fcefb092e17f769fcc5fb228542bebf81bc24f932"
+    },
+    "docs/tutorials/06-bosses.md": {
+      "bytes": 7169,
+      "sha256": "b6c3211d3d5055aba2367c26bf815a1d77a70500634633ba40831eefa609c325"
+    },
+    "docs/tutorials/07-guided-fires.md": {
+      "bytes": 5613,
+      "sha256": "e4a8c75afd57d5a8a783bce4edab98303d37035d46c2c25ebc92e9735f3d9129"
+    },
+    "docs/tutorials/08-stages-and-campaigns.md": {
+      "bytes": 6221,
+      "sha256": "43132422d18c479b9ab004eb92c47a4a52dfb823d6527ef375174abcf57ad1b9"
+    },
+    "docs/from-dmk.md": {
+      "bytes": 23798,
+      "sha256": "5f3f76f88ea9abbc4774aea4ce563f0ebd30bfef8a98b5ed0af7a3b830359743"
+    }
+  }
 }

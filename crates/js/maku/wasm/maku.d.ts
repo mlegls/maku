@@ -94,6 +94,11 @@ export class Maku {
     positions(col: string): Float32Array;
     recolor_sprite_stride(): number;
     recolor_sprites(): Uint8Array;
+    /**
+     * Deduplicated profile fallback diagnostics from the latest and prior
+     * frame builds. One line per unknown style/color encountered.
+     */
+    render_diagnostics(): string;
     restart(): void;
     running(): boolean;
     seek(tick: number): void;
@@ -178,6 +183,7 @@ export interface InitOutput {
     readonly maku_positions: (a: number, b: number, c: number) => [number, number];
     readonly maku_recolor_sprite_stride: (a: number) => number;
     readonly maku_recolor_sprites: (a: number) => any;
+    readonly maku_render_diagnostics: (a: number) => [number, number];
     readonly maku_restart: (a: number) => void;
     readonly maku_running: (a: number) => number;
     readonly maku_seek: (a: number, b: number) => void;

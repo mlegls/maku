@@ -8,7 +8,7 @@ import initMaku, {
   createMaku,
   releaseIdentity,
 } from '../../js/maku/dist/index.js';
-import { CARD_FILES } from './manifest.js';
+import { CARD_FILES, TUTORIALS } from './manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
@@ -43,6 +43,38 @@ maku.build_render_frame();
 validateFrameViews(maku);
 if (maku.draw_commands().length === 0) throw new Error('tutorial rendered nothing: ' + maku.status());
 
+maku.boot('cards/render-pack-showcase.maku', 'showcase');
+if (!maku.running()) throw new Error('showcase boot failed: ' + maku.status());
+maku.step(2);
+maku.build_render_frame();
+validateFrameViews(maku);
+validateRenderManifest(maku);
+const showcaseDraws = maku.draw_commands();
+const showcaseTags = new Set();
+for (let i = 0; i < showcaseDraws.length; i += maku.draw_command_stride()) {
+  showcaseTags.add(showcaseDraws[i + 1]);
+}
+if (![0, 1, 3].every(tag => showcaseTags.has(tag))) {
+  throw new Error(`showcase is missing fixed/tinted/ribbon sources: ${[...showcaseTags]}`);
+}
+const showcaseVertices = maku.strip_vertices();
+const view = new DataView(showcaseVertices.buffer, showcaseVertices.byteOffset, showcaseVertices.byteLength);
+const ribbonXs = { warning: [], active: [] };
+for (let offset = 0; offset < showcaseVertices.byteLength; offset += maku.strip_vertex_stride()) {
+  const x = view.getFloat32(offset, true);
+  (x < 0 ? ribbonXs.warning : ribbonXs.active).push(x);
+}
+const spread = xs => Math.max(...xs) - Math.min(...xs);
+if (!ribbonXs.warning.length || !ribbonXs.active.length
+    || spread(ribbonXs.active) <= spread(ribbonXs.warning) * 2) {
+  throw new Error('showcase does not expose distinct warning/active ribbon widths');
+}
+const showcaseDiagnostics = maku.render_diagnostics();
+if (!showcaseDiagnostics.includes('showcase-unknown-family')
+    || !showcaseDiagnostics.includes('showcase-unknown-color')) {
+  throw new Error(`showcase fallback diagnostics missing: ${showcaseDiagnostics}`);
+}
+
 maku.boot('cards/reimu_vs_mima.maku', undefined);
 if (!maku.running()) throw new Error('boot failed: ' + maku.status());
 
@@ -71,7 +103,22 @@ if (maku.entity_count() < 6) throw new Error('run failed: ' + maku.status());
 maku.seek(100);
 if (maku.tick() !== 100 || !maku.paused()) throw new Error('seek failed');
 console.log('wire protocol + scrub OK — timeline', maku.timeline().join('/'));
+validateDocumentationRoutes();
 console.log('WASM SMOKE PASS');
+
+function validateDocumentationRoutes() {
+  const playerHtml = readFileSync(join(here, 'index.html'), 'utf8');
+  const tutorialsHtml = readFileSync(join(here, 'tutorials.html'), 'utf8');
+  if (!playerHtml.includes('main.js') || !tutorialsHtml.includes('reader.js')) {
+    throw new Error('upstream player/tutorial routes do not load their entry modules');
+  }
+  for (const tutorial of TUTORIALS) {
+    const source = readFileSync(join(root, tutorial.doc), 'utf8');
+    if (!source.includes('Runnable companion:')) {
+      throw new Error(`tutorial route has no checked companion: ${tutorial.doc}`);
+    }
+  }
+}
 
 function validateRenderManifest(maku) {
   for (let i = 0; i < maku.texture_count(); i++) {

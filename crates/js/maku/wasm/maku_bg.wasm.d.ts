@@ -44,6 +44,7 @@ export const maku_player_pos: (a: number) => [number, number];
 export const maku_positions: (a: number, b: number, c: number) => [number, number];
 export const maku_recolor_sprite_stride: (a: number) => number;
 export const maku_recolor_sprites: (a: number) => any;
+export const maku_render_diagnostics: (a: number) => [number, number];
 export const maku_restart: (a: number) => void;
 export const maku_running: (a: number) => number;
 export const maku_seek: (a: number, b: number) => void;

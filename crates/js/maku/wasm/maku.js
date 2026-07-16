@@ -402,6 +402,23 @@ export class Maku {
         const ret = wasm.maku_recolor_sprites(this.__wbg_ptr);
         return ret;
     }
+    /**
+     * Deduplicated profile fallback diagnostics from the latest and prior
+     * frame builds. One line per unknown style/color encountered.
+     * @returns {string}
+     */
+    render_diagnostics() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.maku_render_diagnostics(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
     restart() {
         wasm.maku_restart(this.__wbg_ptr);
     }

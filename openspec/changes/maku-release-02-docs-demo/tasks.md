@@ -16,16 +16,16 @@
 
 - [x] 3.1 Export complete material sampler metadata, including separate minimum and maximum filters, and add wasm ABI tests for every manifest field needed by Canvas and WebGPU adapters.
 - [x] 3.2 Add release/frame ABI identity checks across wasm, bindgen glue, JavaScript wrapper, and renderer initialization.
-- [ ] 3.3 Create the deterministic render-pack showcase card/profile covering style axes, orientation, layered active/warning ribbons, and explicit fallback diagnostics.
-- [ ] 3.4 Update the upstream Canvas frontend to consume the current ordered render-pack ABI for the showcase and label it as Canvas2D rather than generic wasm/WebGPU throughput.
-- [ ] 3.5 Add browser smoke coverage for loading libraries/cards, advancing, building a mixed frame, resolving every material/resource, drawing ordered sprite/ribbon commands, and opening docs routes.
+- [x] 3.3 Create the deterministic render-pack showcase card/profile covering style axes, orientation, layered active/warning ribbons, and explicit fallback diagnostics.
+- [x] 3.4 Update the upstream Canvas frontend to consume the current ordered render-pack ABI for the showcase and label it as Canvas2D rather than generic wasm/WebGPU throughput.
+- [x] 3.5 Add browser smoke coverage for loading libraries/cards, advancing, building a mixed frame, resolving every material/resource, drawing ordered sprite/ribbon commands, and opening docs routes.
 - [x] 3.6 Document the fixed WebGPU-compatible frame layouts, upload/copy lifetime, shader/material contract, ordered submission, and distinction from GPU simulation without implementing the adapter.
 
 ## 4. Produce a Downstream Sync Unit
 
-- [ ] 4.1 Emit the versioned web release manifest with package versions, source revision, frame ABI, tool versions, artifact paths, and integrity hashes.
-- [ ] 4.2 Separate reusable upstream runtime/render integration from page-specific UI through a narrow frontend adapter.
-- [ ] 4.3 Define the selected card/tutorial/library manifest and synchronization command/checklist for downstream consumers.
+- [x] 4.1 Emit the versioned web release manifest with package versions, source revision, frame ABI, tool versions, artifact paths, and integrity hashes.
+- [x] 4.2 Separate reusable upstream runtime/render integration from page-specific UI through a narrow frontend adapter.
+- [x] 4.3 Define the selected card/tutorial/library manifest and synchronization command/checklist for downstream consumers.
 - [ ] 4.4 Build the complete wasm/JavaScript/static artifact from the release-readiness package versions and verify its hashes from a clean checkout.
 
 ## 5. Refresh neen.ink

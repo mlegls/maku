@@ -5,6 +5,7 @@ export const LIB_FILES = [
 ];
 
 export const DEMO_CARDS = [
+  { title: 'Render Pack Showcase', detail: 'styles, orientation, ribbons, fallbacks', path: 'cards/render-pack-showcase.maku' },
   { title: 'Reimu vs Mima', detail: 'full playable fight', path: 'cards/reimu_vs_mima.maku' },
   { title: 'Co-op Rig', detail: 'two player host inputs', path: 'cards/coop.maku' },
   { title: 'Duel Sandbox', detail: 'player/enemy interaction', path: 'cards/duel.maku' },

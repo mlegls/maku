@@ -8,20 +8,18 @@ SOURCE_REVISION="${MAKU_SOURCE_REVISION:-development}"
 export MAKU_SOURCE_REVISION="$SOURCE_REVISION"
 wasm-pack build . --target web --out-dir static/pkg --out-name maku
 cp static/pkg/maku.js static/pkg/maku.d.ts static/pkg/maku_bg.wasm static/pkg/maku_bg.wasm.d.ts ../js/maku/wasm/
-VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "maku-web") | .version')
-cat > static/pkg/release.json <<EOF
-{
-  "maku_version": "$VERSION",
-  "frame_abi_version": 1,
-  "source_revision": "$SOURCE_REVISION",
-  "rustc": "$(rustc --version)",
-  "wasm_pack": "$(wasm-pack --version)",
-  "bun": "$(bun --version)"
-}
-EOF
-cp static/pkg/release.json ../js/maku/wasm/release.json
 (cd ../js/maku && bun run build)
 bun build editor-src/maku-codemirror.js --outfile static/maku-codemirror.js --target browser --format esm
+METADATA=$(cargo metadata --no-deps --format-version 1)
+export MAKU_ENGINE_VERSION=$(printf '%s' "$METADATA" | jq -r '.packages[] | select(.name == "maku") | .version')
+export MAKU_RENDER_VERSION=$(printf '%s' "$METADATA" | jq -r '.packages[] | select(.name == "maku-render-touhou") | .version')
+export MAKU_WEB_VERSION=$(printf '%s' "$METADATA" | jq -r '.packages[] | select(.name == "maku-web") | .version')
+export MAKU_NPM_VERSION=$(jq -r '.version' ../js/maku/package.json)
+export MAKU_FRAME_ABI_VERSION=1
+export MAKU_RUSTC_VERSION=$(rustc --version)
+export MAKU_WASM_PACK_VERSION=$(wasm-pack --version)
+export MAKU_BUN_VERSION=$(bun --version)
+bun ../../scripts/write-web-release.mjs
 echo "built -> crates/web/static/pkg"
 if [ "$1" = "serve" ]; then
   PORT="${PORT:-8000}"

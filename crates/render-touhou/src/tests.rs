@@ -422,6 +422,36 @@ fn stock_profile_renders_a_real_declared_touhou_card() {
 }
 
 #[test]
+fn deterministic_showcase_covers_style_axes_ribbons_and_fallbacks() {
+    let card = format!("{}/../../cards/render-pack-showcase.maku", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&card).exists() {
+        return; // repository-level integration fixture is not in the crate archive
+    }
+    let mut inst = Instance::new(None);
+    inst.set_render_kinds(TouhouMesh::RENDER_KINDS);
+    inst.boot(card, Some("showcase".into()));
+    inst.advance(Inputs::default());
+    inst.advance(Inputs::default());
+    assert!(inst.running(), "{}", inst.status());
+
+    let mut mesh = TouhouMesh::default();
+    for kind in TouhouMesh::RENDER_KINDS {
+        let schema = inst.declared_render_schema(kind).expect("showcase schema");
+        mesh.bind_schema(kind, schema).unwrap();
+    }
+    let items = inst.render_frame();
+    let out = mesh.build(&items).unwrap();
+    assert!(!out.basic_sprites.is_empty() && !out.tinted_sprites.is_empty());
+    assert!(!out.vertices.is_empty() && !out.indices.is_empty());
+    assert!(out.tinted_sprites.iter().any(|v| v.base.rotation == 0.0));
+    assert!(out.tinted_sprites.iter().any(|v| v.base.rotation == -45.0));
+    assert!(out.tinted_sprites.iter().any(|v| v.base.rotation == 45.0));
+    let messages = mesh.diagnostics().iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("\n");
+    assert!(messages.contains("showcase-unknown-family"), "{messages}");
+    assert!(messages.contains("showcase-unknown-color"), "{messages}");
+}
+
+#[test]
 fn mixed_native_frame_resolves_every_emitted_material_and_texture() {
     let mut mesh = bound_mesh();
     let items = [RenderItem::Row(sprite_row("star", "red", "", 0.0, 1.0)), RenderItem::Row(beam_row(1.0, true))];

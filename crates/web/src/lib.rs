@@ -251,6 +251,12 @@ impl Maku {
     pub fn strip_indices(&self) -> Uint32Array { unsafe { Uint32Array::view(&self.mesh.frame().indices) } }
     pub fn draw_commands(&self) -> Uint32Array { unsafe { Uint32Array::view(&self.packed_draws) } }
 
+    /// Deduplicated profile fallback diagnostics from the latest and prior
+    /// frame builds. One line per unknown style/color encountered.
+    pub fn render_diagnostics(&self) -> String {
+        self.mesh.diagnostics().iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("\n")
+    }
+
     pub fn texture_count(&self) -> usize { self.mesh.profile().textures().len() }
     pub fn texture_key(&self, index: usize) -> String {
         self.mesh.profile().textures().get(index).map(|v| v.key.to_string()).unwrap_or_default()
