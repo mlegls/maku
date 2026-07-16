@@ -26,7 +26,7 @@
 - [x] 4.1 Emit the versioned web release manifest with package versions, source revision, frame ABI, tool versions, artifact paths, and integrity hashes.
 - [x] 4.2 Separate reusable upstream runtime/render integration from page-specific UI through a narrow frontend adapter.
 - [x] 4.3 Define the selected card/tutorial/library manifest and synchronization command/checklist for downstream consumers.
-- [ ] 4.4 Build the complete wasm/JavaScript/static artifact from the release-readiness package versions and verify its hashes from a clean checkout.
+- [x] 4.4 Build the complete wasm/JavaScript/static artifact from the release-readiness package versions and verify its hashes from a clean checkout.
 
 ## 5. Refresh neen.ink
 
