@@ -6,11 +6,19 @@ supported. Pushes to both branches run normal CI, while every push to `main`
 runs the complete release gate and the idempotent registry publisher in
 `.github/workflows/publish.yml`.
 
-The `release` GitHub environment must define `CARGO_REGISTRY_TOKEN` and
-`NPM_TOKEN`; configure required reviewers on that environment before the first
-publication. The npm token must be allowed to publish public packages in the
-`@mlegls` scope. The workflow also requests an OIDC identity and publishes npm
-provenance. Missing credentials fail before any registry mutation.
+The publisher uses GitHub OIDC trusted publishing and stores no registry
+secrets. Configure required reviewers on the `release` GitHub environment. For
+each published crate and for `@mlegls/maku`, register `mlegls/maku`, workflow
+`publish.yml`, and environment `release` in the registry's trusted-publisher
+settings. `rust-lang/crates-io-auth-action` exchanges the workflow identity for
+a short-lived crates.io token; npm 11.5.1+ performs its exchange automatically
+and emits provenance.
+
+Both registries require a package to exist before its trusted publisher can be
+registered. Bootstrap `0.1.0` interactively from this clean checkout—never by
+storing a token in GitHub—using the same dependency order below. Then register
+the five trusted-publisher relationships before approving the pending release
+environment deployment. Subsequent releases require no long-lived token.
 
 Run `scripts/check.sh fast` during development and `scripts/check.sh release`
 from a clean checkout before promoting to `main`. Tool versions are pinned by
