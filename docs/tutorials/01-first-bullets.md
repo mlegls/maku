@@ -1,8 +1,10 @@
 # Tutorial 1: First Bullets
 
 Runnable companion: **`cards/tutorials/t01.maku`** — every example below is a
-pattern in that card. Start the player and press the number keys (or click
-the menu in the web host) to run each one:
+pattern in that card. [Open Tutorial 1 in the interactive player](https://neen.ink/projects/maku/play.html?card=t01),
+then press the number keys or click the pattern menu to run each one.
+
+To run the same card in the native player:
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t01.maku

@@ -1,6 +1,9 @@
 # Tutorial 7: Indices, Formations, and Guided Fires
 
-Runnable companion: **`cards/tutorials/t07.maku`**.
+Runnable companion: **`cards/tutorials/t07.maku`**. [Open Tutorial 7 in the
+interactive player](https://neen.ink/projects/maku/play.html?card=t07).
+
+To run the same card in the native player:
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t07.maku

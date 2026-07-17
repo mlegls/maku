@@ -71,6 +71,10 @@ export const TUTORIALS = [
 
 export const ALL_CARDS = [...TUTORIALS, ...DEMO_CARDS];
 
+export function cardSlug(card) {
+  return card.path.split('/').pop().replace(/\.maku$/, '');
+}
+
 export const CARD_FILES = Array.from(new Set([
   ...LIB_FILES,
   ...ALL_CARDS.map(card => card.path),

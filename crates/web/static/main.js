@@ -3,7 +3,7 @@
 // This adapter consumes the ordered render-pack ABI; it is not a WebGPU or
 // engine-throughput benchmark.
 import initMaku, { createMaku, releaseIdentity } from '../../js/maku/dist/index.js';
-import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl } from './manifest.js';
+import { ALL_CARDS, CARD_FILES, DEMO_CARDS, TUTORIALS, assetUrl, cardSlug } from './manifest.js';
 import { markdownToHtml } from './markdown.js';
 import { highlightCodeBlocks } from './maku-highlight.js';
 import { createMakuEditor } from './maku-codemirror.js';
@@ -57,7 +57,10 @@ const pressed = new Set();
 const sources = new Map();
 const docs = new Map();
 const editingTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
-let selected = ALL_CARDS.find(card => card.path === BOOT) || ALL_CARDS[0];
+const requestedCard = new URLSearchParams(location.search).get('card');
+let selected = ALL_CARDS.find(card => cardSlug(card) === requestedCard)
+  || ALL_CARDS.find(card => card.path === BOOT)
+  || ALL_CARDS[0];
 let maku;
 let last = performance.now();
 let acc = 0;
@@ -262,8 +265,16 @@ function bootSelected(pattern = undefined) {
   lastPatternKey = '';
 }
 
-async function selectCard(card) {
+function reflectSelectedCard(historyMode) {
+  if (!historyMode) return;
+  const url = new URL(location.href);
+  url.searchParams.set('card', cardSlug(selected));
+  history[`${historyMode}State`](null, '', url);
+}
+
+async function selectCard(card, { historyMode = 'push' } = {}) {
   selected = card;
+  reflectSelectedCard(historyMode);
   els.title.textContent = card.title;
   els.path.textContent = card.path;
   els.sourceName.textContent = card.path;
@@ -497,6 +508,11 @@ function installEvents() {
     };
   }
   document.getElementById('restart').onclick = () => maku.restart();
+  addEventListener('popstate', async () => {
+    const slug = new URLSearchParams(location.search).get('card');
+    const card = ALL_CARDS.find(candidate => cardSlug(candidate) === slug);
+    if (card && card !== selected) await selectCard(card, { historyMode: null });
+  });
 }
 
 async function boot() {
@@ -527,7 +543,7 @@ async function boot() {
   registerVfs();
   installEvents();
   renderBindings();
-  await selectCard(selected);
+  await selectCard(selected, { historyMode: 'replace' });
   requestAnimationFrame(frame);
 }
 

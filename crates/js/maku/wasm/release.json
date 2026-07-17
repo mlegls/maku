@@ -35,16 +35,16 @@
       "sha256": "4615efae357d9d39c4514435875d61d4eba842a1ea352c34b26e8a89191f4483"
     },
     "crates/web/static/main.js": {
-      "bytes": 20639,
-      "sha256": "3fdc5e07e5a8f28cf4d5cd7ce6740ff35089bfea8b8130fe3b555d97886262e3"
+      "bytes": 21370,
+      "sha256": "fe4feec2099c1d7ba88e7fafb8a03be15cef0bf2f221af96287f745c7d782afa"
     },
     "crates/web/static/canvas-renderer.js": {
       "bytes": 9301,
       "sha256": "cbaaae649813bb76ffcfd7fbda6967839455fede673424e63cb75e5cf75bebc1"
     },
     "crates/web/static/manifest.js": {
-      "bytes": 3252,
-      "sha256": "724d16278e54d4e2f82eac950759ed989d966f222f31c6ce650a2dfd60981a80"
+      "bytes": 3348,
+      "sha256": "416ec3ac5ab1540853842b62e34bccdd8549f96cadea2059a99f3342fe46700c"
     },
     "crates/web/static/index.html": {
       "bytes": 11646,
@@ -211,36 +211,36 @@
       "sha256": "ce9673bc915f142724916470802b0b0adc49df11680167ad2e032262f905948b"
     },
     "docs/tutorials/01-first-bullets.md": {
-      "bytes": 5775,
-      "sha256": "e7c3e26c31ae768f85446c3d19ae0d88ad671fcfcb1f8853c8d6ff26937689fb"
+      "bytes": 5889,
+      "sha256": "6fa529f537abb63d3f004967472d4128ec96b7166086523eec7dff9f8ef885f7"
     },
     "docs/tutorials/02-bullet-controls.md": {
-      "bytes": 4941,
-      "sha256": "83303ac80f345057a9a9aee5c46bc5a86a94b05ff2de931355e0a571733cb386"
+      "bytes": 5112,
+      "sha256": "dca91d452055663263860005b3376fa45f6021090d2de212f5c939d4020e9372"
     },
     "docs/tutorials/03-two-spells.md": {
-      "bytes": 9349,
-      "sha256": "34b47296600c651223ec69fa2a7fad09d18355c66ececf51fcace4f5c3ea9c03"
+      "bytes": 9489,
+      "sha256": "90734e3bf06106cc622a86af458fe0c5f5ab108f7ef15d74917e57110ffce82d"
     },
     "docs/tutorials/04-pathers-and-lasers.md": {
-      "bytes": 7986,
-      "sha256": "77e68858d360f2dea439fdb4813ee6434f64ab81544d4ec38bc776c54136524b"
+      "bytes": 8126,
+      "sha256": "b0fab167429d41fbb4d0d7a605ab953841a66a79e4ae6453fed2ee22ab494089"
     },
     "docs/tutorials/05-channels.md": {
-      "bytes": 6005,
-      "sha256": "176cf8f82a7f528786885e2fcefb092e17f769fcc5fb228542bebf81bc24f932"
+      "bytes": 6129,
+      "sha256": "f5839295229ab715b644fc8c485f10ab0f4067d5991edb6811f3b6de293be2ca"
     },
     "docs/tutorials/06-bosses.md": {
-      "bytes": 7169,
-      "sha256": "b6c3211d3d5055aba2367c26bf815a1d77a70500634633ba40831eefa609c325"
+      "bytes": 7309,
+      "sha256": "d5897673bfa5c8554fc14bec91a4233ff498496b26dc10716080c289d713c5d3"
     },
     "docs/tutorials/07-guided-fires.md": {
-      "bytes": 5613,
-      "sha256": "e4a8c75afd57d5a8a783bce4edab98303d37035d46c2c25ebc92e9735f3d9129"
+      "bytes": 5753,
+      "sha256": "ebc011d3ad64b16b91eb6700f9a0ac5194bb2215933bb70cb2ed1b7d417a65bc"
     },
     "docs/tutorials/08-stages-and-campaigns.md": {
-      "bytes": 6221,
-      "sha256": "43132422d18c479b9ab004eb92c47a4a52dfb823d6527ef375174abcf57ad1b9"
+      "bytes": 6361,
+      "sha256": "e47f5a0eaecfe23193cc81bac0b7e22d4a9988b408c20aacff756bf690466ce5"
     },
     "docs/from-dmk.md": {
       "bytes": 23798,

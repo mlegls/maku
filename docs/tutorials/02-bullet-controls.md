@@ -1,7 +1,10 @@
 # Tutorial 2: Changing Bullets in Flight
 
-Runnable companion: **`cards/tutorials/t02.maku`** — press the number keys
-to run each example.
+Runnable companion: **`cards/tutorials/t02.maku`** — [open Tutorial 2 in the
+interactive player](https://neen.ink/projects/maku/play.html?card=t02), then press
+the number keys or click the pattern menu to run each example.
+
+To run the same card in the native player:
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t02.maku

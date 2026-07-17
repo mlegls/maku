@@ -1,6 +1,9 @@
 # Tutorial 6: Bosses, Phases, and Script Structure
 
-Runnable companion: **`cards/tutorials/t06.maku`**.
+Runnable companion: **`cards/tutorials/t06.maku`**. [Open Tutorial 6 in the
+interactive player](https://neen.ink/projects/maku/play.html?card=t06).
+
+To run the same card in the native player:
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t06.maku

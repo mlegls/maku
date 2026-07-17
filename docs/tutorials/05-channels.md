@@ -1,7 +1,10 @@
 # Tutorial 5: Channels and the Host Boundary
 
-Runnable companion: **`cards/tutorials/t05.maku`**. In the native player,
-**T / Y / U / I** set the difficulty (0.7 / 1.0 / 1.4 / 2.0).
+Runnable companion: **`cards/tutorials/t05.maku`**. [Open Tutorial 5 in the
+interactive player](https://neen.ink/projects/maku/play.html?card=t05).
+
+To run the same card in the native player, where **T / Y / U / I** set the
+difficulty (0.7 / 1.0 / 1.4 / 2.0):
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t05.maku

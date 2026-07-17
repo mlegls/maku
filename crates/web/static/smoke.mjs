@@ -8,7 +8,7 @@ import initMaku, {
   createMaku,
   releaseIdentity,
 } from '../../js/maku/dist/index.js';
-import { CARD_FILES, TUTORIALS } from './manifest.js';
+import { ALL_CARDS, CARD_FILES, TUTORIALS, cardSlug } from './manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '../../..');
@@ -107,6 +107,10 @@ validateDocumentationRoutes();
 console.log('WASM SMOKE PASS');
 
 function validateDocumentationRoutes() {
+  const slugs = ALL_CARDS.map(cardSlug);
+  if (new Set(slugs).size !== slugs.length) {
+    throw new Error(`card URL slugs are not unique: ${slugs.join(', ')}`);
+  }
   const playerHtml = readFileSync(join(here, 'index.html'), 'utf8');
   const tutorialsHtml = readFileSync(join(here, 'tutorials.html'), 'utf8');
   if (!playerHtml.includes('main.js') || !tutorialsHtml.includes('reader.js')) {
@@ -116,6 +120,10 @@ function validateDocumentationRoutes() {
     const source = readFileSync(join(root, tutorial.doc), 'utf8');
     if (!source.includes('Runnable companion:')) {
       throw new Error(`tutorial route has no checked companion: ${tutorial.doc}`);
+    }
+    const link = `https://neen.ink/projects/maku/play.html?card=${cardSlug(tutorial)}`;
+    if (!source.includes(link)) {
+      throw new Error(`tutorial does not deep-link its interactive card: ${tutorial.doc}`);
     }
   }
 }

@@ -1,6 +1,9 @@
 # Tutorial 3: Two Spells
 
-Runnable companion: **`cards/tutorials/t03.maku`**.
+Runnable companion: **`cards/tutorials/t03.maku`**. [Open Tutorial 3 in the
+interactive player](https://neen.ink/projects/maku/play.html?card=t03).
+
+To run the same card in the native player:
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t03.maku

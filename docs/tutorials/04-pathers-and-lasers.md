@@ -1,6 +1,9 @@
 # Tutorial 4: Pathers, Lasers, and Subfiring
 
-Runnable companion: **`cards/tutorials/t04.maku`**.
+Runnable companion: **`cards/tutorials/t04.maku`**. [Open Tutorial 4 in the
+interactive player](https://neen.ink/projects/maku/play.html?card=t04).
+
+To run the same card in the native player:
 
 ```sh
 cargo run --release --manifest-path crates/Cargo.toml -p maku-player -- cards/tutorials/t04.maku
