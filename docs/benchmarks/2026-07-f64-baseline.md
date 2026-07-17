@@ -4,10 +4,10 @@ This is Maku's first versioned staged baseline. It is evidence for the declared 
 
 ## Reproduce and inspect
 
-- Raw envelopes: [`bench/results/maku-v1-f64/m4-pro-macos15-chrome150/`](../bench/results/maku-v1-f64/m4-pro-macos15-chrome150/)
-- Full generated table: [`2026-07-17-summary.md`](../bench/results/maku-v1-f64/m4-pro-macos15-chrome150/2026-07-17-summary.md)
-- Machine-readable table: [`2026-07-17-summary.csv`](../bench/results/maku-v1-f64/m4-pro-macos15-chrome150/2026-07-17-summary.csv)
-- Workload/result policy: [`bench/README.md`](../bench/README.md)
+- Raw envelopes: [`bench/results/maku-v1-f64/m4-pro-macos15-chrome150/`](../../bench/results/maku-v1-f64/m4-pro-macos15-chrome150/)
+- Full generated table: [`2026-07-17-summary.md`](../../bench/results/maku-v1-f64/m4-pro-macos15-chrome150/2026-07-17-summary.md)
+- Machine-readable table: [`2026-07-17-summary.csv`](../../bench/results/maku-v1-f64/m4-pro-macos15-chrome150/2026-07-17-summary.csv)
+- Workload/result policy: [`bench/README.md`](../../bench/README.md)
 
 Controlled runs used an Apple M4 Pro (14 CPU cores, 24 GiB), macOS 15.6.1, release builds, AC power, 120 Hz fixed simulation, and a 60 Hz/16.667 ms displayed-frame target. Browser runs used Playwright Chromium 140.0.7339.16 at 1512×982 CSS pixels and DPR 2. Each successful result contains 30 batches of 10 complete displayed-frame observations after 120 warm-up ticks. Percentiles use nearest rank.
 

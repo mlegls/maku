@@ -16,7 +16,7 @@ language or API documentation.
 | Native player users | [`player.md`](player.md) | `crates/player/README.md` | `session`, `mesh-renderer-api` |
 | JavaScript users | `crates/js/maku/README.md` | `crates/web/README.md`, `docs/renderer-api.md` | `web-demo-delivery`, `release-packaging` |
 | Migrating DMK authors | [`from-dmk.md`](from-dmk.md) | tutorials and language reference | `language` |
-| Performance readers | [`performance-baseline-2026-07.md`](performance-baseline-2026-07.md) | retained raw envelopes under `bench/results/` | `perf`, `scale-benchmarking` |
+| Performance readers | [`benchmarks/`](benchmarks/) | dated reports and retained raw envelopes under `bench/results/` | `perf`, `scale-benchmarking` |
 | Release maintainers | [`releasing.md`](releasing.md) | release notes and generated `release.json` | `release-packaging` |
 
 ## Authority and version presentation

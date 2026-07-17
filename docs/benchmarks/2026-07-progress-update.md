@@ -22,7 +22,7 @@ The measurements reinforce the planned order: **entity representation first**, t
 
 Links:
 
-- Performance report and raw-result links: `docs/performance-baseline-2026-07.md`
+- Performance report and raw-result links: [`2026-07-f64-baseline.md`](2026-07-f64-baseline.md)
 - Public player: https://neen.ink/projects/maku/play.html
 - Tutorials: https://neen.ink/projects/maku/tutorials.html
 - Repository: https://github.com/mlegls/maku
