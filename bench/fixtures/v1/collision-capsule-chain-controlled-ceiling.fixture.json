@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-capsule-chain-controlled-ceiling.expanded.maku",
+  "expanded_source_sha256": "a4ffedf9b8ac41e2df979a6e0a0b60d876916f27350d4cb200b50231b058f415",
+  "expect": {
+    "contacts_per_tick": 25000,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-capsule-chain-controlled-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-capsule-chain-controlled-ceiling.json",
+  "workload_sha256": "fd3a65f14dbdbd50755a16572aa6ec839bc1184c045668416c8456c4c8d0b892"
+}

@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-capsule-chain-sparse-normal.expanded.maku",
+  "expanded_source_sha256": "0ce26c9d77ce5cd1f79395a7530d8c21c4190fce6b97fcb896e37b317ed99595",
+  "expect": {
+    "contacts_per_tick": 5,
+    "live_entities": 1000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-capsule-chain-sparse-normal",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-capsule-chain-sparse-normal.json",
+  "workload_sha256": "218593288393c6317ff10ecfd05ebacd11f4957db3f383dfbd0f5463a06a9514"
+}

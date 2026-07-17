@@ -130,8 +130,10 @@ impl Workload {
         if self.cadence.sample_frames == 0 || self.cadence.sample_batches == 0 || self.cadence.ticks_per_frame == 0 { return Err("sample counts and ticks_per_frame must be nonzero".into()); }
         if self.entities.plateau > 1_000_000 { return Err("v1 plateau exceeds attempted 1M ceiling".into()); }
         if self.expect.live_entities != self.entities.plateau { return Err("expected live_entities must equal the declared plateau".into()); }
-        if self.render.layers == 0 && self.expect.render_lanes != 0 { return Err("zero render layers require zero expected lanes".into()); }
-        if self.render.layers > 0 && self.expect.render_lanes != self.entities.plateau * self.render.layers as usize { return Err("render lanes must equal plateau times layers".into()); }
+        let match_lanes = match self.rules.match_rate { MatchRate::None => 0, MatchRate::Half => self.entities.plateau / 2, MatchRate::All => self.entities.plateau };
+        let rule_lanes = if self.rules.class == RuleClass::RenderOnly { match_lanes * self.rules.count as usize } else { 0 };
+        let expected_lanes = self.entities.plateau * self.render.layers as usize + rule_lanes;
+        if self.expect.render_lanes != expected_lanes { return Err(format!("expected render lanes {}, declared {}", expected_lanes, self.expect.render_lanes)); }
         if let Some(f) = self.collision.contact_fraction { if !(0.0..=1.0).contains(&f) { return Err("contact_fraction must be in [0,1]".into()); } }
         let wanted = match self.rules.match_rate { MatchRate::None => 0.0, MatchRate::Half => 0.5, MatchRate::All => 1.0 };
         if self.rules.match_fraction.is_some_and(|f| f != wanted) { return Err("match_fraction disagrees with match_rate".into()); }

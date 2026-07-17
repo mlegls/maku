@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-circle-none-ceiling.expanded.maku",
+  "expanded_source_sha256": "12bab89e8c30f06eb9a1c6cc804221713863c461db84db7978de064634b089e0",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-circle-none-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-circle-none-ceiling.json",
+  "workload_sha256": "dc3800675acd3b3e551edcc70a5702e1522bd86e157a3bd756c3a79d18520c69"
+}

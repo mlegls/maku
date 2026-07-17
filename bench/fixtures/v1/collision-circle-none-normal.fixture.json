@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-circle-none-normal.expanded.maku",
+  "expanded_source_sha256": "aaf774910629c3b692964e1e04a1d37a27c2d3cc1d67c2bc5cf6570ea6c3ea25",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 1000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-circle-none-normal",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-circle-none-normal.json",
+  "workload_sha256": "7cd73bb0996503bf538924784f319923a572c4d18a787d031f5b42cc2c49fb44"
+}

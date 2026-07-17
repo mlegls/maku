@@ -1,4 +1,4 @@
-use crate::contract::Workload;
+use crate::contract::{RuleClass, Workload, WorkloadFamily};
 use maku::{render::RenderItem, sim::Sim};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,8 +21,9 @@ pub struct Verification {
     pub errors: Vec<String>,
 }
 
-pub fn observe(sim: &mut Sim) -> SemanticObservation {
-    let live_entities = sim.world.entities.len();
+pub fn observe(sim: &mut Sim, workload: &Workload) -> SemanticObservation {
+    let counters = sim.benchmark_counters();
+    let live_entities = counters.live_entities;
     let mut render_lanes = 0;
     let mut render_lanes_by_kind = BTreeMap::new();
     for item in sim.render_frame() {
@@ -33,26 +34,32 @@ pub fn observe(sim: &mut Sim) -> SemanticObservation {
         render_lanes += lanes;
         *render_lanes_by_kind.entry(kind).or_default() += lanes;
     }
+    let rule_actions_per_tick = match workload.rules.class {
+        RuleClass::MaskedUpdate => counters.rule_actions as u64,
+        RuleClass::EffectAction => counters.rule_actions as u64,
+        RuleClass::RenderOnly => render_lanes as u64,
+        RuleClass::FilterOnly | RuleClass::None => 0,
+    };
     SemanticObservation {
         live_entities,
         render_lanes,
         render_lanes_by_kind,
-        contacts_per_tick: 0,
-        rule_matches_per_tick: 0,
-        rule_actions_per_tick: 0,
+        contacts_per_tick: counters.contacts as u64,
+        rule_matches_per_tick: counters.predicate_matches as u64,
+        rule_actions_per_tick,
         state_digest: format!("{:016x}", sim.benchmark_digest()),
     }
 }
 
 pub fn verify(sim: &mut Sim, workload: &Workload) -> Verification {
-    let observed = observe(sim);
+    let observed = observe(sim, workload);
     let expected = &workload.expect;
     let mut errors = Vec::new();
     if observed.live_entities != expected.live_entities { errors.push(format!("live entities: expected {}, got {}", expected.live_entities, observed.live_entities)); }
     if observed.render_lanes != expected.render_lanes { errors.push(format!("render lanes: expected {}, got {}", expected.render_lanes, observed.render_lanes)); }
     if observed.contacts_per_tick != expected.contacts_per_tick { errors.push(format!("contacts/tick: expected {}, got {}", expected.contacts_per_tick, observed.contacts_per_tick)); }
-    if observed.rule_matches_per_tick != expected.rule_matches_per_tick { errors.push(format!("rule matches/tick: expected {}, got {}", expected.rule_matches_per_tick, observed.rule_matches_per_tick)); }
-    if observed.rule_actions_per_tick != expected.rule_actions_per_tick { errors.push(format!("rule actions/tick: expected {}, got {}", expected.rule_actions_per_tick, observed.rule_actions_per_tick)); }
+    if workload.family == WorkloadFamily::Rules && observed.rule_matches_per_tick != expected.rule_matches_per_tick { errors.push(format!("rule matches/tick: expected {}, got {}", expected.rule_matches_per_tick, observed.rule_matches_per_tick)); }
+    if workload.family == WorkloadFamily::Rules && observed.rule_actions_per_tick != expected.rule_actions_per_tick { errors.push(format!("rule actions/tick: expected {}, got {}", expected.rule_actions_per_tick, observed.rule_actions_per_tick)); }
     Verification { valid: errors.is_empty(), observed, errors }
 }
 

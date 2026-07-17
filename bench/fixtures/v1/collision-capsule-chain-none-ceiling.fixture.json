@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-capsule-chain-none-ceiling.expanded.maku",
+  "expanded_source_sha256": "1fda11f7c3c7f131665f09edef626935503acca9a2b94e4cbd6dad5892a847f5",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-capsule-chain-none-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-capsule-chain-none-ceiling.json",
+  "workload_sha256": "bea6f256722f8df8790dd9825ffe6be45b2b7adc4725cd6007d2714686183b70"
+}

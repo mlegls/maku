@@ -872,6 +872,7 @@ pub struct CollisionIndex {
     /// Alive-with-pos at capture time; kept for the oracle reference path.
     eligible: Vec<bool>,
     memo: FxHashMap<(Symbol, Symbol), Rc<[(usize, usize)]>>,
+    benchmark_candidates: usize,
 }
 
 impl CollisionIndex {
@@ -887,6 +888,7 @@ impl CollisionIndex {
         self.aabbs.clear();
         self.layer_entities.clear();
         self.memo.clear();
+        self.benchmark_candidates = 0;
         let mut layers: Vec<Symbol> = Vec::new();
         for i in 0..self.ranges.len() {
             let mut bounds = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
@@ -924,11 +926,18 @@ impl CollisionIndex {
 
     pub(crate) fn query(&mut self, a: Symbol, b: Symbol) -> Rc<[(usize, usize)]> {
         if let Some(pairs) = self.memo.get(&(a, b)) { return pairs.clone(); }
-        let pairs = self.compute(a, b);
+        let (pairs, candidates) = self.compute(a, b);
+        self.benchmark_candidates += candidates;
         if super::lower::oracle_enabled() { assert_eq!(pairs, self.brute(a, b)); }
         let pairs: Rc<[(usize, usize)]> = pairs.into();
         self.memo.insert((a, b), pairs.clone());
         pairs
+    }
+
+    pub(crate) fn benchmark_stats(&self) -> (usize, usize, usize, usize) {
+        let projections = self.ranges.iter().filter(|range| !range.is_empty()).count();
+        let contacts = self.memo.values().map(|pairs| pairs.len()).sum();
+        (projections, self.memo.len(), self.benchmark_candidates, contacts)
     }
 
     /// Oracle-only reference: every captured entity pair through the raw
@@ -951,8 +960,9 @@ impl CollisionIndex {
     }
 
     // Querying two large layers pays for that requested pair; AABBs still reject disjoint entities.
-    fn compute(&self, a: Symbol, b: Symbol) -> Vec<(usize, usize)> {
+    fn compute(&self, a: Symbol, b: Symbol) -> (Vec<(usize, usize)>, usize) {
         let mut out = Vec::new();
+        let mut candidates = 0;
         let empty = Vec::new();
         let ais = self.layer_entities.get(&a).unwrap_or(&empty);
         let bjs = self.layer_entities.get(&b).unwrap_or(&empty);
@@ -962,6 +972,7 @@ impl CollisionIndex {
                 let ia = self.aabbs[i].unwrap();
                 let ja = self.aabbs[j].unwrap();
                 if ia.1 < ja.0 || ja.1 < ia.0 || ia.3 < ja.2 || ja.3 < ia.2 { continue; }
+                candidates += 1;
                 // Entity and collider row iteration matches the old eager fact/filter order.
                 for ac in self.row(i).iter().filter(|c| c.layer() == Some(a)) {
                     for bc in self.row(j).iter().filter(|c| c.layer() == Some(b)) {
@@ -970,7 +981,7 @@ impl CollisionIndex {
                 }
             }
         }
-        out
+        (out, candidates)
     }
 }
 
@@ -1005,6 +1016,8 @@ pub struct World {
     pub collision_index: CollisionIndex,
     /// Writes queued during the current tick, drained at the next tick boundary.
     pub pending_writes: Vec<PendingWrite>,
+    pub(crate) benchmark_predicate_matches: usize,
+    pub(crate) benchmark_rule_actions: usize,
 }
 
 impl Clone for World {
@@ -1025,6 +1038,8 @@ impl Clone for World {
             standing_rules: self.standing_rules.clone(),
             collision_index: self.collision_index.clone(),
             pending_writes: self.pending_writes.clone(),
+            benchmark_predicate_matches: self.benchmark_predicate_matches,
+            benchmark_rule_actions: self.benchmark_rule_actions,
         }
     }
 }
@@ -1139,6 +1154,8 @@ impl World {
             standing_rules: Vec::new(),
             collision_index: CollisionIndex::default(),
             pending_writes: Vec::new(),
+            benchmark_predicate_matches: 0,
+            benchmark_rule_actions: 0,
         }
     }
 }

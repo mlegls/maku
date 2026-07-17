@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "seed": 12648430,
+  "generator_version": "maku-bench-generator-v1",
+  "cadence": {
+    "tick_hz": 120,
+    "presentation_hz": 60,
+    "warmup_ticks": 120,
+    "sample_frames": 120,
+    "ticks_per_frame": 2,
+    "sample_batches": 30
+  },
+  "input_tape": [],
+  "id": "collision-circle-controlled-normal",
+  "description": "circle collision controlled contacts at 1000 total entities",
+  "family": "collision",
+  "entities": {
+    "plateau": 1000,
+    "capacity": 2024
+  },
+  "motion": {
+    "shape": "static",
+    "speed": 0,
+    "bounded": true
+  },
+  "render": {
+    "shape": "none",
+    "layers": 0
+  },
+  "collision": {
+    "geometry": "circle",
+    "query_pairs": 1,
+    "active_layers": 2,
+    "contact_density": "controlled",
+    "contact_fraction": 0.5
+  },
+  "rules": {
+    "class": "none",
+    "count": 0,
+    "match_rate": "none",
+    "match_fraction": 0
+  },
+  "expect": {
+    "live_entities": 1000,
+    "render_lanes": 0,
+    "contacts_per_tick": 250,
+    "rule_matches_per_tick": 0,
+    "rule_actions_per_tick": 0
+  }
+}

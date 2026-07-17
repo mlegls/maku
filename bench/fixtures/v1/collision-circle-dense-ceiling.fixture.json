@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-circle-dense-ceiling.expanded.maku",
+  "expanded_source_sha256": "cec1842cfe81063fe77ec8734cb4d15792dab378bc2d3a02edcc9b50917e166b",
+  "expect": {
+    "contacts_per_tick": 50000,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-circle-dense-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-circle-dense-ceiling.json",
+  "workload_sha256": "d4f1dbcc9d6f4c209cef7bdc38bc30b18a5db538d25e283b831e693dfd64d01d"
+}

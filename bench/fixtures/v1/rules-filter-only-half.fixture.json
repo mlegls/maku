@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/rules-filter-only-half.expanded.maku",
+  "expanded_source_sha256": "260779cb4f453ff501fd556f9bc55e5e6e984d70337ffbb294c9ac845ae8ad46",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 1000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 1000
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "rules-filter-only-half",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/rules-filter-only-half.json",
+  "workload_sha256": "9a3a90aa5d34db73a19c09b01c89c291109b45db347f3a5160bfdee3deacfed4"
+}

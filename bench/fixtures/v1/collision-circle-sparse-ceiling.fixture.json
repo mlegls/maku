@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-circle-sparse-ceiling.expanded.maku",
+  "expanded_source_sha256": "ff6811665e7f294a0331477a29b9551a251b6e0797c5113837c1b915f4017c47",
+  "expect": {
+    "contacts_per_tick": 500,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-circle-sparse-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-circle-sparse-ceiling.json",
+  "workload_sha256": "135835e99021d916f50d7ab8e4413f7e9c4ce91c0502c76f711d2af579549621"
+}

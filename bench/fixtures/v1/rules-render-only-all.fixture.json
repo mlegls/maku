@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/rules-render-only-all.expanded.maku",
+  "expanded_source_sha256": "b6b2a4a31e731b0fe960ebfcb4cc788464f9986848f820f8edf56d96370099c4",
+  "expect": {
+    "contacts_per_tick": 0,
+    "live_entities": 1000,
+    "render_lanes": 2000,
+    "rule_actions_per_tick": 2000,
+    "rule_matches_per_tick": 2000
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "rules-render-only-all",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/rules-render-only-all.json",
+  "workload_sha256": "fbfc032ef91f4fd61d69fd813c27a7e8bc57e3948e01bf6c59a8eac2bf17dd3a"
+}

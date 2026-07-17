@@ -58,6 +58,20 @@ impl Inputs {
     }
 }
 
+/// Work counters used by deterministic benchmark verification. Reading them
+/// is outside timed stages and does not expose simulation storage.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BenchmarkCounters {
+    pub live_entities: usize,
+    pub collider_projections: usize,
+    pub active_query_pairs: usize,
+    pub collision_candidates: usize,
+    pub contacts: usize,
+    pub predicate_matches: usize,
+    pub rule_actions: usize,
+}
+
 pub struct Sim {
     pub world: World,
     tasks: Vec<Task>,
@@ -653,6 +667,21 @@ impl Sim {
         self.world.tick
     }
 
+    #[doc(hidden)]
+    pub fn benchmark_counters(&self) -> BenchmarkCounters {
+        let (collider_projections, active_query_pairs, collision_candidates, contacts) =
+            self.world.collision_index.benchmark_stats();
+        BenchmarkCounters {
+            live_entities: self.world.entities.len(),
+            collider_projections,
+            active_query_pairs,
+            collision_candidates,
+            contacts,
+            predicate_matches: self.world.benchmark_predicate_matches,
+            rule_actions: self.world.benchmark_rule_actions,
+        }
+    }
+
     pub fn resize_entity_capacity(&mut self, max_entities: usize) -> Result<(), String> {
         self.world.resize_entity_capacity(max_entities)
     }
@@ -1045,6 +1074,7 @@ impl Sim {
     fn exec_tick_value(&mut self, v: Val) -> Result<(), String> {
         match v {
             Val::Action(action) => {
+                self.world.benchmark_rule_actions += 1;
                 exec_instant(&action, &mut self.ctx, &mut self.world)?;
             }
             Val::Arr(items) => {
@@ -1456,6 +1486,8 @@ impl Sim {
             self.render_scratch.match_rows = rows;
             return Ok(None);
         }
+        self.world.benchmark_predicate_matches += rows.len();
+        self.world.benchmark_rule_actions += rows.len();
         let render = match &form.action {
             CompiledTickAction::Cull => {
                 // matches were collected before any cull applies, so
@@ -1967,6 +1999,8 @@ impl Sim {
     }
 
     pub fn step_with(&mut self, inputs: &Inputs) -> Result<(), String> {
+        self.world.benchmark_predicate_matches = 0;
+        self.world.benchmark_rule_actions = 0;
         self.drain_pending_writes()?;
         self.refresh_channels(inputs)?;
         self.render_scratch.recycle_rows(&mut self.world.render_rows);

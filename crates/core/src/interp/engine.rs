@@ -126,6 +126,7 @@ pub(crate) fn special(
         "entities-where" => {
             let q = evaluate(&items[1], env, ctx, world)?;
             let idxs = resolve_query(&q, ctx, world)?;
+            world.benchmark_predicate_matches += idxs.len();
             Val::EntitySet(idxs.into())
         }
         "collisions" => {

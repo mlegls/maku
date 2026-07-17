@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-circle-controlled-ceiling.expanded.maku",
+  "expanded_source_sha256": "21f25ea30cca1dd67de4d8d578862acdf4f13f62fde7c89679d31d129118cc25",
+  "expect": {
+    "contacts_per_tick": 25000,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-circle-controlled-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-circle-controlled-ceiling.json",
+  "workload_sha256": "cfd6069d66bee96b9c65e4dd79affa899a7816b02836738a932c6ccd120359b9"
+}

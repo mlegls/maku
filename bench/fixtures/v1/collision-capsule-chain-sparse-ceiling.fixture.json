@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/collision-capsule-chain-sparse-ceiling.expanded.maku",
+  "expanded_source_sha256": "f2f63d533f55035fb2f16ad28914d02059faed84fd449671cfcd9d94945a0bc8",
+  "expect": {
+    "contacts_per_tick": 500,
+    "live_entities": 100000,
+    "render_lanes": 0,
+    "rule_actions_per_tick": 0,
+    "rule_matches_per_tick": 0
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "collision-capsule-chain-sparse-ceiling",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/collision-capsule-chain-sparse-ceiling.json",
+  "workload_sha256": "02e2e8596a581393be045404fade652299ee84a72152a452de9cb488bf8ebf51"
+}
