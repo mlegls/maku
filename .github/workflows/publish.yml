@@ -28,25 +28,23 @@ jobs:
       - uses: jdx/mise-action@v3
         with:
           cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
       - name: Install benchmark browser
         run: bunx playwright install --with-deps chromium
       - name: Complete release validation
         run: scripts/check.sh release
-      - name: Require registry credentials
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          test -n "$CARGO_REGISTRY_TOKEN" || { echo 'release environment is missing CARGO_REGISTRY_TOKEN' >&2; exit 1; }
-          test -n "$NODE_AUTH_TOKEN" || { echo 'release environment is missing NPM_TOKEN' >&2; exit 1; }
-      - name: Configure npm authentication
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
+      - name: Exchange GitHub OIDC identity for a crates.io token
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1
       - name: Publish missing registry packages
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+          # npm 11.5.1+ discovers GitHub OIDC automatically. An inherited token
+          # takes precedence and disables trusted publishing, so clear it.
+          NODE_AUTH_TOKEN: ''
         run: scripts/publish-release.sh
