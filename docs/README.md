@@ -16,11 +16,8 @@ language or API documentation.
 | Native player users | [`player.md`](player.md) | `crates/player/README.md` | `session`, `mesh-renderer-api` |
 | JavaScript users | `crates/js/maku/README.md` | `crates/web/README.md`, `docs/renderer-api.md` | `web-demo-delivery`, `release-packaging` |
 | Migrating DMK authors | [`from-dmk.md`](from-dmk.md) | tutorials and language reference | `language` |
+| Performance readers | [`performance-baseline-2026-07.md`](performance-baseline-2026-07.md) | retained raw envelopes under `bench/results/` | `perf`, `scale-benchmarking` |
 | Release maintainers | [`releasing.md`](releasing.md) | release notes and generated `release.json` | `release-packaging` |
-
-Paths shown above that do not exist yet are deliverables of
-`maku-release-02-docs-demo`; this map fixes their canonical names so links and
-checks converge on one location.
 
 ## Authority and version presentation
 

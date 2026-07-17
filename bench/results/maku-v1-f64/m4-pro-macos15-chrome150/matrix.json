@@ -1,0 +1,26 @@
+{
+  "matrix_schema_version": 1,
+  "series": "maku-v1-f64",
+  "workloads": {
+    "bullet_sweep": [
+      "bullets-continuity", "bullets-1k", "bullets-10k", "bullets-100k", "bullets-1m"
+    ],
+    "collision_normal": [
+      "collision-circle-none-normal", "collision-circle-sparse-normal", "collision-circle-controlled-normal", "collision-circle-dense-normal",
+      "collision-capsule-chain-none-normal", "collision-capsule-chain-sparse-normal", "collision-capsule-chain-controlled-normal", "collision-capsule-chain-dense-normal"
+    ],
+    "collision_ceiling": [
+      "collision-circle-none-ceiling", "collision-circle-sparse-ceiling", "collision-circle-controlled-ceiling", "collision-circle-dense-ceiling",
+      "collision-capsule-chain-none-ceiling", "collision-capsule-chain-sparse-ceiling", "collision-capsule-chain-controlled-ceiling", "collision-capsule-chain-dense-ceiling"
+    ],
+    "rules": [
+      "rules-filter-only-none", "rules-filter-only-half", "rules-filter-only-all",
+      "rules-render-only-none", "rules-render-only-half", "rules-render-only-all",
+      "rules-masked-update-none", "rules-masked-update-half", "rules-masked-update-all",
+      "rules-effect-action-none", "rules-effect-action-half", "rules-effect-action-all"
+    ],
+    "corners": ["corner-render-collision-rules-normal", "corner-render-collision-rules-ceiling"]
+  },
+  "native_tiers": ["simulation-only", "byo-transport", "touhou-pack", "native-macroquad-compat"],
+  "browser_tiers": ["simulation-only", "byo-transport", "touhou-pack", "web-canvas2d"]
+}

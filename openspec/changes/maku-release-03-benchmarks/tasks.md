@@ -47,9 +47,9 @@
 
 ## 7. Establish and Publish the Baseline
 
-- [ ] 7.1 Run the native and browser one-axis sweeps and representative corners at normal and attempted ceiling scales on the declared reference systems.
-- [ ] 7.2 Review failed/invalid samples, semantic parity, memory ceilings, Canvas/native adapter attribution, and renderer-headroom calculations before accepting results.
-- [ ] 7.3 Publish reproducible raw results and a user-facing report separating simulation, BYO transport, bundled Touhou construction, and concrete host drawing.
-- [ ] 7.4 Prepare the Bullet Hell Engines update with historical comparison, workload/environment disclosure, p95/p99 headroom, current limitations, and links to artifacts/demo.
-- [ ] 7.5 Use the measured bottlenecks to recommend the next OpenSpec optimization among entity representation, f32 columns, collision streaming, JIT, or GPU work without changing benchmark history.
+- [x] 7.1 Run the native and browser one-axis sweeps and representative corners at normal and attempted ceiling scales on the declared reference systems.
+- [x] 7.2 Review failed/invalid samples, semantic parity, memory ceilings, Canvas/native adapter attribution, and renderer-headroom calculations before accepting results.
+- [x] 7.3 Publish reproducible raw results and a user-facing report separating simulation, BYO transport, bundled Touhou construction, and concrete host drawing.
+- [x] 7.4 Prepare the Bullet Hell Engines update with historical comparison, workload/environment disclosure, p95/p99 headroom, current limitations, and links to artifacts/demo.
+- [x] 7.5 Use the measured bottlenecks to recommend the next OpenSpec optimization among entity representation, f32 columns, collision streaming, JIT, or GPU work without changing benchmark history.
 - [ ] 7.6 Run strict OpenSpec validation and confirm the benchmark suite preserves determinism, lowering oracle, render ordering, and existing perf methodology.

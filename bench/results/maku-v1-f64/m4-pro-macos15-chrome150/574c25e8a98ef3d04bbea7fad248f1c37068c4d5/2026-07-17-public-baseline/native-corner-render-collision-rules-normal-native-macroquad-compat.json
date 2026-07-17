@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "series": "maku-v1-f64",
+  "run_id": "20260717T010721532Z-corner-render-collision-rules-normal-native-macroquad-compat-failure",
+  "captured_at": "2026-07-17T01:07:21.532Z",
+  "source": {
+    "revision": "574c25e8a98ef3d04bbea7fad248f1c37068c4d5",
+    "dirty": false,
+    "workload_schema": 1,
+    "result_schema": 1,
+    "generator": "maku-bench-generator-v1",
+    "expanded_source_sha256": "f6682de55143981798ee70919e42174c7ceec5143ad818a1253ca3d4c38b8fb2",
+    "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "fixture": {
+    "id": "corner-render-collision-rules-normal",
+    "family": "corner",
+    "workload_sha256": "c32d270d33d1eac01de2a7a1c543fee41b21323d7a221a9190af716a4da859ed",
+    "seed": 12648430,
+    "parameters": {
+      "schema_version": 1,
+      "id": "corner-render-collision-rules-normal",
+      "description": "Representative sprite + controlled circle contacts + masked updates at 10000 entities",
+      "family": "corner",
+      "seed": 12648430,
+      "generator_version": "maku-bench-generator-v1",
+      "cadence": {
+        "tick_hz": 120,
+        "presentation_hz": 60,
+        "warmup_ticks": 120,
+        "sample_frames": 10,
+        "ticks_per_frame": 2,
+        "sample_batches": 30
+      },
+      "entities": {
+        "plateau": 10000,
+        "capacity": 11024
+      },
+      "motion": {
+        "shape": "static",
+        "speed": 0,
+        "bounded": true
+      },
+      "render": {
+        "shape": "point-basic",
+        "layers": 1,
+        "family": "circle",
+        "variant": "w",
+        "color": "red"
+      },
+      "collision": {
+        "geometry": "circle",
+        "query_pairs": 1,
+        "active_layers": 2,
+        "contact_density": "controlled",
+        "contact_fraction": 0.5
+      },
+      "rules": {
+        "class": "masked-update",
+        "count": 2,
+        "match_rate": "half",
+        "match_fraction": 0.5
+      },
+      "input_tape": [],
+      "expect": {
+        "live_entities": 10000,
+        "render_lanes": 10000,
+        "contacts_per_tick": 2500,
+        "rule_matches_per_tick": 20000,
+        "rule_actions_per_tick": 20000
+      }
+    }
+  },
+  "stage": {
+    "executor": "interpreter-native",
+    "tier": "host-draw",
+    "adapter": "native-macroquad-compat"
+  },
+  "environment": {
+    "environment_id": "m4-pro-macos15-chrome150",
+    "os": "macOS 15.6.1 (24G90)",
+    "arch": "arm64",
+    "cpu": "Apple M4 Pro, 14 cores (10 performance, 4 efficiency)",
+    "gpu": "Apple M4 Pro, 20 GPU cores, Metal 3",
+    "memory_bytes": 25769803776,
+    "browser": null,
+    "display": null,
+    "build_profile": "release",
+    "rustflags": "--cfg tokio_unstable",
+    "tool_versions": {
+      "rust": "1.97.0",
+      "cargo": "1.97.0",
+      "bun": "1.3.14",
+      "node": "24.18.0",
+      "wasm-pack": "0.15.0",
+      "xcode": "16.4",
+      "apple_clang": "17.0.0"
+    },
+    "power": {
+      "source": "ac",
+      "low_power_mode": false,
+      "notes": "controlled bounded-failure record"
+    }
+  },
+  "policy": {
+    "tick_hz": 120,
+    "presentation_hz": 60,
+    "warmup_ticks": 120,
+    "sample_frames": 10,
+    "sample_batches": 30,
+    "percentile_method": "nearest-rank",
+    "wall_mode": "instrumented",
+    "elapsed_clamp_ms": null,
+    "canvas_texture_cache_warm": null
+  },
+  "correctness": {
+    "valid": false,
+    "state_digest": "0000000000000000",
+    "expected": {
+      "live_entities": 10000,
+      "render_lanes": 10000,
+      "contacts_per_tick": 2500,
+      "rule_matches_per_tick": 20000,
+      "rule_actions_per_tick": 20000
+    },
+    "observed": {
+      "live_entities": 0,
+      "render_lanes": 0,
+      "render_lanes_by_kind": {},
+      "contacts_per_tick": 0,
+      "rule_matches_per_tick": 0,
+      "rule_actions_per_tick": 0,
+      "state_digest": "0000000000000000"
+    },
+    "errors": [
+      "Macroquad compatibility expansion/submission exceeded the 120 second controlled-run bound"
+    ]
+  },
+  "counters": {
+    "live_entities": 0,
+    "render_lanes": 0,
+    "sprite_instances": {},
+    "sprite_layers": 0,
+    "beam_segments": 0,
+    "vertices": 0,
+    "indices": 0,
+    "triangles": 0,
+    "draw_commands": 0,
+    "collider_projections": 0,
+    "active_query_pairs": 0,
+    "collision_candidates": 0,
+    "contacts": 0,
+    "rules": {},
+    "predicate_matches": 0,
+    "rule_actions": 0
+  },
+  "memory": {
+    "rss_start_bytes": null,
+    "rss_peak_bytes": null,
+    "wasm_start_bytes": null,
+    "wasm_peak_bytes": null,
+    "allocations": null,
+    "allocated_bytes": null
+  },
+  "cold_setup": {
+    "load_ns": null,
+    "schema_bind_ns": null,
+    "resource_setup_ns": null
+  },
+  "samples": [],
+  "summaries": {},
+  "headroom": null,
+  "outcome": {
+    "status": "bounded-failure",
+    "last_successful_plateau": 1000,
+    "failure_class": "adapter-timeout",
+    "message": "Macroquad compatibility expansion/submission exceeded the 120 second controlled-run bound"
+  }
+}

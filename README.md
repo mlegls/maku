@@ -44,7 +44,8 @@ or browse the [interactive tutorials](https://neen.ink/projects/maku/tutorials.h
 For local development, run `crates/web/build.sh serve` and open
 `http://localhost:8000/crates/web/static/`. Both use the same wasm engine and
 Canvas2D compatibility adapter, with the same controls and an in-page eval box
-speaking the wire protocol.
+speaking the wire protocol. See the [July 2026 staged performance baseline](docs/performance-baseline-2026-07.md)
+for native/wasm p95/p99 headroom, memory, workload shape, and raw results.
 
 ## Development toolchain
 
