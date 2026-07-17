@@ -16,9 +16,9 @@
 
 ## 3. Implement Native Staged Runner
 
-- [ ] 3.1 Instrument actual fixed-step frame observations with tick count and separate simulation, transport, pack-build, host-overhead, adapter/submission, and available completion/presentation durations.
-- [ ] 3.2 Add simulation-only and BYO transport tiers that consume typed render batches without row expansion.
-- [ ] 3.3 Add warmed `maku-render-touhou` construction timing and counters for layouts, layers, segments, vertices, indices, and ordered commands.
+- [x] 3.1 Instrument actual fixed-step frame observations with tick count and separate simulation, transport, pack-build, host-overhead, adapter/submission, and available completion/presentation durations.
+- [x] 3.2 Add simulation-only and BYO transport tiers that consume typed render batches without row expansion.
+- [x] 3.3 Add warmed `maku-render-touhou` construction timing and counters for layouts, layers, segments, vertices, indices, and ordered commands.
 - [ ] 3.4 Add the named `native-macroquad-compat` end-to-end adapter tier while separating instance expansion/remapping, CPU submission, and any measurable GPU/present completion.
 - [ ] 3.5 Add allocation, peak resident memory, cold setup, and bounded-failure capture without contaminating minimally instrumented wall runs.
 - [ ] 3.6 Emit validated result envelopes and raw samples for every native tier.
@@ -33,8 +33,8 @@
 
 ## 5. Compute and Present Headroom
 
-- [ ] 5.1 Implement median/p95/p99/max summaries over complete observed tick and displayed-frame samples without deriving paired frames from average tick cost.
-- [ ] 5.2 Compute BYO renderer headroom, bundled-pack draw headroom, and end-to-end margin against declared 120 Hz simulation and 60 Hz presentation targets, preserving negative margins and catch-up observations.
+- [x] 5.1 Implement median/p95/p99/max summaries over complete observed tick and displayed-frame samples without deriving paired frames from average tick cost.
+- [x] 5.2 Compute BYO renderer headroom, bundled-pack draw headroom, and end-to-end margin against declared 120 Hz simulation and 60 Hz presentation targets, preserving negative margins and catch-up observations.
 - [ ] 5.3 Generate tables/curves relating logical bullets to render/collision/rule shape, incremental stage cost, memory, and last successful ceiling point.
 - [ ] 5.4 Add claim-generation checks requiring fixture, percentile, backend/adapter, environment, cadence, workload counters, and source revision before producing report prose.
 

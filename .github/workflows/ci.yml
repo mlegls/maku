@@ -25,6 +25,8 @@ jobs:
       - uses: jdx/mise-action@v3
         with:
           cache: true
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
       - name: Fast validation
         run: scripts/check.sh fast
 
@@ -40,5 +42,7 @@ jobs:
       - uses: jdx/mise-action@v3
         with:
           cache: true
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
       - name: Complete release validation
         run: scripts/check.sh release

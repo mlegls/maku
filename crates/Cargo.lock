@@ -259,6 +259,7 @@ version = "0.1.0"
 name = "maku-bench"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "maku",
  "maku-render-touhou",
  "serde",

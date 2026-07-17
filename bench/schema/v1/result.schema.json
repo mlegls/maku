@@ -44,7 +44,7 @@
         "browser": { "type": ["object", "null"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } }, "required": ["name", "version"], "additionalProperties": false },
         "display": { "type": ["object", "null"], "properties": { "width_css": { "type": "integer" }, "height_css": { "type": "integer" }, "dpr": { "type": "number" } }, "required": ["width_css", "height_css", "dpr"], "additionalProperties": false },
         "build_profile": { "enum": ["release", "release-debug"] }, "rustflags": { "type": "string" }, "tool_versions": { "type": "object", "additionalProperties": { "type": "string" } },
-        "power": { "type": "object", "additionalProperties": false, "required": ["source", "low_power_mode"], "properties": { "source": { "enum": ["ac", "battery", "unknown"] }, "low_power_mode": { "type": ["boolean", "null"] }, "notes": { "type": "string" } }
+        "power": { "type": "object", "additionalProperties": false, "required": ["source", "low_power_mode"], "properties": { "source": { "enum": ["ac", "battery", "unknown"] }, "low_power_mode": { "type": ["boolean", "null"] }, "notes": { "type": "string" } } }
       }
     },
     "policy": {
@@ -57,10 +57,11 @@
     },
     "counters": {
       "type": "object", "additionalProperties": false,
-      "required": ["live_entities", "render_lanes", "sprite_instances", "beam_segments", "vertices", "indices", "triangles", "draw_commands", "collider_projections", "active_query_pairs", "collision_candidates", "contacts", "rules", "predicate_matches", "rule_actions"],
+      "required": ["live_entities", "render_lanes", "sprite_instances", "sprite_layers", "beam_segments", "vertices", "indices", "triangles", "draw_commands", "collider_projections", "active_query_pairs", "collision_candidates", "contacts", "rules", "predicate_matches", "rule_actions"],
       "properties": {
         "live_entities": { "type": "integer", "minimum": 0 }, "render_lanes": { "type": "integer", "minimum": 0 },
         "sprite_instances": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "sprite_layers": { "type": "integer", "minimum": 0 },
         "beam_segments": { "type": "integer", "minimum": 0 }, "vertices": { "type": "integer", "minimum": 0 }, "indices": { "type": "integer", "minimum": 0 }, "triangles": { "type": "integer", "minimum": 0 }, "draw_commands": { "type": "integer", "minimum": 0 },
         "collider_projections": { "type": "integer", "minimum": 0 }, "active_query_pairs": { "type": "integer", "minimum": 0 }, "collision_candidates": { "type": "integer", "minimum": 0 }, "contacts": { "type": "integer", "minimum": 0 },
         "rules": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }, "predicate_matches": { "type": "integer", "minimum": 0 }, "rule_actions": { "type": "integer", "minimum": 0 }

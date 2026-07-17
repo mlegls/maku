@@ -16,6 +16,7 @@ run_fast() {
   scripts/check-stdlib-assets.sh
   bun scripts/check-compatibility.mjs
   cargo test --workspace --all-targets --manifest-path crates/Cargo.toml
+  scripts/check-benchmark-smoke.sh
   cargo test --locked --manifest-path tests/public-api-smoke/Cargo.toml
   cargo check --workspace --target wasm32-unknown-unknown --manifest-path crates/Cargo.toml
   (cd crates/js/maku && bun run check)
