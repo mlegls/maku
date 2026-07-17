@@ -76,7 +76,7 @@
       "properties": { "load_ns": { "$ref": "#/$defs/duration" }, "schema_bind_ns": { "$ref": "#/$defs/duration" }, "resource_setup_ns": { "$ref": "#/$defs/duration" } }
     },
     "samples": {
-      "type": "array", "minItems": 1,
+      "type": "array", "minItems": 0,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["batch", "frame", "ticks", "simulation_ns", "transport_ns", "pack_build_ns", "host_overhead_ns", "adapter_submission_ns", "completion_ns", "presentation_ns", "elapsed_clamped_ns", "memory_bytes", "raf_ticks"],

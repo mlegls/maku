@@ -8,7 +8,8 @@ This directory contains the versioned workload and result contracts used by the 
 - `schema/v1/result.schema.json`: common native/browser envelope and raw displayed-frame observations.
 - `environments/*.json`: sanitized reference-system records.
 - `workloads/v1/*.json`: maintained one-axis and representative-corner matrix.
-- `results/v1/<series>/<revision>/`: immutable raw runs, summaries, and provenance.
+- `matrix-v1.json`: controlled one-axis/corner matrix and named native/browser tiers.
+- `results/<series>/<environment>/<revision>/<run-id>/`: immutable raw runs, summaries, and provenance.
 
 Changing fixture semantics, hot numeric representation, or either schema starts a distinguishable baseline series. Existing raw results are never rewritten.
 
@@ -28,3 +29,15 @@ Changing fixture semantics, hot numeric representation, or either schema starts 
 ## Performance claims
 
 Generated report prose requires a fixture, percentile, executor, tier/adapter, cadence, workload counters, environment, and source revision. Instrumented stage attribution must agree with same-session minimally instrumented wall behavior. Optimization deltas continue to follow `openspec/specs/perf/spec.md`: interleaved `MAKU_WALL_ONLY=1` A/B runs are the verdict.
+
+## Controlled commands
+
+Run from a clean worktree with the checked release wasm snapshot and declared environment:
+
+```sh
+scripts/run-benchmark-matrix.sh native bench/environments/m4-pro-macos15-chrome150.json /tmp/maku-native
+scripts/run-benchmark-matrix.sh browser bench/environments/m4-pro-macos15-chrome150.json /tmp/maku-browser
+scripts/run-benchmark-matrix.sh all bench/environments/m4-pro-macos15-chrome150.json /tmp/maku-all bullet_sweep,corners
+```
+
+The runner validates every envelope and invokes the claim-gated report generator. Browser runs use the pinned Playwright Chromium; `web-canvas2d` remains explicitly distinct from native Macroquad and future WebGPU adapters. See `bench/results/README.md` before retaining a controlled run.

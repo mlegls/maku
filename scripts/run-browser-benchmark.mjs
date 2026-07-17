@@ -19,7 +19,6 @@ const fixture = JSON.parse(readFileSync(resolve(root, `bench/fixtures/v1/${workl
 const source = readFileSync(resolve(root, fixture.expanded_source), 'utf8');
 const envRecord = environmentPath ? JSON.parse(readFileSync(resolve(environmentPath), 'utf8')) : null;
 const command = (...args) => spawnSync(args[0], args.slice(1), { cwd: root, encoding: 'utf8' }).stdout.trim();
-const revision = command('git', 'rev-parse', 'HEAD');
 const dirty = command('git', 'status', '--porcelain').length > 0;
 
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json', '.maku': 'text/plain' };
@@ -92,13 +91,16 @@ try {
   const summaries = {};
   for (const key of ['simulation_ns','transport_ns','pack_build_ns','adapter_submission_ns','presentation_ns']) { const values = observed.samples.map(s => s[key]).filter(v => v !== null); if (values.length) summaries[key] = summary('ns', values); }
   const period = 1000 / workload.cadence.presentation_hz;
-  const margins = observed.samples.map(s => { const sim=s.simulation_ns/1e6,t=(s.transport_ns??0)/1e6,b=(s.pack_build_ns??0)/1e6,h=(s.host_overhead_ns??0)/1e6,d=(s.adapter_submission_ns??0)/1e6; return [period-sim-t-h,period-sim-t-b-h,period-sim-t-b-h-d]; });
+  const costs = observed.samples.map(s => { const sim=s.simulation_ns/1e6,t=(s.transport_ns??0)/1e6,b=(s.pack_build_ns??0)/1e6,h=(s.host_overhead_ns??0)/1e6,d=(s.adapter_submission_ns??0)/1e6; return [sim+t+h,sim+t+b+h,sim+t+b+h+d]; });
+  const headroomSummary = values => { const d=summary('ms',values); return {...d,median:period-d.median,p95:period-d.p95,p99:period-d.p99,max:period-d.max}; };
   const errors = [];
   for (const [label, actual, expected] of [['live entities',observed.live,workload.expect.live_entities],['render lanes',observed.lanes,workload.expect.render_lanes],['contacts/tick',observed.contacts,workload.expect.contacts_per_tick],['rule matches/tick',observed.matches,workload.expect.rule_matches_per_tick],['rule actions/tick',observed.actions,workload.expect.rule_actions_per_tick]]) if (actual !== expected) errors.push(`${label}: expected ${expected}, got ${actual}`);
   const now = new Date().toISOString();
+  const runtimeRevision = observed.identity.sourceRevision;
+  if (!/^[0-9a-f]{40}$/.test(runtimeRevision)) throw new Error(`benchmark wasm lacks a release source revision: ${runtimeRevision}`);
   const baseHost = envRecord?.host ?? {};
   const envelope = { schema_version:1, series:'maku-v1-f64', run_id:`${now.replace(/[-:.]/g,'')}-${workload.id}-${tierArg}`, captured_at:now,
-    source:{revision,dirty,workload_schema:1,result_schema:1,generator:workload.generator_version,expanded_source_sha256:fixture.expanded_source_sha256,input_tape_sha256:fixture.input_tape_sha256},
+    source:{revision:runtimeRevision,dirty,workload_schema:1,result_schema:1,generator:workload.generator_version,expanded_source_sha256:fixture.expanded_source_sha256,input_tape_sha256:fixture.input_tape_sha256},
     fixture:{id:workload.id,family:workload.family,workload_sha256:fixture.workload_sha256,seed:workload.seed,parameters:workload},
     stage:{executor:'interpreter-wasm',tier:tierArg==='web-canvas2d'?'host-draw':tierArg,adapter:tierArg==='web-canvas2d'?'web-canvas2d':'none'},
     environment:{environment_id:envRecord?.environment_id??`playwright-${process.platform}-${process.arch}`,os:baseHost.os??process.platform,arch:baseHost.arch??process.arch,cpu:baseHost.cpu??'CI/unspecified',gpu:baseHost.gpu??null,memory_bytes:baseHost.memory_bytes??1,browser:{name:'Playwright Chromium',version:browserVersion},display:{width_css:width,height_css:height,dpr},build_profile:'release',rustflags:envRecord?.build?.rustflags??'',tool_versions:{...(envRecord?.tools??{}),playwright:'1.55.0'},power:{source:envRecord?.power?.source??'unknown',low_power_mode:envRecord?.power?.low_power_mode??null,notes:envRecord?'controlled reference configuration':'structural smoke environment'}},
@@ -106,7 +108,7 @@ try {
     correctness:{valid:errors.length===0,state_digest:observed.digest,expected:workload.expect,observed:{live_entities:observed.live,render_lanes:observed.lanes,render_lanes_by_kind:{sprite:observed.lanes},contacts_per_tick:observed.contacts,rule_matches_per_tick:observed.matches,rule_actions_per_tick:observed.actions,state_digest:observed.digest},errors},
     counters:{live_entities:observed.live,render_lanes:observed.lanes,sprite_instances:{basic:observed.basic,tinted:observed.tinted,recolor:observed.recolor},sprite_layers:observed.basic+observed.tinted+observed.recolor,beam_segments:observed.indices/6,vertices:observed.vertices,indices:observed.indices,triangles:observed.indices/3,draw_commands:observed.commands,collider_projections:observed.projections,active_query_pairs:observed.pairs,collision_candidates:observed.candidates,contacts:observed.contacts,rules:{[workload.rules.class]:workload.rules.count},predicate_matches:observed.matches,rule_actions:observed.actions},
     memory:{rss_start_bytes:null,rss_peak_bytes:null,wasm_start_bytes:observed.wasmStart,wasm_peak_bytes:observed.wasmPeak,allocations:null,allocated_bytes:null},cold_setup:{load_ns:observed.loadNs,schema_bind_ns:null,resource_setup_ns:observed.resourceSetupNs},samples:observed.samples,summaries,
-    headroom:{period_ms:period,byo_ms:summary('ms',margins.map(v=>v[0])),bundled_draw_ms:summary('ms',margins.map(v=>v[1])),end_to_end_ms:summary('ms',margins.map(v=>v[2]))},
+    headroom:{period_ms:period,byo_ms:headroomSummary(costs.map(v=>v[0])),bundled_draw_ms:headroomSummary(costs.map(v=>v[1])),end_to_end_ms:headroomSummary(costs.map(v=>v[2]))},
     outcome:{status:errors.length?'invalid':'success',last_successful_plateau:errors.length?null:workload.entities.plateau,failure_class:errors.length?'semantic-mismatch':null,message:null}};
   mkdirSync(dirname(resolve(outputPath)),{recursive:true}); writeFileSync(resolve(outputPath),JSON.stringify(envelope,null,2)+'\n');
   console.log(resolve(outputPath)); if(errors.length) process.exitCode=1;

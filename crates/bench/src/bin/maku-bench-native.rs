@@ -1,6 +1,6 @@
 use maku::{render::{Column, RenderItem}, sim::Sim};
 use maku_bench::{
-    generate, load_workload, summary::{summarize, FrameStages}, verify, ColdSetup,
+    generate, load_workload, summary::{summarize, summarize_headroom, FrameStages}, verify, ColdSetup,
     Correctness, Display, Environment, FixtureIdentity, FrameSample, Headroom, Memory, Outcome,
     Power, ResultEnvelope, SourceIdentity, StageIdentity, TimingPolicy, WorkCounters,
     RESULT_SCHEMA_VERSION, WORKLOAD_SCHEMA_VERSION,
@@ -134,8 +134,8 @@ fn main() -> Result<(), String> {
     }
     let period = 1000.0 / workload.cadence.presentation_hz as f64;
     let mut byo = Vec::new(); let mut bundled = Vec::new(); let mut end = Vec::new();
-    for sample in &samples { let stages = FrameStages { simulation_ms: sample.simulation_ns.unwrap_or(0.0)/1e6, transport_ms: sample.transport_ns.unwrap_or(0.0)/1e6, pack_build_ms: sample.pack_build_ns.unwrap_or(0.0)/1e6, host_overhead_ms: sample.host_overhead_ns.unwrap_or(0.0)/1e6, adapter_submission_ms: sample.adapter_submission_ns.unwrap_or(0.0)/1e6 }; let h=stages.headroom(period); byo.push(h.0); bundled.push(h.1); end.push(h.2); }
-    let headroom = Some(Headroom { period_ms: period, byo_ms: summarize("ms", &byo).unwrap(), bundled_draw_ms: summarize("ms", &bundled).unwrap(), end_to_end_ms: summarize("ms", &end).unwrap() });
+    for sample in &samples { let stages = FrameStages { simulation_ms: sample.simulation_ns.unwrap_or(0.0)/1e6, transport_ms: sample.transport_ns.unwrap_or(0.0)/1e6, pack_build_ms: sample.pack_build_ns.unwrap_or(0.0)/1e6, host_overhead_ms: sample.host_overhead_ns.unwrap_or(0.0)/1e6, adapter_submission_ms: sample.adapter_submission_ns.unwrap_or(0.0)/1e6 }; let h=stages.headroom(0.0); byo.push(-h.0); bundled.push(-h.1); end.push(-h.2); }
+    let headroom = Some(Headroom { period_ms: period, byo_ms: summarize_headroom(period, &byo).unwrap(), bundled_draw_ms: summarize_headroom(period, &bundled).unwrap(), end_to_end_ms: summarize_headroom(period, &end).unwrap() });
     let rev = revision(); if rev.len() != 40 { return Err("source revision must be a full 40-character hash".into()); }
     let captured = captured_at();
     let envelope = ResultEnvelope { schema_version: RESULT_SCHEMA_VERSION, series: "maku-v1-f64".into(), run_id: format!("{}-{}-{}", captured.replace([':', '-'], ""), workload.id, args.tier.name()), captured_at: captured,
