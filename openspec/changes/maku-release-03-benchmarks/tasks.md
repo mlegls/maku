@@ -52,4 +52,4 @@
 - [x] 7.3 Publish reproducible raw results and a user-facing report separating simulation, BYO transport, bundled Touhou construction, and concrete host drawing.
 - [x] 7.4 Prepare the Bullet Hell Engines update with historical comparison, workload/environment disclosure, p95/p99 headroom, current limitations, and links to artifacts/demo.
 - [x] 7.5 Use the measured bottlenecks to recommend the next OpenSpec optimization among entity representation, f32 columns, collision streaming, JIT, or GPU work without changing benchmark history.
-- [ ] 7.6 Run strict OpenSpec validation and confirm the benchmark suite preserves determinism, lowering oracle, render ordering, and existing perf methodology.
+- [x] 7.6 Run strict OpenSpec validation and confirm the benchmark suite preserves determinism, lowering oracle, render ordering, and existing perf methodology.
