@@ -59,6 +59,21 @@
     { "source": "docs/tutorials/06-bosses.md", "target": "tutorials/06-bosses.md", "role": "tutorial-doc" },
     { "source": "docs/tutorials/07-guided-fires.md", "target": "tutorials/07-guided-fires.md", "role": "tutorial-doc" },
     { "source": "docs/tutorials/08-stages-and-campaigns.md", "target": "tutorials/08-stages-and-campaigns.md", "role": "tutorial-doc" },
-    { "source": "docs/from-dmk.md", "target": "from-dmk.md", "role": "migration-doc" }
+    { "source": "docs/from-dmk.md", "target": "from-dmk.md", "role": "migration-doc" },
+
+    { "source": "docs/language-reference.md", "target": "reference/language-reference.md", "role": "reference-doc" },
+    { "source": "docs/host-api.md", "target": "reference/host-api.md", "role": "reference-doc" },
+    { "source": "docs/renderer-api.md", "target": "reference/renderer-api.md", "role": "reference-doc" },
+    { "source": "docs/public-api.md", "target": "reference/public-api.md", "role": "reference-doc" },
+    { "source": "docs/player.md", "target": "reference/player.md", "role": "reference-doc" },
+
+    { "source": "cards/docs/language-reference.maku", "target": "cards/docs/language-reference.maku", "role": "reference-example" },
+    { "source": "openspec/specs/language/spec.md", "target": "openspec/specs/language/spec.md", "role": "reference-authority" },
+    { "source": "openspec/specs/determinism/spec.md", "target": "openspec/specs/determinism/spec.md", "role": "reference-authority" },
+    { "source": "openspec/specs/session/spec.md", "target": "openspec/specs/session/spec.md", "role": "reference-authority" },
+    { "source": "openspec/specs/render-rows/spec.md", "target": "openspec/specs/render-rows/spec.md", "role": "reference-authority" },
+    { "source": "openspec/specs/load-time-schema/spec.md", "target": "openspec/specs/load-time-schema/spec.md", "role": "reference-authority" },
+    { "source": "crates/web/README.md", "target": "crates/web/README.md", "role": "reference-support" },
+    { "source": "crates/player/README.md", "target": "crates/player/README.md", "role": "reference-support" }
   ]
 }

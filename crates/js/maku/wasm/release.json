@@ -71,8 +71,8 @@
       "sha256": "508be96982e06039e2ace37142f051fefea8725d32545af4796661541b584e08"
     },
     "crates/web/release-sync.json": {
-      "bytes": 5580,
-      "sha256": "7bb030c51b6db099c6669e851821ead1afacd99aa32464717006851f3d1138de"
+      "bytes": 7120,
+      "sha256": "addf3eda8f7ba77e64f9c734e7801d92c44d02680fdb4a7f270a5c4bfd01d22f"
     },
     "crates/js/maku/package.json": {
       "bytes": 798,
@@ -245,6 +245,58 @@
     "docs/from-dmk.md": {
       "bytes": 23798,
       "sha256": "5f3f76f88ea9abbc4774aea4ce563f0ebd30bfef8a98b5ed0af7a3b830359743"
+    },
+    "docs/language-reference.md": {
+      "bytes": 11978,
+      "sha256": "189863b6b0eb39c3e713faf575a83d0efd157f82a9dcfe134778a7f22137b768"
+    },
+    "docs/host-api.md": {
+      "bytes": 10920,
+      "sha256": "5cc4e5c3c7ff926206dc58623cb740160faea881e77b4eb7a420578f530f39fa"
+    },
+    "docs/renderer-api.md": {
+      "bytes": 9128,
+      "sha256": "5084c077583888a058b48cc16bc5e9bf267fd4a93605b650cfda0acfc536d801"
+    },
+    "docs/public-api.md": {
+      "bytes": 1581,
+      "sha256": "e2b08596964376f6e5aad9c50e7f9f7ba7d25fa26b63d6a1a5b1dafca872ad40"
+    },
+    "docs/player.md": {
+      "bytes": 4966,
+      "sha256": "7765eda07d855883b54608e894f542d70b8c55e1f242123cb3399feebb30d8d0"
+    },
+    "cards/docs/language-reference.maku": {
+      "bytes": 1028,
+      "sha256": "7e1dbe8e7c698d0a150aee9ef9d68876310a09e34ef9714f850212ba724179ee"
+    },
+    "openspec/specs/language/spec.md": {
+      "bytes": 113079,
+      "sha256": "44cb49fae290c9f2a987276d2e941299572a26d2a0a7e26c60759637fb5ed9e1"
+    },
+    "openspec/specs/determinism/spec.md": {
+      "bytes": 4779,
+      "sha256": "d30ce34661a8bc13f6b5c0405d6b7d13b8de486196aacdb40c6f740ad778e2d3"
+    },
+    "openspec/specs/session/spec.md": {
+      "bytes": 2943,
+      "sha256": "e8d5a97d4b10cb4fef695148b384357f5ca3f3ef97590c677256c4765292de84"
+    },
+    "openspec/specs/render-rows/spec.md": {
+      "bytes": 16728,
+      "sha256": "3ed7567076475fc88d7248d06e4395243cab5a7d7a199df6d2c19ca4a10fc60d"
+    },
+    "openspec/specs/load-time-schema/spec.md": {
+      "bytes": 2036,
+      "sha256": "b04d46c524dfae172320ac33191c448c1e004b024916c786fe064c8bdc06d306"
+    },
+    "crates/web/README.md": {
+      "bytes": 2606,
+      "sha256": "e426bfca7efe26b36ce170f729f0df6510f07248586d88a551167fbfba41331d"
+    },
+    "crates/player/README.md": {
+      "bytes": 1102,
+      "sha256": "9758f0dfc181a95fce7b164380912fe3cff4033054f38ed57bb9a8ecf27d14fb"
     }
   }
 }
