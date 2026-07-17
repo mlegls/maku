@@ -46,5 +46,5 @@ if [ "$host" = browser ] || [ "$host" = all ]; then
     done
   done
 fi
-bun scripts/check-benchmarks.mjs "$out"/*.json
+bun scripts/check-benchmarks.mjs "$out"/native-*.json "$out"/browser-*.json
 bun scripts/summarize-benchmarks.mjs "$out"/*.json --output "$out/summary.md" --csv "$out/summary.csv"
