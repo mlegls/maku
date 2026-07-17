@@ -49,7 +49,7 @@
     },
     "policy": {
       "type": "object", "additionalProperties": false, "required": ["tick_hz", "presentation_hz", "warmup_ticks", "sample_frames", "sample_batches", "percentile_method", "wall_mode"],
-      "properties": { "tick_hz": { "const": 120 }, "presentation_hz": { "const": 60 }, "warmup_ticks": { "type": "integer", "minimum": 0 }, "sample_frames": { "type": "integer", "minimum": 1 }, "sample_batches": { "type": "integer", "minimum": 1 }, "percentile_method": { "const": "nearest-rank" }, "wall_mode": { "enum": ["instrumented", "minimal"] }, "elapsed_clamp_ms": { "type": ["number", "null"] } }
+      "properties": { "tick_hz": { "const": 120 }, "presentation_hz": { "const": 60 }, "warmup_ticks": { "type": "integer", "minimum": 0 }, "sample_frames": { "type": "integer", "minimum": 1 }, "sample_batches": { "type": "integer", "minimum": 1 }, "percentile_method": { "const": "nearest-rank" }, "wall_mode": { "enum": ["instrumented", "minimal"] }, "elapsed_clamp_ms": { "type": ["number", "null"] }, "canvas_texture_cache_warm": { "type": ["boolean", "null"] } }
     },
     "correctness": {
       "type": "object", "additionalProperties": false, "required": ["valid", "state_digest", "expected", "observed", "errors"],
@@ -79,8 +79,8 @@
       "type": "array", "minItems": 1,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["batch", "frame", "ticks", "simulation_ns", "transport_ns", "pack_build_ns", "host_overhead_ns", "adapter_submission_ns", "completion_ns", "presentation_ns", "elapsed_clamped_ns", "memory_bytes"],
-        "properties": { "batch": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 0 }, "ticks": { "type": "integer", "minimum": 0 }, "simulation_ns": { "$ref": "#/$defs/duration" }, "transport_ns": { "$ref": "#/$defs/duration" }, "pack_build_ns": { "$ref": "#/$defs/duration" }, "host_overhead_ns": { "$ref": "#/$defs/duration" }, "adapter_submission_ns": { "$ref": "#/$defs/duration" }, "completion_ns": { "$ref": "#/$defs/duration" }, "presentation_ns": { "$ref": "#/$defs/duration" }, "elapsed_clamped_ns": { "$ref": "#/$defs/duration" }, "memory_bytes": { "type": ["integer", "null"], "minimum": 0 } }
+        "required": ["batch", "frame", "ticks", "simulation_ns", "transport_ns", "pack_build_ns", "host_overhead_ns", "adapter_submission_ns", "completion_ns", "presentation_ns", "elapsed_clamped_ns", "memory_bytes", "raf_ticks"],
+        "properties": { "batch": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 0 }, "ticks": { "type": "integer", "minimum": 0 }, "simulation_ns": { "$ref": "#/$defs/duration" }, "transport_ns": { "$ref": "#/$defs/duration" }, "pack_build_ns": { "$ref": "#/$defs/duration" }, "host_overhead_ns": { "$ref": "#/$defs/duration" }, "adapter_submission_ns": { "$ref": "#/$defs/duration" }, "completion_ns": { "$ref": "#/$defs/duration" }, "presentation_ns": { "$ref": "#/$defs/duration" }, "elapsed_clamped_ns": { "$ref": "#/$defs/duration" }, "memory_bytes": { "type": ["integer", "null"], "minimum": 0 }, "raf_ticks": { "type": ["integer", "null"], "minimum": 0 } }
       }
     },
     "summaries": { "type": "object", "additionalProperties": { "$ref": "#/$defs/summary" } },

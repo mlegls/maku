@@ -27,6 +27,8 @@ jobs:
           cache: true
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
+      - name: Install benchmark browser
+        run: bunx playwright install --with-deps chromium
       - name: Fast validation
         run: scripts/check.sh fast
 
@@ -44,5 +46,7 @@ jobs:
           cache: true
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
+      - name: Install benchmark browser
+        run: bunx playwright install --with-deps chromium
       - name: Complete release validation
         run: scripts/check.sh release

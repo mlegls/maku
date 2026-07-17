@@ -116,7 +116,7 @@ fn main() -> Result<(), String> {
             if args.tier == Tier::Pack { let start = Instant::now(); mesh.build(&items).map_err(|e| format!("pack build: {e:?}"))?; pack_build_ns = Some(ns(start)); }
         }
         samples.push(FrameSample { batch, frame, ticks: workload.cadence.ticks_per_frame, simulation_ns: Some(simulation_ns), transport_ns, pack_build_ns,
-            host_overhead_ns: Some(0.0), adapter_submission_ns: None, completion_ns: None, presentation_ns: None, elapsed_clamped_ns: Some(0.0), memory_bytes: peak_rss_bytes() });
+            host_overhead_ns: Some(0.0), adapter_submission_ns: None, completion_ns: None, presentation_ns: None, elapsed_clamped_ns: Some(0.0), memory_bytes: peak_rss_bytes(), raf_ticks: None });
     }}
     let verification = verify(&mut sim, &workload);
     let core = sim.benchmark_counters(); let frame = mesh.frame();
@@ -142,7 +142,7 @@ fn main() -> Result<(), String> {
         source: SourceIdentity { revision: rev, dirty: dirty(), workload_schema: WORKLOAD_SCHEMA_VERSION, result_schema: RESULT_SCHEMA_VERSION, generator: workload.generator_version.clone(), expanded_source_sha256: generated.source_sha256, input_tape_sha256: generated.input_tape_sha256 },
         fixture: FixtureIdentity { id: workload.id.clone(), family: format!("{:?}", workload.family).to_lowercase(), workload_sha256: generated.workload_sha256, seed: workload.seed, parameters: serde_json::to_value(&workload).unwrap() },
         stage: StageIdentity { executor: "interpreter-native".into(), tier: args.tier.name().into(), adapter: "none".into() }, environment: environment(&args.environment)?,
-        policy: TimingPolicy { tick_hz: 120, presentation_hz: 60, warmup_ticks: warmup, sample_frames: frames, sample_batches: batches, percentile_method: "nearest-rank".into(), wall_mode: "instrumented".into(), elapsed_clamp_ms: None },
+        policy: TimingPolicy { tick_hz: 120, presentation_hz: 60, warmup_ticks: warmup, sample_frames: frames, sample_batches: batches, percentile_method: "nearest-rank".into(), wall_mode: "instrumented".into(), elapsed_clamp_ms: None, canvas_texture_cache_warm: None },
         correctness: Correctness { valid: verification.valid, state_digest: verification.observed.state_digest.clone(), expected: workload.expect.clone(), observed: verification.observed, errors: verification.errors }, counters,
         memory: Memory { rss_start_bytes: rss_start, rss_peak_bytes: peak_rss_bytes(), wasm_start_bytes: None, wasm_peak_bytes: None, allocations: None, allocated_bytes: None },
         cold_setup: ColdSetup { load_ns: Some(load_ns), schema_bind_ns: Some(bind_ns), resource_setup_ns: None }, samples, summaries, headroom,

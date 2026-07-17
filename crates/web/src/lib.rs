@@ -7,6 +7,7 @@
 use js_sys::{Uint32Array, Uint8Array};
 use maku::host::Instance;
 use maku::host::Inputs;
+use maku::render::RenderItem;
 use maku_render_touhou::{
     DrawSource, TextureSource, TouhouMesh, TouhouProfile, FRAME_ABI_VERSION,
 };
@@ -52,6 +53,7 @@ pub struct Maku {
     inst: Instance,
     pending: Inputs,
     mesh: TouhouMesh,
+    pending_render: Vec<RenderItem>,
     packed_draws: Vec<u32>,
 }
 
@@ -66,6 +68,7 @@ impl Maku {
             inst,
             pending: Inputs::default(),
             mesh: TouhouMesh::new(Rc::new(TouhouProfile::stock())),
+            pending_render: Vec::new(),
             packed_draws: Vec::new(),
         }
     }
@@ -214,13 +217,29 @@ impl Maku {
     /// before the next mutating wasm call: another build reuses their backing
     /// vectors, and any wasm-memory growth invalidates JavaScript views.
     pub fn build_render_frame(&mut self) -> Result<(), JsValue> {
+        self.benchmark_render_transport();
+        self.benchmark_build_pack()
+    }
+
+    /// Build and retain only the typed core transport. Returns its lane count.
+    #[doc(hidden)]
+    pub fn benchmark_render_transport(&mut self) -> usize {
+        self.pending_render = self.inst.render_frame();
+        self.pending_render.iter().map(|item| match item {
+            RenderItem::Row(_) => 1,
+            RenderItem::Batch(batch) => batch.len,
+        }).sum()
+    }
+
+    /// Build the Touhou pack from the retained transport without regenerating it.
+    #[doc(hidden)]
+    pub fn benchmark_build_pack(&mut self) -> Result<(), JsValue> {
         for kind in ["sprite", "beam"] {
             if let Some(schema) = self.inst.declared_render_schema(kind) {
                 self.mesh.bind_schema(kind, schema).map_err(|e| JsValue::from_str(&e.to_string()))?;
             }
         }
-        let items = self.inst.render_frame();
-        self.mesh.build(&items).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.mesh.build(&self.pending_render).map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.packed_draws.clear();
         self.packed_draws.reserve(self.mesh.frame().draws.len() * 8);
         for draw in &self.mesh.frame().draws {
@@ -236,6 +255,21 @@ impl Maku {
         }
         Ok(())
     }
+
+    #[doc(hidden)]
+    pub fn benchmark_digest(&mut self) -> String { format!("{:016x}", self.inst.benchmark_digest()) }
+    #[doc(hidden)]
+    pub fn benchmark_collider_projections(&self) -> usize { self.inst.benchmark_counters().collider_projections }
+    #[doc(hidden)]
+    pub fn benchmark_active_query_pairs(&self) -> usize { self.inst.benchmark_counters().active_query_pairs }
+    #[doc(hidden)]
+    pub fn benchmark_collision_candidates(&self) -> usize { self.inst.benchmark_counters().collision_candidates }
+    #[doc(hidden)]
+    pub fn benchmark_contacts(&self) -> usize { self.inst.benchmark_counters().contacts }
+    #[doc(hidden)]
+    pub fn benchmark_predicate_matches(&self) -> usize { self.inst.benchmark_counters().predicate_matches }
+    #[doc(hidden)]
+    pub fn benchmark_rule_actions(&self) -> usize { self.inst.benchmark_counters().rule_actions }
 
     pub fn frame_abi_version(&self) -> u32 { FRAME_ABI_VERSION }
     pub fn basic_sprite_stride(&self) -> usize { size_of::<maku_render_touhou::BasicSpriteInstance>() }

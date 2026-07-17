@@ -25,11 +25,11 @@
 
 ## 4. Implement Browser-Wasm Staged Runner
 
-- [ ] 4.1 Add browser automation that loads the same generated cards, seed/input tape, cadence, warm-up, and sample intervals as native.
-- [ ] 4.2 Add wasm simulation-only, BYO transport, and warmed Touhou pack tiers with the common stage and semantic counters.
-- [ ] 4.3 Add the named `web-canvas2d` tier with Canvas command/draw timing, resolution/DPR, texture-cache warm state, RAF tick count, and elapsed-time clamping recorded.
+- [x] 4.1 Add browser automation that loads the same generated cards, seed/input tape, cadence, warm-up, and sample intervals as native.
+- [x] 4.2 Add wasm simulation-only, BYO transport, and warmed Touhou pack tiers with the common stage and semantic counters.
+- [x] 4.3 Add the named `web-canvas2d` tier with Canvas command/draw timing, resolution/DPR, texture-cache warm state, RAF tick count, and elapsed-time clamping recorded.
 - [ ] 4.4 Capture wasm linear-memory growth/peak, browser process/environment data where available, cold load/setup, and bounded failure at ceiling ramps.
-- [ ] 4.5 Emit and validate the same machine-readable envelope/raw sample schema as native and verify fixture/digest parity across hosts.
+- [x] 4.5 Emit and validate the same machine-readable envelope/raw sample schema as native and verify fixture/digest parity across hosts.
 
 ## 5. Compute and Present Headroom
 
@@ -40,7 +40,7 @@
 
 ## 6. CI and Controlled Measurement
 
-- [ ] 6.1 Add smoke-sized native/browser CI fixtures validating generation, semantic digests, stage boundaries, counters, and result-schema parsing without wall-clock failure thresholds.
+- [x] 6.1 Add smoke-sized native/browser CI fixtures validating generation, semantic digests, stage boundaries, counters, and result-schema parsing without wall-clock failure thresholds.
 - [ ] 6.2 Add explicit controlled-run commands for native and browser matrices using release artifacts and recorded environment/tool versions.
 - [ ] 6.3 Run minimally instrumented interleaved wall-only comparisons alongside instrumented attribution runs and flag disagreements per the governing perf spec.
 - [ ] 6.4 Store raw baseline artifacts and summaries under a versioned retention/provenance policy.

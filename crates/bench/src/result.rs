@@ -53,6 +53,7 @@ pub struct TimingPolicy {
     pub tick_hz: u32, pub presentation_hz: u32, pub warmup_ticks: u64,
     pub sample_frames: u64, pub sample_batches: u32, pub percentile_method: String,
     pub wall_mode: String, pub elapsed_clamp_ms: Option<f64>,
+    pub canvas_texture_cache_warm: Option<bool>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Correctness {
@@ -82,7 +83,7 @@ pub struct FrameSample {
     pub simulation_ns: Option<f64>, pub transport_ns: Option<f64>, pub pack_build_ns: Option<f64>,
     pub host_overhead_ns: Option<f64>, pub adapter_submission_ns: Option<f64>,
     pub completion_ns: Option<f64>, pub presentation_ns: Option<f64>,
-    pub elapsed_clamped_ns: Option<f64>, pub memory_bytes: Option<u64>,
+    pub elapsed_clamped_ns: Option<f64>, pub memory_bytes: Option<u64>, pub raf_ticks: Option<u32>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Headroom {

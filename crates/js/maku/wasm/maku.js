@@ -38,6 +38,80 @@ export class Maku {
         return ret;
     }
     /**
+     * @returns {number}
+     */
+    benchmark_active_query_pairs() {
+        const ret = wasm.maku_benchmark_active_query_pairs(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Build the Touhou pack from the retained transport without regenerating it.
+     */
+    benchmark_build_pack() {
+        const ret = wasm.maku_benchmark_build_pack(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    benchmark_collider_projections() {
+        const ret = wasm.maku_benchmark_collider_projections(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    benchmark_collision_candidates() {
+        const ret = wasm.maku_benchmark_collision_candidates(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    benchmark_contacts() {
+        const ret = wasm.maku_benchmark_contacts(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {string}
+     */
+    benchmark_digest() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.maku_benchmark_digest(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    benchmark_predicate_matches() {
+        const ret = wasm.maku_benchmark_predicate_matches(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Build and retain only the typed core transport. Returns its lane count.
+     * @returns {number}
+     */
+    benchmark_render_transport() {
+        const ret = wasm.maku_benchmark_render_transport(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    benchmark_rule_actions() {
+        const ret = wasm.maku_benchmark_rule_actions(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * @param {string} path
      * @param {string | null} [pattern]
      */

@@ -95,8 +95,7 @@ export function createCanvas2DRenderer({ maku, context, worldToCanvas, pixelsPer
     ctx.transform(a, b, c, d, e, f); ctx.drawImage(surface, 0, 0); ctx.restore();
   }
 
-  function draw() {
-    maku.build_render_frame();
+  function drawBuiltFrame() {
     if (variants.size > 4096) variants.clear();
     const buffers = [maku.basic_sprites(), maku.tinted_sprites(), maku.recolor_sprites()];
     const views = buffers.map(bytes => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength));
@@ -157,5 +156,10 @@ export function createCanvas2DRenderer({ maku, context, worldToCanvas, pixelsPer
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  return { draw, resolveManifest, registerExternalTexture, get manifest() { return manifest; } };
+  function draw() {
+    maku.build_render_frame();
+    drawBuiltFrame();
+  }
+
+  return { draw, drawBuiltFrame, resolveManifest, registerExternalTexture, get manifest() { return manifest; } };
 }

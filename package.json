@@ -9,6 +9,7 @@
   },
   "devDependencies": {
     "ajv": "8",
-    "ajv-formats": "3"
+    "ajv-formats": "3",
+    "playwright": "1.55.0"
   }
 }

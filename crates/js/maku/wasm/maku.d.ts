@@ -10,6 +10,21 @@ export class Maku {
     add_file(path: string, text: string): void;
     basic_sprite_stride(): number;
     basic_sprites(): Uint8Array;
+    benchmark_active_query_pairs(): number;
+    /**
+     * Build the Touhou pack from the retained transport without regenerating it.
+     */
+    benchmark_build_pack(): void;
+    benchmark_collider_projections(): number;
+    benchmark_collision_candidates(): number;
+    benchmark_contacts(): number;
+    benchmark_digest(): string;
+    benchmark_predicate_matches(): number;
+    /**
+     * Build and retain only the typed core transport. Returns its lane count.
+     */
+    benchmark_render_transport(): number;
+    benchmark_rule_actions(): number;
     boot(path: string, pattern?: string | null): void;
     /**
      * Build the pack frame once. Consume the zero-copy typed-array views
@@ -146,6 +161,15 @@ export interface InitOutput {
     readonly maku_add_file: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly maku_basic_sprite_stride: (a: number) => number;
     readonly maku_basic_sprites: (a: number) => any;
+    readonly maku_benchmark_active_query_pairs: (a: number) => number;
+    readonly maku_benchmark_build_pack: (a: number) => [number, number];
+    readonly maku_benchmark_collider_projections: (a: number) => number;
+    readonly maku_benchmark_collision_candidates: (a: number) => number;
+    readonly maku_benchmark_contacts: (a: number) => number;
+    readonly maku_benchmark_digest: (a: number) => [number, number];
+    readonly maku_benchmark_predicate_matches: (a: number) => number;
+    readonly maku_benchmark_render_transport: (a: number) => number;
+    readonly maku_benchmark_rule_actions: (a: number) => number;
     readonly maku_boot: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly maku_build_render_frame: (a: number) => [number, number];
     readonly maku_cells: (a: number) => [number, number];

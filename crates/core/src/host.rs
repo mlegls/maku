@@ -430,6 +430,18 @@ impl Instance {
         self.session.sim.as_ref().and_then(|sim| sim.declared_render_schema(kind))
     }
 
+    /// Deterministic state digest for benchmark correctness gates.
+    #[doc(hidden)]
+    pub fn benchmark_digest(&mut self) -> u64 {
+        self.session.sim.as_mut().map(|sim| sim.benchmark_digest()).unwrap_or_default()
+    }
+
+    /// Latest deterministic work counters for benchmark attribution.
+    #[doc(hidden)]
+    pub fn benchmark_counters(&self) -> crate::sim::BenchmarkCounters {
+        self.session.sim.as_ref().map(|sim| sim.benchmark_counters()).unwrap_or_default()
+    }
+
     /// Numeric channel value, if the channel currently holds a number.
     pub fn channel_num(&self, name: &str) -> Option<f64> {
         match self.session.sim.as_ref()?.channel_val(name)? {
