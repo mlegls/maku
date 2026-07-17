@@ -1,0 +1,18 @@
+{
+  "expanded_source": "bench/fixtures/v1/corner-render-collision-rules-normal.expanded.maku",
+  "expanded_source_sha256": "f6682de55143981798ee70919e42174c7ceec5143ad818a1253ca3d4c38b8fb2",
+  "expect": {
+    "contacts_per_tick": 2500,
+    "live_entities": 10000,
+    "render_lanes": 10000,
+    "rule_actions_per_tick": 20000,
+    "rule_matches_per_tick": 20000
+  },
+  "fixture_schema_version": 1,
+  "generator": "maku-bench-generator-v1",
+  "id": "corner-render-collision-rules-normal",
+  "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "seed": 12648430,
+  "workload": "bench/workloads/v1/corner-render-collision-rules-normal.json",
+  "workload_sha256": "1cf71d66201301d6d6c3309bf81cfc921dd6059a80572d0a342121417dc097e5"
+}

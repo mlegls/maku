@@ -1,4 +1,4 @@
-use crate::contract::{RuleClass, Workload, WorkloadFamily};
+use crate::contract::{RuleClass, Workload};
 use maku::{render::RenderItem, sim::Sim};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -35,10 +35,8 @@ pub fn observe(sim: &mut Sim, workload: &Workload) -> SemanticObservation {
         *render_lanes_by_kind.entry(kind).or_default() += lanes;
     }
     let rule_actions_per_tick = match workload.rules.class {
-        RuleClass::MaskedUpdate => counters.rule_actions as u64,
-        RuleClass::EffectAction => counters.rule_actions as u64,
-        RuleClass::RenderOnly => render_lanes as u64,
-        RuleClass::FilterOnly | RuleClass::None => 0,
+        RuleClass::FilterOnly => 0,
+        RuleClass::RenderOnly | RuleClass::MaskedUpdate | RuleClass::EffectAction | RuleClass::None => counters.rule_actions as u64,
     };
     SemanticObservation {
         live_entities,
@@ -58,8 +56,8 @@ pub fn verify(sim: &mut Sim, workload: &Workload) -> Verification {
     if observed.live_entities != expected.live_entities { errors.push(format!("live entities: expected {}, got {}", expected.live_entities, observed.live_entities)); }
     if observed.render_lanes != expected.render_lanes { errors.push(format!("render lanes: expected {}, got {}", expected.render_lanes, observed.render_lanes)); }
     if observed.contacts_per_tick != expected.contacts_per_tick { errors.push(format!("contacts/tick: expected {}, got {}", expected.contacts_per_tick, observed.contacts_per_tick)); }
-    if workload.family == WorkloadFamily::Rules && observed.rule_matches_per_tick != expected.rule_matches_per_tick { errors.push(format!("rule matches/tick: expected {}, got {}", expected.rule_matches_per_tick, observed.rule_matches_per_tick)); }
-    if workload.family == WorkloadFamily::Rules && observed.rule_actions_per_tick != expected.rule_actions_per_tick { errors.push(format!("rule actions/tick: expected {}, got {}", expected.rule_actions_per_tick, observed.rule_actions_per_tick)); }
+    if observed.rule_matches_per_tick != expected.rule_matches_per_tick { errors.push(format!("rule matches/tick: expected {}, got {}", expected.rule_matches_per_tick, observed.rule_matches_per_tick)); }
+    if observed.rule_actions_per_tick != expected.rule_actions_per_tick { errors.push(format!("rule actions/tick: expected {}, got {}", expected.rule_actions_per_tick, observed.rule_actions_per_tick)); }
     Verification { valid: errors.is_empty(), observed, errors }
 }
 

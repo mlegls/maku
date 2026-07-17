@@ -47,7 +47,7 @@
     "live_entities": 1000000,
     "render_lanes": 1000000,
     "contacts_per_tick": 0,
-    "rule_matches_per_tick": 0,
-    "rule_actions_per_tick": 0
+    "rule_matches_per_tick": 1000000,
+    "rule_actions_per_tick": 1000000
   }
 }

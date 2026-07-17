@@ -1,0 +1,11 @@
+{
+  "continuity_schema_version": 1,
+  "historical_profiler": "crates/core/examples/profile.rs",
+  "cases": [
+    { "id": "fruit-900t", "card": "cards/tutorials/t03.maku", "pattern": "ex3-fruit-colors", "ticks": 900 },
+    { "id": "fruit-scaled-12000t", "card": "cards/tutorials/t03.maku", "pattern": "ex3-fruit-colors", "ticks": 12000 },
+    { "id": "reimu-vs-mima", "card": "cards/reimu_vs_mima.maku", "pattern": "reimu-vs-mima", "ticks": 1800 },
+    { "id": "spell-2", "card": "cards/translations/ph_boss2_spell2.maku", "pattern": "spell-2", "ticks": 900 },
+    { "id": "cradle", "card": "cards/translations/200_cradle.maku", "pattern": "cradle", "ticks": 300 }
+  ]
+}

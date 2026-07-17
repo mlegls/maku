@@ -5,8 +5,8 @@
     "contacts_per_tick": 0,
     "live_entities": 128,
     "render_lanes": 128,
-    "rule_actions_per_tick": 0,
-    "rule_matches_per_tick": 0
+    "rule_actions_per_tick": 128,
+    "rule_matches_per_tick": 128
   },
   "fixture_schema_version": 1,
   "generator": "maku-bench-generator-v1",
@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/bullets-continuity.json",
-  "workload_sha256": "fd4f4fac25a396645e8fed1ebd2a801cf4a81cd66f5f947e3837b857ef84bf0e"
+  "workload_sha256": "ae1b006cd7d12f06488115b6d40c6de6b2d6bde0bb607132f56aa5f3cd6d2287"
 }

@@ -11,7 +11,7 @@
 - [x] 2.2 Add bullet-count one-axis fixtures at continuity, 1k, 10k, 100k, and attempted 1M plateaus with controlled motion and render shape.
 - [x] 2.3 Add collider fixtures varying circle/capsule-chain geometry, active layer/query pairs, and no/sparse/controlled/dense contact rates at normal and ceiling scales.
 - [x] 2.4 Add `deftick` fixtures varying filter-only, render-only, masked-update, and effect/action rules at 0%, approximately 50%, and 100% match rates.
-- [ ] 2.5 Add representative corner fixtures and retain historical representative cards/fruit profiling as continuity cases.
+- [x] 2.5 Add representative corner fixtures and retain historical representative cards/fruit profiling as continuity cases.
 - [x] 2.6 Implement semantic verification for live entities, render counters, contacts/effects, rule actions, and deterministic state digests.
 
 ## 3. Implement Native Staged Runner

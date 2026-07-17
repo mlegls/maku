@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "id": "bullets-100k",
-  "description": "Static point-render bullet plateau at 100,000 entities",
-  "family": "bullet-scale",
+  "id": "corner-render-collision-rules-ceiling",
+  "description": "Representative sprite + controlled circle contacts + masked updates at 100000 entities",
+  "family": "corner",
   "seed": 12648430,
   "generator_version": "maku-bench-generator-v1",
   "cadence": {
@@ -30,24 +30,24 @@
     "color": "red"
   },
   "collision": {
-    "geometry": "none",
-    "query_pairs": 0,
-    "active_layers": 0,
-    "contact_density": "none",
-    "contact_fraction": 0
+    "geometry": "circle",
+    "query_pairs": 1,
+    "active_layers": 2,
+    "contact_density": "controlled",
+    "contact_fraction": 0.5
   },
   "rules": {
-    "class": "none",
-    "count": 0,
-    "match_rate": "none",
-    "match_fraction": 0
+    "class": "masked-update",
+    "count": 2,
+    "match_rate": "half",
+    "match_fraction": 0.5
   },
   "input_tape": [],
   "expect": {
     "live_entities": 100000,
     "render_lanes": 100000,
-    "contacts_per_tick": 0,
-    "rule_matches_per_tick": 100000,
-    "rule_actions_per_tick": 100000
+    "contacts_per_tick": 25000,
+    "rule_matches_per_tick": 200000,
+    "rule_actions_per_tick": 200000
   }
 }
