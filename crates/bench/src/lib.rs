@@ -1,5 +1,6 @@
 //! Deterministic workload generation and common result contracts for Maku baselines.
 
+pub mod alloc;
 pub mod contract;
 pub mod fixture;
 pub mod result;

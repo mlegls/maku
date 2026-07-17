@@ -79,8 +79,8 @@
       "type": "array", "minItems": 0,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["batch", "frame", "ticks", "simulation_ns", "transport_ns", "pack_build_ns", "host_overhead_ns", "adapter_submission_ns", "completion_ns", "presentation_ns", "elapsed_clamped_ns", "memory_bytes", "raf_ticks"],
-        "properties": { "batch": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 0 }, "ticks": { "type": "integer", "minimum": 0 }, "simulation_ns": { "$ref": "#/$defs/duration" }, "transport_ns": { "$ref": "#/$defs/duration" }, "pack_build_ns": { "$ref": "#/$defs/duration" }, "host_overhead_ns": { "$ref": "#/$defs/duration" }, "adapter_submission_ns": { "$ref": "#/$defs/duration" }, "completion_ns": { "$ref": "#/$defs/duration" }, "presentation_ns": { "$ref": "#/$defs/duration" }, "elapsed_clamped_ns": { "$ref": "#/$defs/duration" }, "memory_bytes": { "type": ["integer", "null"], "minimum": 0 }, "raf_ticks": { "type": ["integer", "null"], "minimum": 0 } }
+        "required": ["batch", "frame", "ticks", "simulation_ns", "transport_ns", "pack_build_ns", "host_overhead_ns", "adapter_submission_ns", "completion_ns", "presentation_ns", "elapsed_clamped_ns", "memory_bytes", "raf_ticks", "wall_ns"],
+        "properties": { "batch": { "type": "integer", "minimum": 0 }, "frame": { "type": "integer", "minimum": 0 }, "ticks": { "type": "integer", "minimum": 0 }, "simulation_ns": { "$ref": "#/$defs/duration" }, "transport_ns": { "$ref": "#/$defs/duration" }, "pack_build_ns": { "$ref": "#/$defs/duration" }, "host_overhead_ns": { "$ref": "#/$defs/duration" }, "adapter_submission_ns": { "$ref": "#/$defs/duration" }, "completion_ns": { "$ref": "#/$defs/duration" }, "presentation_ns": { "$ref": "#/$defs/duration" }, "elapsed_clamped_ns": { "$ref": "#/$defs/duration" }, "memory_bytes": { "type": ["integer", "null"], "minimum": 0 }, "raf_ticks": { "type": ["integer", "null"], "minimum": 0 }, "wall_ns": { "$ref": "#/$defs/duration" } }
       }
     },
     "summaries": { "type": "object", "additionalProperties": { "$ref": "#/$defs/summary" } },

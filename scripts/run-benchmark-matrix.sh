@@ -23,11 +23,12 @@ printf '%s\n' "$revision" > "$out/source-revision.txt"
 
 ids=$(printf '%s' "$groups" | tr ',' '\n' | while IFS= read -r group; do jq -r --arg group "$group" '.workloads[$group][]' bench/matrix-v1.json; done)
 if [ "$host" = native ] || [ "$host" = all ]; then
-  MAKU_SOURCE_REVISION="$revision" cargo build --release --locked --manifest-path crates/Cargo.toml -p maku-bench --bin maku-bench-native
+  MAKU_SOURCE_REVISION="$revision" cargo build --release --locked --manifest-path crates/Cargo.toml -p maku-bench --bin maku-bench-native --bin maku-bench-native-draw
   for id in $ids; do
     for tier in $(jq -r '.native_tiers[]' bench/matrix-v1.json); do
       result="$out/native-$id-$tier.json"
-      if ! MAKU_SOURCE_REVISION="$revision" crates/target/release/maku-bench-native "bench/workloads/v1/$id.json" --tier "$tier" --environment "$environment" --output "$result" 2>"$result.stderr"; then
+      binary=maku-bench-native; [ "$tier" = native-macroquad-compat ] && binary=maku-bench-native-draw
+      if ! MAKU_SOURCE_REVISION="$revision" "crates/target/release/$binary" "bench/workloads/v1/$id.json" --tier "$tier" --environment "$environment" --output "$result" 2>"$result.stderr"; then
         bun scripts/write-benchmark-failure.mjs "bench/workloads/v1/$id.json" native "$tier" "$environment" "$result" runtime-error "$(cat "$result.stderr")"
       fi
       rm -f "$result.stderr"

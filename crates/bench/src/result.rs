@@ -83,7 +83,7 @@ pub struct FrameSample {
     pub simulation_ns: Option<f64>, pub transport_ns: Option<f64>, pub pack_build_ns: Option<f64>,
     pub host_overhead_ns: Option<f64>, pub adapter_submission_ns: Option<f64>,
     pub completion_ns: Option<f64>, pub presentation_ns: Option<f64>,
-    pub elapsed_clamped_ns: Option<f64>, pub memory_bytes: Option<u64>, pub raf_ticks: Option<u32>,
+    pub elapsed_clamped_ns: Option<f64>, pub memory_bytes: Option<u64>, pub raf_ticks: Option<u32>, pub wall_ns: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Headroom {

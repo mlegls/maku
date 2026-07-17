@@ -13,4 +13,9 @@ for tier in simulation-only byo-transport touhou-pack; do
     bench/workloads/v1/bullets-continuity.json \
     --tier "$tier" --output "$tmp/$tier.json" --smoke
 done
+if command -v xvfb-run >/dev/null 2>&1; then display=xvfb-run; else display=; fi
+$display cargo run --quiet --manifest-path crates/Cargo.toml -p maku-bench \
+  --bin maku-bench-native-draw -- \
+  bench/workloads/v1/bullets-continuity.json \
+  --tier native-macroquad-compat --output "$tmp/native-macroquad-compat.json" --smoke
 bun scripts/check-benchmarks.mjs "$tmp"/*.json

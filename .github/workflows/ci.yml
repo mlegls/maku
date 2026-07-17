@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native player prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config xvfb
       - uses: jdx/mise-action@v3
         with:
           cache: true
@@ -40,7 +40,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install native player prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config xvfb
       - uses: jdx/mise-action@v3
         with:
           cache: true

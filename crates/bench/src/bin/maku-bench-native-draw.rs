@@ -6,33 +6,33 @@ use maku_bench::{
     RESULT_SCHEMA_VERSION, WORKLOAD_SCHEMA_VERSION,
 };
 use maku_render_touhou::{TouhouMesh, TouhouProfile};
+use maku_player::macroquad_compat::{prepare_frame, submit_frame, RenderResources};
+use macroquad::prelude::{clear_background, next_frame, BLACK};
 use std::{collections::BTreeMap, hint::black_box, path::PathBuf, rc::Rc, time::Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Tier { Simulation, Transport, Pack }
+enum Tier { Draw }
 impl Tier {
     fn parse(value: &str) -> Result<Self, String> { match value {
-        "simulation-only" => Ok(Self::Simulation), "byo-transport" => Ok(Self::Transport),
-        "touhou-pack" => Ok(Self::Pack), _ => Err(format!("unknown tier {value}")),
+        "native-macroquad-compat" => Ok(Self::Draw), _ => Err(format!("unknown tier {value}")),
     }}
-    fn name(self) -> &'static str { match self { Self::Simulation => "simulation-only", Self::Transport => "byo-transport", Self::Pack => "touhou-pack" } }
+    fn name(self) -> &'static str { "native-macroquad-compat" }
 }
 
-struct Args { workload: PathBuf, output: PathBuf, tier: Tier, smoke: bool, minimal: bool, environment: PathBuf }
+struct Args { workload: PathBuf, output: PathBuf, tier: Tier, smoke: bool, environment: PathBuf }
 fn args() -> Result<Args, String> {
     let mut it = std::env::args().skip(1);
     let workload = PathBuf::from(it.next().ok_or("usage: maku-bench-native WORKLOAD --tier TIER --output FILE [--smoke]")?);
-    let mut output = None; let mut tier = Tier::Transport; let mut smoke = false; let mut minimal = false;
+    let mut output = None; let mut tier = Tier::Draw; let mut smoke = false;
     let mut environment = PathBuf::from("bench/environments/m4-pro-macos15-chrome150.json");
     while let Some(arg) = it.next() { match arg.as_str() {
         "--tier" => tier = Tier::parse(&it.next().ok_or("--tier requires a value")?)?,
         "--output" => output = Some(PathBuf::from(it.next().ok_or("--output requires a value")?)),
         "--environment" => environment = PathBuf::from(it.next().ok_or("--environment requires a value")?),
         "--smoke" => smoke = true,
-        "--wall-mode" => minimal = match it.next().as_deref() { Some("minimal") => true, Some("instrumented") => false, _ => return Err("--wall-mode requires minimal or instrumented".into()) },
         _ => return Err(format!("unknown argument {arg}")),
     }}
-    Ok(Args { workload, output: output.ok_or("--output is required")?, tier, smoke, minimal, environment })
+    Ok(Args { workload, output: output.ok_or("--output is required")?, tier, smoke, environment })
 }
 
 fn command(args: &[&str]) -> String {
@@ -87,7 +87,7 @@ fn consume_transport(items: &[RenderItem]) -> usize {
 
 fn ns(start: Instant) -> f64 { start.elapsed().as_nanos() as f64 }
 
-fn main() -> Result<(), String> {
+async fn run() -> Result<(), String> {
     let args = args()?; let workload = load_workload(&args.workload)?; let generated = generate(&workload)?;
     let rss_start = peak_rss_bytes();
     let load_start = Instant::now();
@@ -99,29 +99,28 @@ fn main() -> Result<(), String> {
     if let Some(schema) = sim.declared_render_schema("sprite") { mesh.bind_schema("sprite", schema).map_err(|e| format!("bind sprite: {e:?}"))?; }
     if let Some(schema) = sim.declared_render_schema("beam") { mesh.bind_schema("beam", schema).map_err(|e| format!("bind beam: {e:?}"))?; }
     let bind_ns = ns(bind_start);
+    let resource_start = Instant::now();
+    let resources = RenderResources::resolve(mesh.profile())?;
+    let resource_setup_ns = ns(resource_start);
     let warmup = if args.smoke { workload.cadence.warmup_ticks.min(2) } else { workload.cadence.warmup_ticks };
     for _ in 0..warmup { sim.step()?; }
-    // Prime transport and pack allocations outside sampled observations.
-    let warm = sim.render_frame(); consume_transport(&warm);
-    if args.tier == Tier::Pack { mesh.build(&warm).map_err(|e| format!("pack warmup: {e:?}"))?; }
+    let warm = sim.render_frame(); consume_transport(&warm); mesh.build(&warm).map_err(|e| format!("pack warmup: {e:?}"))?;
+    let prepared = prepare_frame(mesh.frame(), &resources, 640.0, 360.0); clear_background(BLACK); submit_frame(&prepared, &resources); next_frame().await;
     let frames = if args.smoke { workload.cadence.sample_frames.min(3) } else { workload.cadence.sample_frames };
     let batches = if args.smoke { 1 } else { workload.cadence.sample_batches };
     let mut samples = Vec::with_capacity(frames as usize * batches as usize);
     maku_bench::alloc::reset();
     for batch in 0..batches { for frame in 0..frames {
-        if args.minimal {
-            let wall = Instant::now();
-            for _ in 0..workload.cadence.ticks_per_frame { sim.step()?; }
-            if args.tier != Tier::Simulation { let items = sim.render_frame(); consume_transport(&items); if args.tier == Tier::Pack { mesh.build(&items).map_err(|e| format!("pack build: {e:?}"))?; } }
-            samples.push(FrameSample { batch, frame, ticks: workload.cadence.ticks_per_frame, simulation_ns: None, transport_ns: None, pack_build_ns: None,
-                host_overhead_ns: None, adapter_submission_ns: None, completion_ns: None, presentation_ns: None, elapsed_clamped_ns: Some(0.0), memory_bytes: None, raf_ticks: None, wall_ns: Some(ns(wall)) });
-        } else {
-            let start = Instant::now(); for _ in 0..workload.cadence.ticks_per_frame { sim.step()?; } let simulation_ns = ns(start);
-            let (mut transport_ns, mut pack_build_ns) = (None, None);
-            if args.tier != Tier::Simulation { let start = Instant::now(); let items = sim.render_frame(); consume_transport(&items); transport_ns = Some(ns(start)); if args.tier == Tier::Pack { let start = Instant::now(); mesh.build(&items).map_err(|e| format!("pack build: {e:?}"))?; pack_build_ns = Some(ns(start)); } }
-            samples.push(FrameSample { batch, frame, ticks: workload.cadence.ticks_per_frame, simulation_ns: Some(simulation_ns), transport_ns, pack_build_ns,
-                host_overhead_ns: Some(0.0), adapter_submission_ns: None, completion_ns: None, presentation_ns: None, elapsed_clamped_ns: Some(0.0), memory_bytes: peak_rss_bytes(), raf_ticks: None, wall_ns: Some(simulation_ns + transport_ns.unwrap_or(0.0) + pack_build_ns.unwrap_or(0.0)) });
-        }
+        let start = Instant::now();
+        for _ in 0..workload.cadence.ticks_per_frame { sim.step()?; }
+        let simulation_ns = ns(start);
+        let start = Instant::now(); let items = sim.render_frame(); consume_transport(&items); let transport_ns = Some(ns(start));
+        let start = Instant::now(); mesh.build(&items).map_err(|e| format!("pack build: {e:?}"))?; let pack_build_ns = Some(ns(start));
+        let start = Instant::now(); let prepared = prepare_frame(mesh.frame(), &resources, 640.0, 360.0); let host_overhead_ns = Some(ns(start));
+        clear_background(BLACK); let start = Instant::now(); submit_frame(&prepared, &resources); let adapter_submission_ns = Some(ns(start));
+        let start = Instant::now(); next_frame().await; let presentation_ns = Some(ns(start));
+        samples.push(FrameSample { batch, frame, ticks: workload.cadence.ticks_per_frame, simulation_ns: Some(simulation_ns), transport_ns, pack_build_ns,
+            host_overhead_ns, adapter_submission_ns, completion_ns: None, presentation_ns, elapsed_clamped_ns: Some(0.0), memory_bytes: peak_rss_bytes(), raf_ticks: None, wall_ns: Some(simulation_ns + transport_ns.unwrap_or(0.0) + pack_build_ns.unwrap_or(0.0) + host_overhead_ns.unwrap_or(0.0) + adapter_submission_ns.unwrap_or(0.0)) });
     }}
     let allocation_snapshot = maku_bench::alloc::snapshot();
     let verification = verify(&mut sim, &workload);
@@ -135,26 +134,35 @@ fn main() -> Result<(), String> {
         rules: BTreeMap::from([(format!("{:?}", workload.rules.class).to_lowercase(), workload.rules.count as usize)]), predicate_matches: core.predicate_matches, rule_actions: core.rule_actions };
     let stage_values = |f: fn(&FrameSample) -> Option<f64>| samples.iter().filter_map(f).collect::<Vec<_>>();
     let mut summaries = BTreeMap::new();
-    for (name, values) in [("simulation_ns", stage_values(|s| s.simulation_ns)), ("transport_ns", stage_values(|s| s.transport_ns)), ("pack_build_ns", stage_values(|s| s.pack_build_ns)), ("wall_ns", stage_values(|s| s.wall_ns))] {
+    for (name, values) in [("simulation_ns", stage_values(|s| s.simulation_ns)), ("transport_ns", stage_values(|s| s.transport_ns)), ("pack_build_ns", stage_values(|s| s.pack_build_ns)), ("host_overhead_ns", stage_values(|s| s.host_overhead_ns)), ("adapter_submission_ns", stage_values(|s| s.adapter_submission_ns)), ("presentation_ns", stage_values(|s| s.presentation_ns))] {
         if let Some(summary) = summarize("ns", &values) { summaries.insert(name.into(), summary); }
     }
     let period = 1000.0 / workload.cadence.presentation_hz as f64;
     let mut byo = Vec::new(); let mut bundled = Vec::new(); let mut end = Vec::new();
     for sample in &samples { let stages = FrameStages { simulation_ms: sample.simulation_ns.unwrap_or(0.0)/1e6, transport_ms: sample.transport_ns.unwrap_or(0.0)/1e6, pack_build_ms: sample.pack_build_ns.unwrap_or(0.0)/1e6, host_overhead_ms: sample.host_overhead_ns.unwrap_or(0.0)/1e6, adapter_submission_ms: sample.adapter_submission_ns.unwrap_or(0.0)/1e6 }; let h=stages.headroom(0.0); byo.push(-h.0); bundled.push(-h.1); end.push(-h.2); }
-    let headroom = (!args.minimal).then(|| Headroom { period_ms: period, byo_ms: summarize_headroom(period, &byo).unwrap(), bundled_draw_ms: summarize_headroom(period, &bundled).unwrap(), end_to_end_ms: summarize_headroom(period, &end).unwrap() });
+    let headroom = Some(Headroom { period_ms: period, byo_ms: summarize_headroom(period, &byo).unwrap(), bundled_draw_ms: summarize_headroom(period, &bundled).unwrap(), end_to_end_ms: summarize_headroom(period, &end).unwrap() });
     let rev = revision(); if rev.len() != 40 { return Err("source revision must be a full 40-character hash".into()); }
     let captured = captured_at();
     let envelope = ResultEnvelope { schema_version: RESULT_SCHEMA_VERSION, series: "maku-v1-f64".into(), run_id: format!("{}-{}-{}", captured.replace([':', '-'], ""), workload.id, args.tier.name()), captured_at: captured,
         source: SourceIdentity { revision: rev, dirty: dirty(), workload_schema: WORKLOAD_SCHEMA_VERSION, result_schema: RESULT_SCHEMA_VERSION, generator: workload.generator_version.clone(), expanded_source_sha256: generated.source_sha256, input_tape_sha256: generated.input_tape_sha256 },
         fixture: FixtureIdentity { id: workload.id.clone(), family: format!("{:?}", workload.family).to_lowercase(), workload_sha256: generated.workload_sha256, seed: workload.seed, parameters: serde_json::to_value(&workload).unwrap() },
-        stage: StageIdentity { executor: "interpreter-native".into(), tier: args.tier.name().into(), adapter: "none".into() }, environment: environment(&args.environment)?,
-        policy: TimingPolicy { tick_hz: 120, presentation_hz: 60, warmup_ticks: warmup, sample_frames: frames, sample_batches: batches, percentile_method: "nearest-rank".into(), wall_mode: if args.minimal { "minimal" } else { "instrumented" }.into(), elapsed_clamp_ms: None, canvas_texture_cache_warm: None },
+        stage: StageIdentity { executor: "interpreter-native".into(), tier: "host-draw".into(), adapter: args.tier.name().into() }, environment: environment(&args.environment)?,
+        policy: TimingPolicy { tick_hz: 120, presentation_hz: 60, warmup_ticks: warmup, sample_frames: frames, sample_batches: batches, percentile_method: "nearest-rank".into(), wall_mode: "instrumented".into(), elapsed_clamp_ms: None, canvas_texture_cache_warm: None },
         correctness: Correctness { valid: verification.valid, state_digest: verification.observed.state_digest.clone(), expected: workload.expect.clone(), observed: verification.observed, errors: verification.errors }, counters,
         memory: Memory { rss_start_bytes: rss_start, rss_peak_bytes: peak_rss_bytes(), wasm_start_bytes: None, wasm_peak_bytes: None, allocations: allocation_snapshot.map(|v| v.0), allocated_bytes: allocation_snapshot.map(|v| v.1) },
-        cold_setup: ColdSetup { load_ns: Some(load_ns), schema_bind_ns: Some(bind_ns), resource_setup_ns: None }, samples, summaries, headroom,
+        cold_setup: ColdSetup { load_ns: Some(load_ns), schema_bind_ns: Some(bind_ns), resource_setup_ns: Some(resource_setup_ns) }, samples, summaries, headroom,
         outcome: Outcome { status: if verification.valid { "success" } else { "invalid" }.into(), last_successful_plateau: verification.valid.then_some(workload.entities.plateau), failure_class: (!verification.valid).then(|| "semantic-mismatch".into()), message: None } };
     if let Some(parent) = args.output.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
     std::fs::write(&args.output, serde_json::to_vec_pretty(&envelope).unwrap()).map_err(|e| e.to_string())?;
     if !envelope.correctness.valid { return Err(format!("semantic verification failed: {:?}", envelope.correctness.errors)); }
     println!("{}", args.output.display()); Ok(())
+}
+
+fn window_conf() -> macroquad::prelude::Conf {
+    macroquad::prelude::Conf { window_title: "Maku native benchmark".into(), window_width: 1280, window_height: 720, high_dpi: false, ..Default::default() }
+}
+
+#[macroquad::main(window_conf)]
+async fn main() {
+    if let Err(error) = run().await { eprintln!("{error}"); std::process::exit(1); }
 }

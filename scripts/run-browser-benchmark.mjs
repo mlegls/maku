@@ -68,6 +68,7 @@ try {
     for (let batch = 0; batch < batches; batch++) for (let frame = 0; frame < frames; frame++) {
       let rafDelta = null;
       if (tierArg === 'web-canvas2d') await new Promise(resolve => requestAnimationFrame(now => { if (priorRaf !== null) rafDelta = now - priorRaf; priorRaf = now; resolve(); }));
+      const frameStart = performance.now();
       const simStart = performance.now(); maku.step(workload.cadence.ticks_per_frame); const simulationNs = (performance.now() - simStart) * 1e6;
       let transportNs = null, packBuildNs = null, adapterSubmissionNs = null;
       if (tierArg !== 'simulation-only') { const start = performance.now(); maku.benchmark_render_transport(); transportNs = (performance.now() - start) * 1e6; }
@@ -76,7 +77,7 @@ try {
       wasmPeak = Math.max(wasmPeak, wasm.memory.buffer.byteLength);
       samples.push({ batch, frame, ticks: workload.cadence.ticks_per_frame, simulation_ns: simulationNs, transport_ns: transportNs, pack_build_ns: packBuildNs,
         host_overhead_ns: 0, adapter_submission_ns: adapterSubmissionNs, completion_ns: null, presentation_ns: rafDelta === null ? null : rafDelta * 1e6,
-        elapsed_clamped_ns: rafDelta === null ? 0 : Math.max(0, rafDelta - 250) * 1e6, memory_bytes: wasm.memory.buffer.byteLength, raf_ticks: renderer ? 1 : null });
+        elapsed_clamped_ns: rafDelta === null ? 0 : Math.max(0, rafDelta - 250) * 1e6, memory_bytes: wasm.memory.buffer.byteLength, raf_ticks: renderer ? 1 : null, wall_ns: (performance.now() - frameStart) * 1e6 });
     }
     const lanes = maku.benchmark_render_transport(); maku.benchmark_build_pack();
     const basic = maku.basic_sprites().byteLength / maku.basic_sprite_stride(), tinted = maku.tinted_sprites().byteLength / maku.tinted_sprite_stride(), recolor = maku.recolor_sprites().byteLength / maku.recolor_sprite_stride();

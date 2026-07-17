@@ -19,9 +19,9 @@
 - [x] 3.1 Instrument actual fixed-step frame observations with tick count and separate simulation, transport, pack-build, host-overhead, adapter/submission, and available completion/presentation durations.
 - [x] 3.2 Add simulation-only and BYO transport tiers that consume typed render batches without row expansion.
 - [x] 3.3 Add warmed `maku-render-touhou` construction timing and counters for layouts, layers, segments, vertices, indices, and ordered commands.
-- [ ] 3.4 Add the named `native-macroquad-compat` end-to-end adapter tier while separating instance expansion/remapping, CPU submission, and any measurable GPU/present completion.
-- [ ] 3.5 Add allocation, peak resident memory, cold setup, and bounded-failure capture without contaminating minimally instrumented wall runs.
-- [ ] 3.6 Emit validated result envelopes and raw samples for every native tier.
+- [x] 3.4 Add the named `native-macroquad-compat` end-to-end adapter tier while separating instance expansion/remapping, CPU submission, and any measurable GPU/present completion.
+- [x] 3.5 Add allocation, peak resident memory, cold setup, and bounded-failure capture without contaminating minimally instrumented wall runs.
+- [x] 3.6 Emit validated result envelopes and raw samples for every native tier.
 
 ## 4. Implement Browser-Wasm Staged Runner
 
@@ -42,7 +42,7 @@
 
 - [x] 6.1 Add smoke-sized native/browser CI fixtures validating generation, semantic digests, stage boundaries, counters, and result-schema parsing without wall-clock failure thresholds.
 - [x] 6.2 Add explicit controlled-run commands for native and browser matrices using release artifacts and recorded environment/tool versions.
-- [ ] 6.3 Run minimally instrumented interleaved wall-only comparisons alongside instrumented attribution runs and flag disagreements per the governing perf spec.
+- [x] 6.3 Run minimally instrumented interleaved wall-only comparisons alongside instrumented attribution runs and flag disagreements per the governing perf spec.
 - [x] 6.4 Store raw baseline artifacts and summaries under a versioned retention/provenance policy.
 
 ## 7. Establish and Publish the Baseline

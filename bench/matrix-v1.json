@@ -21,6 +21,6 @@
     ],
     "corners": ["corner-render-collision-rules-normal", "corner-render-collision-rules-ceiling"]
   },
-  "native_tiers": ["simulation-only", "byo-transport", "touhou-pack"],
+  "native_tiers": ["simulation-only", "byo-transport", "touhou-pack", "native-macroquad-compat"],
   "browser_tiers": ["simulation-only", "byo-transport", "touhou-pack", "web-canvas2d"]
 }

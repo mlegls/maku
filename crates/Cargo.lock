@@ -260,7 +260,9 @@ name = "maku-bench"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "macroquad",
  "maku",
+ "maku-player",
  "maku-render-touhou",
  "serde",
  "serde_json",
