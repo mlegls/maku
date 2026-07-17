@@ -54,3 +54,6 @@ cargo publish --dry-run -p maku-player --manifest-path crates/Cargo.toml --allow
   --config "$core_patch" --config "$pack_patch"
 cargo publish --dry-run -p maku-web --manifest-path crates/Cargo.toml --allow-dirty \
   --config "$core_patch" --config "$pack_patch"
+
+# Validate the exact scoped browser package without requiring registry auth.
+(cd crates/js/maku && bun publish --dry-run --access public)

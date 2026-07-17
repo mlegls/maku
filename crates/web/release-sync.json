@@ -13,6 +13,7 @@
     { "source": "crates/web/static/maku-highlight.js", "target": "maku-highlight.js", "role": "runtime" },
     { "source": "crates/js/maku/package.json", "target": "pkg/package.json", "role": "runtime" },
     { "source": "crates/js/maku/README.md", "target": "pkg/README.md", "role": "documentation" },
+    { "source": "crates/js/maku/LICENSE", "target": "pkg/LICENSE", "role": "license" },
     { "source": "crates/js/maku/dist/index.js", "target": "pkg/dist/index.js", "role": "runtime" },
     { "source": "crates/js/maku/dist/index.d.ts", "target": "pkg/dist/index.d.ts", "role": "runtime" },
     { "source": "crates/js/maku/wasm/maku.js", "target": "pkg/wasm/maku.js", "role": "runtime" },

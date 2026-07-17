@@ -71,16 +71,20 @@
       "sha256": "508be96982e06039e2ace37142f051fefea8725d32545af4796661541b584e08"
     },
     "crates/web/release-sync.json": {
-      "bytes": 7120,
-      "sha256": "addf3eda8f7ba77e64f9c734e7801d92c44d02680fdb4a7f270a5c4bfd01d22f"
+      "bytes": 7208,
+      "sha256": "204790ce51d3241d975f9afe4eedf02b165870573b949af2fd1a6eb949ab5dae"
     },
     "crates/js/maku/package.json": {
-      "bytes": 798,
-      "sha256": "4f0d2342774cb900491d858588b43f3cf21b4b05161fc8fb6cfea5868fcb7ecc"
+      "bytes": 1115,
+      "sha256": "4559d73261ba09cc99a903011690e284e300992e2b45d399acc185a0fe1f9436"
     },
     "crates/js/maku/README.md": {
       "bytes": 1602,
       "sha256": "949b6f9df493837d0b52abe254369a8d34448aa6e7f3ef7c76814f84b5c6494a"
+    },
+    "crates/js/maku/LICENSE": {
+      "bytes": 1074,
+      "sha256": "86039052a29d2ce3194f1bed08da52dc625b8340e60a2f9e26ac4fd949ea003e"
     },
     "crates/js/maku/wasm/maku.js": {
       "bytes": 28643,

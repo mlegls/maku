@@ -1,0 +1,52 @@
+name: Publish release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Validate and publish
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require the protected main branch
+        run: test "$GITHUB_REF" = refs/heads/main
+      - name: Install native player prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config xvfb
+      - uses: jdx/mise-action@v3
+        with:
+          cache: true
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
+      - name: Install benchmark browser
+        run: bunx playwright install --with-deps chromium
+      - name: Complete release validation
+        run: scripts/check.sh release
+      - name: Require registry credentials
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN" || { echo 'release environment is missing CARGO_REGISTRY_TOKEN' >&2; exit 1; }
+          test -n "$NODE_AUTH_TOKEN" || { echo 'release environment is missing NPM_TOKEN' >&2; exit 1; }
+      - name: Configure npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
+      - name: Publish missing registry packages
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: scripts/publish-release.sh

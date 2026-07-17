@@ -2,13 +2,25 @@
   "name": "@mlegls/maku",
   "version": "0.1.0",
   "description": "Browser bindings for the Maku danmaku pattern engine.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mlegls/maku.git",
+    "directory": "crates/js/maku"
+  },
+  "homepage": "https://neen.ink/projects/maku/",
+  "bugs": "https://github.com/mlegls/maku/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "sideEffects": false,
   "files": [
     "dist/",
     "src/",
     "wasm/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "exports": {
     ".": {

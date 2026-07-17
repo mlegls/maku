@@ -1,12 +1,26 @@
 # Release verification
 
+Development lands on `dev`. Promote a coordinated, versioned release from
+`dev` to the protected `main` branch; direct development on `main` is not
+supported. Pushes to both branches run normal CI, while every push to `main`
+runs the complete release gate and the idempotent registry publisher in
+`.github/workflows/publish.yml`.
+
+The `release` GitHub environment must define `CARGO_REGISTRY_TOKEN` and
+`NPM_TOKEN`; configure required reviewers on that environment before the first
+publication. The npm token must be allowed to publish public packages in the
+`@mlegls` scope. The workflow also requests an OIDC identity and publishes npm
+provenance. Missing credentials fail before any registry mutation.
+
 Run `scripts/check.sh fast` during development and `scripts/check.sh release`
-from a clean checkout before creating artifacts. Tool versions are pinned by
+from a clean checkout before promoting to `main`. Tool versions are pinned by
 `rust-toolchain.toml` and `mise.toml`.
 
 ## Package topology and order
 
-Rust packages publish independently in dependency order:
+`scripts/publish-release.sh` checks each exact version before publishing, so a
+retry resumes a partially completed release without attempting to overwrite an
+existing package. Rust packages publish independently in dependency order:
 
 1. `maku`
 2. `maku-render-touhou`
