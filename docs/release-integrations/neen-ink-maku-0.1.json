@@ -1,15 +1,16 @@
 {
   "maku_release": "0.1.0",
   "frame_abi": 1,
-  "artifact_source_revision": "a834bdbc7b6772d2431276c5d38264e9d65a0aba",
-  "artifact_snapshot_commit": "60953d8",
-  "neen_ink_commit": "1ca175899e86d2ad11a2d03663f617b76a270f77",
+  "artifact_source_revision": "c6f5559e766bcde3bf25ba67640c67ec3a72b1f1",
+  "artifact_snapshot_commit": "669df43",
+  "neen_ink_commit": "7fc453b",
   "browser_package": "@mlegls/maku@0.1.0",
   "upstream_player_url": "/crates/web/static/",
   "downstream_player_url": "https://neen.ink/projects/maku/play.html",
   "downstream_tutorial_url": "https://neen.ink/projects/maku/tutorials.html",
+  "downstream_reference_url": "https://neen.ink/projects/maku/tutorials.html#language-reference",
   "renderer": "Canvas2D compatibility adapter",
-  "deployed_at": "2026-07-16T23:18:00Z",
-  "rollback_artifact": "/home/mlegls/neen-maku-rollbacks/20260716T231745Z-before-1ca1758.tar.gz",
+  "deployed_at": "2026-07-17T01:51:00Z",
+  "rollback_artifact": "/home/mlegls/neen-maku-rollbacks/20260717T015022Z-before-7fc453b.tar.gz",
   "status": "production-smoke-passed"
 }
