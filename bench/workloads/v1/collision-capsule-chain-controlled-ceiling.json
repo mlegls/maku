@@ -6,7 +6,7 @@
     "tick_hz": 120,
     "presentation_hz": 60,
     "warmup_ticks": 120,
-    "sample_frames": 120,
+    "sample_frames": 10,
     "ticks_per_frame": 2,
     "sample_batches": 30
   },

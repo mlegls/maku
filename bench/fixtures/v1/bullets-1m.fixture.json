@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/bullets-1m.json",
-  "workload_sha256": "6ab4faf849a9fb8b3db65281b723b516f33b3d4c5a34a01b952d231eaa566c55"
+  "workload_sha256": "206cbf2542e79bfdc81a9597d285e40aa0086c769fb2a565ad4d8b997d9dea86"
 }

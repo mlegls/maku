@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/rules-effect-action-half.json",
-  "workload_sha256": "68cf4fc4360115f3bcb13181b83d7f6bf1724993e2606c5f55cbdfc23fbe1557"
+  "workload_sha256": "581a46eeda5b869982552b94a5916282a07619afc3a1647ad570875eefa71bd4"
 }

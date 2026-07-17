@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-capsule-chain-dense-ceiling.json",
-  "workload_sha256": "fe15ebeae109983013acae70ae76d0a5cddc54208d9b31cc71a8dd044b846109"
+  "workload_sha256": "c6867fa29237bc85ab116e345b3ebc4ec47003be63ed97f55898f3d7cc3b04e5"
 }

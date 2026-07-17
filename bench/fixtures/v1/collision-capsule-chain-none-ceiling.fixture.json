@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-capsule-chain-none-ceiling.json",
-  "workload_sha256": "bea6f256722f8df8790dd9825ffe6be45b2b7adc4725cd6007d2714686183b70"
+  "workload_sha256": "be9f4add93608ff9847fee31645ef742f3f7947eef0a7cdb7bedf0b7e543f1b2"
 }

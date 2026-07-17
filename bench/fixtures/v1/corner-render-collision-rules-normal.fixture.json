@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/corner-render-collision-rules-normal.json",
-  "workload_sha256": "1cf71d66201301d6d6c3309bf81cfc921dd6059a80572d0a342121417dc097e5"
+  "workload_sha256": "c32d270d33d1eac01de2a7a1c543fee41b21323d7a221a9190af716a4da859ed"
 }

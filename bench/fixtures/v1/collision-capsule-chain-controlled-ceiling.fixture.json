@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-capsule-chain-controlled-ceiling.json",
-  "workload_sha256": "fd3a65f14dbdbd50755a16572aa6ec839bc1184c045668416c8456c4c8d0b892"
+  "workload_sha256": "4c448b8769a674c32b2e0e18cbebc3209501224226b9163f90f36ff24b69f104"
 }

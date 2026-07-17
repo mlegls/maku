@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-capsule-chain-sparse-normal.json",
-  "workload_sha256": "218593288393c6317ff10ecfd05ebacd11f4957db3f383dfbd0f5463a06a9514"
+  "workload_sha256": "862e51609a79c580b20df41522a0c20b6ed3f71c72dfd712d55f62b137d20095"
 }

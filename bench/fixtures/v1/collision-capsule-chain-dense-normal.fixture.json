@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-capsule-chain-dense-normal.json",
-  "workload_sha256": "3f68fa1925a6905df43d96da3e9f9e65b835a340769373c2ca65d828f76ea47a"
+  "workload_sha256": "65e865df1ce66d6bd5eab78b15d5f96b4fa83738933ad8160743567aefbfc753"
 }

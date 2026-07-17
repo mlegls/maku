@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-circle-dense-ceiling.json",
-  "workload_sha256": "d4f1dbcc9d6f4c209cef7bdc38bc30b18a5db538d25e283b831e693dfd64d01d"
+  "workload_sha256": "af0d927c9d07f8164cb11e759937a2adb6f7738c5c3fb959cf3d244a47e7e0c0"
 }

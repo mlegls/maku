@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-capsule-chain-sparse-ceiling.json",
-  "workload_sha256": "02e2e8596a581393be045404fade652299ee84a72152a452de9cb488bf8ebf51"
+  "workload_sha256": "907dd9e3cf51c70203c417e02d1b1d332988d487109f99a6bfa17d915b090c89"
 }

@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-circle-none-ceiling.json",
-  "workload_sha256": "dc3800675acd3b3e551edcc70a5702e1522bd86e157a3bd756c3a79d18520c69"
+  "workload_sha256": "7a8f7ea863c9ede6520c42a7e30a459e18b23017458db3650ba8ff7870308373"
 }

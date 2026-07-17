@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-circle-controlled-normal.json",
-  "workload_sha256": "faf3329a036363cac994522d2d6db2b5b12bffba752bf54b80554ace747fcccc"
+  "workload_sha256": "44dcfa9392ab7b1df3a8dbaf234be222ed2e0bafc87a1d0feb5bb3b5b983059f"
 }

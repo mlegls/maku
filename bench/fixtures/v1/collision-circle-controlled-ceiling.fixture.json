@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-circle-controlled-ceiling.json",
-  "workload_sha256": "cfd6069d66bee96b9c65e4dd79affa899a7816b02836738a932c6ccd120359b9"
+  "workload_sha256": "c78bad1c468d746d4eb830315d0a9411453e23b7c97ce5305ec85c3247651acc"
 }

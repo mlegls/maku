@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-circle-sparse-normal.json",
-  "workload_sha256": "dc3bece9870efade984a0dce94379a4eddc01693f843dca8ee001c661018343b"
+  "workload_sha256": "83220cff00b79d05970b0626c02ea521d003a1df30ce5e425a3e6fec0784b1b5"
 }

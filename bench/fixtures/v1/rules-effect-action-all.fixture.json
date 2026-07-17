@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/rules-effect-action-all.json",
-  "workload_sha256": "50d25940eee24a8eb1621ddbfda4897924d36879f6e02aed8f72899fc06bcffe"
+  "workload_sha256": "a21208af9824b6a98bb94c4a4a14bd2a0e62aff5fa09602ade2260d7433bcad7"
 }

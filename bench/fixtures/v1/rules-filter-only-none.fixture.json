@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/rules-filter-only-none.json",
-  "workload_sha256": "a2940b225915926e0cd9fde40ccb2462bdf382f45e91dd4e52fe2114f4970203"
+  "workload_sha256": "310d6ce69761dd2c1e7498bc1332d3a2edc19011200b215ed021a5fea8b9d3b3"
 }

@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/collision-circle-sparse-ceiling.json",
-  "workload_sha256": "135835e99021d916f50d7ab8e4413f7e9c4ce91c0502c76f711d2af579549621"
+  "workload_sha256": "2a1cb2831354a3778791db153b7d99e5f02b9b908c27cfce35ff664e453bb49e"
 }

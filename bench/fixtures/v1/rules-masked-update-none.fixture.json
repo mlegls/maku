@@ -14,5 +14,5 @@
   "input_tape_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "seed": 12648430,
   "workload": "bench/workloads/v1/rules-masked-update-none.json",
-  "workload_sha256": "def7f7f2ffdad1e328e7fa5cd322bc49cbe2aea1442dd591ac3161f257340534"
+  "workload_sha256": "dcdd0404fd25ed456024c74407da1580702eee794fd34cd3bc7ddea52978e389"
 }
