@@ -210,6 +210,8 @@ impl Sim {
     /// This is intentionally outside timed benchmark stages. It includes the
     /// tick, live entity count, and canonical expanded render rows, making the
     /// digest independent of whether transport selected row or batch storage.
+    /// Observable numbers are canonicalized to f32 bits so harmless native/
+    /// wasm libm rounding differences do not become semantic mismatches.
     #[doc(hidden)]
     pub fn benchmark_digest(&mut self) -> u64 {
         use std::hash::{Hash, Hasher};
@@ -227,17 +229,17 @@ impl Sim {
                 RenderData::None => 0_u8.hash(&mut hasher),
                 RenderData::Point { x, y, theta, scale, alpha, hue } => {
                     1_u8.hash(&mut hasher);
-                    for value in [x, y, theta, scale, alpha, hue] { value.to_bits().hash(&mut hasher); }
+                    for value in [x, y, theta, scale, alpha, hue] { (value as f32).to_bits().hash(&mut hasher); }
                 }
                 RenderData::Polyline { points, active } => {
                     2_u8.hash(&mut hasher);
                     active.hash(&mut hasher);
                     points.len().hash(&mut hasher);
-                    for (x, y) in points { x.to_bits().hash(&mut hasher); y.to_bits().hash(&mut hasher); }
+                    for (x, y) in points { (x as f32).to_bits().hash(&mut hasher); (y as f32).to_bits().hash(&mut hasher); }
                 }
             }
             row.nums.len().hash(&mut hasher);
-            for (key, value) in row.nums { key.as_ref().hash(&mut hasher); value.to_bits().hash(&mut hasher); }
+            for (key, value) in row.nums { key.as_ref().hash(&mut hasher); (value as f32).to_bits().hash(&mut hasher); }
             row.syms.len().hash(&mut hasher);
             for (key, value) in row.syms { key.as_ref().hash(&mut hasher); value.as_ref().hash(&mut hasher); }
         }
