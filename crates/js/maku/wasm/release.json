@@ -75,8 +75,8 @@
       "sha256": "204790ce51d3241d975f9afe4eedf02b165870573b949af2fd1a6eb949ab5dae"
     },
     "crates/js/maku/package.json": {
-      "bytes": 1115,
-      "sha256": "4559d73261ba09cc99a903011690e284e300992e2b45d399acc185a0fe1f9436"
+      "bytes": 1091,
+      "sha256": "69fa6ae30f5eb184187ecfc26d71118bcad98e4e747e91d9d77b47041b4a2196"
     },
     "crates/js/maku/README.md": {
       "bytes": 1602,

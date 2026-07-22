@@ -16,7 +16,9 @@ and emits provenance.
 
 Both registries require a package to exist before its trusted publisher can be
 registered. Bootstrap `0.1.0` interactively from this clean checkout—never by
-storing a token in GitHub—using the same dependency order below. Then register
+storing a token in GitHub—using the same dependency order below. For npm, run
+`npm publish --provenance=false` from `crates/js/maku`: local publication has no
+OIDC provider, while trusted CI adds provenance automatically. Then register
 the five trusted-publisher relationships before approving the pending release
 environment deployment. Subsequent releases require no long-lived token.
 
