@@ -10,8 +10,7 @@
   "homepage": "https://neen.ink/projects/maku/",
   "bugs": "https://github.com/mlegls/maku/issues",
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "type": "module",
   "sideEffects": false,
