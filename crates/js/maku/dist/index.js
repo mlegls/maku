@@ -7,7 +7,7 @@ import initWasm, {
   sourceRevision,
   stdlibSource
 } from "../wasm/maku.js";
-var EXPECTED_MAKU_VERSION = "0.1.0";
+var EXPECTED_MAKU_VERSION = "0.2.0";
 var EXPECTED_FRAME_ABI_VERSION = 1;
 function releaseIdentity() {
   return {
