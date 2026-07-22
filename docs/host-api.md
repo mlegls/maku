@@ -1,4 +1,4 @@
-# Embedding Maku 0.1 in a Rust host
+# Embedding Maku 0.2 in a Rust host
 
 > **Supported surface:** `maku::host`, `maku::source`, and `maku::render`.
 > Interpreter, physical simulation storage, lowering, and raw value modules are
@@ -6,8 +6,8 @@
 
 ```toml
 [dependencies]
-maku = "0.1"
-maku-render-touhou = "0.1" # optional bundled render policy
+maku = "0.2"
+# Optional bundled policy: maku = { version = "0.2", features = ["touhou"] }
 ```
 
 ## Minimal lifecycle
@@ -230,7 +230,7 @@ The pack compiles semantic sprite/beam transport to fixed buffers and ordered
 material commands:
 
 ```rust
-use maku_render_touhou::{TouhouMesh, TouhouProfile};
+use maku::touhou::{TouhouMesh, TouhouProfile};
 use std::rc::Rc;
 
 let mut pack = TouhouMesh::new(Rc::new(TouhouProfile::stock()));

@@ -1,6 +1,6 @@
 # Renderer integration and frame ABI
 
-> **Version:** Maku 0.1, Touhou frame ABI 1. This guide describes CPU/native
+> **Version:** Maku 0.2, Touhou frame ABI 1. This guide describes CPU/native
 > and wasm render data. It does not define a WebGPU adapter or GPU simulation
 > backend.
 
@@ -50,7 +50,7 @@ paths. They allocate rows and are not required for a columnar renderer.
 
 ## Touhou pack
 
-`maku-render-touhou` is optional policy over core transport. It supports
+The `maku::touhou` module, enabled by the optional `touhou` feature, is policy over core transport. It supports
 `:sprite` and `:beam` kinds. A profile owns:
 
 - `(family, variant)` recipe selection and independent color palettes;
@@ -58,10 +58,15 @@ paths. They allocate rows and are not required for a columnar renderer.
 - active/warning ribbon layers and fallback diagnostics;
 - texture resources, material layouts, blending, samplers, and pipeline keys.
 
-Core owns none of that Touhou policy.
+Core owns none of that Touhou policy. Official frontend release manifests list
+their compiled packs as stable IDs and contract versions, currently
+`[{ "id": "touhou", "contract_version": 1 }]`. This is a curated set, not an
+all-packs promise. A frontend that does not bundle a card/adapter's required
+pack must reject it as an unsupported render capability before decoding frame
+buffers.
 
 ```rust
-use maku_render_touhou::{TouhouMesh, TouhouProfile};
+use maku::touhou::{TouhouMesh, TouhouProfile};
 use std::rc::Rc;
 
 let mut pack = TouhouMesh::new(Rc::new(TouhouProfile::stock()));
@@ -75,7 +80,7 @@ for kind in TouhouMesh::RENDER_KINDS {
 let transport = instance.render_frame();
 let frame = pack.build(&transport)?;
 // Resolve frame.draws in order against pack.profile().materials()/textures().
-# Ok::<(), maku_render_touhou::MeshError>(())
+# Ok::<(), maku::touhou::RenderError>(())
 ```
 
 Sprite schemas require symbolic `family`, `color`, and `variant`. Beam schemas

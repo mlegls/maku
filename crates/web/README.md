@@ -1,9 +1,9 @@
 # maku-web
 
-`maku-web` is the Rust WebAssembly host layer for Maku. It owns a supported
-`maku::host::Instance` and a stock `maku-render-touhou` pack. Browser
-applications normally consume the versioned `@mlegls/maku` package built from
-`crates/js/maku` rather than calling this Rust crate directly.
+`maku-web` is Maku's private Rust WebAssembly producer. It owns a supported
+`maku::host::Instance` and enables the stock `maku::touhou` pack. Browser
+applications consume the versioned `@mlegls/maku` package built from
+`crates/js/maku`; this workspace package is not published to crates.io.
 
 ## Lifecycle
 

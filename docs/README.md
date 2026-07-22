@@ -1,9 +1,9 @@
 # Maku documentation
 
-Documentation describes **Maku 0.1** and the source revision reported by the
+Documentation describes **Maku 0.2** and the source revision reported by the
 release artifact's `release.json`. Capability specs under `openspec/specs/` are
-the semantic authority; [`release-notes/0.1.0-pre.md`](release-notes/0.1.0-pre.md)
-is the migration authority. Backlog OpenSpec changes are plans, not current
+the semantic authority; [`release-notes/0.2.0.md`](release-notes/0.2.0.md) is
+the migration authority. Backlog OpenSpec changes are plans, not current
 language or API documentation.
 
 ## Choose a path
@@ -12,7 +12,7 @@ language or API documentation.
 |---|---|---|---|
 | Card authors | [`tutorials/01-first-bullets.md`](tutorials/01-first-bullets.md) | `docs/language-reference.md`, then the remaining tutorials | `language`, `language-type-checking`, `determinism` |
 | Rust embedders | [`public-api.md`](public-api.md) | `docs/host-api.md`, `crates/core/README.md` | `session`, `render-rows`, `release-packaging` |
-| Renderer/frontend authors | `crates/render-touhou/README.md` | `docs/renderer-api.md`, `crates/web/README.md` | `render-rows`, `mesh-renderer-api` |
+| Renderer/frontend authors | [`renderer-api.md`](renderer-api.md) | `crates/core/README.md`, `crates/web/README.md` | `render-rows`, `mesh-renderer-api` |
 | Native player users | [`player.md`](player.md) | `crates/player/README.md` | `session`, `mesh-renderer-api` |
 | JavaScript users | `crates/js/maku/README.md` | `crates/web/README.md`, `docs/renderer-api.md` | `web-demo-delivery`, `release-packaging` |
 | Migrating DMK authors | [`from-dmk.md`](from-dmk.md) | tutorials and language reference | `language` |

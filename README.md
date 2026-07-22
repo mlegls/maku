@@ -19,7 +19,7 @@ replays, rewind, and live code-swap are exact by construction.
 | `docs/tutorials/` | learn the language from scratch — runnable companions in `cards/tutorials/` |
 | `docs/from-dmk.md` | mapping notes for readers coming from Danmokou/BDSL |
 | `openspec/` | specs (settled contracts + design), changes (all open work — `openspec list`) |
-| `crates/` | Rust workspace: `core` (engine/session/host), `render-touhou` (render pack), `player` (Macroquad host), `web` (wasm/Canvas host), `editors/danmaku.nvim` |
+| `crates/` | Rust workspace: public `maku` SDK in `core`; private player, wasm, benchmark, and editor producers |
 | `crates/js/maku/` | publishable browser package wrapping the wasm host |
 | `cards/` | playable cards — start with `reimu_vs_mima.maku` |
 | `cards/translations/` | the DMK translation corpus (validation exercise) + working records |
@@ -27,12 +27,21 @@ replays, rewind, and live code-swap are exact by construction.
 
 ## Quickstart
 
+Download a native player from [GitHub Releases](https://github.com/mlegls/maku/releases/latest),
+or build it from this checkout:
+
 ```sh
 # play the demo fight: WASD move, Shift focus, X bomb
 cargo run --manifest-path crates/Cargo.toml -p maku-player -- cards/reimu_vs_mima.maku
 
 # core conformance, gameplay, and session/scrubbing tests
 cargo test --manifest-path crates/Cargo.toml -p maku
+```
+
+Rust games use one SDK dependency; render/backend integrations are opt-in:
+
+```toml
+maku = { version = "0.2", features = ["touhou"] }
 ```
 
 Live editing: the player is a server (`docs/player.md`); install

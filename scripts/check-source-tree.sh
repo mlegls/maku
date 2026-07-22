@@ -18,7 +18,7 @@ if git ls-files 'crates/target/**' | grep -q .; then
   exit 1
 fi
 
-for package_license in crates/core/LICENSE crates/render-touhou/LICENSE crates/player/LICENSE crates/web/LICENSE crates/js/maku/LICENSE; do
+for package_license in crates/core/LICENSE crates/player/LICENSE crates/web/LICENSE crates/js/maku/LICENSE; do
   if ! cmp -s LICENSE "$package_license"; then
     echo "$package_license differs from canonical LICENSE" >&2
     exit 1

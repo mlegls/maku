@@ -1,65 +1,74 @@
 # Release verification
 
 Development lands on `dev`. Promote a coordinated, versioned release from
-`dev` to the protected `main` branch; direct development on `main` is not
-supported. Pushes to both branches run normal CI, while every push to `main`
-runs the complete release gate and the idempotent registry publisher in
-`.github/workflows/publish.yml`.
-
-The publisher uses GitHub OIDC trusted publishing and stores no registry
-secrets. Configure required reviewers on the `release` GitHub environment. For
-each published crate and for `@mlegls/maku`, register `mlegls/maku`, workflow
-`publish.yml`, and environment `release` in the registry's trusted-publisher
-settings. `rust-lang/crates-io-auth-action` exchanges the workflow identity for
-a short-lived crates.io token; npm 11.5.1+ performs its exchange automatically
-and emits provenance.
-
-Both registries require a package to exist before its trusted publisher can be
-registered. Bootstrap `0.1.0` interactively from this clean checkout—never by
-storing a token in GitHub—using the same dependency order below. For npm, run
-`npm publish --provenance=false` from `crates/js/maku`: local publication has no
-OIDC provider, while trusted CI adds provenance automatically. Then register
-the five trusted-publisher relationships before approving the pending release
-environment deployment. Subsequent releases require no long-lived token.
+`dev` to protected `main`; direct development on `main` is unsupported. Normal
+CI runs on both branches. Registry publication and player artifacts run only
+for a protected `vX.Y.Z` tag whose version matches Cargo/npm and whose commit is
+reachable from `main`.
 
 Run `scripts/check.sh fast` during development and `scripts/check.sh release`
-from a clean checkout before promoting to `main`. Tool versions are pinned by
+from a clean checkout before promotion. Tool versions are pinned by
 `rust-toolchain.toml` and `mise.toml`.
 
-## Package topology and order
+## Public distribution topology
 
-`scripts/publish-release.sh` checks each exact version before publishing, so a
-retry resumes a partially completed release without attempting to overwrite an
-existing package. Rust packages publish independently in dependency order:
+Maku has audience-aligned distributions:
 
-1. `maku`
-2. `maku-render-touhou`
-3. `maku-player` and `maku-web`
+1. crates.io: `maku`, the sole Rust SDK; `touhou` and `macroquad` are optional
+   features.
+2. npm: `@mlegls/maku`, containing wrapper, declarations, wasm, frame ABI, and
+   the explicitly bundled Touhou pack.
+3. GitHub Releases: Linux, macOS, and Windows `maku-player` binaries.
 
-`maku-web` remains a crates.io package because its Rust/wasm host boundary is
-independently testable and reusable. The browser-facing distribution is the
-separate scoped npm package `@mlegls/maku`, built from `crates/js/maku`. Its
-wasm binary, bindgen glue, wrapper, and render ABI are released as one unit;
-the npm version does not permit mixing files from another Maku revision.
+`maku-player`, `maku-web`, and `maku-bench` are private Cargo workspace
+packages (`publish = false`). The old `maku-render-touhou` source now lives in
+`maku::touhou`; no 0.2 versions are published for the three auxiliary 0.1
+crates.
 
-## Registry name check
+## OIDC trusted publishing
 
-On 2026-07-16 the crates.io API returned `404 crate does not exist` for
-`maku`, `maku-render-touhou`, `maku-player`, and `maku-web`, using the required
-identified API user agent. No existing crates.io owner therefore controls
-those names. Registry availability is not a reservation; repeat this check
-immediately before the first publish and publish the four packages in one
-coordinated window.
+The `release` GitHub environment requires approval and stores no registry
+secrets. Configure these trusted publishers with repository `mlegls/maku`,
+workflow `publish.yml`, and environment `release`:
 
-The unscoped npm name `maku` is owned by an unrelated package (latest observed
-version 0.1.12). Both `@mlegls/maku` and `@maku-engine/maku` returned 404; this
-release selects `@mlegls/maku`, matching the repository owner. Confirm npm
-account/scope authorization before publication.
+- crates.io: only the `maku` crate
+- npm: only `@mlegls/maku`, allowing `npm publish`
+
+The workflow exchanges GitHub OIDC through
+`rust-lang/crates-io-auth-action`; npm 11.5.1+ performs its OIDC exchange and
+provenance generation automatically. `NODE_AUTH_TOKEN` is cleared explicitly
+so a local credential cannot disable trusted publishing.
+
+## Tagged release
+
+1. Verify `scripts/check.sh release` from the release commit.
+2. Merge `dev` to `main` through its required checks.
+3. Create and push an annotated `vX.Y.Z` tag on that exact commit.
+4. Approve the GitHub `release` environment deployment.
+5. The workflow validates version/tag/main ancestry, builds all player
+   artifacts, publishes missing Cargo/npm versions idempotently, and creates
+   the GitHub Release.
+6. Verify crate/npm provenance, package hashes, player downloads, browser smoke,
+   and downstream identity before removing rollback artifacts.
+
+A retry uses the same immutable tag. `scripts/publish-release.sh` skips an exact
+version already present and resumes missing registry products; never move a tag
+or overwrite package bytes. If a published artifact is defective, yank it and
+publish a patch.
+
+After verified 0.2.0 replacements exist, yank the retired Cargo packages with:
+
+```sh
+cargo yank --version 0.1.0 maku-render-touhou
+cargo yank --version 0.1.0 maku-player
+cargo yank --version 0.1.0 maku-web
+```
 
 ## Package contents
 
-Each Rust manifest has an explicit `include` list. Engine archives contain the
-canonical inlined `lib/*.maku` sources; web archives intentionally omit the
-Canvas/editor/static frontend; all archives contain the package README and an
-identical MIT license. `scripts/check-source-tree.sh` rejects license drift and
-tracked build products.
+The `maku` manifest has an explicit include list. Its archive contains the
+canonical `lib/*.maku` sources and all sources needed by `touhou` and
+`macroquad`; `scripts/check-packages.sh` extracts and tests that archive with
+all features. The npm archive contains the matching wrapper, declarations,
+wasm unit, README, license, and release manifest. `scripts/check-source-tree.sh`
+rejects license drift and tracked build products.
