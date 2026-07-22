@@ -28,15 +28,15 @@
 - [x] 4.1 Change publication triggering from `main` pushes to protected `v*` tags with tag/version/main-ancestry validation
 - [x] 4.2 Add Linux, macOS, and Windows native-player artifact builds for GitHub Releases
 - [x] 4.3 Keep the GitHub `release` environment and OIDC permissions while reducing crates.io trusted-publisher requirements to `maku`
-- [ ] 4.4 Document and test idempotent partial-release recovery, player artifact checks, and post-publication auxiliary-crate yanking
+- [x] 4.4 Document and test idempotent partial-release recovery, player artifact checks, and post-publication auxiliary-crate yanking
 
 ## 5. Public documentation and migration
 
-- [ ] 5.1 Update root, SDK, host, renderer, player, web, and release documentation for one Rust SDK and frontend-native installation paths
-- [ ] 5.2 Add a 0.1-to-0.2 Rust migration table for retired crate imports and Cargo dependencies
-- [ ] 5.3 Document explicit curated render-pack inclusion and missing-pack capability behavior for each frontend
-- [ ] 5.4 Remove stale current documentation claims that all four Cargo packages are independently supported
-- [ ] 5.5 Update release notes, package ownership state, and OIDC web-UI instructions for the consolidated topology
+- [x] 5.1 Update root, SDK, host, renderer, player, web, and release documentation for one Rust SDK and frontend-native installation paths
+- [x] 5.2 Add a 0.1-to-0.2 Rust migration table for retired crate imports and Cargo dependencies
+- [x] 5.3 Document explicit curated render-pack inclusion and missing-pack capability behavior for each frontend
+- [x] 5.4 Remove stale current documentation claims that all four Cargo packages are independently supported
+- [x] 5.5 Update release notes, package ownership state, and OIDC web-UI instructions for the consolidated topology
 
 ## 6. Validation and rollout
 

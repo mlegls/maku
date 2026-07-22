@@ -1,25 +1,25 @@
-# Documentation inventory for Maku 0.1
+# Documentation inventory for Maku 0.2
 
-This maintainer inventory records the starting point for the 0.1 documentation
+This maintainer inventory records the maintained 0.2 documentation
 and demo refresh. The public entry point is [`README.md`](README.md).
 
 ## Canonical upstream material
 
-| Area | Current source | 0.1 action |
+| Area | Current source | 0.2 action |
 |---|---|---|
 | Project/package overview | root `README.md` | Keep package names and scoped npm name current; link the public document map. |
 | Supported Rust boundary | `docs/public-api.md`, `crates/core/README.md` | Expand into `docs/host-api.md`; retain the explicit unstable-internals boundary. |
 | Card-author learning | `docs/tutorials/*.md` | Syntax-check every card and remove renderer-policy claims. |
 | Language semantics | `openspec/specs/language/spec.md` | Derive a lookup-oriented `docs/language-reference.md`; the capability spec remains normative. |
 | Native player | `docs/player.md`, `crates/player/README.md` | Remove the core-owned palette and flat-dot/beam descriptions. |
-| Render transport/pack | `crates/render-touhou/README.md`, `docs/public-api.md` | Document BYO batches, fixed layouts, manifests, ordering, and host-owned resources. |
+| Render transport/pack | `docs/renderer-api.md`, `docs/public-api.md` | Document BYO batches, feature-gated pack APIs, fixed layouts, manifests, ordering, and host-owned resources. |
 | Wasm/JavaScript | `crates/web/README.md`, `crates/js/maku/README.md` | Add identity, lifetime, full frame ABI, and Canvas2D adapter guidance. |
-| Migration/release | `docs/release-notes/0.1.0-pre.md`, `docs/releasing.md` | Treat release notes as migration authority and generated `release.json` as artifact identity. |
+| Migration/release | `docs/release-notes/0.2.0.md`, `docs/releasing.md` | Treat release notes as migration authority and generated `release.json` as artifact identity. |
 | DMK comparison | `docs/from-dmk.md` | Keep comparative material out of the Maku-first reference and tutorials. |
 
 ## Known stale upstream claims
 
-- `docs/player.md` and the `maku-web` crate prose describe flat `f32`
+- `docs/player.md` and the private web producer prose describe flat `f32`
   dots/beams and place palette ownership in core. The current contract is
   ordered typed transport interpreted by the optional Touhou profile.
 - `docs/tutorials/01-first-bullets.md` implies that a style record directly

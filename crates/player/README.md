@@ -1,6 +1,8 @@
 # maku-player
 
-`maku-player` is Maku's native Macroquad reference host. It runs cards through
+`maku-player` is Maku's private native Macroquad producer. Ready-to-run builds
+are distributed through [GitHub Releases](https://github.com/mlegls/maku/releases/latest),
+not as a public Rust SDK crate. It runs cards through
 the supported `maku::host::Instance` facade, builds `TouhouProfile::stock()`
 frames, and submits the pack's authoritative ordered commands.
 

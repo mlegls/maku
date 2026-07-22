@@ -1,6 +1,6 @@
-# Maku 0.1 language reference
+# Maku 0.2 language reference
 
-> **Version:** Maku 0.1. This is a user-facing reference for implemented
+> **Version:** Maku 0.2. This is a user-facing reference for implemented
 > behavior. [`openspec/specs/language/spec.md`](../openspec/specs/language/spec.md)
 > is the semantic authority; active backlog changes are not current syntax.
 
@@ -274,7 +274,7 @@ one authoritative stream order; batch lanes expand exactly at the batch's
 position. Frontends must not globally regroup transparent output.
 
 The Touhou library emits `:sprite` and `:beam` semantics. The optional
-`maku-render-touhou` profile—not core or the card—maps family/variant/color to
+The bundled `maku::touhou` profile—not core semantics or the card—maps family/variant/color to
 textures, materials, palettes, orientation, radii, and layers. See
 [`renderer-api.md`](renderer-api.md).
 

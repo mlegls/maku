@@ -1,6 +1,7 @@
 # The debug player
 
-`crates/player` is the reference host: a sim+render **server** (the
+Download the reference host from [GitHub Releases](https://github.com/mlegls/maku/releases/latest).
+`crates/player` is its private source package: a sim+render **server** (the
 sclang/scsynth split). Editor clients are thin
 send-a-form-to-a-socket shims; `crates/editors/danmaku.nvim` is the reference
 client (see its README for mappings).
@@ -65,7 +66,7 @@ live with the editor. The status line shows tick, entity count, graze, hits, liv
 
 `crates/web` compiles the supported host facade to wasm (`crates/web/build.sh
 serve`) and runs the same `Instance` in the browser. It builds the ordered
-fixed-layout frame from `maku-render-touhou` and draws it with the bundled
+fixed-layout frame from the bundled `maku::touhou` feature and draws it with the bundled
 **Canvas2D compatibility adapter**. Keyboard/mouse values become `Inputs`,
 cards are fetched into a virtual filesystem, and the eval box speaks the same
 wire protocol (`run`/`swap`/`add`). Touhou palettes, sprite dimensions,
