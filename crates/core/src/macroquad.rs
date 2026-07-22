@@ -3,7 +3,7 @@
 //! Sprite instances are expanded to quads and `u32` ribbon indices are
 //! remapped to Macroquad's `u16` mesh format before CPU submission.
 
-use maku_render_touhou::{AddressMode, BlendMode, DrawSource, MaterialDesc, MaterialId, MeshFrame, SourceLayout, TextureFilter, TextureSource, TouhouProfile};
+use crate::touhou::{AddressMode, BlendMode, DrawSource, MaterialDesc, MaterialId, MeshFrame, SourceLayout, TextureFilter, TextureSource, TouhouProfile};
 use macroquad::miniquad::{Backend, BlendFactor, BlendState, BlendValue, Equation, PipelineParams};
 use macroquad::prelude::*;
 use std::collections::HashMap;
@@ -61,7 +61,7 @@ pub fn submit_frame(frame:&PreparedFrame,resources:&RenderResources){
 }
 pub fn draw_frame(frame:&MeshFrame,resources:&RenderResources,cx:f32,cy:f32){let prepared=prepare_frame(frame,resources,cx,cy);submit_frame(&prepared,resources);}
 
-fn sprite_meshes<'a>(instances:impl Iterator<Item=(&'a maku_render_touhou::BasicSpriteInstance,[u8;4],[f32;4])>,texture:&Texture2D,cx:f32,cy:f32)->Vec<Mesh>{
+fn sprite_meshes<'a>(instances:impl Iterator<Item=(&'a crate::touhou::BasicSpriteInstance,[u8;4],[f32;4])>,texture:&Texture2D,cx:f32,cy:f32)->Vec<Mesh>{
     const QUADS:usize=u16::MAX as usize/4; let mut out=Vec::new();let mut vertices=Vec::with_capacity(QUADS*4);let mut indices=Vec::with_capacity(QUADS*6);
     for(instance,color,normal)in instances{
         if vertices.len()+4>u16::MAX as usize{out.push(Mesh{vertices,indices,texture:Some(texture.clone())});vertices=Vec::with_capacity(QUADS*4);indices=Vec::with_capacity(QUADS*6);}

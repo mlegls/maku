@@ -33,7 +33,7 @@
 
 use maku::host::Instance;
 use maku::host::Inputs;
-use maku_render_touhou::{TouhouMesh, TouhouProfile};
+use maku::touhou::{TouhouMesh, TouhouProfile};
 use macroquad::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
@@ -71,7 +71,7 @@ fn serve(port: u16) -> Receiver<String> {
     rx
 }
 
-use maku_player::macroquad_compat::{draw_frame, RenderResources};
+use maku::macroquad::{draw_frame, RenderResources};
 
 /// Bottom strip: play/pause button + timeline slider over the recorded tape.
 /// Dragging the handle scrubs (auto-pauses); clicking play resumes, which

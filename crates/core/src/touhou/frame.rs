@@ -1,4 +1,4 @@
-use crate::{MaterialId, SourceLayout};
+use super::{MaterialId, SourceLayout};
 
 /// Version of the public host-facing buffer and manifest ABI.
 pub const FRAME_ABI_VERSION: u32 = 1;

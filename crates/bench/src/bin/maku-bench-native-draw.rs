@@ -5,8 +5,8 @@ use maku_bench::{
     Power, ResultEnvelope, SourceIdentity, StageIdentity, TimingPolicy, WorkCounters,
     RESULT_SCHEMA_VERSION, WORKLOAD_SCHEMA_VERSION,
 };
-use maku_render_touhou::{TouhouMesh, TouhouProfile};
-use maku_player::macroquad_compat::{prepare_frame, submit_frame, RenderResources};
+use maku::touhou::{TouhouMesh, TouhouProfile};
+use maku::macroquad::{prepare_frame, submit_frame, RenderResources};
 use macroquad::prelude::{clear_background, next_frame, BLACK};
 use std::{collections::BTreeMap, hint::black_box, path::PathBuf, rc::Rc, time::Instant};
 

@@ -1,7 +1,7 @@
 use super::*;
-use maku::host::Instance;
-use maku::render::{Column, NumColumn, RenderBatch, RenderData, RenderFieldKind, RenderItem, RenderRow, RenderSchema};
-use maku::host::Inputs;
+use crate::host::Instance;
+use crate::render::{Column, NumColumn, RenderBatch, RenderData, RenderFieldKind, RenderItem, RenderRow, RenderSchema};
+use crate::host::Inputs;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::rc::Rc;

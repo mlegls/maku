@@ -396,8 +396,8 @@ impl TouhouProfile {
         })
     }
 
-    pub fn stock() -> Self { Self::new(crate::stock::stock_desc()).expect("stock profile is valid") }
-    pub fn stock_desc() -> ProfileDesc { crate::stock::stock_desc() }
+    pub fn stock() -> Self { Self::new(super::stock::stock_desc()).expect("stock profile is valid") }
+    pub fn stock_desc() -> ProfileDesc { super::stock::stock_desc() }
     pub fn pixels_per_unit(&self) -> f32 { self.pixels_per_unit }
     pub fn palettes(&self) -> &[PaletteEntry] { &self.palettes }
     pub fn sprites(&self) -> &[SpriteStyle] { &self.sprites }

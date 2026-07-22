@@ -1,17 +1,17 @@
 ## 1. Public SDK consolidation
 
-- [ ] 1.1 Add default-empty `touhou` and `macroquad` feature definitions and optional Macroquad dependency to `crates/core/Cargo.toml`
-- [ ] 1.2 Move the Touhou render-pack implementation and tests under feature-gated `maku::touhou`
-- [ ] 1.3 Move the Macroquad compatibility adapter under feature-gated `maku::macroquad`
-- [ ] 1.4 Remove the retired `crates/render-touhou` workspace package and update workspace membership
-- [ ] 1.5 Verify default, Touhou, Macroquad, and all-feature `maku` builds independently
+- [x] 1.1 Add default-empty `touhou` and `macroquad` feature definitions and optional Macroquad dependency to `crates/core/Cargo.toml`
+- [x] 1.2 Move the Touhou render-pack implementation and tests under feature-gated `maku::touhou`
+- [x] 1.3 Move the Macroquad compatibility adapter under feature-gated `maku::macroquad`
+- [x] 1.4 Remove the retired `crates/render-touhou` workspace package and update workspace membership
+- [x] 1.5 Verify default, Touhou, Macroquad, and all-feature `maku` builds independently
 
 ## 2. Private workspace consumers
 
-- [ ] 2.1 Mark `maku-player` non-publishable and migrate it to the `maku/macroquad` feature and public module paths
-- [ ] 2.2 Mark `maku-web` non-publishable and migrate it to the `maku/touhou` feature and public module paths
-- [ ] 2.3 Migrate benchmark code and dependencies to `maku::touhou` and `maku::macroquad`
-- [ ] 2.4 Update the external public API smoke crate to consume only `maku` with the Touhou feature
+- [x] 2.1 Mark `maku-player` non-publishable and migrate it to the `maku/macroquad` feature and public module paths
+- [x] 2.2 Mark `maku-web` non-publishable and migrate it to the `maku/touhou` feature and public module paths
+- [x] 2.3 Migrate benchmark code and dependencies to `maku::touhou` and `maku::macroquad`
+- [x] 2.4 Update the external public API smoke crate to consume only `maku` with the Touhou feature
 - [ ] 2.5 Update examples, tests, and local tooling imports and pass all workspace/wasm targets
 
 ## 3. Release identity and package verification
