@@ -15,15 +15,6 @@ if [[ "$npm_version" != "$version" ]]; then
   exit 1
 fi
 
-mismatched=$(
-  cargo metadata --manifest-path crates/Cargo.toml --no-deps --format-version 1 \
-    | jq -r --arg version "$version" '.packages[] | select(.name | startswith("maku")) | select(.version != $version) | "\(.name) \(.version)"'
-)
-if [[ -n "$mismatched" ]]; then
-  printf 'coordinated package version mismatch:\n%s\n' "$mismatched" >&2
-  exit 1
-fi
-
 crate_published() {
   curl --fail --silent --show-error \
     --user-agent 'maku-release-ci (https://github.com/mlegls/maku)' \
@@ -51,12 +42,7 @@ publish_crate() {
   wait_for_crate "$package"
 }
 
-# Registry resolution requires dependency order. The final two packages are
-# kept sequential so retries and logs remain deterministic.
 publish_crate maku
-publish_crate maku-render-touhou
-publish_crate maku-player
-publish_crate maku-web
 
 if npm view "$npm_name@$npm_version" version --json 2>/dev/null \
   | jq -e --arg version "$npm_version" '. == $version' >/dev/null; then

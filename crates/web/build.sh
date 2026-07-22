@@ -12,8 +12,6 @@ cp static/pkg/maku.js static/pkg/maku.d.ts static/pkg/maku_bg.wasm static/pkg/ma
 bun build editor-src/maku-codemirror.js --outfile static/maku-codemirror.js --target browser --format esm
 METADATA=$(cargo metadata --no-deps --format-version 1)
 export MAKU_ENGINE_VERSION=$(printf '%s' "$METADATA" | jq -r '.packages[] | select(.name == "maku") | .version')
-export MAKU_RENDER_VERSION=$(printf '%s' "$METADATA" | jq -r '.packages[] | select(.name == "maku-render-touhou") | .version')
-export MAKU_WEB_VERSION=$(printf '%s' "$METADATA" | jq -r '.packages[] | select(.name == "maku-web") | .version')
 export MAKU_NPM_VERSION=$(jq -r '.version' ../js/maku/package.json)
 export MAKU_FRAME_ABI_VERSION=1
 export MAKU_RUSTC_VERSION=$(rustc --version)

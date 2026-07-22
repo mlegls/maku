@@ -5,6 +5,9 @@
 //! details retained for in-workspace backend development and carry no
 //! compatibility promise before 1.0.
 
+/// Version of the public Rust SDK.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[doc(hidden)]
 pub mod edn;
 mod fxhash;

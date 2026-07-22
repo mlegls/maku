@@ -253,14 +253,14 @@ checksum = "64b1d96218903768c1ce078b657c0d5965465c95a60d2682fd97443c9d2483dd"
 
 [[package]]
 name = "maku"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "macroquad",
 ]
 
 [[package]]
 name = "maku-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "macroquad",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "maku-player"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "macroquad",
  "maku",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "maku-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "js-sys",
  "maku",

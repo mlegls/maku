@@ -2,27 +2,70 @@ name: Publish release
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
 
 concurrency:
-  group: publish-main
+  group: publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  player:
+    name: Player (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            extension: ''
+          - os: macos-13
+            platform: macos-x86_64
+            extension: ''
+          - os: macos-14
+            platform: macos-arm64
+            extension: ''
+          - os: windows-latest
+            platform: windows-x86_64
+            extension: '.exe'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux player prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config
+      - uses: jdx/mise-action@v3
+        with:
+          cache: true
+      - name: Build native player
+        shell: bash
+        run: |
+          cargo build --release --manifest-path crates/Cargo.toml -p maku-player
+          cp "crates/target/release/maku-player${{ matrix.extension }}" "maku-player-${{ matrix.platform }}${{ matrix.extension }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maku-player-${{ matrix.platform }}
+          path: maku-player-${{ matrix.platform }}${{ matrix.extension }}
+          if-no-files-found: error
+
   publish:
     name: Validate and publish
+    needs: player
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Require the protected main branch
-        run: test "$GITHUB_REF" = refs/heads/main
+      - name: Verify protected release identity
+        run: |
+          git fetch origin main
+          scripts/check-release-tag.sh
       - name: Install native player prerequisites
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config xvfb
       - uses: jdx/mise-action@v3
@@ -48,3 +91,11 @@ jobs:
           # takes precedence and disables trusted publishing, so clear it.
           NODE_AUTH_TOKEN: ''
         run: scripts/publish-release.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: maku-player-*
+          path: player-artifacts
+      - name: Publish player artifacts and release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" player-artifacts/*/* --verify-tag --generate-notes --title "Maku ${GITHUB_REF_NAME#v}"
