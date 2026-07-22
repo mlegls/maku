@@ -42,8 +42,7 @@ const required = name => {
 };
 const release = {
   maku_version: required('MAKU_ENGINE_VERSION'),
-  render_pack_version: required('MAKU_RENDER_VERSION'),
-  web_host_version: required('MAKU_WEB_VERSION'),
+  render_packs: [{ id: 'touhou', contract_version: 1 }],
   npm_package: '@mlegls/maku',
   npm_version: required('MAKU_NPM_VERSION'),
   frame_abi_version: Number(required('MAKU_FRAME_ABI_VERSION')),

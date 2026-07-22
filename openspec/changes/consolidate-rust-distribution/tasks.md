@@ -16,18 +16,18 @@
 
 ## 3. Release identity and package verification
 
-- [ ] 3.1 Advance the consolidated Cargo and npm/browser release version to 0.2.0 without changing frame ABI v1
-- [ ] 3.2 Replace browser render/web Cargo-version identity fields with an explicit bundled render-pack manifest
+- [x] 3.1 Advance the consolidated Cargo and npm/browser release version to 0.2.0 without changing frame ABI v1
+- [x] 3.2 Replace browser render/web Cargo-version identity fields with an explicit bundled render-pack manifest
 - [ ] 3.3 Regenerate wasm bindings, declarations, wrapper, integrity metadata, and downstream sync inputs as one snapshot
-- [ ] 3.4 Simplify Cargo archive extraction and publish dry-runs to the sole public `maku` package with all public features
-- [ ] 3.5 Simplify the idempotent OIDC publisher to publish `maku` and `@mlegls/maku` only
-- [ ] 3.6 Add checks that private workspace packages cannot become registry publication candidates
+- [x] 3.4 Simplify Cargo archive extraction and publish dry-runs to the sole public `maku` package with all public features
+- [x] 3.5 Simplify the idempotent OIDC publisher to publish `maku` and `@mlegls/maku` only
+- [x] 3.6 Add checks that private workspace packages cannot become registry publication candidates
 
 ## 4. Release automation and player artifacts
 
-- [ ] 4.1 Change publication triggering from `main` pushes to protected `v*` tags with tag/version/main-ancestry validation
-- [ ] 4.2 Add Linux, macOS, and Windows native-player artifact builds for GitHub Releases
-- [ ] 4.3 Keep the GitHub `release` environment and OIDC permissions while reducing crates.io trusted-publisher requirements to `maku`
+- [x] 4.1 Change publication triggering from `main` pushes to protected `v*` tags with tag/version/main-ancestry validation
+- [x] 4.2 Add Linux, macOS, and Windows native-player artifact builds for GitHub Releases
+- [x] 4.3 Keep the GitHub `release` environment and OIDC permissions while reducing crates.io trusted-publisher requirements to `maku`
 - [ ] 4.4 Document and test idempotent partial-release recovery, player artifact checks, and post-publication auxiliary-crate yanking
 
 ## 5. Public documentation and migration

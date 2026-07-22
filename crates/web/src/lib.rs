@@ -22,7 +22,7 @@ unsafe fn byte_view<T>(values: &[T]) -> Uint8Array {
     unsafe { Uint8Array::view(bytes) }
 }
 
-pub const MAKU_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const MAKU_VERSION: &str = maku::VERSION;
 pub const SOURCE_REVISION: &str = match option_env!("MAKU_SOURCE_REVISION") {
     Some(value) => value,
     None => "development",

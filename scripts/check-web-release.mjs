@@ -15,9 +15,11 @@ if (release.npm_package !== '@mlegls/maku' || release.frame_abi_version !== 1) {
   throw new Error('unexpected browser release identity');
 }
 const npm = JSON.parse(readFileSync(join(root, 'crates/js/maku/package.json'), 'utf8'));
-if (release.npm_version !== npm.version || release.maku_version !== npm.version
-    || release.render_pack_version !== npm.version || release.web_host_version !== npm.version) {
+if (release.npm_version !== npm.version || release.maku_version !== npm.version) {
   throw new Error(`package version mismatch: ${JSON.stringify(release)}`);
+}
+if (JSON.stringify(release.render_packs) !== JSON.stringify([{ id: 'touhou', contract_version: 1 }])) {
+  throw new Error(`unexpected bundled render packs: ${JSON.stringify(release.render_packs)}`);
 }
 for (const [path, expected] of Object.entries(release.artifacts || {})) {
   const bytes = readFileSync(join(root, path));
