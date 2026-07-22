@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "WebAssembly host bindings for Maku and its Touhou render pack"
-documentation = "https://docs.rs/maku-web"
+publish = false
 readme = "README.md"
 include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
 keywords = ["danmaku", "bullet-hell", "wasm", "webassembly"]
@@ -17,11 +17,6 @@ categories = ["wasm", "game-engines"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-maku = { version = "0.1.0", path = "../core" }
-maku-render-touhou = { version = "0.1.0", path = "../render-touhou" }
+maku = { path = "../core", features = ["touhou"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-
-[package.metadata.docs.rs]
-all-features = true
-targets = ["wasm32-unknown-unknown"]

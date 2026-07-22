@@ -1,4 +1,4 @@
-use crate::*;
+use super::*;
 use std::rc::Rc;
 
 const ATLAS_SIDE: u32 = 64;

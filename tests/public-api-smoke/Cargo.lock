@@ -11,12 +11,4 @@ name = "maku-public-api-smoke"
 version = "0.0.0"
 dependencies = [
  "maku",
- "maku-render-touhou",
-]
-
-[[package]]
-name = "maku-render-touhou"
-version = "0.1.0"
-dependencies = [
- "maku",
 ]

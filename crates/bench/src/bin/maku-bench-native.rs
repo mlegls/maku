@@ -5,7 +5,7 @@ use maku_bench::{
     Power, ResultEnvelope, SourceIdentity, StageIdentity, TimingPolicy, WorkCounters,
     RESULT_SCHEMA_VERSION, WORKLOAD_SCHEMA_VERSION,
 };
-use maku_render_touhou::{TouhouMesh, TouhouProfile};
+use maku::touhou::{TouhouMesh, TouhouProfile};
 use std::{collections::BTreeMap, hint::black_box, path::PathBuf, rc::Rc, time::Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq)]

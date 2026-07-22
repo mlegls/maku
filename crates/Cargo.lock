@@ -254,6 +254,9 @@ checksum = "64b1d96218903768c1ce078b657c0d5965465c95a60d2682fd97443c9d2483dd"
 [[package]]
 name = "maku"
 version = "0.1.0"
+dependencies = [
+ "macroquad",
+]
 
 [[package]]
 name = "maku-bench"
@@ -262,8 +265,6 @@ dependencies = [
  "libc",
  "macroquad",
  "maku",
- "maku-player",
- "maku-render-touhou",
  "serde",
  "serde_json",
  "sha2",
@@ -275,14 +276,6 @@ version = "0.1.0"
 dependencies = [
  "macroquad",
  "maku",
- "maku-render-touhou",
-]
-
-[[package]]
-name = "maku-render-touhou"
-version = "0.1.0"
-dependencies = [
- "maku",
 ]
 
 [[package]]
@@ -291,7 +284,6 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "maku",
- "maku-render-touhou",
  "wasm-bindgen",
 ]
 

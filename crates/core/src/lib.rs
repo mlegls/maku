@@ -9,6 +9,10 @@
 pub mod edn;
 mod fxhash;
 pub mod host;
+#[cfg(feature = "touhou")]
+pub mod touhou;
+#[cfg(feature = "macroquad")]
+pub mod macroquad;
 #[doc(hidden)]
 pub mod interp;
 #[doc(hidden)]

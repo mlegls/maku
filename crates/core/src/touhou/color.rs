@@ -1,4 +1,4 @@
-use crate::Rgba8;
+use super::Rgba8;
 
 pub(crate) fn with_hue_alpha(color: Rgba8, hue_deg: f64, alpha: f64) -> [u8; 4] {
     let [r, g, b, source_alpha] = color.0;

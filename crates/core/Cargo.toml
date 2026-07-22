@@ -13,6 +13,14 @@ include = ["src/**", "lib/**", "examples/**", "Cargo.toml", "README.md", "LICENS
 keywords = ["danmaku", "bullet-hell", "gamedev", "simulation"]
 categories = ["game-engines", "simulation"]
 
+[features]
+default = []
+touhou = []
+macroquad = ["touhou", "dep:macroquad"]
+
+[dependencies]
+macroquad = { version = "0.4", optional = true }
+
 [lib]
 crate-type = ["rlib"]
 

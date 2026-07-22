@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
-maku = { path = "../../crates/core" }
-maku-render-touhou = { path = "../../crates/render-touhou" }
+maku = { path = "../../crates/core", features = ["touhou"] }
 
 [workspace]

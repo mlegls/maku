@@ -8,7 +8,7 @@ use js_sys::{Uint32Array, Uint8Array};
 use maku::host::Instance;
 use maku::host::Inputs;
 use maku::render::RenderItem;
-use maku_render_touhou::{
+use maku::touhou::{
     DrawSource, TextureSource, TouhouMesh, TouhouProfile, FRAME_ABI_VERSION,
 };
 use std::mem::{size_of, size_of_val};
@@ -272,10 +272,10 @@ impl Maku {
     pub fn benchmark_rule_actions(&self) -> usize { self.inst.benchmark_counters().rule_actions }
 
     pub fn frame_abi_version(&self) -> u32 { FRAME_ABI_VERSION }
-    pub fn basic_sprite_stride(&self) -> usize { size_of::<maku_render_touhou::BasicSpriteInstance>() }
-    pub fn tinted_sprite_stride(&self) -> usize { size_of::<maku_render_touhou::TintedSpriteInstance>() }
-    pub fn recolor_sprite_stride(&self) -> usize { size_of::<maku_render_touhou::RecolorSpriteInstance>() }
-    pub fn strip_vertex_stride(&self) -> usize { size_of::<maku_render_touhou::StripVertex>() }
+    pub fn basic_sprite_stride(&self) -> usize { size_of::<maku::touhou::BasicSpriteInstance>() }
+    pub fn tinted_sprite_stride(&self) -> usize { size_of::<maku::touhou::TintedSpriteInstance>() }
+    pub fn recolor_sprite_stride(&self) -> usize { size_of::<maku::touhou::RecolorSpriteInstance>() }
+    pub fn strip_vertex_stride(&self) -> usize { size_of::<maku::touhou::StripVertex>() }
     pub fn draw_command_stride(&self) -> usize { 8 }
 
     pub fn basic_sprites(&self) -> Uint8Array { unsafe { byte_view(&self.mesh.frame().basic_sprites) } }
@@ -331,13 +331,13 @@ impl Maku {
         self.mesh.profile().materials().get(index).map(|v| v.texture.0).unwrap_or(u32::MAX)
     }
     pub fn material_layout(&self, index: usize) -> u32 {
-        use maku_render_touhou::SourceLayout::*;
+        use maku::touhou::SourceLayout::*;
         self.mesh.profile().materials().get(index).map(|v| match v.layout {
             BasicSprite => 0, TintedSprite => 1, RecolorSprite => 2, IndexedStrip => 3,
         }).unwrap_or(u32::MAX)
     }
     pub fn material_blend(&self, index: usize) -> u32 {
-        use maku_render_touhou::BlendMode::*;
+        use maku::touhou::BlendMode::*;
         self.mesh.profile().materials().get(index).map(|v| match v.blend {
             Opaque => 0, Alpha => 1, Additive => 2, SoftAdditive => 3,
         }).unwrap_or(u32::MAX)
@@ -349,25 +349,25 @@ impl Maku {
         }).unwrap_or(0)
     }
     pub fn material_min_filter(&self, index: usize) -> u32 {
-        use maku_render_touhou::TextureFilter::*;
+        use maku::touhou::TextureFilter::*;
         self.mesh.profile().materials().get(index).map(|v| match v.sampler.min_filter {
             Nearest => 0, Linear => 1,
         }).unwrap_or(u32::MAX)
     }
     pub fn material_mag_filter(&self, index: usize) -> u32 {
-        use maku_render_touhou::TextureFilter::*;
+        use maku::touhou::TextureFilter::*;
         self.mesh.profile().materials().get(index).map(|v| match v.sampler.mag_filter {
             Nearest => 0, Linear => 1,
         }).unwrap_or(u32::MAX)
     }
     pub fn material_address_u(&self, index: usize) -> u32 {
-        use maku_render_touhou::AddressMode::*;
+        use maku::touhou::AddressMode::*;
         self.mesh.profile().materials().get(index).map(|v| match v.sampler.address_u {
             Clamp => 0, Repeat => 1, Mirror => 2,
         }).unwrap_or(u32::MAX)
     }
     pub fn material_address_v(&self, index: usize) -> u32 {
-        use maku_render_touhou::AddressMode::*;
+        use maku::touhou::AddressMode::*;
         self.mesh.profile().materials().get(index).map(|v| match v.sampler.address_v {
             Clamp => 0, Repeat => 1, Mirror => 2,
         }).unwrap_or(u32::MAX)
