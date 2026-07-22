@@ -41,6 +41,6 @@
 ## 6. Validation and rollout
 
 - [x] 6.1 Run default/feature/all-target Rust checks, full workspace tests, wasm/browser smoke, documentation checks, package archive tests, and npm dry-run
-- [ ] 6.2 Run the complete clean-checkout release gate and strict OpenSpec validation
+- [x] 6.2 Run the complete clean-checkout release gate and strict OpenSpec validation
 - [x] 6.3 Synchronize the delta specs into canonical specs and verify downstream manifest coherence
 - [ ] 6.4 Publish and verify 0.2.0 through the protected tag workflow before yanking auxiliary Cargo 0.1.0 packages
