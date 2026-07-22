@@ -9,14 +9,14 @@
   "npm_package": "@mlegls/maku",
   "npm_version": "0.2.0",
   "frame_abi_version": 1,
-  "source_revision": "a0f1e6261cac86eee3e0f156b4f4dce171842f9e",
+  "source_revision": "bbe7329ead877e7dbe5e84505b8ae1d69110f6f0",
   "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
   "wasm_pack": "wasm-pack 0.15.0",
   "bun": "1.3.14",
   "artifacts": {
     "crates/web/static/pkg/maku_bg.wasm": {
       "bytes": 1586415,
-      "sha256": "5748a1c7f5803c035b9d58e9b6864367e5040b9af160a2cd79f907b927fdf384"
+      "sha256": "01c7b6c248f27d6fee16c50a991c7c7dfe457543294bc80d21c15235ce470d9f"
     },
     "crates/web/static/pkg/maku.js": {
       "bytes": 28643,
@@ -100,7 +100,7 @@
     },
     "crates/js/maku/wasm/maku_bg.wasm": {
       "bytes": 1586415,
-      "sha256": "5748a1c7f5803c035b9d58e9b6864367e5040b9af160a2cd79f907b927fdf384"
+      "sha256": "01c7b6c248f27d6fee16c50a991c7c7dfe457543294bc80d21c15235ce470d9f"
     },
     "crates/js/maku/wasm/maku_bg.wasm.d.ts": {
       "bytes": 5311,
@@ -255,24 +255,24 @@
       "sha256": "5f3f76f88ea9abbc4774aea4ce563f0ebd30bfef8a98b5ed0af7a3b830359743"
     },
     "docs/language-reference.md": {
-      "bytes": 11978,
-      "sha256": "189863b6b0eb39c3e713faf575a83d0efd157f82a9dcfe134778a7f22137b768"
+      "bytes": 11994,
+      "sha256": "c3c09b6934148f2a40752823918c1cbf0bfdfc5a718ee87637713db48588e1df"
     },
     "docs/host-api.md": {
-      "bytes": 10920,
-      "sha256": "5cc4e5c3c7ff926206dc58623cb740160faea881e77b4eb7a420578f530f39fa"
+      "bytes": 10931,
+      "sha256": "a52dbf9acacf4eba88f8eb0fec5f4d35656554e8fd5ea841d143251a843dfe0b"
     },
     "docs/renderer-api.md": {
-      "bytes": 9128,
-      "sha256": "5084c077583888a058b48cc16bc5e9bf267fd4a93605b650cfda0acfc536d801"
+      "bytes": 9507,
+      "sha256": "492572ab49d5c55e3851d37f71070db893ed4b21b51be68a77629a5be2ebba65"
     },
     "docs/public-api.md": {
-      "bytes": 1581,
-      "sha256": "e2b08596964376f6e5aad9c50e7f9f7ba7d25fa26b63d6a1a5b1dafca872ad40"
+      "bytes": 2144,
+      "sha256": "76bd2a98d7a63f08c6655865f80316a166ea94a3180b24954ccf2cae8b1215ff"
     },
     "docs/player.md": {
-      "bytes": 4966,
-      "sha256": "7765eda07d855883b54608e894f542d70b8c55e1f242123cb3399feebb30d8d0"
+      "bytes": 5088,
+      "sha256": "39b00e8641423120dc35d40fea75aae3bc1635002e7f4807465d57c52b50457b"
     },
     "cards/docs/language-reference.maku": {
       "bytes": 1028,
@@ -299,12 +299,12 @@
       "sha256": "b04d46c524dfae172320ac33191c448c1e004b024916c786fe064c8bdc06d306"
     },
     "crates/web/README.md": {
-      "bytes": 2606,
-      "sha256": "e426bfca7efe26b36ce170f729f0df6510f07248586d88a551167fbfba41331d"
+      "bytes": 2610,
+      "sha256": "02838ed66eb4d0f9a3e2f4e55d3574c8273d547c2e7a8aec4a5164fffd630600"
     },
     "crates/player/README.md": {
-      "bytes": 1102,
-      "sha256": "9758f0dfc181a95fce7b164380912fe3cff4033054f38ed57bb9a8ecf27d14fb"
+      "bytes": 1247,
+      "sha256": "cfc8c10e24ffc0df18bda1419559dbf02b5d39e29da5e9fe9290bdf294fb36ed"
     }
   }
 }
