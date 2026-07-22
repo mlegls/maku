@@ -15,7 +15,7 @@ export type InitMakuOptions = {
   moduleOrPath?: InitInput | Promise<InitInput>;
 };
 
-export declare const EXPECTED_MAKU_VERSION = "0.1.0";
+export declare const EXPECTED_MAKU_VERSION = "0.2.0";
 export declare const EXPECTED_FRAME_ABI_VERSION = 1;
 export declare function releaseIdentity(): {
   makuVersion: string;

@@ -12,13 +12,13 @@
 - [x] 2.2 Mark `maku-web` non-publishable and migrate it to the `maku/touhou` feature and public module paths
 - [x] 2.3 Migrate benchmark code and dependencies to `maku::touhou` and `maku::macroquad`
 - [x] 2.4 Update the external public API smoke crate to consume only `maku` with the Touhou feature
-- [ ] 2.5 Update examples, tests, and local tooling imports and pass all workspace/wasm targets
+- [x] 2.5 Update examples, tests, and local tooling imports and pass all workspace/wasm targets
 
 ## 3. Release identity and package verification
 
 - [x] 3.1 Advance the consolidated Cargo and npm/browser release version to 0.2.0 without changing frame ABI v1
 - [x] 3.2 Replace browser render/web Cargo-version identity fields with an explicit bundled render-pack manifest
-- [ ] 3.3 Regenerate wasm bindings, declarations, wrapper, integrity metadata, and downstream sync inputs as one snapshot
+- [x] 3.3 Regenerate wasm bindings, declarations, wrapper, integrity metadata, and downstream sync inputs as one snapshot
 - [x] 3.4 Simplify Cargo archive extraction and publish dry-runs to the sole public `maku` package with all public features
 - [x] 3.5 Simplify the idempotent OIDC publisher to publish `maku` and `@mlegls/maku` only
 - [x] 3.6 Add checks that private workspace packages cannot become registry publication candidates
