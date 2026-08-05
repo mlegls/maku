@@ -61,13 +61,30 @@ jobs:
           path: maku-player-${{ matrix.platform }}${{ matrix.extension }}
           if-no-files-found: error
 
+  generated:
+    name: Verify generated browser release
+    needs: player
+    # Rust's wasm link/optimization output is not byte-identical across host
+    # OSes. Verify freshness on the declared Apple Silicon build environment.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: jdx/mise-action@v3
+        with:
+          cache: true
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify generated artifact freshness
+        run: |
+          scripts/check-generated.sh
+          test -z "$(git status --porcelain --untracked-files=all)"
+
   publish:
     name: Validate and publish
-    needs: player
-    # The checked-in wasm release unit is generated on Apple Silicon. Rust's
-    # wasm link/optimization output is not byte-identical across host OSes, so
-    # freshness validation must use the declared artifact build environment.
-    runs-on: macos-14
+    needs: [player, generated]
+    runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: write
@@ -81,6 +98,8 @@ jobs:
         run: |
           git fetch origin main
           GITHUB_REF_NAME="$RELEASE_TAG" scripts/check-release-tag.sh
+      - name: Install native player prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config xvfb
       - uses: jdx/mise-action@v3
         with:
           cache: true
@@ -91,9 +110,16 @@ jobs:
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
       - name: Install benchmark browser
-        run: bunx playwright install chromium
-      - name: Complete release validation
-        run: scripts/check.sh release
+        run: bunx playwright install --with-deps chromium
+      - name: Complete platform-independent release validation
+        run: |
+          scripts/check.sh fast
+          scripts/check-docs.sh
+          MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml
+          MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml -- --ignored
+          (cd crates/web/static && bun smoke.mjs)
+          scripts/check-packages.sh
+          test -z "$(git status --porcelain --untracked-files=all)"
       - name: Exchange GitHub OIDC identity for a crates.io token
         id: crates-io-auth
         uses: rust-lang/crates-io-auth-action@v1
