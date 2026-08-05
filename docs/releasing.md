@@ -46,8 +46,9 @@ so a local credential cannot disable trusted publishing.
 3. Create and push an annotated `vX.Y.Z` tag on that exact commit.
 4. Approve the GitHub `release` environment deployment.
 5. The workflow validates version/tag/main ancestry, builds all player
-   artifacts, publishes missing Cargo/npm versions idempotently, and creates
-   the GitHub Release.
+   artifacts, verifies generated wasm bytes on their declared Apple Silicon
+   build host, runs platform-independent release validation on Linux, publishes
+   missing Cargo/npm versions idempotently, and creates the GitHub Release.
 6. Verify crate/npm provenance, package hashes, player downloads, browser smoke,
    and downstream identity before removing rollback artifacts.
 
