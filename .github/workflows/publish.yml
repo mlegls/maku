@@ -62,11 +62,12 @@ jobs:
           if-no-files-found: error
 
   generated:
-    name: Verify generated browser release
+    name: Verify committed browser release
     needs: player
-    # Rust's wasm link/optimization output is not byte-identical across host
-    # OSes. Verify freshness on the declared Apple Silicon build environment.
-    runs-on: macos-14
+    # wasm link/optimization output varies by build host. Release CI verifies
+    # the committed unit's hashes and ABI; generation freshness is checked on
+    # the declared release-generation host before tagging.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,11 +75,9 @@ jobs:
       - uses: jdx/mise-action@v3
         with:
           cache: true
-      - name: Install JavaScript dependencies
-        run: bun install --frozen-lockfile
-      - name: Verify generated artifact freshness
+      - name: Verify committed artifact integrity
         run: |
-          scripts/check-generated.sh
+          bun scripts/check-web-release.mjs
           test -z "$(git status --porcelain --untracked-files=all)"
 
   publish:

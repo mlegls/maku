@@ -46,8 +46,8 @@ so a local credential cannot disable trusted publishing.
 3. Create and push an annotated `vX.Y.Z` tag on that exact commit.
 4. Approve the GitHub `release` environment deployment.
 5. The workflow validates version/tag/main ancestry, builds all player
-   artifacts, verifies generated wasm bytes on their declared Apple Silicon
-   build host, runs platform-independent release validation on Linux, publishes
+   artifacts, verifies the committed wasm unit's hashes and ABI, runs
+   platform-independent release validation on Linux, publishes
    missing Cargo/npm versions idempotently, and creates the GitHub Release.
 6. Verify crate/npm provenance, package hashes, player downloads, browser smoke,
    and downstream identity before removing rollback artifacts.
@@ -68,6 +68,11 @@ cargo yank --version 0.1.0 maku-web
 ```
 
 ## Package contents
+
+The no-diff generated-artifact check runs on the declared release-generation
+host before tagging. Rust/wasm optimization bytes vary across build hosts, so
+tagged CI validates the committed unit's integrity hashes, ABI, package shape,
+and runtime smoke rather than replacing those bytes with host-specific output.
 
 The `maku` manifest has an explicit include list. Its archive contains the
 canonical `lib/*.maku` sources and all sources needed by `touhou` and
