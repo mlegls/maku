@@ -64,7 +64,10 @@ jobs:
   publish:
     name: Validate and publish
     needs: player
-    runs-on: ubuntu-latest
+    # The checked-in wasm release unit is generated on Apple Silicon. Rust's
+    # wasm link/optimization output is not byte-identical across host OSes, so
+    # freshness validation must use the declared artifact build environment.
+    runs-on: macos-14
     environment: release
     permissions:
       contents: write
@@ -78,8 +81,6 @@ jobs:
         run: |
           git fetch origin main
           GITHUB_REF_NAME="$RELEASE_TAG" scripts/check-release-tag.sh
-      - name: Install native player prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev libxi-dev pkg-config xvfb
       - uses: jdx/mise-action@v3
         with:
           cache: true
@@ -90,7 +91,7 @@ jobs:
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
       - name: Install benchmark browser
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install chromium
       - name: Complete release validation
         run: scripts/check.sh release
       - name: Exchange GitHub OIDC identity for a crates.io token
