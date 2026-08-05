@@ -77,6 +77,12 @@ jobs:
           cache: true
       - name: Verify committed artifact integrity
         run: |
+          mkdir -p crates/web/static/pkg
+          cp crates/js/maku/wasm/maku.d.ts crates/web/static/pkg/
+          cp crates/js/maku/wasm/maku.js crates/web/static/pkg/
+          cp crates/js/maku/wasm/maku_bg.wasm crates/web/static/pkg/
+          cp crates/js/maku/wasm/maku_bg.wasm.d.ts crates/web/static/pkg/
+          cp crates/js/maku/wasm/release.json crates/web/static/pkg/
           bun scripts/check-web-release.mjs
           test -z "$(git status --porcelain --untracked-files=all)"
 
