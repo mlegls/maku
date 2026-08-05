@@ -51,10 +51,12 @@ so a local credential cannot disable trusted publishing.
 6. Verify crate/npm provenance, package hashes, player downloads, browser smoke,
    and downstream identity before removing rollback artifacts.
 
-A retry uses the same immutable tag. `scripts/publish-release.sh` skips an exact
-version already present and resumes missing registry products; never move a tag
-or overwrite package bytes. If a published artifact is defective, yank it and
-publish a patch.
+A retry uses **Run workflow** on `publish.yml` with the same existing immutable
+tag. The retry checks out that tag, revalidates its version and `main` ancestry,
+and rebuilds all player artifacts before resuming publication.
+`scripts/publish-release.sh` skips an exact version already present and resumes
+missing registry products; never move a tag or overwrite package bytes. If a
+published artifact is defective, yank it and publish a patch.
 
 After verified 0.2.0 replacements exist, yank the retired Cargo packages with:
 
