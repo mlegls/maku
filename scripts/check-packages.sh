@@ -24,4 +24,5 @@ cargo test --all-targets --all-features --offline --manifest-path "$tmp/maku-$ve
 cargo publish --dry-run -p maku --manifest-path crates/Cargo.toml --allow-dirty
 
 # Validate the exact scoped browser package without requiring registry auth.
-(cd crates/js/maku && bun publish --dry-run --access public)
+# Bun 1.3 requires authentication even for --dry-run; npm's dry run does not.
+(cd crates/js/maku && npm publish --dry-run --provenance=false --access public)

@@ -123,7 +123,12 @@ jobs:
           MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml
           MAKU_LOWER_ORACLE=1 cargo test --release -p maku --manifest-path crates/Cargo.toml -- --ignored
           (cd crates/web/static && bun smoke.mjs)
+          # v0.2.0 predates the auth-free npm dry-run fix. Use the protected
+          # main version of the package checker for immutable-tag retries.
+          git show origin/main:scripts/check-packages.sh > scripts/check-packages.sh
+          chmod +x scripts/check-packages.sh
           scripts/check-packages.sh
+          git checkout -- scripts/check-packages.sh
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Exchange GitHub OIDC identity for a crates.io token
         id: crates-io-auth
