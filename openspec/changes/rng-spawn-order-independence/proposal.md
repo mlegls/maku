@@ -19,7 +19,8 @@ Settled at decision level 2026-08-10 (implementation round still to be picked up
 
 ## Capabilities
 
-To be finalized at pick-up.
+- `determinism` — the RNG contract flips from sequential-stream draw order to keyed counter-based draws.
+- `session` — the seed becomes host-settable surface riding the command tape.
 
 ## Impact
 
