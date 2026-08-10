@@ -25,11 +25,11 @@
   memo growth, snapshot/scrub determinism unchanged.
 - [x] 7. Full gates on the final tree: core suite, oracle mode, all
   ignored release oracle card suites, first-hand.
-- [ ] 8. Perf verdict: interleaved wall-only A/B (representative suite
+- [x] 8. Perf verdict: interleaved wall-only A/B (representative suite
   aggregate + scaled fruit 12000t) vs pre-round commit; update
   `openspec/specs/perf/spec.md` walls table same-session.
-- [ ] 9. Sync the lowering delta into `openspec/specs/lowering/spec.md`;
+- [x] 9. Sync the lowering delta into `openspec/specs/lowering/spec.md`;
   record measured results and deviations in design.md.
-- [ ] 10. Remove the folded `spec-store-dedup` stub (pointing here),
+- [x] 10. Remove the folded `spec-store-dedup` stub (pointing here),
   update `group-integrator-dedup` to reference SpecId identity; archive
   the change.

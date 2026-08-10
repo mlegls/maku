@@ -256,3 +256,47 @@ go through the same spec mint once per plan, not per row.
 Each slice lands oracle-green (`MAKU_LOWER_ORACLE=1` core suite + the
 ignored release card suites) before the next starts; the round's wall
 verdict is interleaved A/B per `openspec/specs/perf/spec.md`.
+
+## Measured (round close, 2026-08-10)
+
+All gates green on every slice: 348 core tests plain and under
+`MAKU_LOWER_ORACLE=1`, all 6 ignored release oracle card suites, and an
+11-card corpus A/B (`abdump`, 600 ticks, rand-heavy included) that is
+bit-identical against pre-round `e568850` — the round changed no
+observable behavior, RNG draws included. Walls (5 interleaved
+observations, medians): representative suite +1.19%, scaled fruit
+12000t −2.28% — both inside ±5%; small cards pay the spec-store
+bookkeeping, dense cards win. Landed as three commits: b4e59a8
+(spec table), 0eb886f (captures/root frames/axis to rows), 5ffdcbd
+(generational-id re-keying).
+
+Deviations and findings vs the plan:
+
+- Masked-remat spec sharing moved from slice 1 to slice 2 as predicted
+  mid-flight: each rebuilt tree embedded its row's exit-pose anchor, so
+  one-spec-per-plan was impossible until root anchors became row data
+  (`RowFrame`). Slice 1 kept per-row remat specs (bit-identical),
+  slice 2 resolved the deferral.
+- Culled rows keep a tombstone spec ref until slot reuse — generation-
+  valid handles may still read `:pos`/`:kind` from a dead row, so the
+  release-at-cull design point became detach-from-carrier-index at cull,
+  release at reuse. Carrier lookup tracks live rows separately.
+- Spec identity needed more than pointer equality to fuse moving-spawner
+  calls: structural fallbacks for dyn-col templates (form trees plus the
+  visible env bindings — sound because same form + same visible bindings
+  implies same eval), RowFrame templates by inner pointer, and Const
+  templates by pose bits.
+- Slice 2 dropped capture values from the vel batch key: lanes carry
+  their own caps as inputs, so rand-bearing rows fuse into one batch
+  group across draw values — the lane-widening half of the old
+  `group-integrator-dedup` observation fell out for free (integrator
+  state itself remains per-row; the fold-dedup half stays optional).
+- Classification (closed-pose row class) became once-per-spec rather
+  than once-per-row, and the vel-chain n2 slot got a per-spec memo with
+  cached negatives.
+- Residual accepted risk, documented after empirical probing: the
+  no-live-carrier fallback in `resolve_node_pose` evaluates a shared
+  rand-bearing spec tree with empty caps (the pre-flip per-entity clone
+  kept its values). Task-frame nodes are task-constructed, the corpus
+  and suites never reach the shape, and the failure is loud (panic in
+  `caps[slot]`), not silent.

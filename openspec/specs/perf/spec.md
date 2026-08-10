@@ -101,7 +101,32 @@ rows, interleaved runs):
 - Milestone-B remainder (ClosedPt group pose, AxisSel scatter) is now
   JIT prep more than wall win on this rig (input slots + interning
   landed round 22 at −8%) — see `compiled-dyn-milestone-b`.
-## Current walls (typed-kernel unification, 2026-07, bare)
+## Current walls (entity-representation-flip, 2026-08, bare)
+
+Five interleaved A/B observations per case against the pre-round
+`e568850` baseline, same sitting:
+
+| case | baseline median | flip median | delta |
+|---|---:|---:|---:|
+| representative suite aggregate | 411.4ms | 416.3ms | +1.19% |
+| scaled fruit 12000t | 3010.1ms | 2941.5ms | −2.28% |
+
+Both within the ±5% threshold. The suite's small cards pay a slight
+spec-store cost (mint/memo plus per-pass eviction sweeps that don't
+amortize over few rows); the scaled case wins from per-spec schemas,
+shared trees, and once-per-spec classification. The round's payoff is
+the 1M-row layout, not wall time.
+
+A current candidate suite run, for standing per-card attribution:
+
+| case | wall |
+|---|---:|
+| fruit (t03 ex3) 900t | 139.9ms |
+| reimu_vs_mima 1800t | 147.8ms |
+| spell-2 900t | 22.1ms |
+| cradle 300t | 51.1ms |
+
+## Prior walls (typed-kernel unification, 2026-07, bare)
 
 The final same-session verdict used five interleaved A/B observations per
 candidate against the pre-change `b11ec85` baseline:
