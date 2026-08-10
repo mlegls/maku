@@ -9,6 +9,7 @@ RNG is sequential splitmix, so replay determinism holds but spawn-order independ
 ## What Changes
 
 - To be scoped at pick-up (e.g. independently seeded entities / hierarchical seeding), preserving the replay-determinism contract.
+- Host-facing seed-reset API: the world exposes an explicit "reset RNG seed" call, and construction seeds by implicitly calling it (replacing the hardcoded constant in `World::new`). Under counter-based keying the seed is the root all path-derived keys hash from, so a reset re-roots future draws without touching already-captured vectors; the active seed is part of run identity and must land on the replay tape.
 
 ## Capabilities
 
