@@ -15,15 +15,15 @@
 - [x] 4. Slice 2 gates: same suites, plus RNG bit-parity — same-seed
   cross-commit A/B on rand-heavy cards must be bit-identical (this
   round, unlike the RNG round, changes no draw keying).
-- [ ] 5. Slice 3 — explicit-id re-keying: closed-pose class cache,
+- [x] 5. Slice 3 — explicit-id re-keying: closed-pose class cache,
   slots.rs dyn-field memo, collision projector front-end memo,
   vel-chain slot resolution, `examples/dbg.rs` histograms.
-- [ ] 6. Rewrite/extend representation tests: round-22 node-walk tests
+- [x] 6. Rewrite/extend representation tests: round-22 node-walk tests
   (`rand_capture_slots_share_programs`,
   `env_capture_slots_intern_across_sites`), new tests for spec sharing
   across a group, refcount free/reuse with generation bump, bounded
   memo growth, snapshot/scrub determinism unchanged.
-- [ ] 7. Full gates on the final tree: core suite, oracle mode, all
+- [x] 7. Full gates on the final tree: core suite, oracle mode, all
   ignored release oracle card suites, first-hand.
 - [ ] 8. Perf verdict: interleaved wall-only A/B (representative suite
   aggregate + scaled fruit 12000t) vs pre-round commit; update
