@@ -182,6 +182,17 @@ Macro expansion performed at `deftick` registration SHALL be followed by the sam
 - **WHEN** a rule body binds a local name that shadows a rewrite-eligible head
 - **THEN** the rewrite leaves that form untouched and evaluation uses the local binding
 
+### Requirement: Batch map-remat shapes lower to masked updates
+Tick-rule shapes of the form `(map (fn [b] (remat b …)) domain)` whose remat spec touches statically-known slots SHALL lower to masked SoA updates: masked epoch writes plus masked slot updates under the existing masked-update plan domain, with evaluation bit-identical to the interpreted per-entity path. Shapes with dynamic slot sets or impure update functions SHALL fall back to the interpreted path unchanged. (Landed 2026-08 as `CompiledTickAction::Remat`: a closed spec template queued as one boundary write per selected row in row order, so the pending-write drain remains sole owner of remat timing and motion/field epoch semantics.)
+
+#### Scenario: Uniform batch remat lowers
+- **WHEN** a deftick rule maps a remat with fixed slots over an entity domain
+- **THEN** the lowered masked update applies the same boundary-queued writes in the same order as the interpreter, verified under MAKU_LOWER_ORACLE
+
+#### Scenario: Unsupported shape falls back
+- **WHEN** the remat spec's slot set depends on per-entity data
+- **THEN** the shape is not lowered and the interpreted path runs unchanged
+
 ## Design
 
 The material below line 138 is the non-normative historical compiled-dyn design archive. Its old `NumProgram`, `ProjectorNum`, resolved-row evaluator, and “still open” references describe the route to the cutover, not the current architecture.

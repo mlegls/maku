@@ -37,4 +37,4 @@ core suite plus the 4 ignored oracle card suites
 
 ## 6. Spec sync
 
-- [ ] 6.1 Update the evolve-semantics spec's design prose ("still open: vel — deferred to the model/ split") and the language spec's vel constructor note to the landed shape when syncing/archiving this change
+- [x] 6.1 Update the evolve-semantics spec's design prose ("still open: vel — deferred to the model/ split") and the language spec's vel constructor note to the landed shape when syncing/archiving this change (synced at archive: 4 requirements into evolve-semantics, 1 into lowering, prose updates in evolve-semantics design + language §motion/§F1)
