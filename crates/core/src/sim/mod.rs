@@ -1277,6 +1277,9 @@ impl Sim {
                             if matches!(compiled.action, CompiledTickAction::Update(_)) {
                                 return self.oracle_check_compiled_update(compiled, form, &rule.env);
                             }
+                            if matches!(compiled.action, CompiledTickAction::Remat(_)) {
+                                return self.oracle_check_compiled_remat(compiled, form, &rule.env);
+                            }
                         }
                         let before = self.world.render_rows.len();
                         if self.run_compiled_tick_form(compiled)?.is_none() {
@@ -1403,6 +1406,39 @@ impl Sim {
                 "compiled deftick update rows/values mismatch for {:?}",
                 form
             );
+        }
+        self.exec_tick_value(value)
+    }
+
+    fn oracle_check_compiled_remat(
+        &mut self,
+        compiled: &CompiledTickForm,
+        form: &Form,
+        env: &Env,
+    ) -> Result<(), String> {
+        let CompiledTickAction::Remat(plan) = &compiled.action else {
+            unreachable!()
+        };
+        let mut rows = Vec::new();
+        let predicted = if filter_plans_match(&plan.predicate, &compiled.filter)
+            && self.compiled_predicate_scan(&plan.predicate, &mut rows)
+        {
+            Some(rows.iter().map(|&row| self.world.entity_ref(row)).collect::<Vec<_>>())
+        } else {
+            None
+        };
+        let value = evaluate(form, env, &mut self.ctx, &mut self.world)?;
+        if let Some(predicted) = predicted {
+            let mut actual = Vec::new();
+            collect_remat_actions(&value, &mut actual);
+            assert_eq!(actual.len(), predicted.len(),
+                "compiled deftick remat count mismatch for {:?}", form);
+            for ((target, spec), predicted_target) in actual.iter().zip(predicted) {
+                assert_eq!(*target, predicted_target,
+                    "compiled deftick remat row mismatch for {:?}", form);
+                assert!(remat_specs_match(&plan.spec, spec),
+                    "compiled deftick remat slots/values mismatch for {:?}", form);
+            }
         }
         self.exec_tick_value(value)
     }
@@ -1546,6 +1582,20 @@ impl Sim {
                         target: self.world.entity_ref(row),
                         col: plan.column,
                         f: value,
+                    });
+                }
+                self.render_scratch.match_rows = rows;
+                return Ok(Some(()));
+            }
+            CompiledTickAction::Remat(plan) => {
+                if !filter_plans_match(&plan.predicate, &form.filter) {
+                    self.render_scratch.match_rows = rows;
+                    return Ok(None);
+                }
+                for &row in &rows {
+                    self.world.pending_writes.push(PendingWrite::Remat {
+                        target: self.world.entity_ref(row),
+                        spec: plan.spec.clone(),
                     });
                 }
                 self.render_scratch.match_rows = rows;
@@ -2309,15 +2359,69 @@ enum FixedUpdateValue {
     Sym(Symbol),
 }
 
+fn filter_plans_match(a: &FilterPlan, b: &FilterPlan) -> bool {
+    a.predicate.id() == b.predicate.id()
+        && a.predicate.program().inputs() == b.predicate.program().inputs()
+        && a.predicate.bindings() == b.predicate.bindings()
+        && a.predicate.domain() == b.predicate.domain()
+        && a.predicate.fallback() == b.predicate.fallback()
+        && a.predicate.merge() == b.predicate.merge()
+        && a.short_circuit_prefix == b.short_circuit_prefix
+}
+
 fn update_filter_matches(plan: &MaskedUpdatePlan, filter: &FilterPlan) -> bool {
-    plan.predicate.predicate.id() == filter.predicate.id()
-        && plan.predicate.predicate.program().inputs()
-            == filter.predicate.program().inputs()
-        && plan.predicate.predicate.bindings() == filter.predicate.bindings()
-        && plan.predicate.predicate.domain() == filter.predicate.domain()
-        && plan.predicate.predicate.fallback() == filter.predicate.fallback()
-        && plan.predicate.predicate.merge() == filter.predicate.merge()
-        && plan.predicate.short_circuit_prefix == filter.short_circuit_prefix
+    filter_plans_match(&plan.predicate, filter)
+}
+
+fn remat_values_match(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Num(a), Val::Num(b)) => a.to_bits() == b.to_bits(),
+        (Val::Kw(a), Val::Kw(b)) | (Val::Builtin(a), Val::Builtin(b)) => a == b,
+        (Val::Pose(a), Val::Pose(b)) => a == b,
+        (
+            Val::Fn { params: ap, body: ab, .. },
+            Val::Fn { params: bp, body: bb, .. },
+        ) => ap == bp && ab == bb,
+        (
+            Val::DynLike(a),
+            Val::DynLike(b),
+        ) => match (a.as_ref(), b.as_ref()) {
+            (
+                DynLike::Dyn(DynVal::Expr { form: af, .. }),
+                DynLike::Dyn(DynVal::Expr { form: bf, .. }),
+            ) => af == bf,
+            _ => std::mem::discriminant(a.as_ref()) == std::mem::discriminant(b.as_ref()),
+        },
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+    }
+}
+
+fn remat_specs_match(a: &RematSpec, b: &RematSpec) -> bool {
+    match (&a.motion, &b.motion) {
+        (Some(a), Some(b)) if !remat_values_match(a, b) => return false,
+        (None, None) | (Some(_), Some(_)) => {}
+        _ => return false,
+    }
+    a.fields.len() == b.fields.len()
+        && a.fields.iter().zip(&b.fields).all(|((ac, av), (bc, bv))| {
+            ac == bc && remat_values_match(av, bv)
+        })
+}
+
+fn collect_remat_actions(value: &Val, out: &mut Vec<(EntityRef, RematSpec)>) {
+    match value {
+        Val::Arr(items) => {
+            for item in items.iter() {
+                collect_remat_actions(item, out);
+            }
+        }
+        Val::Action(action) => match action.as_ref() {
+            ActionV::Remat { target, spec } => out.push((*target, spec.clone())),
+            other => panic!("compiled remat oracle: unexpected action {other:?}"),
+        },
+        Val::Nothing => {}
+        other => panic!("compiled remat oracle: unexpected value {other:?}"),
+    }
 }
 
 fn collect_update_actions(value: &Val, out: &mut Vec<(EntityRef, Symbol, Val)>) {

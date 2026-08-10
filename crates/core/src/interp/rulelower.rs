@@ -1,8 +1,8 @@
-use super::engine::RenderKey;
+use super::engine::{parse_remat_spec_form, RenderKey};
 use super::{
-    evaluate, intern_kernel_program, row_predicate, Ctx, Env, FilterPlan, KernelInputRef,
-    KernelLayout, KernelOp, KernelProgram, KernelRegister, KernelType, MaskBinaryOp, Symbol,
-    World,
+    evaluate, intern_kernel_program, is_builtin, row_predicate, Ctx, Env, FilterPlan,
+    KernelInputRef, KernelLayout, KernelOp, KernelProgram, KernelRegister, KernelType,
+    MaskBinaryOp, RematSpec, Symbol, World,
 };
 use crate::edn::Form;
 use crate::sim::kernel::{
@@ -23,6 +23,7 @@ pub(crate) enum CompiledTickAction {
     /// entities-where completes before any cull applies).
     Cull,
     Update(MaskedUpdatePlan),
+    Remat(MaskedRematPlan),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,6 +46,13 @@ pub(crate) struct MaskedUpdatePlan {
     /// Installation-time CPU backend derived from the same constant op as
     /// `value`; normal execution publishes it directly without lane buffers.
     pub cpu: CpuMaskedUpdateArtifact,
+}
+
+pub(crate) struct MaskedRematPlan {
+    pub predicate: FilterPlan,
+    /// Closed template cloned into one boundary-queued write per selected
+    /// row. Drain remains the sole owner of motion and field epoch changes.
+    pub spec: RematSpec,
 }
 
 pub(crate) struct CompiledRender {
@@ -156,7 +164,7 @@ pub(crate) enum RowVal {
     FieldOr(Rc<str>, Box<RowVal>),
 }
 
-const HEADS: [&str; 6] = ["map", "entities-where", "emit", "let", "%value-or", "fn"];
+const HEADS: [&str; 7] = ["map", "entities-where", "emit", "let", "%value-or", "fn", "remat"];
 
 fn unshadowed(name: &str, env: &Env, ctx: &Ctx) -> bool {
     env.lookup(name).is_none() && !ctx.sig.defs.contains_key(name)
@@ -936,6 +944,147 @@ fn fixed_update_plan(
     })
 }
 
+fn remat_value_is_closed(
+    form: &Form,
+    locals: &[Rc<str>],
+    allow_signal_slots: bool,
+    env: &Env,
+    ctx: &Ctx,
+    depth: usize,
+) -> bool {
+    if depth >= 32 {
+        return false;
+    }
+    match form {
+        Form::Num(_) | Form::Str(_) | Form::Kw(_) | Form::Bool(_) => true,
+        Form::Sym(name) => {
+            locals.iter().any(|local| local == name)
+                || (allow_signal_slots && matches!(name.as_ref(), "t" | "u"))
+                || matches!(name.as_ref(), "inf" | "phi")
+                || (env.lookup(name).is_none()
+                    && (is_builtin(name)
+                        || ctx.sig.defs.get(name.as_ref()).is_some_and(|value| {
+                            remat_value_is_closed(
+                                value,
+                                &[],
+                                allow_signal_slots,
+                                env,
+                                ctx,
+                                depth + 1,
+                            )
+                        })))
+        }
+        Form::Vector(items) => items.iter().all(|value| {
+            remat_value_is_closed(value, locals, allow_signal_slots, env, ctx, depth + 1)
+        }),
+        Form::Map(kvs) => kvs.iter().all(|(key, value)| {
+            remat_value_is_closed(key, locals, allow_signal_slots, env, ctx, depth + 1)
+                && remat_value_is_closed(
+                    value,
+                    locals,
+                    allow_signal_slots,
+                    env,
+                    ctx,
+                    depth + 1,
+                )
+        }),
+        Form::List(items) => {
+            let Some(head) = items.first() else { return true };
+            if let Form::Kw(_) = head {
+                return items.len() == 2
+                    && remat_value_is_closed(
+                        &items[1],
+                        locals,
+                        allow_signal_slots,
+                        env,
+                        ctx,
+                        depth + 1,
+                    );
+            }
+            let Form::Sym(head) = head else { return false };
+            if head.as_ref() == "fn" {
+                let [Form::Vector(params), body @ ..] = &items[1..] else { return false };
+                if body.is_empty() {
+                    return false;
+                }
+                let mut nested = locals.to_vec();
+                for param in params.iter() {
+                    let Form::Sym(param) = param else { return false };
+                    if param.as_ref() == "&" {
+                        return false;
+                    }
+                    nested.push(param.clone());
+                }
+                return body.iter().all(|value| {
+                    remat_value_is_closed(value, &nested, false, env, ctx, depth + 1)
+                });
+            }
+            if env.lookup(head).is_some() || matches!(head.as_ref(), "rand" | "live") {
+                return false;
+            }
+            let pure_head = is_builtin(head)
+                || matches!(head.as_ref(), "if")
+                || ctx.sig.defs.get(head.as_ref()).is_some_and(|value| {
+                    remat_value_is_closed(
+                        value,
+                        &[],
+                        allow_signal_slots,
+                        env,
+                        ctx,
+                        depth + 1,
+                    )
+                });
+            pure_head
+                && items[1..].iter().all(|value| {
+                    remat_value_is_closed(
+                        value,
+                        locals,
+                        allow_signal_slots,
+                        env,
+                        ctx,
+                        depth + 1,
+                    )
+                })
+        }
+    }
+}
+
+fn masked_remat_plan(
+    filter: FilterPlan,
+    spec_form: &Form,
+    env: &Env,
+    ctx: &mut Ctx,
+    world: &mut World,
+) -> Option<MaskedRematPlan> {
+    match spec_form {
+        Form::Map(kvs) => {
+            if kvs.is_empty() {
+                return None;
+            }
+            for (key, value) in kvs.iter() {
+                let Form::Kw(key) = key else { return None };
+                let motion = key.as_ref() == "motion";
+                if (motion && matches!(value, Form::List(items)
+                    if matches!(items.first(), Some(Form::Sym(head)) if head.as_ref() == "fn")))
+                    || !remat_value_is_closed(value, &[], !motion, env, ctx, 0)
+                {
+                    return None;
+                }
+            }
+        }
+        value => {
+            if matches!(value, Form::List(items)
+                if matches!(items.first(), Some(Form::Sym(head)) if head.as_ref() == "fn"))
+                || !remat_value_is_closed(value, &[], false, env, ctx, 0)
+            {
+                return None;
+            }
+        }
+    }
+    let spec = parse_remat_spec_form(spec_form, env, ctx, world).ok()?;
+    Some(MaskedRematPlan { predicate: filter, spec })
+}
+
 pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut World) -> Option<CompiledTickForm> {
     let args = call(form, "map", env, ctx)?;
     let [fnform, query] = args else { return None };
@@ -975,6 +1124,17 @@ pub(crate) fn lower_tick_form(form: &Form, env: &Env, ctx: &mut Ctx, world: &mut
         return Some(CompiledTickForm {
             filter,
             action: CompiledTickAction::Update(plan),
+        });
+    }
+    if let Some(args) = call(body, "remat", env, ctx) {
+        let [Form::Sym(target), spec] = args else { return None };
+        if target != entity {
+            return None;
+        }
+        let plan = masked_remat_plan(filter.clone(), spec, env, ctx, world)?;
+        return Some(CompiledTickForm {
+            filter,
+            action: CompiledTickAction::Remat(plan),
         });
     }
 

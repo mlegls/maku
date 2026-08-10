@@ -4483,6 +4483,71 @@
     }
 
     #[test]
+    fn masked_batch_remat_queues_once_and_restarts_touched_epochs() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [b]
+         (remat b {:motion (linear c[0 120])
+                   :hp (fn [hp] (+ hp 2))
+                   :opacity (lerp 0 1 t 1 0)}))
+       (entities-where (fn [b] (= b.team :enemy)))))
+(defpattern p []
+  (par
+    (spawn (linear c[120 0]) {:team :enemy :hp 1})
+    (spawn (pose c[1 0]) {:team :friend :hp 1})
+    (spawn (linear c[120 0]) {:team :enemy :hp 4})))
+"#;
+        let _guard = crate::interp::oracle_on_guard();
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let compiled = sim.world.standing_rules[0].compiled[0].as_ref().unwrap();
+        let CompiledTickAction::Remat(plan) = &compiled.action else {
+            panic!("expected masked remat plan")
+        };
+        assert!(plan.spec.motion.is_some());
+        assert_eq!(plan.spec.fields.len(), 2);
+        assert_eq!(plan.predicate.predicate.domain(), kernel::IterationDomain::EntityRows);
+
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(1.0), "remat stays boundary-queued");
+        let queued = sim.world.pending_writes.iter().map(|write| match write {
+            PendingWrite::Remat { target, spec } => (target.row, spec.fields.len()),
+            other => panic!("unexpected queued batch remat: {other:?}"),
+        }).collect::<Vec<_>>();
+        assert_eq!(queued, vec![(0, 2), (2, 2)], "oracle must not double-queue remats");
+
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "hp"), Some(3.0));
+        assert_eq!(sim.world.col_get_at(1, "hp"), Some(1.0));
+        assert_eq!(sim.world.col_get_at(2, "hp"), Some(6.0));
+        assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 1.0 / DEFAULT_TICK_RATE);
+        assert_eq!(dyn_field_epoch(&sim, 0, "opacity"), sim.world.tick - 1);
+        assert_eq!(sim.world.pending_writes.len(), 2, "one next-tick remat per selected row");
+    }
+
+    #[test]
+    fn dynamic_slot_and_impure_batch_remats_stay_interpreted() {
+        const CARD: &str = r#"
+(deftick
+  (map (fn [b]
+         (remat b {(if (= b.hp 1) :mark :other) 7}))
+       (entities-where (fn [b] (= b.team :enemy)))))
+(deftick
+  (map (fn [b]
+         (remat b {:hp (fn [hp] (+ hp (rand 0 1)))}))
+       (entities-where (fn [b] (= b.team :enemy)))))
+(defpattern p [] (spawn (pose c[0 0]) {:team :enemy :hp 1}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        assert!(sim.world.standing_rules.iter().all(|rule| rule.compiled[0].is_none()));
+        sim.step().unwrap();
+        assert_eq!(sim.world.pending_writes.len(), 2);
+        sim.step().unwrap();
+        assert_eq!(sim.world.col_get_at(0, "mark"), Some(7.0));
+        let hp = sim.world.col_get_at(0, "hp").unwrap();
+        assert!(hp >= 1.0 && hp < 2.0, "impure update must retain interpreted behavior: {hp}");
+    }
+
+    #[test]
     fn masked_updates_preserve_rule_and_row_action_order() {
         const CARD: &str = r#"
 (deftick

@@ -32,8 +32,8 @@ core suite plus the 4 ignored oracle card suites
 
 ## 5. Map-remat masked lowering (D8)
 
-- [ ] 5.1 Recognize `(map (fn [b] (remat b …)) domain)` with statically-known slots; lower to masked epoch + slot updates under the existing masked-update plan domain; dynamic-slot/impure shapes fall back
-- [ ] 5.2 Oracle parity tests for lowered vs interpreted batch remats
+- [x] 5.1 Recognize `(map (fn [b] (remat b …)) domain)` with statically-known slots; lower to `CompiledTickAction::Remat` — a closed spec template queued as one `PendingWrite::Remat` per selected row in row order, so the drain stays sole owner of boundary timing and motion/field epoch semantics; dynamic slots, per-row reads, `rand`/`live`, and exit-dependent motion fall back
+- [x] 5.2 Oracle parity tests for lowered vs interpreted batch remats (target rows, spec slots/values, no double-queue; plus epoch-restart and fallback coverage)
 
 ## 6. Spec sync
 

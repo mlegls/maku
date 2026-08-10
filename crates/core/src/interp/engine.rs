@@ -247,7 +247,7 @@ fn parse_remat_spec(v: Val, world: &mut World) -> Result<RematSpec, String> {
     }
 }
 
-fn parse_remat_spec_form(
+pub(crate) fn parse_remat_spec_form(
     form: &Form,
     env: &Env,
     ctx: &mut Ctx,
