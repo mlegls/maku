@@ -36,7 +36,7 @@
     }
 
     fn dyn_figure(sim: &Sim, row: usize) -> &DynFigure {
-        sim.world.entities.dyn_figure(row).unwrap()
+        sim.world.dyn_figure(row).unwrap()
     }
 
     fn assert_render_rows_eq(a: &RenderRow, b: &RenderRow) {
@@ -2511,12 +2511,12 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
-        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
         assert_eq!(schema.val_keys.len(), 1);
         assert!(schema.n2_keys.is_empty());
         assert!(schema.dyn_keys.is_empty());
         let key = schema.val_keys[0];
-        let cell = sim.world.entities.state_val(0, key).unwrap();
+        let cell = sim.world.state_val(0, key).unwrap();
         assert_eq!(cell.tick, 0);
         assert!(matches!(cell.state, Val::Pose(p) if p.x.abs() < 1e-9 && p.y.abs() < 1e-9));
     }
@@ -2583,8 +2583,8 @@
         for value in [1.0, 2.0, 3.0] {
             sim.step_with(&Inputs { vals: vec![("dx".into(), Val::Num(value))] }).unwrap();
         }
-        let schema = sim.world.entities.motion_schema(0).unwrap();
-        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
+        let cell = sim.world.state_val(0, schema.val_keys[0]).unwrap();
         assert!(matches!(cell.state, Val::Pose(p) if (p.x - 5.0).abs() < 1e-9), "cell: {:?}", cell);
         let err = dyn_figure_pose_in(
             dyn_figure(&sim, 0),
@@ -2603,8 +2603,8 @@
 "#;
         let mut sim = Sim::load(GOOD, Some("p")).unwrap();
         sim.step().unwrap();
-        let schema = sim.world.entities.motion_schema(0).unwrap();
-        assert!(matches!(sim.world.entities.state_val(0, schema.val_keys[0]).unwrap().state,
+        let schema = sim.world.motion_schema(0).unwrap();
+        assert!(matches!(sim.world.state_val(0, schema.val_keys[0]).unwrap().state,
             Val::Pose(p) if (p.x - 4.0).abs() < 1e-9 && (p.y - 5.0).abs() < 1e-9));
 
         const BAD: &str = r#"
@@ -2628,8 +2628,8 @@
         for _ in 0..6 {
             sim.step().unwrap();
         }
-        let schema = sim.world.entities.motion_schema(0).unwrap();
-        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
+        let cell = sim.world.state_val(0, schema.val_keys[0]).unwrap();
         assert!(matches!(cell.state, Val::Pose(p)
             if (p.x - 4.0).abs() < 1e-9 && p.y.abs() < 1e-9),
             "cell: {:?}", cell);
@@ -2646,8 +2646,8 @@
         for _ in 0..10 {
             sim.step().unwrap();
         }
-        let schema = sim.world.entities.motion_schema(0).unwrap();
-        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
+        let cell = sim.world.state_val(0, schema.val_keys[0]).unwrap();
         assert_eq!(cell.tick, sim.world.tick - 1);
         assert!(matches!(cell.state, Val::Pose(p) if (p.x - cell.tick as f64).abs() < 1e-9));
     }
@@ -2664,8 +2664,8 @@
         let mut walked = Vec::new();
         for _ in 0..8 {
             sim.step().unwrap();
-            if let Some(schema) = sim.world.entities.motion_schema(0) {
-                if let Some(cell) = sim.world.entities.state_val(0, schema.val_keys[0]) {
+            if let Some(schema) = sim.world.motion_schema(0) {
+                if let Some(cell) = sim.world.state_val(0, schema.val_keys[0]) {
                     let Val::Pose(p) = cell.state else { panic!("pose evolve state") };
                     walked.push(p.x.to_bits());
                 }
@@ -2674,8 +2674,8 @@
         assert!(walked.windows(2).all(|pair| pair[0] != pair[1]), "evolve changes each tick");
 
         let values = (0..2).map(|row| {
-            let schema = sim.world.entities.motion_schema(row).unwrap();
-            let cell = sim.world.entities.state_val(row, schema.val_keys[0]).unwrap();
+            let schema = sim.world.motion_schema(row).unwrap();
+            let cell = sim.world.state_val(row, schema.val_keys[0]).unwrap();
             let Val::Pose(p) = cell.state else { panic!("pose evolve state") };
             p.x.to_bits()
         }).collect::<Vec<_>>();
@@ -2687,10 +2687,10 @@
             replay.step().unwrap();
         }
         for row in 0..2 {
-            let a_schema = sim.world.entities.motion_schema(row).unwrap();
-            let b_schema = replay.world.entities.motion_schema(row).unwrap();
-            let a = sim.world.entities.state_val(row, a_schema.val_keys[0]).unwrap();
-            let b = replay.world.entities.state_val(row, b_schema.val_keys[0]).unwrap();
+            let a_schema = sim.world.motion_schema(row).unwrap();
+            let b_schema = replay.world.motion_schema(row).unwrap();
+            let a = sim.world.state_val(row, a_schema.val_keys[0]).unwrap();
+            let b = replay.world.state_val(row, b_schema.val_keys[0]).unwrap();
             let (Val::Pose(ap), Val::Pose(bp)) = (a.state, b.state) else {
                 panic!("pose evolve state")
             };
@@ -2714,10 +2714,10 @@
             a.step().unwrap();
             b.step().unwrap();
         }
-        let a_schema = a.world.entities.motion_schema(0).unwrap();
-        let b_schema = b.world.entities.motion_schema(0).unwrap();
-        let ac = a.world.entities.state_val(0, a_schema.val_keys[0]).unwrap();
-        let bc = b.world.entities.state_val(0, b_schema.val_keys[0]).unwrap();
+        let a_schema = a.world.motion_schema(0).unwrap();
+        let b_schema = b.world.motion_schema(0).unwrap();
+        let ac = a.world.state_val(0, a_schema.val_keys[0]).unwrap();
+        let bc = b.world.state_val(0, b_schema.val_keys[0]).unwrap();
         assert_eq!(ac.tick, bc.tick);
         assert!(matches!((ac.state, bc.state), (Val::Pose(ap), Val::Pose(bp)) if (ap.x - bp.x).abs() < 1e-12 && (ap.y - bp.y).abs() < 1e-12));
     }
@@ -2735,8 +2735,8 @@
         for _ in 0..6 {
             sim.step().unwrap();
         }
-        let schema = sim.world.entities.motion_schema(0).unwrap();
-        let cell = sim.world.entities.state_val(0, schema.val_keys[0]).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
+        let cell = sim.world.state_val(0, schema.val_keys[0]).unwrap();
         assert!(cell.tick <= 2, "remat should restart evolve epoch, got {cell:?}");
         assert!(matches!(cell.state, Val::Pose(p) if p.x <= 20.0));
     }
@@ -2973,15 +2973,15 @@
             v => panic!("bad player channel: {:?}", v),
         };
         assert!((x_wall + 2.0).abs() < 0.05, "parked at the wall: {}", x_wall);
-        let pos_key = sim.world.entities.motion_schema(0).unwrap().n2_keys.iter().copied()
+        let pos_key = sim.world.motion_schema(0).unwrap().n2_keys.iter().copied()
             .find(|key| matches!(key, MotionStateKey::Node(_)))
             .unwrap();
-        let at_wall = sim.world.entities.state_n2(0, pos_key).unwrap();
+        let at_wall = sim.world.state_n2(0, pos_key).unwrap();
         assert_eq!(at_wall[0], -2.0, "integrator state itself is clamped each tick");
         // reverse for half a second: must move ~2 units immediately
         inputs.set_num("move-x", 1.0);
         sim.step_with(&inputs).unwrap();
-        let first_back = sim.world.entities.state_n2(0, pos_key).unwrap();
+        let first_back = sim.world.state_n2(0, pos_key).unwrap();
         assert_eq!(first_back[0].to_bits(), (-2.0 + 4.0 / DEFAULT_TICK_RATE).to_bits());
         for _ in 1..60 {
             sim.step_with(&inputs).unwrap();
@@ -3856,7 +3856,7 @@
 
     fn dyn_field_epoch(sim: &Sim, row: usize, name: &str) -> u64 {
         let col = sim.world.symbols.lookup(name).unwrap();
-        let dyn_cols = sim.world.entities.dyn_cols(row);
+        let dyn_cols = sim.world.dyn_cols(row);
         let index = dyn_cols.iter().position(|(candidate, _)| *candidate == col).unwrap();
         sim.world.entities.dyn_col_epoch(row, index).unwrap()
     }
@@ -3886,12 +3886,12 @@
          (remat (first bs) {:opacity (lerp 0 1 t 1 0)}))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        while sim.world.entities.dyn_cols(0).is_empty() {
+        while sim.world.dyn_cols(0).is_empty() {
             sim.step().unwrap();
         }
         let epoch = dyn_field_epoch(&sim, 0, "opacity");
         assert!(epoch > sim.world.entities.birth(0).unwrap());
-        let index = sim.world.entities.dyn_cols(0)
+        let index = sim.world.dyn_cols(0)
             .iter().position(|(col, _)| *col == sim.world.symbols.lookup("opacity").unwrap()).unwrap();
         assert_eq!(sim.world.entities.dyn_col_tau(0, index, epoch, sim.world.tick_rate()), 0.0);
         let tau = sim.world.entities.dyn_col_tau(0, index, sim.world.tick, sim.world.tick_rate());
@@ -3906,7 +3906,7 @@
     (set-col (first bs) :opacity (nth [(- 1 t)] 0))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        while sim.world.entities.dyn_cols(0).is_empty() {
+        while sim.world.dyn_cols(0).is_empty() {
             sim.step().unwrap();
         }
         assert!(dyn_field_epoch(&sim, 0, "opacity") > sim.world.entities.birth(0).unwrap());
@@ -3989,7 +3989,7 @@
          (soft-cull (first bs) 0.05))))
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
-        while sim.world.entities.dyn_cols(0).is_empty() {
+        while sim.world.dyn_cols(0).is_empty() {
             sim.step().unwrap();
         }
         let epoch = dyn_field_epoch(&sim, 0, "opacity");
@@ -4889,7 +4889,9 @@
 "#;
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         sim.step().unwrap();
+        let old_spec = sim.world.spec_id(0).unwrap();
         sim.step().unwrap();
+        assert_ne!(sim.world.spec_id(0), Some(old_spec), "motion remat retained the old spec");
         assert_eq!(sim.world.col_get_at(0, "hp"), Some(7.0));
         assert_eq!(sim.world.entity_tau(0, sim.world.tick), 2.0 / DEFAULT_TICK_RATE);
         assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 1.0 / DEFAULT_TICK_RATE);
@@ -5027,7 +5029,7 @@ fn variadic_macro_unquotes_inside_maps() {
         .find(|(i, _)| sim.world.entities.is_alive(*i))
         .map(|(i, _)| i)
         .unwrap();
-    let projector = sim.world.entities.collider_projector(row).unwrap().clone();
+    let projector = sim.world.collider_projector(row).unwrap().clone();
     let tick_rate = sim.world.tick_rate();
     let mut slots = Vec::new();
     crate::sim::slots::materialize_collider_defs_into(
@@ -5367,7 +5369,7 @@ fn sited_evolve_advances_once_per_tick_and_persists() {
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
-    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let schema = sim.world.motion_schema(0).unwrap();
     let site = schema
         .val_keys
         .iter()
@@ -5377,7 +5379,7 @@ fn sited_evolve_advances_once_per_tick_and_persists() {
     for _ in 0..2 {
         sim.step().unwrap();
     }
-    let cell = sim.world.entities.state_val(0, site).unwrap();
+    let cell = sim.world.state_val(0, site).unwrap();
     assert_eq!(cell.tick, 3, "one advance per tick");
     let Val::Num(vx) = cell.state else { panic!("numeric evolve state, got {:?}", cell.state) };
     let expected = 3.0 * 60.0 / DEFAULT_TICK_RATE;
@@ -5425,7 +5427,7 @@ fn sited_evolve_counter_skips_hold_step_regions() {
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
     let slew_site = {
-        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
         assert_eq!(schema.val_keys.len(), 2, "evolve and slew val sites");
         assert_eq!(schema.n2_keys.len(), 1, "vel state");
         schema
@@ -5438,7 +5440,7 @@ fn sited_evolve_counter_skips_hold_step_regions() {
     for _ in 0..3 {
         sim.step().unwrap();
     }
-    let cell = sim.world.entities.state_val(0, slew_site).unwrap();
+    let cell = sim.world.state_val(0, slew_site).unwrap();
     let Val::Num(angle) = cell.state else { panic!("numeric slew state, got {:?}", cell.state) };
     let expected = 4.0 * 720.0 / DEFAULT_TICK_RATE;
     assert!((angle - expected).abs() < 1e-9, "slew site aligned after evolve skip: {angle} (expected {expected})");
@@ -5459,7 +5461,7 @@ fn captured_dyn_exprs_expand_macros_at_capture() {
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
     let site = {
-        let schema = sim.world.entities.motion_schema(0).unwrap();
+        let schema = sim.world.motion_schema(0).unwrap();
         schema
             .val_keys
             .iter()
@@ -5470,7 +5472,7 @@ fn captured_dyn_exprs_expand_macros_at_capture() {
     for _ in 0..2 {
         sim.step().unwrap();
     }
-    let cell = sim.world.entities.state_val(0, site).unwrap();
+    let cell = sim.world.state_val(0, site).unwrap();
     assert_eq!(cell.tick, 3);
     let Val::Num(vx) = cell.state else { panic!("numeric state, got {:?}", cell.state) };
     let expected = 3.0 * 60.0 / DEFAULT_TICK_RATE;
@@ -5524,7 +5526,7 @@ fn spawned_entity_rows_carry_motion_schema() {
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
-    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let schema = sim.world.motion_schema(0).unwrap();
     assert_eq!(schema.n2_keys.len(), 1, "vel integrator state");
     assert_eq!(schema.val_keys.len(), 1, "slew evolve state");
     assert_eq!(schema.dyn_keys.len(), 0);
@@ -5540,7 +5542,7 @@ fn vel_motion_writes_dense_state_slot() {
     sim.step().unwrap();
     let key = sim
         .world
-        .entities
+        
         .motion_schema(0)
         .unwrap()
         .n2_keys
@@ -5548,7 +5550,7 @@ fn vel_motion_writes_dense_state_slot() {
         .copied()
         .find(|key| matches!(key, MotionStateKey::Node(_)))
         .unwrap();
-    let [x, y] = sim.world.entities.state_n2(0, key).unwrap();
+    let [x, y] = sim.world.state_n2(0, key).unwrap();
     assert!((x - (3.0 / DEFAULT_TICK_RATE)).abs() < 1e-9, "dense vel x: {x}");
     assert_eq!(y, 0.0);
 }
@@ -5565,8 +5567,8 @@ fn vel_components_materialize_the_values_consumed_by_the_integrator() {
         sim.step().unwrap();
         let vx = sim.world.col_get_at(0, "vel-x").unwrap();
         let vy = sim.world.col_get_at(0, "vel-y").unwrap();
-        let key = sim.world.entities.motion_schema(0).unwrap().n2_keys[0];
-        let next = sim.world.entities.state_n2(0, key).unwrap();
+        let key = sim.world.motion_schema(0).unwrap().n2_keys[0];
+        let next = sim.world.state_n2(0, key).unwrap();
         assert_eq!(next[0].to_bits(), (prior[0] + vx / DEFAULT_TICK_RATE).to_bits());
         assert_eq!(next[1].to_bits(), (prior[1] + vy / DEFAULT_TICK_RATE).to_bits());
         prior = next;
@@ -5581,11 +5583,11 @@ fn sited_evolve_component_advances_once_and_materializes_its_settled_value() {
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
-    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let schema = sim.world.motion_schema(0).unwrap();
     let site = schema.val_keys.iter().copied()
         .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
         .unwrap();
-    let cell = sim.world.entities.state_val(0, site).unwrap();
+    let cell = sim.world.state_val(0, site).unwrap();
     let Val::Num(angle) = cell.state else { panic!("numeric slew state") };
     assert_eq!(angle, 6.0);
     let (s, c) = angle.to_radians().sin_cos();
@@ -5596,7 +5598,7 @@ fn sited_evolve_component_advances_once_and_materializes_its_settled_value() {
     let pos_key = schema.n2_keys.iter().copied()
         .find(|key| matches!(key, MotionStateKey::Node(_)))
         .unwrap();
-    let pos = sim.world.entities.state_n2(0, pos_key).unwrap();
+    let pos = sim.world.state_n2(0, pos_key).unwrap();
     assert_eq!(pos[0].to_bits(), (vx / DEFAULT_TICK_RATE).to_bits());
     assert_eq!(pos[1].to_bits(), (vy / DEFAULT_TICK_RATE).to_bits());
 }
@@ -5611,7 +5613,7 @@ fn scan_sites_write_dense_state_slots() {
     sim.step().unwrap();
     let key = sim
         .world
-        .entities
+        
         .motion_schema(0)
         .unwrap()
         .val_keys
@@ -5619,7 +5621,7 @@ fn scan_sites_write_dense_state_slots() {
         .copied()
         .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
         .unwrap();
-    let cell = sim.world.entities.state_val(0, key).unwrap();
+    let cell = sim.world.state_val(0, key).unwrap();
     let Val::Num(angle) = cell.state else { panic!("numeric slew state, got {:?}", cell.state) };
     assert!((angle - 6.0).abs() < 1e-9, "dense slew angle: {angle}");
 }
@@ -5634,7 +5636,7 @@ fn numeric_motion_reads_dense_state_before_legacy_map() {
     sim.step().unwrap();
     let key = sim
         .world
-        .entities
+        
         .motion_schema(0)
         .unwrap()
         .val_keys
@@ -5643,7 +5645,7 @@ fn numeric_motion_reads_dense_state_before_legacy_map() {
         .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
         .unwrap();
     sim.step().unwrap();
-    let cell = sim.world.entities.state_val(0, key).unwrap();
+    let cell = sim.world.state_val(0, key).unwrap();
     let Val::Num(angle) = cell.state else { panic!("numeric slew state, got {:?}", cell.state) };
     assert!((angle - 12.0).abs() < 1e-9, "dense slew angle after legacy clear: {angle}");
 }
@@ -5659,7 +5661,7 @@ fn lazy_stages_lower_to_closed_exit_cells() {
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
     sim.step().unwrap();
-    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let schema = sim.world.motion_schema(0).unwrap();
     assert!(schema
         .n2_keys
         .iter()
@@ -5684,12 +5686,12 @@ fn entity_motion_writes_dense_without_entity_state() {
     for _ in 0..4 {
         sim.step().unwrap();
     }
-    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let schema = sim.world.motion_schema(0).unwrap();
     for key in schema.n2_keys.iter().copied() {
-        assert!(sim.world.entities.state_n2(0, key).is_some());
+        assert!(sim.world.state_n2(0, key).is_some());
     }
     for key in schema.val_keys.iter().copied() {
-        assert!(sim.world.entities.state_val(0, key).is_some());
+        assert!(sim.world.state_val(0, key).is_some());
     }
     assert!(schema.dyn_keys.is_empty());
 }
@@ -5967,7 +5969,7 @@ fn stale_handles_do_not_target_reused_rows() {
         let mut sim = Sim::load(CARD, Some("p")).unwrap();
         for _ in 0..3 { sim.step().unwrap(); }
         let x = sim.world.entities.sampled_pos(0, sim.world.tick - 1).unwrap().0;
-        assert!(sim.world.entities.overrides(0).is_some(), "spawn did not capture overrides");
+        assert!(sim.world.overrides(0).is_some(), "spawn did not capture overrides");
         assert_eq!(x, 5.0);
         let Some(Val::Pose(base)) = sim.ctx.sig.stream_val(sim.ctx.sig.stream_id("x").unwrap()) else { panic!("missing base") };
         assert_eq!((base.x, base.y), (9.0, 0.0));

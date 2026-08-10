@@ -48,12 +48,12 @@ fn census(sim: &Sim, label: &str) {
             continue;
         }
         alive += 1;
-        let Some(fig) = sim.world.entities.dyn_figure(i) else {
+        let Some(fig) = sim.world.dyn_figure(i) else {
             continue;
         };
         let root = fig.pose_dyn().clone();
         *root_kinds.entry(node_name(&root).to_string()).or_default() += 1;
-        if !sim.world.entities.is_scanned(i) {
+        if !sim.world.is_scanned(i) {
             continue;
         }
         scanned += 1;
@@ -72,7 +72,7 @@ fn census(sim: &Sim, label: &str) {
         if !sim.world.entities.is_alive(i) {
             continue;
         }
-        if let Some(p) = sim.world.entities.collider_projector(i) {
+        if let Some(p) = sim.world.collider_projector(i) {
             *proj_ptrs.entry(Rc::as_ptr(&p.projectors) as *const u8 as usize).or_default() += 1;
         }
     }
@@ -82,7 +82,7 @@ fn census(sim: &Sim, label: &str) {
         if !sim.world.entities.is_alive(i) {
             continue;
         }
-        if let Some(p) = sim.world.entities.collider_projector(i) {
+        if let Some(p) = sim.world.collider_projector(i) {
             for v in p.projectors.iter() {
                 use maku::interp::ColliderProjectorExpr as E;
                 let (kind, radius) = match &v.expr {

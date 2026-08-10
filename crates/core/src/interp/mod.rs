@@ -1960,7 +1960,7 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
 }
 
 fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
-    let readers = world.entities.row_motion_readers(i);
+    let readers = world.row_motion_readers(i);
     let Some((columns, slots)) = world.entities.integrator_cols(i) else {
         return readers;
     };
@@ -1975,13 +1975,12 @@ fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
 
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
     let dyn_figure = world
-        .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("entity view: missing dyn figure for row {i}"))?;
     let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::default();
-    let sig = sig.with_overrides(world.entities.overrides(i));
+    let sig = sig.with_overrides(world.overrides(i));
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
@@ -1995,7 +1994,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
         (Val::Kw("tick".into()), Val::Num(world.tick as f64)),
         (Val::Kw("handle".into()), Val::Handle(world.entity_ref(i))),
         (Val::Kw("kind".into()), Val::Kw(match dyn_figure.repr() {
-            FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
+            FigureDynRepr::Pose(_) if world.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "curve",
         }.into())),
@@ -2411,9 +2410,9 @@ fn cpu_filter_tests_match(
     for (index, test) in tests.iter().enumerate() {
         let passes = match test {
             CpuFilterTest::Kind(value) => {
-                world.entities.dyn_figure(row).is_some_and(|figure| {
+                world.dyn_figure(row).is_some_and(|figure| {
                     let kind = match figure.repr() {
-                        FigureDynRepr::Pose(_) if world.entities.is_traced(row) => {
+                        FigureDynRepr::Pose(_) if world.is_traced(row) => {
                             CpuRowKind::Pather
                         }
                         FigureDynRepr::Pose(_) => CpuRowKind::Point,
@@ -2847,8 +2846,8 @@ fn execute_filter_plan_generic(
                 (KernelInputRef::U32(_), KernelInputSource::Direct { .. }) => {
                     for (lane, &row) in rows.iter().enumerate() {
                         inputs.u32s[start + lane] =
-                            world.entities.dyn_figure(row).map_or(3, |figure| match figure.repr() {
-                                FigureDynRepr::Pose(_) if world.entities.is_traced(row) => 0,
+                            world.dyn_figure(row).map_or(3, |figure| match figure.repr() {
+                                FigureDynRepr::Pose(_) if world.is_traced(row) => 0,
                                 FigureDynRepr::Pose(_) => 1,
                                 FigureDynRepr::Curve { .. } => 2,
                             });
@@ -3212,13 +3211,12 @@ pub(crate) fn entity_pose_at(i: usize, world: &World, sig: &SigEnv) -> Result<Po
         return Ok(Pose::point(x, y));
     }
     let dyn_figure = world
-        .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?;
     let tau = world.entity_motion_tau(i, world.tick);
     let readers = entity_motion_readers(i, world);
     let state = MotionState::default();
-    let sig = sig.with_overrides(world.entities.overrides(i));
+    let sig = sig.with_overrides(world.overrides(i));
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
@@ -3240,11 +3238,10 @@ pub(crate) fn entity_field_at(i: usize, field: &str, world: &World, sig: &SigEnv
         "tick" => Ok(Val::Num(world.tick as f64)),
         "handle" => Ok(Val::Handle(world.entity_ref(i))),
         "kind" => Ok(Val::Kw(match world
-            .entities
             .dyn_figure(i)
             .ok_or_else(|| format!("field: missing dyn figure for row {i}"))?
             .repr() {
-            FigureDynRepr::Pose(_) if world.entities.is_traced(i) => "pather",
+            FigureDynRepr::Pose(_) if world.is_traced(i) => "pather",
             FigureDynRepr::Pose(_) => "point",
             FigureDynRepr::Curve { .. } => "curve",
         }

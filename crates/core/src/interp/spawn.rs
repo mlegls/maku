@@ -241,27 +241,32 @@ fn build_entity_specs(
                 }
             }
             let mut cols = cols;
-            let mut dyn_cols = dyn_cols.iter().cloned().collect::<Vec<_>>();
-            if group > 1 {
+            let mut elem_dyn_cols = dyn_cols.iter().cloned().collect::<Vec<_>>();
+            let mut dyn_cols_changed = false;
+            if group > 1 && !elem_dyn_cols.is_empty() {
                 // shared meta signals bind per element: array-valued
                 // results select by the element's axis position
-                for (_, d) in dyn_cols.iter_mut() {
+                for (_, d) in elem_dyn_cols.iter_mut() {
                     *d = d.with_axis(&e.path, flat);
                 }
+                dyn_cols_changed = true;
             }
             for (key, seed) in e.fields.iter() {
                 match seed {
                     FieldSeed::Num(n) => {
                         let col = world.intern_col(key.as_ref());
                         cols.retain(|(name, _)| *name != col);
-                        dyn_cols.retain(|(name, _)| *name != col);
+                        let before = elem_dyn_cols.len();
+                        elem_dyn_cols.retain(|(name, _)| *name != col);
+                        dyn_cols_changed |= elem_dyn_cols.len() != before;
                         cols.push((col, *n));
                     }
                     FieldSeed::Dyn(d) => {
                         let col = world.intern_col(key.as_ref());
                         cols.retain(|(name, _)| *name != col);
-                        dyn_cols.retain(|(name, _)| *name != col);
-                        dyn_cols.push((col, d.clone()));
+                        elem_dyn_cols.retain(|(name, _)| *name != col);
+                        elem_dyn_cols.push((col, d.clone()));
+                        dyn_cols_changed = true;
                     }
                     FieldSeed::Sym(s) => {
                         let field = world.field_sym(key.as_ref());
@@ -278,7 +283,7 @@ fn build_entity_specs(
             // overwritten by the integrator's step.
             for column in concurrent_integrator_figure_columns(&e.dyn_figure)? {
                 if cols.iter().any(|(name, _)| *name == column)
-                    || dyn_cols.iter().any(|(name, _)| *name == column)
+                    || elem_dyn_cols.iter().any(|(name, _)| *name == column)
                 {
                     return Err(format!(
                         "spawn: :{} is reserved by the motion integrator",
@@ -292,7 +297,7 @@ fn build_entity_specs(
                 cache_policy: e.cache_policy,
                 sym_fields,
                 cols,
-                dyn_cols: dyn_cols.into(),
+                dyn_cols: if dyn_cols_changed { elem_dyn_cols.into() } else { dyn_cols.clone() },
                 collider_projector,
             })
         })

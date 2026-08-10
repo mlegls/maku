@@ -86,7 +86,6 @@ pub(crate) fn special(
                 return Ok(Some(Val::Pose(Pose::IDENTITY)));
             };
             let dyn_figure = world
-                .entities
                 .dyn_figure(i)
                 .ok_or_else(|| format!("on-curve: missing dyn figure for row {i}"))?;
             let Some(curve) = dyn_figure.curve() else {
@@ -192,7 +191,7 @@ pub(crate) fn special(
             let sig = ctx.sig.clone();
             let mut best: Option<(f64, (f64, f64))> = None;
             for i in idxs {
-                let Some(dyn_figure) = world.entities.dyn_figure(i) else { continue };
+                let Some(dyn_figure) = world.dyn_figure(i) else { continue };
                 let tau = world.entity_motion_tau(i, world.tick);
                 let readers = entity_motion_readers(i, world);
                 let state = MotionState::default();
@@ -603,13 +602,12 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
         return Err("render: curve-samples entity is not live".into());
     };
     let dyn_figure = world
-        .entities
         .dyn_figure(i)
         .ok_or_else(|| format!("render: curve-samples missing dyn figure for row {i}"))?;
     // A traced pose entity (pather) IS its trace: the ribbon geometry is
     // the recorded trajectory window — the same samples its colliders
     // sweep. u-max/resolution are parametric-curve knobs and don't apply.
-    if matches!(dyn_figure.repr(), FigureDynRepr::Pose(_)) && world.entities.is_traced(i) {
+    if matches!(dyn_figure.repr(), FigureDynRepr::Pose(_)) && world.is_traced(i) {
         let trace = world.entities.trace_samples(i);
         if trace.len() >= 2 {
             return Ok(trace.iter().map(|p| (p.x, p.y)).collect());

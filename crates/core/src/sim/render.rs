@@ -159,7 +159,7 @@ impl Sim {
                 scratch.push_empty();
                 continue;
             }
-            let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
+            let Some(dyn_figure) = self.world.dyn_figure(i).cloned() else {
                 scratch.push_empty();
                 continue;
             };
@@ -179,7 +179,7 @@ impl Sim {
             let readers = self.motion_readers(i);
             let state = MotionState::default();
             let mut row_sig = None;
-            let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+            let sig = sig.for_row(self.world.overrides(i), &mut row_sig);
             let pose = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
@@ -187,7 +187,7 @@ impl Sim {
             )
             .ok();
             let trace = self.world.entities.trace_samples(i);
-            let traced = self.world.entities.is_traced(i);
+            let traced = self.world.is_traced(i);
             let start = scratch.begin_row();
             Sim::push_stock_dot_rows(
                 &dyn_figure,

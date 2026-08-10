@@ -418,7 +418,7 @@ mod tests {
         let state = |sess: &Session| {
             let sim = sess.sim.as_ref().unwrap();
             let col = sim.world.symbols.lookup("opacity").unwrap();
-            let dyn_cols = sim.world.entities.dyn_cols(0);
+            let dyn_cols = sim.world.dyn_cols(0);
             let index = dyn_cols.iter().position(|(candidate, _)| *candidate == col).unwrap();
             (
                 sim.world.entities.dyn_col_epoch(0, index).unwrap(),

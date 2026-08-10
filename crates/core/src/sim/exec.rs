@@ -100,25 +100,23 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
 
 fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
     let key = Rc::as_ptr(node) as usize;
-    for (i, _) in world.entities.iter().enumerate() {
-        let carries_node = world
-            .entities
-            .motion_schema(i)
-            .is_some_and(|schema| schema.node_ids.contains_key(&key));
-        if world.entities.is_alive(i) && carries_node {
-            let tau = world.entity_motion_tau(i, world.tick);
-            let state = MotionState::default();
-            let readers = crate::interp::entity_motion_readers(i, world);
-            let sig = sig.with_overrides(world.entities.overrides(i));
-            if let Ok(p) = dyn_node_pose_u_in(
-                node,
-                tau,
-                0.0,
-                MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()),
-            ) {
-                return p;
-            }
+    let mut after = None;
+    while let Some(i) = world.specs.next_node_carrier(key, after) {
+        let tau = world.entity_motion_tau(i, world.tick);
+        let state = MotionState::default();
+        let readers = crate::interp::entity_motion_readers(i, world);
+        let sig = sig.with_overrides(world.overrides(i));
+        if let Ok(p) = dyn_node_pose_u_in(
+            node,
+            tau,
+            0.0,
+            MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()),
+        ) {
+            return p;
         }
+        // Preserve the old ascending-row carrier tie-break, including trying
+        // the next carrier when evaluation of the first one fails.
+        after = Some(i);
     }
     // no carrier yet (or stateless node): evaluate with empty state at t=0
     dyn_node_pose(node, 0.0, &MotionState::default(), sig).unwrap_or(Pose::IDENTITY)

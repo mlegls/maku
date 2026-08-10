@@ -732,17 +732,17 @@ impl Sim {
     /// to `dyn_figure_pose_in` with pos_only (same ops, same order); the
     /// oracle asserts exactly that.
     pub(crate) fn fast_pos_pose(&self, row: usize, tau: f64, sig: &SigEnv) -> Option<Pose> {
-        if self.world.entities.overrides(row).is_some() { return None; }
-        let fig = self.world.entities.dyn_figure(row)?;
+        if self.world.overrides(row).is_some() { return None; }
+        let fig = self.world.dyn_figure(row)?;
         let ptr = vel_chain_ptr(fig)?;
-        let schema = self.world.entities.motion_schema(row)?;
+        let schema = self.world.motion_schema(row)?;
         let slot = vel_chain_n2_slot(schema, ptr)?;
         let state = self.world.entities.state_n2_at_slot(slot, row);
         let p = wrapper_chain_pos_pose(fig.pose_dyn(), state);
         if oracle_enabled() {
             let readers = self.motion_readers(row);
             let mstate = MotionState::default();
-            let sig = sig.with_overrides(self.world.entities.overrides(row));
+            let sig = sig.with_overrides(self.world.overrides(row));
             let want = dyn_figure_pose_in(
                 fig,
                 tau,
@@ -778,7 +778,7 @@ impl Sim {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
-            let Some(fig) = self.world.entities.dyn_figure(i) else {
+            let Some(fig) = self.world.dyn_figure(i) else {
                 continue;
             };
             let root = Rc::as_ptr(fig.pose_dyn());
@@ -816,7 +816,7 @@ impl Sim {
             if !self.world.entities.is_alive(i) {
                 continue;
             }
-            let Some(fig) = self.world.entities.dyn_figure(i) else {
+            let Some(fig) = self.world.dyn_figure(i) else {
                 continue;
             };
             if Rc::as_ptr(fig.pose_dyn()) != root {
@@ -861,7 +861,6 @@ impl Sim {
                 let row = g.rows[l];
                 let fig = self
                     .world
-                    .entities
                     .dyn_figure(row)
                     .ok_or_else(|| format!("closed pose fill: missing dyn figure for row {row}"))?;
                 let p = wrapper_chain_pos_pose(fig.pose_dyn(), [x, y]);
@@ -870,7 +869,7 @@ impl Sim {
                     let mstate = MotionState::default();
                     // an interpreted error leaves the row unfilled so the
                     // per-row path surfaces it (fast_pos_pose's stance)
-                    let sig = sig.with_overrides(self.world.entities.overrides(row));
+                    let sig = sig.with_overrides(self.world.overrides(row));
                     let Ok(want) = dyn_figure_pose_in(
                         fig,
                         g.tau[l],
@@ -901,7 +900,7 @@ impl Sim {
     /// CURRENT figure root (a swapped figure recomputes); the oracle
     /// re-derives and asserts.
     fn cull_reused_pos(&mut self, row: usize, tick: u64, sig: &SigEnv) -> Option<(f64, f64)> {
-        let fig = self.world.entities.dyn_figure(row)?;
+        let fig = self.world.dyn_figure(row)?;
         let root = Rc::as_ptr(fig.pose_dyn());
         let class = match self.closed_pose.class.get(row) {
             Some((p, c)) if *p == root => *c,
@@ -964,14 +963,14 @@ impl Sim {
                 p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD
             } else {
                 let readers = self.motion_readers(i);
-                let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                let Some(dyn_figure) = self.world.dyn_figure(i) else {
                     continue;
                 };
                 match dyn_figure.repr() {
                     FigureDynRepr::Pose(_) => {
                         let state = MotionState::default();
                         let mut row_sig = None;
-                        let row_sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+                        let row_sig = sig.for_row(self.world.overrides(i), &mut row_sig);
                         match dyn_figure_pose_in(
                             dyn_figure,
                             tau,
@@ -1025,9 +1024,9 @@ impl Sim {
         row: usize,
         sig: &SigEnv,
     ) -> Option<(VelStepPlanRef<'a>, usize)> {
-        if self.world.entities.overrides(row).is_some() { return None; }
+        if self.world.overrides(row).is_some() { return None; }
         let plan = vel_step_plan(dyn_figure, sig)?;
-        let schema = self.world.entities.motion_schema(row)?;
+        let schema = self.world.motion_schema(row)?;
         let ptr = Rc::as_ptr(plan.vel) as usize;
         let slot = vel_chain_n2_slot(schema, ptr)?;
         Some((plan, slot))
@@ -1212,12 +1211,12 @@ impl Sim {
         let col_label = self.world.symbols.resolve(col).unwrap_or("<unknown>").to_string();
         match next {
             Val::Num(n) => {
-                self.world.entities.remove_dyn_col(row, col);
+                self.world.remove_dyn_col(row, col);
                 self.world.sym_field_clear_at(row, col);
                 self.world.col_set_sym_at(row, col, n);
             }
             Val::Kw(v) => {
-                self.world.entities.remove_dyn_col(row, col);
+                self.world.remove_dyn_col(row, col);
                 self.world.col_clear_sym_at(row, col);
                 let value = self.world.symbols.intern(v.as_ref());
                 self.world.sym_field_set_at(row, col, value);
@@ -1225,7 +1224,7 @@ impl Sim {
             Val::DynLike(value) => {
                 let value = as_dyn_num(&value)?;
                 self.world.sym_field_clear_at(row, col);
-                self.world.entities.install_dyn_col(row, col, value, self.world.tick);
+                self.world.install_dyn_col(row, col, value);
             }
             other => {
                 return Err(format!(
@@ -1246,14 +1245,13 @@ impl Sim {
         let (exit, anchor) = {
             let dyn_figure = self
                 .world
-                .entities
                 .dyn_figure(row)
                 .cloned()
                 .ok_or_else(|| format!("remat: missing dyn figure for row {row}"))?;
             let tau = self.world.entity_motion_tau(row, self.world.tick);
             let readers = entity_motion_readers(row, &self.world);
             let state = MotionState::default();
-            let sig = self.ctx.sig.with_overrides(self.world.entities.overrides(row));
+            let sig = self.ctx.sig.with_overrides(self.world.overrides(row));
             let p = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
@@ -1288,12 +1286,8 @@ impl Sim {
             Rc::new(DynNode::Const(anchor)),
             new_dyn.into_node(),
         ))));
-        let scanned = is_scanned_figure(&dyn_figure);
-        let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
-        self.world.entities.set_motion_schema(row, motion_schema);
+        self.world.replace_entity_figure(row, dyn_figure);
         self.world.entities.set_sampled_pose(row, self.world.tick, Some(anchor));
-        self.world.entities.set_scanned(row, scanned);
-        self.world.set_entity_dyn_figure(row, dyn_figure);
         self.world.entities.reset_motion_birth(row, self.world.tick);
         Ok(())
     }
@@ -2160,9 +2154,9 @@ impl Sim {
         // the walk is unobservable.
         self.vel_batch.begin_tick();
         for i in 0..self.world.entities.len() {
-            if self.world.entities.is_alive(i) && self.world.entities.is_scanned(i) {
+            if self.world.entities.is_alive(i) && self.world.is_scanned(i) {
                 let tau = self.world.entity_motion_tau(i, tick);
-                let Some(dyn_figure) = self.world.entities.dyn_figure(i).cloned() else {
+                let Some(dyn_figure) = self.world.dyn_figure(i).cloned() else {
                     continue;
                 };
                 if let Some((plan, slot)) = self.vel_batch_lane(&dyn_figure, i, &sig) {
@@ -2186,7 +2180,7 @@ impl Sim {
                 );
                 // live evolve steps must see the row's scoped overrides
                 let mut row_sig = None;
-                let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+                let sig = sig.for_row(self.world.overrides(i), &mut row_sig);
                 let mut motion = MotionStepCtx {
                     state: &mut state,
                     sig,
@@ -2202,10 +2196,10 @@ impl Sim {
                 };
                 step_dyn_figure_in(&dyn_figure, tau, dt, &mut motion)?;
                 for (key, value) in n2_writes {
-                    self.world.entities.set_state_n2(i, key, value);
+                    self.world.set_state_n2(i, key, value);
                 }
                 for (key, value) in val_writes {
-                    self.world.entities.set_state_val(i, key, value);
+                    self.world.set_state_val(i, key, value);
                 }
                 for (column, value) in col_writes {
                     self.world.col_set_sym_at(i, column, value);
@@ -2237,8 +2231,8 @@ impl Sim {
                     continue;
                 }
                 let tau = self.world.entity_motion_tau(i, tick);
-                if let Some(window) = self.world.entities.trace_window(i) {
-                    let Some(dyn_figure) = self.world.entities.dyn_figure(i) else {
+                if let Some(window) = self.world.trace_window(i) {
+                    let Some(dyn_figure) = self.world.dyn_figure(i) else {
                         continue;
                     };
                     // readers only for traced rows — construction is the
@@ -2246,7 +2240,7 @@ impl Sim {
                     let readers = self.motion_readers(i);
                     let state = MotionState::default();
                     let mut row_sig = None;
-                    let row_sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
+                    let row_sig = sig.for_row(self.world.overrides(i), &mut row_sig);
                     if let Ok(p) = dyn_figure_pose_in(
                         dyn_figure,
                         tau,

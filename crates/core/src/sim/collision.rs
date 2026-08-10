@@ -346,7 +346,6 @@ impl ColliderScratch {
                 let lanes = group.rows.len();
                 for (lane, &row) in group.rows.iter().enumerate() {
                     let projector = world
-                        .entities
                         .collider_projector(row)
                         .ok_or_else(|| format!("colliders: missing projector for row {row}"))?;
                     let tau = world.entity_motion_tau(row, world.tick);
@@ -952,7 +951,7 @@ fn materialize_colliders_into(
     )
     .map_err(|error| format!("colliders: {error}"))?;
     let trace = world.entities.trace_samples(row);
-    let traced = world.entities.is_traced(row);
+    let traced = world.is_traced(row);
     out.extend(defs.drain(..).map(|slot| {
         eval_collider_slot(
             dyn_figure,
@@ -998,12 +997,11 @@ impl Sim {
             } else {
                 let dyn_figure = self
                     .world
-                    .entities
                     .dyn_figure(row)
                     .ok_or_else(|| format!("colliders: missing dyn figure for row {row}"))?;
                 let readers = self.motion_readers(row);
                 let mut row_sig = None;
-                let row_sig = sig.for_row(self.world.entities.overrides(row), &mut row_sig);
+                let row_sig = sig.for_row(self.world.overrides(row), &mut row_sig);
                 dyn_figure_pose_in(
                     dyn_figure,
                     tau,
@@ -1022,7 +1020,6 @@ impl Sim {
                 .unwrap_or(1.0);
             let projector = self
                 .world
-                .entities
                 .collider_projector(row)
                 .ok_or_else(|| format!("colliders: missing projector for row {row}"))?;
             let source = Rc::as_ptr(&projector.projectors) as *const () as usize;
@@ -1039,10 +1036,9 @@ impl Sim {
                 last_plan = Some((source, plan));
             }
             let plan = &last_plan.as_ref().unwrap().1;
-            if self.world.entities.is_traced(row)
+            if self.world.is_traced(row)
                 || !self
                     .world
-                    .entities
                     .dyn_figure(row)
                     .is_some_and(|figure| matches!(figure.repr(), FigureDynRepr::Pose(_)))
             {
@@ -1120,12 +1116,11 @@ impl Sim {
             } else {
                 let dyn_figure = self
                     .world
-                    .entities
                     .dyn_figure(row)
                     .ok_or_else(|| format!("colliders: missing dyn figure for row {row}"))?;
                 let readers = self.motion_readers(row);
                 let mut row_sig = None;
-                let row_sig = sig.for_row(self.world.entities.overrides(row), &mut row_sig);
+                let row_sig = sig.for_row(self.world.overrides(row), &mut row_sig);
                 dyn_figure_pose_in(
                     dyn_figure,
                     tau,
@@ -1146,7 +1141,6 @@ impl Sim {
             scales.push(scale);
             let projector = self
                 .world
-                .entities
                 .collider_projector(row)
                 .ok_or_else(|| format!("colliders: missing projector for row {row}"))?;
             self.collider_scratch
@@ -1173,11 +1167,10 @@ impl Sim {
                     let tau = self.world.entity_motion_tau(row, tick);
                     let dyn_figure = self
                         .world
-                        .entities
                         .dyn_figure(row)
                         .ok_or_else(|| format!("colliders: missing dyn figure for row {row}"))?;
                     let trace = self.world.entities.trace_samples(row);
-                    let traced = self.world.entities.is_traced(row);
+                    let traced = self.world.is_traced(row);
                     let start = self.collider_scratch.begin_row();
                     project_colliders(
                         group,
@@ -1213,11 +1206,10 @@ impl Sim {
                     Some((group, lane)) if !groups[group].fallback => {
                         let dyn_figure = self
                             .world
-                            .entities
                             .dyn_figure(row)
                             .ok_or_else(|| format!("colliders: missing dyn figure for row {row}"))?;
                         let trace = self.world.entities.trace_samples(row);
-                        let traced = self.world.entities.is_traced(row);
+                        let traced = self.world.is_traced(row);
                         project_colliders(
                             &groups[group],
                             lane,
@@ -1235,13 +1227,11 @@ impl Sim {
                     _ => {
                         let dyn_figure = self
                             .world
-                            .entities
                             .dyn_figure(row)
                             .ok_or_else(|| format!("colliders: missing dyn figure for row {row}"))?
                             .clone();
                         let projector = self
                             .world
-                            .entities
                             .collider_projector(row)
                             .ok_or_else(|| format!("colliders: missing projector for row {row}"))?
                             .clone();

@@ -139,7 +139,7 @@ fn semantic_dyn_field(
     let state = MotionState::default();
     let tick_rate = world.tick_rate();
     let mut row_sig = None;
-    let row_sig = sig.for_row(world.entities.overrides(row), &mut row_sig);
+    let row_sig = sig.for_row(world.overrides(row), &mut row_sig);
     match dyn_num.repr() {
         NumDynRepr::AxisSel {
             form,
@@ -184,7 +184,7 @@ pub(super) fn refresh_dyn_field_columns(
         if !world.entities.is_alive(row) {
             continue;
         }
-        let dyn_cols = world.entities.dyn_cols(row);
+        let dyn_cols = world.dyn_cols(row);
         if dyn_cols.is_empty() {
             continue;
         }
@@ -264,7 +264,7 @@ pub(super) fn refresh_dyn_field_columns(
         if !executed {
             let mut fallback = Vec::with_capacity(group.rows.len());
             for (&row, &tau) in group.rows.iter().zip(&group.tau) {
-                let dyn_cols = world.entities.dyn_cols(row);
+                let dyn_cols = world.dyn_cols(row);
                 let dyn_num = dyn_cols
                     .iter()
                     .find_map(|(column, value)| (*column == group.plan.output).then_some(value))
@@ -290,7 +290,7 @@ pub(super) fn refresh_dyn_field_columns(
         }
         if oracle {
             for (lane, (&row, &tau)) in group.rows.iter().zip(&group.tau).enumerate() {
-                let dyn_cols = world.entities.dyn_cols(row);
+                let dyn_cols = world.dyn_cols(row);
                 let dyn_num = dyn_cols
                     .iter()
                     .find_map(|(column, value)| (*column == group.plan.output).then_some(value))
