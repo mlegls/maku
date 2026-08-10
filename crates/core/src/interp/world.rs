@@ -149,6 +149,7 @@ pub struct EntityStore {
     alive: Vec<bool>,
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
+    rng_key: Vec<u64>,
     motion_birth: Vec<u64>,
     dyn_col_epochs: Vec<Vec<u64>>,
     /// Component columns of the row's motion integrator plus their resolved
@@ -370,6 +371,7 @@ impl EntityStore {
             alive: Vec::with_capacity(max),
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
+            rng_key: Vec::with_capacity(max),
             motion_birth: Vec::with_capacity(max),
             dyn_col_epochs: Vec::with_capacity(max),
             integrator_cols: Vec::with_capacity(max),
@@ -416,6 +418,10 @@ impl EntityStore {
 
     pub fn birth(&self, row: usize) -> Option<u64> {
         self.birth.get(row).copied()
+    }
+
+    pub fn rng_key(&self, row: usize) -> u64 {
+        self.rng_key[row]
     }
 
     pub fn tau(&self, row: usize, tick: u64, tick_rate: f64) -> f64 {
@@ -803,6 +809,7 @@ impl EntityStore {
         slot: usize,
         dyn_figure: DynFigure,
         birth: u64,
+        rng_key: u64,
         scanned: bool,
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
@@ -824,6 +831,7 @@ impl EntityStore {
         self.alive[i] = true;
         self.freed_at[i] = None;
         self.birth[i] = birth;
+        self.rng_key[i] = rng_key;
         self.motion_birth[i] = birth;
         self.dyn_col_epochs[i] = vec![birth; self.specs.dyn_cols[i].len()];
         self.integrator_cols[i] =
@@ -839,6 +847,7 @@ impl EntityStore {
         &mut self,
         dyn_figure: DynFigure,
         birth: u64,
+        rng_key: u64,
         scanned: bool,
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
@@ -862,6 +871,7 @@ impl EntityStore {
         self.alive.push(true);
         self.freed_at.push(None);
         self.birth.push(birth);
+        self.rng_key.push(rng_key);
         self.motion_birth.push(birth);
         self.dyn_col_epochs.push(vec![birth; self.specs.dyn_cols[i].len()]);
         self.integrator_cols.push(
@@ -900,6 +910,7 @@ impl Clone for EntityStore {
             alive: self.alive.clone(),
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
+            rng_key: self.rng_key.clone(),
             motion_birth: self.motion_birth.clone(),
             dyn_col_epochs: self.dyn_col_epochs.clone(),
             integrator_cols: self.integrator_cols.clone(),
@@ -1066,6 +1077,7 @@ pub mod rng_domain {
     pub const FIELD: u64 = 8;
     pub const COLLIDER: u64 = 9;
     pub const DEFAULT: u64 = 10;
+    pub const NODE: u64 = 11;
 }
 
 pub fn rng_mix(h: u64, v: u64) -> u64 {
@@ -1073,6 +1085,10 @@ pub fn rng_mix(h: u64, v: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
+}
+
+pub fn rand_unit_from_bits(z: u64) -> f64 {
+    (z >> 11) as f64 / (1u64 << 53) as f64
 }
 
 pub struct World {
@@ -1309,6 +1325,7 @@ impl World {
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
             self.entities.birth.truncate(max_entities);
+            self.entities.rng_key.truncate(max_entities);
             self.entities.motion_birth.truncate(max_entities);
             self.entities.dyn_col_epochs.truncate(max_entities);
             self.entities.integrator_cols.truncate(max_entities);
@@ -1366,6 +1383,9 @@ impl World {
         if self.entities.birth.capacity() < max_entities {
             self.entities.birth.reserve_exact(max_entities - self.entities.birth.capacity());
         }
+        if self.entities.rng_key.capacity() < max_entities {
+            self.entities.rng_key.reserve_exact(max_entities - self.entities.rng_key.capacity());
+        }
         if self.entities.motion_birth.capacity() < max_entities {
             self.entities.motion_birth.reserve_exact(max_entities - self.entities.motion_birth.capacity());
         }
@@ -1405,6 +1425,7 @@ impl World {
     pub fn install_entity(
         &mut self,
         dyn_figure: DynFigure,
+        rng_key: u64,
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
@@ -1419,6 +1440,7 @@ impl World {
                 slot,
                 dyn_figure,
                 self.tick,
+                rng_key,
                 scanned,
                 cache_policy,
                 dyn_cols,
@@ -1430,6 +1452,7 @@ impl World {
             self.entities.push_row(
                 dyn_figure,
                 self.tick,
+                rng_key,
                 scanned,
                 cache_policy,
                 dyn_cols,
@@ -1485,12 +1508,20 @@ impl World {
         }
     }
 
+    pub fn next_key(&mut self, domain: u64) -> u64 {
+        #[cfg(debug_assertions)]
+        debug_assert!(!self.rng_scope.stale, "random draw from a stale scope");
+        let key = rng_mix(self.rng_scope.base, rng_mix(domain, self.rng_scope.n));
+        self.rng_scope.n += 1;
+        key
+    }
+
     pub fn next_rand(&mut self) -> f64 {
         #[cfg(debug_assertions)]
         debug_assert!(!self.rng_scope.stale, "random draw from a stale scope");
         let z = rng_mix(self.rng_scope.base, self.rng_scope.n);
         self.rng_scope.n += 1;
-        (z >> 11) as f64 / (1u64 << 53) as f64
+        rand_unit_from_bits(z)
     }
 
     pub fn find(&self, handle: EntityRef) -> Option<usize> {

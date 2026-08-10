@@ -266,6 +266,7 @@ pub(crate) fn flatten_collider_projectors(
 /// leading-axis/by-length meta rule.
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
+    pub rng_key: u64,
     pub collider_projector_spec: ColliderProjectorValue,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
@@ -379,6 +380,7 @@ pub enum FrameSpec {
 #[derive(Debug, Clone)]
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
+    pub rng_key: u64,
     pub cache_policy: EntityCachePolicy,
     pub sym_fields: Vec<(FieldName, Symbol)>,
     pub cols: Vec<(ColName, f64)>,
@@ -3614,6 +3616,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
                 let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
                 let row = world.install_entity(
                     dyn_figure,
+                    spec.rng_key,
                     spec.cache_policy.clone(),
                     spec.dyn_cols.clone(),
                     spec.collider_projector.clone(),

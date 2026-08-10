@@ -3610,9 +3610,114 @@
         }
     }
 
-    /// Same seed, same card: capture-slot draws consume the RNG in the
-    /// substitution order, so runs are reproducible; and a group whose rand
-    /// sits in an unlowerable form falls back to per-entity substitution.
+    #[test]
+    fn spawn_order_swap_leaves_entity_draws_unchanged() {
+        const CARD_A: &str = r#"
+(defpattern a []
+  (spawn ((pose c[-10 0]) (vel (polar (rand 1 2) 0)))
+         {:style {:family :a}}))
+(defpattern b []
+  (spawn ((pose c[10 0]) (vel (cart (rand 3 4) (rand -1 1))))
+         {:style {:family :b}}))
+"#;
+        const CARD_B: &str = r#"
+(defpattern b []
+  (spawn ((pose c[10 0]) (vel (cart (rand 3 4) (rand -1 1))))
+         {:style {:family :b}}))
+(defpattern a []
+  (spawn ((pose c[-10 0]) (vel (polar (rand 1 2) 0)))
+         {:style {:family :a}}))
+"#;
+        let setup = |card: &str| {
+            let mut sim = Sim::load(card, Some("a")).unwrap();
+            sim.add_forms(card, "(b)").unwrap();
+            sim
+        };
+        let mut a = setup(CARD_A);
+        let mut b = setup(CARD_B);
+        // Preserve task keys while changing only scheduler order.
+        b.tasks.swap(0, 1);
+        a.step().unwrap();
+        b.step().unwrap();
+        let rows_a = a.render();
+        let rows_b = b.render();
+        assert_eq!(
+            rows_a.iter().map(|row| row.sym("family")).collect::<Vec<_>>(),
+            [Some("a"), Some("b")]
+        );
+        assert_eq!(
+            rows_b.iter().map(|row| row.sym("family")).collect::<Vec<_>>(),
+            [Some("b"), Some("a")]
+        );
+        for family in ["a", "b"] {
+            let row_a = rows_a.iter().find(|row| row.sym("family") == Some(family)).unwrap();
+            let row_b = rows_b.iter().find(|row| row.sym("family") == Some(family)).unwrap();
+            assert_render_rows_eq(row_a, row_b);
+        }
+    }
+
+    #[test]
+    fn element_draws_are_per_element() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (circle 8 (vel (polar (rand 1 2) 0)))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let mut keys = (0..8).map(|row| sim.world.entities.rng_key(row)).collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), 8);
+        let speed = |row: usize| {
+            let mut node = dyn_figure(&sim, row).pose_dyn();
+            loop {
+                match &**node {
+                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
+                        node = child
+                    }
+                    DynNode::StockIntegrator { data } => return caps_of(&data.rand)[0],
+                    other => panic!("unexpected node {other:?}"),
+                }
+            }
+        };
+        let first = speed(0);
+        assert!((1..8).any(|row| speed(row) != first));
+    }
+
+    /// Sibling signal nodes in one element get distinct leaf keys: without
+    /// per-node numbering, the pose's site 0 and the integrator's site 0
+    /// would alias to the same unit draw.
+    #[test]
+    fn sibling_nodes_draw_independently() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (in-frame c[(* t (rand 0 1)) 0] (vel c[(rand 0 1) 0]))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let mut pose_cap = None;
+        let mut vel_cap = None;
+        let mut stack = vec![dyn_figure(&sim, 0).pose_dyn().clone()];
+        while let Some(node) = stack.pop() {
+            match &*node {
+                DynNode::Frame(a, b) => {
+                    stack.push(a.clone());
+                    stack.push(b.clone());
+                }
+                DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
+                    stack.push(child.clone())
+                }
+                DynNode::ClosedPt { rand, .. } => pose_cap = Some(caps_of(rand)[0]),
+                DynNode::StockIntegrator { data } => vel_cap = Some(caps_of(&data.rand)[0]),
+                _ => {}
+            }
+        }
+        assert_ne!(pose_cap.unwrap(), vel_cap.unwrap());
+    }
+
+    /// Same seed, same card: capture slots derive from entity keys and site
+    /// numbers, so runs are reproducible; a group whose rand sits in an
+    /// unlowerable form falls back to per-entity substitution.
     #[test]
     fn rand_capture_slots_deterministic_and_fallback() {
         const CARD: &str = r#"

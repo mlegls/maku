@@ -7,8 +7,8 @@
 
 ## 2. Entity keys and captures
 
-- [ ] 2.1 `spawn_key` drawn from the current scope in `plan_spawn`; `elem_key = mix(spawn_key, elem ordinal)`; carried on `EntitySpec`; `EntityStore.rng_key` column (push_row, reuse_free_row, clone, truncate); assigned in `install_entity`.
-- [ ] 2.2 `draw_caps` draws site k from mix(elem_key, CAPS, k) honoring RandSite bounds; `subst_rand` numbers its walk and draws the same keys; update the round-22 contract comment (order → numbering).
+- [x] 2.1 `spawn_key` drawn from the current scope in `plan_spawn`; `elem_key = mix(spawn_key, elem ordinal)`; carried on `EntitySpec`; `EntityStore.rng_key` column (push_row, reuse_free_row, clone, truncate); assigned in `install_entity`.
+- [x] 2.2 `draw_caps` draws site k from mix(elem_key, CAPS, k) honoring RandSite bounds; `subst_rand` numbers its walk and draws the same keys; update the round-22 contract comment (order → numbering).
 
 ## 3. Keyed scratch contexts
 

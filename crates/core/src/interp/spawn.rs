@@ -111,12 +111,14 @@ fn plan_spawn(
     let meta = merge_spawn_meta(slots.meta, env, ctx, world)?;
     let mut elems = Vec::new();
     flatten_elems(slots.figure, &mut Vec::new(), &mut elems)?;
+    let spawn_key = world.next_key(rng_domain::SPAWN);
     // rand in signal expressions is an ir constant per element (§5): draw a
     // capture vector per element over the site's shared marker programs, or
     // (extraction bail) clone the motion tree substituting drawn constants
-    for e in elems.iter_mut() {
+    for (i, e) in elems.iter_mut().enumerate() {
+        e.rng_key = rng_mix(spawn_key, i as u64);
         if dyn_figure_has_rand(&e.dyn_figure) {
-            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, world);
+            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, e.rng_key);
         }
     }
     Ok(SpawnPlan {
@@ -286,6 +288,7 @@ fn build_entity_specs(
             }
             Ok(EntitySpec {
                 dyn_figure: e.dyn_figure,
+                rng_key: e.rng_key,
                 cache_policy: e.cache_policy,
                 sym_fields,
                 cols,
@@ -356,6 +359,7 @@ pub(crate) fn flatten_elems(
             };
             out.push(SpawnElem {
                 dyn_figure,
+                rng_key: 0,
                 collider_projector_spec: colliders,
                 cache_policy,
                 path: path.clone(),
@@ -366,6 +370,7 @@ pub(crate) fn flatten_elems(
         other => {
             out.push(SpawnElem {
                 dyn_figure: as_dyn_figure(other)?,
+                rng_key: 0,
                 collider_projector_spec: ColliderProjectorValue::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
@@ -412,8 +417,8 @@ pub(crate) fn dyn_figure_has_rand(d: &DynFigure) -> bool {
 }
 
 /// One rand site's draw spec, recorded by `extract_rand` in walk order.
-/// The walk order IS the RNG contract: capture draws at spawn must consume
-/// `world.next_rand()` in exactly the order `subst_rand` would.
+/// Capture and substitution must assign identical site numbers and derive
+/// each site's draw from the same element key.
 #[derive(Clone, Copy, Debug)]
 pub enum RandSite {
     Range { a: f64, b: f64, floor: bool },
@@ -424,9 +429,9 @@ fn capture_marker(slot: usize) -> Form {
     Form::List(vec![Form::Sym("%capture".into()), Form::Num(slot as f64)].into())
 }
 
-/// `subst_rand`'s walk, rewriting each rand site to a `(%capture i)` marker
-/// instead of drawing — including subst_rand's literal-bound defaulting and
-/// its non-recursion into rand argument positions.
+/// `subst_rand`'s numbering walk, rewriting each rand site to a `(%capture i)`
+/// marker — including its literal-bound defaulting and non-recursion into rand
+/// argument positions. Both paths derive site i from the same element key.
 pub(crate) fn extract_rand(f: &Form, sites: &mut Vec<RandSite>) -> Form {
     match f {
         Form::List(items) => {
@@ -460,20 +465,25 @@ pub(crate) fn extract_rand(f: &Form, sites: &mut Vec<RandSite>) -> Form {
     }
 }
 
-/// One entity's full capture vector: rand draws (slots 0..sites) in site
-/// (= walk) order, then the node's fixed env-capture values.
-pub(crate) fn draw_caps(ex: &ExtractedSig, world: &mut World) -> Rc<[f64]> {
+fn draw_rand_site(elem_key: u64, site: u64, spec: RandSite) -> f64 {
+    let u = rand_unit_from_bits(rng_mix(rng_mix(elem_key, rng_domain::CAPS), site));
+    match spec {
+        RandSite::Range { a, b, floor } => {
+            let v = a + u * (b - a);
+            if floor { v.floor() } else { v }
+        }
+        RandSite::Pm1 => if u < 0.5 { -1.0 } else { 1.0 },
+    }
+}
+
+/// One entity's full capture vector: keyed rand draws (slots 0..sites), then
+/// the node's fixed env-capture values.
+pub(crate) fn draw_caps(ex: &ExtractedSig, elem_key: u64) -> Rc<[f64]> {
     ex.sites
         .iter()
-        .map(|s| match s {
-            RandSite::Range { a, b, floor } => {
-                let v = a + world.next_rand() * (b - a);
-                if *floor { v.floor() } else { v }
-            }
-            RandSite::Pm1 => {
-                if world.next_rand() < 0.5 { -1.0 } else { 1.0 }
-            }
-        })
+        .copied()
+        .enumerate()
+        .map(|(site, spec)| draw_rand_site(elem_key, site as u64, spec))
         .chain(ex.env_caps.iter().copied())
         .collect()
 }
@@ -499,11 +509,11 @@ pub(crate) fn subst_captures(f: &Form, caps: &[f64]) -> Form {
     }
 }
 
-pub(crate) fn subst_rand(f: &Form, world: &mut World) -> Form {
+pub(crate) fn subst_rand(f: &Form, elem_key: u64, site: &mut u64) -> Form {
     match f {
         Form::List(items) => {
             if let Some(Form::Sym(s)) = items.first() {
-                match s.as_ref() {
+                let spec = match s.as_ref() {
                     "rand" | "rand-int" => {
                         let a = matches!(&items[1], Form::Num(_))
                             .then(|| if let Form::Num(n) = items[1] { n } else { 0.0 })
@@ -511,27 +521,47 @@ pub(crate) fn subst_rand(f: &Form, world: &mut World) -> Form {
                         let b = matches!(&items[2], Form::Num(_))
                             .then(|| if let Form::Num(n) = items[2] { n } else { 1.0 })
                             .unwrap_or(1.0);
-                        let v = a + world.next_rand() * (b - a);
-                        return Form::Num(if s.as_ref() == "rand-int" { v.floor() } else { v });
+                        Some(RandSite::Range { a, b, floor: s.as_ref() == "rand-int" })
                     }
-                    "randpm1" => {
-                        return Form::Num(if world.next_rand() < 0.5 { -1.0 } else { 1.0 });
-                    }
-                    _ => {}
+                    "randpm1" => Some(RandSite::Pm1),
+                    _ => None,
+                };
+                if let Some(spec) = spec {
+                    let value = draw_rand_site(elem_key, *site, spec);
+                    *site += 1;
+                    return Form::Num(value);
                 }
             }
-            Form::List(items.iter().map(|i| subst_rand(i, world)).collect::<Vec<_>>().into())
+            Form::List(
+                items
+                    .iter()
+                    .map(|i| subst_rand(i, elem_key, site))
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
         }
-        Form::Vector(items) => {
-            Form::Vector(items.iter().map(|i| subst_rand(i, world)).collect::<Vec<_>>().into())
-        }
+        Form::Vector(items) => Form::Vector(
+            items
+                .iter()
+                .map(|i| subst_rand(i, elem_key, site))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
         other => other.clone(),
     }
 }
 
-pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode> {
+/// Each signal-bearing leaf gets its own key — `mix(elem_key, NODE, ordinal)`
+/// in instantiation walk order — so sibling nodes' site-0 draws don't alias.
+pub(crate) fn instantiate_rand(d: &Rc<DynNode>, elem_key: u64, node_n: &mut u64) -> Rc<DynNode> {
+    let leaf_key = |node_n: &mut u64| {
+        let key = rng_mix(elem_key, rng_mix(rng_domain::NODE, *node_n));
+        *node_n += 1;
+        key
+    };
     match &**d {
         DynNode::ClosedPt { a, b, polar, env, rand, .. } => {
+            let key = leaf_key(node_n);
             match rand.as_deref() {
                 Some(RandCell::Compiled(ex)) => Rc::new(DynNode::ClosedPt {
                     a: ex.forms[0].clone(),
@@ -542,14 +572,15 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
                         ex.programs[0].clone(),
                         ex.programs[1].clone(),
                     ))),
-                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
+                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, key)))),
                 }),
                 // Bail (markers didn't lower) or a construction path that
                 // skipped extraction: per-entity substitution, as ever.
                 Some(_) | None if form_has_rand(a) || form_has_rand(b) => {
+                    let mut site = 0;
                     Rc::new(DynNode::ClosedPt {
-                        a: subst_rand(a, world),
-                        b: subst_rand(b, world),
+                        a: subst_rand(a, key, &mut site),
+                        b: subst_rand(b, key, &mut site),
                         polar: *polar,
                         env: env.clone(),
                         programs: std::cell::OnceCell::new(),
@@ -560,6 +591,7 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
             }
         }
         DynNode::StockIntegrator { data } => {
+            let key = leaf_key(node_n);
             match data.rand.as_deref() {
                 Some(RandCell::Compiled(ex)) => Rc::new(DynNode::StockIntegrator {
                     data: Rc::new(StockIntegratorData {
@@ -571,15 +603,16 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
                             ex.programs[0].clone(),
                             ex.programs[1].clone(),
                         ))),
-                        rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
+                        rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, key)))),
                         columns: data.columns,
                     }),
                 }),
                 Some(_) | None if form_has_rand(&data.a) || form_has_rand(&data.b) => {
+                    let mut site = 0;
                     Rc::new(DynNode::StockIntegrator {
                         data: Rc::new(StockIntegratorData {
-                            a: subst_rand(&data.a, world),
-                            b: subst_rand(&data.b, world),
+                            a: subst_rand(&data.a, key, &mut site),
+                            b: subst_rand(&data.b, key, &mut site),
                             space: data.space,
                             env: data.env.clone(),
                             programs: std::cell::OnceCell::new(),
@@ -592,50 +625,56 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
             }
         }
         DynNode::RotExpr { form, env, rand, .. } => {
+            let key = leaf_key(node_n);
             match rand.as_deref() {
                 Some(RandCell::Compiled(ex)) => Rc::new(DynNode::RotExpr {
                     form: ex.forms[0].clone(),
                     env: env.clone(),
                     program: std::cell::OnceCell::from(Some(ex.programs[0].clone())),
-                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
+                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, key)))),
                 }),
-                Some(_) | None if form_has_rand(form) => Rc::new(DynNode::RotExpr {
-                    form: subst_rand(form, world),
-                    env: env.clone(),
-                    program: std::cell::OnceCell::new(),
-                    rand: None,
-                }),
+                Some(_) | None if form_has_rand(form) => {
+                    let mut site = 0;
+                    Rc::new(DynNode::RotExpr {
+                        form: subst_rand(form, key, &mut site),
+                        env: env.clone(),
+                        program: std::cell::OnceCell::new(),
+                        rand: None,
+                    })
+                }
                 _ => d.clone(),
             }
         }
         DynNode::Translate { dx, dy, child } => Rc::new(DynNode::Translate {
             dx: *dx,
             dy: *dy,
-            child: instantiate_rand(child, world),
+            child: instantiate_rand(child, elem_key, node_n),
         }),
         DynNode::Frame(a, b) => Rc::new(DynNode::Frame(
-            instantiate_rand(a, world),
-            instantiate_rand(b, world),
+            instantiate_rand(a, elem_key, node_n),
+            instantiate_rand(b, elem_key, node_n),
         )),
         DynNode::ConstFrame { pose, rot, child } => Rc::new(DynNode::ConstFrame {
             pose: *pose,
             rot: *rot,
-            child: instantiate_rand(child, world),
+            child: instantiate_rand(child, elem_key, node_n),
         }),
         _ => d.clone(),
     }
 }
 
-pub(crate) fn instantiate_rand_geometry(d: &DynFigure, world: &mut World) -> DynFigure {
+pub(crate) fn instantiate_rand_geometry(d: &DynFigure, elem_key: u64) -> DynFigure {
+    let mut node_n = 0;
     match d.repr() {
-        FigureDynRepr::Pose(p) => DynFigure::pose_node(instantiate_rand(p.node(), world)),
+        FigureDynRepr::Pose(p) => DynFigure::pose_node(instantiate_rand(p.node(), elem_key, &mut node_n)),
         FigureDynRepr::Curve { frame, curve } => {
+            let frame = DynPose::pose_node(instantiate_rand(frame.node(), elem_key, &mut node_n));
             let eval = match &curve.eval {
                 CurveEval::Straight => CurveEval::Straight,
-                CurveEval::Expr(shape) => CurveEval::Expr(DynPose::pose_node(instantiate_rand(shape.node(), world))),
+                CurveEval::Expr(shape) => CurveEval::Expr(DynPose::pose_node(instantiate_rand(shape.node(), elem_key, &mut node_n))),
             };
             DynFigure::figure_curve(
-                DynPose::pose_node(instantiate_rand(frame.node(), world)),
+                frame,
                 ParametricCurve {
                     eval,
                     domain: curve.domain.clone(),
