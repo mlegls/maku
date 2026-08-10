@@ -1,25 +1,49 @@
 # f32 hot columns (mixed numeric width)
 
-Backlog stub — design/specs/tasks are generated when this is picked up.
-
 ## Why
 
-Mixed numeric width is the contract, not blanket f64 (decided 2026-07). f64 was Val/EDN inheritance, never load-bearing: determinism means same ops/order/width per tier, and replay compatibility — both restate over f32. f32 halves bandwidth (the profile's top fixed cost), doubles SIMD lanes, and legalizes GPU tiers (WGSL has no f64). Needed for the 100k+ scale tier.
+Mixed numeric width is the contract, not blanket f64 (decided 2026-07).
+f64 was Val/EDN inheritance, never load-bearing: determinism means same
+ops/order/width per tier, and replay compatibility — both restate over
+f32. f32 halves resident hot state and the bandwidth over it (the
+profile's top fixed cost) and provides the dense f32 buffers
+`gpu-kernel-backend` consumes (WGSL has no f64). Needed for the 100k+
+scale tier.
 
 ## What Changes
 
-- Control plane (interpreter, Val, spawn-time math) stays f64; HOT columns (positions, integrator state, collider radii, render batches) go f32.
-- Care points: large-angle trig argument reduction inside the shared math shims (possibly f64 internally); long-lived integrators. tau is already integer-tick-anchored, so no time accumulation hazard.
-- This change owns PHYSICAL storage classification and migration: which pose, state, collider, render, scratch, and host-transfer columns narrow; where f64↔f32 conversions occur; and how snapshots/replay version those widths.
-- `ir-unification` owns typed F32/F64 kernel registers, explicit conversions, width-bearing program/plan identity, and width-correct executors. It does not choose which world columns narrow.
+- Hot storage classes narrow to f32: integrator state, sampled/trace/
+  root-frame poses, capture vectors, user/meta num fields, collider
+  rows and AABBs, render batch geometry. Control plane (interpreter,
+  Val, channels, tau, RNG bit-to-float, spawn-time pose math) stays
+  f64.
+- Rounding happens once at the storage boundary (entry into the
+  class); every load widens; all arithmetic between load and store
+  stays f64 with unchanged ops/order — so lowered-vs-interpreted
+  bit-exactness is preserved verbatim at the new widths and the oracle
+  stays a bit-exact gate. Oracle asserts whose expected side is
+  freshly-computed f64 round it through the same boundary.
+- Compute width per program remains F64; F32 program emission, SIMD
+  lane doubling, and GPU math shims stay with `jit-native-codegen` /
+  `gpu-kernel-backend` over `ir-unification`'s typed programs.
+- Drift vs the pre-round f64 build is measured (corpus meter +
+  scripted behavioral suites as boundary-flip detectors), not
+  asserted; the bench baseline series forks (`maku-v1-f64` →
+  `maku-v1-f32`) preserving prior evidence.
 
 ## Capabilities
 
-Numeric-width contract change; determinism spec restated over f32 widths.
+Numeric-width contract change; determinism spec gains the
+storage-class table; lowering spec gains the physical-width
+requirement; perf/bench series forks.
 
 ## Impact
 
-- Gate: run the card corpus with f32 columns against the f64 interpreter via MAKU_LOWER_ORACLE and read the measured drift — the oracle is the precision meter, not a guess.
-- Related: f32 narrowing inside the mesh pack (`crates/render-touhou`) is a small independent slice.
-- Sequencing: typed width support in `KernelProgram` may land independently, but the physical f32 migration must land before `gpu-kernel-backend`; the GPU change consumes the resulting dense f32 buffers rather than defining another width policy.
-- Governing: scale-target decision (this stub + `openspec/specs/perf/spec.md`), `openspec/specs/lowering/spec.md` determinism contract.
+- `crates/core/src/interp/world.rs` (columns + accessors),
+  `model/figure.rs` (`Pose32`), `model/colliders.rs`,
+  `model/renderers.rs`, `sim/{mod,slots,collision,render}.rs` oracle
+  expected-side rounding, `interp/spawn.rs` bail path,
+  `crates/bench` series id.
+- Governing: `openspec/specs/determinism/spec.md`,
+  `openspec/specs/lowering/spec.md`, `openspec/specs/perf/spec.md`,
+  `bench/README.md` series rule.
