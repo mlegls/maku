@@ -3585,6 +3585,31 @@
         );
     }
 
+    #[test]
+    fn unrelated_draws_do_not_shift_task_stream() {
+        let card = |extra: &str| format!(r#"
+(defpattern p []
+  (par
+    (seq (rand 0 1) {extra})
+    (spawn (pose c[(rand -5 5) (rand -5 5)]))))
+"#);
+        let mut a = Sim::load(&card(""), Some("p")).unwrap();
+        let mut b = Sim::load(
+            &card("(rand 0 1) (rand 0 1) (rand 0 1)"),
+            Some("p"),
+        )
+        .unwrap();
+        a.step().unwrap();
+        b.step().unwrap();
+        let rows_a = a.render();
+        let rows_b = b.render();
+        assert!(!rows_a.is_empty());
+        assert_eq!(rows_a.len(), rows_b.len());
+        for (ra, rb) in rows_a.iter().zip(rows_b.iter()) {
+            assert_render_rows_eq(ra, rb);
+        }
+    }
+
     /// Same seed, same card: capture-slot draws consume the RNG in the
     /// substitution order, so runs are reproducible; and a group whose rand
     /// sits in an unlowerable form falls back to per-entity substitution.

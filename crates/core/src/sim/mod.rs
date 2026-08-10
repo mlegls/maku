@@ -75,6 +75,7 @@ pub struct BenchmarkCounters {
 pub struct Sim {
     pub world: World,
     tasks: Vec<Task>,
+    task_seq: u64,
     ctx: Ctx,
     collider_scratch: collision::ColliderScratch,
     dyn_field_scratch: slots::DynFieldScratch,
@@ -387,6 +388,7 @@ impl Clone for Sim {
         Sim {
             world: self.world.clone(),
             tasks: self.tasks.clone(),
+            task_seq: self.task_seq,
             ctx,
             collider_scratch: collision::ColliderScratch::default(),
             dyn_field_scratch: slots::DynFieldScratch::default(),
@@ -401,6 +403,12 @@ impl Clone for Sim {
     }
 }
 impl Sim {
+    fn next_root_task_key(&mut self) -> u64 {
+        let key = rng_mix(rng_mix(self.world.seed, rng_domain::TASK), self.task_seq);
+        self.task_seq += 1;
+        key
+    }
+
     /// Load a card FILE (resolving imports) and instantiate a pattern.
     pub fn load_file(path: &std::path::Path, pattern: Option<&str>) -> Result<Sim, String> {
         let expanded = crate::edn::expand_card_traced(path)?;
@@ -472,13 +480,17 @@ impl Sim {
         let mut world = World::default();
         let schema = collect_card_schema(&card)?;
         world.install_render_kinds(&schema.render_kinds)?;
+        let root_key = rng_mix(rng_mix(world.seed, rng_domain::TASK), 0);
+        world.rebase_rng(rng_mix(root_key, rng_domain::LOAD));
         install_tick_rules(&card, &mut ctx, &mut world)?;
         install_streams(&card, &mut ctx, &mut world)?;
+        world.mark_rng_stale();
         let env = Env::empty();
-        let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }]);
+        let task = new_task(vec![TF::Seq { items: body.into(), idx: 0, env }], root_key);
         Ok(Sim {
             world,
             tasks: vec![task],
+            task_seq: 1,
             ctx,
             collider_scratch: collision::ColliderScratch::default(),
             dyn_field_scratch: slots::DynFieldScratch::default(),
@@ -512,6 +524,8 @@ impl Sim {
             matches!(form, Form::List(items)
                 if matches!(items.first(), Some(Form::Sym(s)) if heads.contains(&s.as_ref())))
         };
+        let root_key = self.next_root_task_key();
+        self.world.rebase_rng(rng_mix(root_key, rng_domain::LOAD));
         let (body, env): (Rc<[Form]>, Env) = match body_forms
             .iter()
             .any(|form| head_in(form, &["defpattern"]))
@@ -564,7 +578,10 @@ impl Sim {
                 if actions.is_empty() {
                     let pat = &self.ctx.patterns.clone()[&first];
                     let mut env = Env::empty();
-                    let mut w = World::default();
+                    let mut w = World::for_eval_keyed(
+                        self.world.tick_rate(),
+                        rng_mix(root_key, rng_domain::LOAD),
+                    );
                     for (pname, default) in &pat.params {
                         let v = evaluate(default, &env, &mut self.ctx, &mut w)?;
                         env = env.bind(pname.clone(), v);
@@ -607,7 +624,8 @@ impl Sim {
                 (body_forms.into(), env)
             }
         };
-        Ok(new_task(vec![TF::Seq { items: body, idx: 0, env }]))
+        self.world.mark_rng_stale();
+        Ok(new_task(vec![TF::Seq { items: body, idx: 0, env }], root_key))
     }
 
     /// Generational hot-swap (design.md §11): replace the program, KEEP the
@@ -640,6 +658,8 @@ impl Sim {
         let mut world = World::default();
         let schema = collect_card_schema(card)?;
         world.install_render_kinds(&schema.render_kinds)?;
+        let root_key = rng_mix(rng_mix(world.seed, rng_domain::TASK), 0);
+        world.rebase_rng(rng_mix(root_key, rng_domain::LOAD));
         install_tick_rules(card, &mut ctx, &mut world)?;
         install_streams(card, &mut ctx, &mut world)?;
         let mut env = Env::empty();
@@ -647,10 +667,12 @@ impl Sim {
             let v = evaluate(default, &env, &mut ctx, &mut world)?;
             env = env.bind(pname.clone(), v);
         }
-        let task = new_task(vec![TF::Seq { items: pat.body.clone(), idx: 0, env }]);
+        world.mark_rng_stale();
+        let task = new_task(vec![TF::Seq { items: pat.body.clone(), idx: 0, env }], root_key);
         Ok(Sim {
             world,
             tasks: vec![task],
+            task_seq: 1,
             ctx,
             collider_scratch: collision::ColliderScratch::default(),
             dyn_field_scratch: slots::DynFieldScratch::default(),
@@ -1266,7 +1288,12 @@ impl Sim {
 
     fn run_standing_rules(&mut self) -> Result<(), String> {
         let rules = self.world.standing_rules.clone();
-        for rule in rules {
+        for (rule_i, rule) in rules.into_iter().enumerate() {
+            let base = rng_mix(
+                rng_mix(rng_mix(self.world.seed, rng_domain::RULE), rule_i as u64),
+                self.world.tick,
+            );
+            self.world.rebase_rng(base);
             for (form, compiled) in rule.body.iter().zip(rule.compiled.iter()) {
                 let result = (|| -> Result<(), String> {
                     if let Some(compiled) = compiled {
@@ -1312,8 +1339,12 @@ impl Sim {
                         self.exec_tick_value(value)
                     }
                 })();
-                result.map_err(|e| format!("deftick: {}", e))?;
+                if let Err(error) = result {
+                    self.world.mark_rng_stale();
+                    return Err(format!("deftick: {}", error));
+                }
             }
+            self.world.mark_rng_stale();
         }
         Ok(())
     }
@@ -2074,13 +2105,20 @@ impl Sim {
         let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
         let mut i = 0;
         while i < self.tasks.len() {
-            let mut task = std::mem::replace(&mut self.tasks[i], new_task(vec![]));
+            let task_base = rng_mix(self.tasks[i].rng_key, self.world.tick);
+            self.world.rebase_rng(task_base);
             let mut new_tasks = Vec::new();
-            let done = step_task(&mut task, &mut self.ctx, &mut self.world, &mut new_tasks)?;
+            let result = step_task(
+                &mut self.tasks[i],
+                &mut self.ctx,
+                &mut self.world,
+                &mut new_tasks,
+            );
+            self.world.mark_rng_stale();
+            let done = result?;
             if done {
                 self.tasks.remove(i);
             } else {
-                self.tasks[i] = task;
                 i += 1;
             }
             self.tasks.extend(new_tasks);

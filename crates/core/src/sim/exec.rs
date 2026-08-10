@@ -44,14 +44,24 @@ pub(super) struct Task {
     stack: Vec<TF>,
     wait: u64,
     wait_pred: Option<(Form, Env)>,
+    pub(super) rng_key: u64,
+    fork_n: u64,
     /// Cancellation guards inherited from enclosing (until ...) scopes at
     /// fork time — structured cancellation: when a guard fires, this task
     /// and every task forked under the same scope die together.
     guards: Vec<(Form, Env)>,
 }
 
-pub(super) fn new_task(stack: Vec<TF>) -> Task {
-    Task { stack, wait: 0, wait_pred: None, guards: Vec::new() }
+pub(super) fn new_task(stack: Vec<TF>, rng_key: u64) -> Task {
+    Task { stack, wait: 0, wait_pred: None, rng_key, fork_n: 0, guards: Vec::new() }
+}
+
+impl Task {
+    fn next_fork_key(&mut self) -> u64 {
+        let key = rng_mix(self.rng_key, rng_mix(rng_domain::FORK, self.fork_n));
+        self.fork_n += 1;
+        key
+    }
 }
 
 
@@ -374,7 +384,8 @@ fn run_action(
             // forks issued inside the instant (callback timed work) are
             // adopted here, inheriting this task's guards
             for inner in std::mem::take(&mut ctx.deferred) {
-                let mut child = new_task(Vec::new());
+                let child_key = task.next_fork_key();
+                let mut child = new_task(Vec::new(), child_key);
                 child.guards = active_guards(task);
                 run_action(&inner, &mut child, ctx, world, new_tasks)?;
                 new_tasks.push(child);
@@ -467,7 +478,8 @@ fn run_action(
                     _ => None,
                 })
                 .collect();
-            let mut child = new_task(stack);
+            let child_key = task.next_fork_key();
+            let mut child = new_task(stack, child_key);
             child.guards = active_guards(task);
             run_action(inner, &mut child, ctx, world, new_tasks)?;
             new_tasks.push(child);
@@ -484,7 +496,8 @@ fn run_action(
                         _ => None,
                     })
                     .collect();
-                let mut child = new_task(stack);
+                let child_key = task.next_fork_key();
+                let mut child = new_task(stack, child_key);
                 child.guards = active_guards(task);
                 run_action(k, &mut child, ctx, world, new_tasks)?;
                 new_tasks.push(child);
@@ -524,7 +537,8 @@ fn run_action(
                         _ => None,
                     })
                     .collect();
-                let mut child = new_task(stack);
+                let child_key = task.next_fork_key();
+                let mut child = new_task(stack, child_key);
                 child.guards = active_guards(task);
                 child.guards.push((done.clone(), env.clone()));
                 let won = Form::list(vec![Form::sym("race-won!"), Form::Num(cell as f64)]);

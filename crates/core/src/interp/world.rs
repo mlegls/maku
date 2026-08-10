@@ -1047,6 +1047,34 @@ impl CollisionIndex {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RngScope {
+    base: u64,
+    n: u64,
+    #[cfg(debug_assertions)]
+    stale: bool,
+}
+
+pub mod rng_domain {
+    pub const TASK: u64 = 1;
+    pub const FORK: u64 = 2;
+    pub const RULE: u64 = 3;
+    pub const LOAD: u64 = 4;
+    pub const SPAWN: u64 = 5;
+    pub const CAPS: u64 = 6;
+    pub const EVOLVE: u64 = 7;
+    pub const FIELD: u64 = 8;
+    pub const COLLIDER: u64 = 9;
+    pub const DEFAULT: u64 = 10;
+}
+
+pub fn rng_mix(h: u64, v: u64) -> u64 {
+    let mut z = h ^ v.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
 pub struct World {
     pub tick: u64,
     timing: TickTiming,
@@ -1059,7 +1087,8 @@ pub struct World {
     pub log: Rc<std::cell::RefCell<EventLog>>,
     /// Global index one past the last event THIS timeline emitted.
     pub cursor: u64,
-    pub rng: u64,
+    pub seed: u64,
+    rng_scope: RngScope,
     /// Typed finite user-field schema/layout. Intrinsic entity storage lives
     /// in `entities`; user-addressable numeric values live here.
     pub fields: WorldFields,
@@ -1091,7 +1120,8 @@ impl Clone for World {
             entities: self.entities.clone(),
             log: self.log.clone(),
             cursor: self.cursor,
-            rng: self.rng,
+            seed: self.seed,
+            rng_scope: self.rng_scope,
             fields: self.fields.clone(),
             symbols: self.symbols.clone(),
             render_rows: self.render_rows.clone(),
@@ -1199,15 +1229,27 @@ impl World {
         w
     }
 
+    pub fn for_eval_keyed(tick_rate: f64, base: u64) -> World {
+        let mut w = Self::for_eval(tick_rate);
+        w.rebase_rng(base);
+        w
+    }
+
     pub fn with_entity_capacity(max_entities: usize) -> World {
-        World {
+        let mut world = World {
             tick: 0,
             timing: TickTiming::default(),
             next_id: 0,
             entities: EntityStore::with_capacity(max_entities),
             log: Rc::new(std::cell::RefCell::new(EventLog::default())),
             cursor: 0,
-            rng: 0x9e37_79b9_7f4a_7c15,
+            seed: 0,
+            rng_scope: RngScope {
+                base: 0,
+                n: 0,
+                #[cfg(debug_assertions)]
+                stale: false,
+            },
             fields: WorldFields::default(),
             symbols: SymbolTable::default(),
             render_rows: Vec::new(),
@@ -1218,7 +1260,9 @@ impl World {
             pending_writes: Vec::new(),
             benchmark_predicate_matches: 0,
             benchmark_rule_actions: 0,
-        }
+        };
+        world.reset_rng(0x9e37_79b9_7f4a_7c15);
+        world
     }
 }
 
@@ -1420,14 +1464,32 @@ impl World {
         self.entities.entity_ref(row)
     }
 
-    /// Deterministic splitmix64-ish stream (counter-based enough for the
-    /// prototype: same run order → same stream → replays agree).
+    pub fn reset_rng(&mut self, seed: u64) {
+        self.seed = seed;
+        self.rebase_rng(rng_mix(seed, rng_domain::DEFAULT));
+    }
+
+    pub fn rebase_rng(&mut self, base: u64) {
+        self.rng_scope.base = base;
+        self.rng_scope.n = 0;
+        #[cfg(debug_assertions)]
+        {
+            self.rng_scope.stale = false;
+        }
+    }
+
+    pub fn mark_rng_stale(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            self.rng_scope.stale = true;
+        }
+    }
+
     pub fn next_rand(&mut self) -> f64 {
-        self.rng = self.rng.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.rng;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^= z >> 31;
+        #[cfg(debug_assertions)]
+        debug_assert!(!self.rng_scope.stale, "random draw from a stale scope");
+        let z = rng_mix(self.rng_scope.base, self.rng_scope.n);
+        self.rng_scope.n += 1;
         (z >> 11) as f64 / (1u64 << 53) as f64
     }
 

@@ -2,8 +2,8 @@
 
 ## 1. Core primitive and seed surface
 
-- [ ] 1.1 Replace `World.rng: u64` with `seed: u64` + transient scope `{base, n}`; `rng_mix` splitmix-finalizer helper with domain constants; `next_rand` = mix(base, n++) with today's f64 mapping; `reset_rng(seed)`; constructor calls it with the existing default constant; `for_eval_keyed(tick_rate, base)`; debug-only stale-scope assert in `next_rand`.
-- [ ] 1.2 Executor re-basing: `Task.rng_key`/`fork_n` (root = mix(seed, TASK, creation ordinal); fork = mix(parent key, FORK, parent fork_n++)); scope set to mix(task key, tick) before each task step; interpreted tick rules mix(seed, RULE, rule index, tick); load-time top-level forms run under the owning root task's key.
+- [x] 1.1 Replace `World.rng: u64` with `seed: u64` + transient scope `{base, n}`; `rng_mix` splitmix-finalizer helper with domain constants; `next_rand` = mix(base, n++) with today's f64 mapping; `reset_rng(seed)`; constructor calls it with the existing default constant; `for_eval_keyed(tick_rate, base)`; debug-only stale-scope assert in `next_rand`.
+- [x] 1.2 Executor re-basing: `Task.rng_key`/`fork_n` (root = mix(seed, TASK, creation ordinal); fork = mix(parent key, FORK, parent fork_n++)); scope set to mix(task key, tick) before each task step; interpreted tick rules mix(seed, RULE, rule index, tick); load-time top-level forms run under the owning root task's key.
 
 ## 2. Entity keys and captures
 
