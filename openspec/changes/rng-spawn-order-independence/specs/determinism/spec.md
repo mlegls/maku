@@ -31,9 +31,11 @@ independent of how many draws other contexts performed.
 ### Requirement: Entities carry rng keys and capture vectors agree on site numbering
 Each spawned element MUST receive a persistent rng key derived from the spawning scope
 and its element ordinal, stored in the entity store and cloned with snapshots. Capture
-vectors MUST draw site k from the element key, the capture domain, and k; the compiled
-extraction (`draw_caps`) and the interpreted substitution walk (`subst_rand`) MUST assign
-identical site numbers to identical sites. Agreement on temporal draw order is no longer
+vectors MUST draw site k from the element key, the signal node's ordinal in the figure's
+instantiation walk, the capture domain, and k — per-node keying, so sibling nodes' equal
+site numbers do not alias to the same draw. The compiled extraction (`draw_caps`) and the
+interpreted substitution walk (`subst_rand`) MUST assign identical site numbers to
+identical sites within a node. Agreement on temporal draw order is no longer
 required.
 
 #### Scenario: Bail path matches compiled captures
