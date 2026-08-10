@@ -53,7 +53,7 @@ A type does not move merely because it is generic over an expression type or cou
 
 `DynNode`, `DynNum`, `EvolveDyn`, `Form`, `Env`, `Val`, interpreter closure adapters, node-local caches, and fallback state construction remain under `interp/` unless a later cut removes them entirely. Their variants encode interpreter evaluation strategy and migration history, not a backend-independent domain value.
 
-`Vel` and `Stages` remain explicitly ineligible for extraction while their `evolve-followups` re-expression is pending.
+`Stages` remains explicitly ineligible for extraction while its `evolve-followups` re-expression is pending. `Vel` is settled the other way (2026-08-10, `evolve-followups` proposal): it re-expresses as a stock integrator evolve over dyn vel meta columns, so it dissolves into lib plus one recognized integrand shape (a kernel plan template) and is categorically not a `model/` candidate.
 
 ### 4. Kernel plans are the compiled backend boundary
 
@@ -86,7 +86,7 @@ Only then create implementation tasks. If no type passes the criterion, close/ar
 - **[Risk] Frontend and runtime schemas drift.** → Share only stable schema descriptors/registries in `model/`; keep elaborated expressions and physical slots in their owning layers.
 - **[Risk] The no-op criterion feels too conservative.** → Prefer evidence from current consumers; a later concrete backend can justify a narrow move without paying for a speculative abstraction now.
 - **[Risk] `model/` becomes an incoherent grab bag.** → Require domain-value identity and two unchanged consumers for every addition; execution and storage types are categorically excluded.
-- **[Risk] Evolve/model changes race.** → Retain the sequencing gate and reassess only after `Vel`/`Stages` target shapes are settled.
+- **[Risk] Evolve/model changes race.** → Retain the sequencing gate for `Stages` and reassess only after its target shape is settled; `Vel`'s shape is settled and off the candidate list.
 
 ## Migration Plan
 

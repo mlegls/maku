@@ -13,7 +13,7 @@ The former plan assumed a backend-parametric semantic `Dyn<E>` in `model/` would
 - Keep typed compiled execution (`KernelProgram`, `KernelPlan`, generated artifacts) in the kernel/lowering layer.
 - Keep physical columns, state slots, epochs, snapshots, row/spec ids, and driver bindings in runtime/sim storage; `entity-representation-flip` owns that cut.
 - Do not introduce a generic runtime `model::Dyn<E>` unless the post-`ir-unification` code shows two concrete consumers need the same enum and state-schema meaning unchanged.
-- Retain the existing evolve sequencing warning: do not extract `Vel` or `Stages` as stable model nodes before their planned re-expression.
+- Retain the evolve sequencing warning for `Stages` only: do not extract it as a stable model node before its planned re-expression. `Vel`'s target shape is settled (2026-08-10, recorded in `evolve-followups`): a stock integrator evolve over dyn vel meta columns — `Vel` is resolved by dissolution into lib + one kernel plan template, never by extraction into `model/`.
 - Permit the change to close with no move if the reassessment finds the remaining types already have the correct owner.
 
 ## Capabilities
