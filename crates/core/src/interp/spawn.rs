@@ -270,16 +270,30 @@ fn build_entity_specs(
                     }
                 }
             }
-            EntitySpec {
+            // Component columns are per-entity: CONCURRENT integrators in one
+            // tree would cross-wire them (stages segments are exclusive and
+            // may share), and user fields on the same names would be silently
+            // overwritten by the integrator's step.
+            for column in concurrent_integrator_figure_columns(&e.dyn_figure)? {
+                if cols.iter().any(|(name, _)| *name == column)
+                    || dyn_cols.iter().any(|(name, _)| *name == column)
+                {
+                    return Err(format!(
+                        "spawn: :{} is reserved by the motion integrator",
+                        world.symbols.resolve(column).unwrap_or("vel component")
+                    ));
+                }
+            }
+            Ok(EntitySpec {
                 dyn_figure: e.dyn_figure,
                 cache_policy: e.cache_policy,
                 sym_fields,
                 cols,
                 dyn_cols: dyn_cols.into(),
                 collider_projector,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(entities)
 }
 
@@ -375,8 +389,9 @@ pub(crate) fn form_has_rand(f: &Form) -> bool {
 
 pub(crate) fn dyn_has_rand(d: &DynNode) -> bool {
     match d {
-        DynNode::ClosedPt { a, b, .. } | DynNode::Vel { a, b, .. } => {
-            form_has_rand(a) || form_has_rand(b)
+        DynNode::ClosedPt { a, b, .. } => form_has_rand(a) || form_has_rand(b),
+        DynNode::StockIntegrator { data } => {
+            form_has_rand(&data.a) || form_has_rand(&data.b)
         }
         DynNode::RotExpr { form, .. } => form_has_rand(form),
         DynNode::Translate { child, .. } => dyn_has_rand(child),
@@ -544,27 +559,33 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, world: &mut World) -> Rc<DynNode
                 _ => d.clone(),
             }
         }
-        DynNode::Vel { a, b, polar, env, rand, .. } => {
-            match rand.as_deref() {
-                Some(RandCell::Compiled(ex)) => Rc::new(DynNode::Vel {
-                    a: ex.forms[0].clone(),
-                    b: ex.forms[1].clone(),
-                    polar: *polar,
-                    env: env.clone(),
-                    programs: std::cell::OnceCell::from(Some((
-                        ex.programs[0].clone(),
-                        ex.programs[1].clone(),
-                    ))),
-                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
+        DynNode::StockIntegrator { data } => {
+            match data.rand.as_deref() {
+                Some(RandCell::Compiled(ex)) => Rc::new(DynNode::StockIntegrator {
+                    data: Rc::new(StockIntegratorData {
+                        a: ex.forms[0].clone(),
+                        b: ex.forms[1].clone(),
+                        space: data.space,
+                        env: data.env.clone(),
+                        programs: std::cell::OnceCell::from(Some((
+                            ex.programs[0].clone(),
+                            ex.programs[1].clone(),
+                        ))),
+                        rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, world)))),
+                        columns: data.columns,
+                    }),
                 }),
-                Some(_) | None if form_has_rand(a) || form_has_rand(b) => {
-                    Rc::new(DynNode::Vel {
-                        a: subst_rand(a, world),
-                        b: subst_rand(b, world),
-                        polar: *polar,
-                        env: env.clone(),
-                        programs: std::cell::OnceCell::new(),
-                        rand: None,
+                Some(_) | None if form_has_rand(&data.a) || form_has_rand(&data.b) => {
+                    Rc::new(DynNode::StockIntegrator {
+                        data: Rc::new(StockIntegratorData {
+                            a: subst_rand(&data.a, world),
+                            b: subst_rand(&data.b, world),
+                            space: data.space,
+                            env: data.env.clone(),
+                            programs: std::cell::OnceCell::new(),
+                            rand: None,
+                            columns: data.columns,
+                        }),
                     })
                 }
                 _ => d.clone(),

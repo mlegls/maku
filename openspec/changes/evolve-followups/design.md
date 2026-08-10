@@ -170,12 +170,29 @@ oracle card suites, committed immediately):
 
 ## Open Questions
 
-- Column naming: reserved `:vel-x`/`:vel-y` user-visible fields vs
-  slot-private gensym columns (visibility is nice — `b.vel-x` in rules — but
-  collides with user fields; decide at implementation).
-- Whether the stock integrator reuses the existing evolve node + recognized
-  step shape or gets a dedicated compact variant (96-byte guard and recognizer
-  simplicity trade off; measure both).
-- Whether `(vel …)` expansion can stay entirely in prelude lib or needs a tiny
-  engine hook for the elem-fields + motion-slot pairing (prefer lib; hook only
-  if spawn-side recognition demands it).
+All three resolved at implementation (2026-08-10, slice 3):
+
+- Column naming: reserved `:vel-x`/`:vel-y` (grep showed no corpus use).
+  User fields on those names are a spawn error. CONCURRENT integrators in
+  one tree (frame parent+child) are a spawn error — they would cross-wire
+  the shared columns and headings; `stages` segments are mutually exclusive
+  and share them safely (t08's fairy wave is the corpus witness).
+- Representation: a dedicated compact variant (`DynNode::StockIntegrator`
+  with data behind one `Rc`), old `Vel` deleted. 96-byte pin holds.
+- Surface: `sf_vel` remains the construction site producing the recognized
+  shape; the pure prelude-macro face over raw evolve is deferred to the
+  kernel-shrink worklist (`core-lib-stratification`) and must not change
+  the contract.
+
+## Measured (slice 3 A/B, 2026-08-10)
+
+Old-vs-new render-row dumps bit-identical over bowap, polar-demo, cradle,
+spell-2, exploding-stars, and t08 ex2-fairy-wave (300–600 ticks each).
+Wall-only interleaved A/B: cradle at parity; bullets-10k scale bench ~2.3%
+slower (old ~16.9 → new ~17.3 ms/frame median); exploding-stars ~6% slower
+(~32.9 → ~34.6 ms/2000 ticks) — worst case: many tiny short-lived vel
+bullets, where the per-tick component-column writes dominate. Phase probes
+attribute the delta to scan-step (column writes, semantically required) and
+collide-mat (~5ns/row extra from the `Rc` indirection + eager component
+reads in readers). Accepted: the materialization cost is the D2 contract;
+`f32-hot-columns`/dense lanes are the recorded mitigation path.

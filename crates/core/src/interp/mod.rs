@@ -1958,7 +1958,17 @@ pub(crate) fn entity_motion_readers(i: usize, world: &World) -> MotionReaders {
 }
 
 fn entity_motion_readers_inner(i: usize, world: &World) -> MotionReaders {
-    world.entities.row_motion_readers(i)
+    let readers = world.entities.row_motion_readers(i);
+    let Some((columns, slots)) = world.entities.integrator_cols(i) else {
+        return readers;
+    };
+    let (Some(vx), Some(vy)) = (
+        world.col_get_slot_at(slots[0], i),
+        world.col_get_slot_at(slots[1], i),
+    ) else {
+        return readers;
+    };
+    readers.with_components(columns, [vx, vy])
 }
 
 pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, String> {
@@ -4243,13 +4253,21 @@ fn sf_vel(items: &[Form], env: &Env, ctx: &mut Ctx, world: &mut World) -> Result
     if let Some(p) = progs {
         let _ = programs.set(Some((p[0].clone(), p[1].clone())));
     }
-    let node = Rc::new(DynNode::Vel {
-        a,
-        b,
-        polar,
-        env: env.clone(),
-        programs,
-        rand,
+    let columns = [world.intern_col("vel-x"), world.intern_col("vel-y")];
+    let node = Rc::new(DynNode::StockIntegrator {
+        data: Rc::new(StockIntegratorData {
+            a,
+            b,
+            space: if polar {
+                IntegratorComponentSpace::Polar
+            } else {
+                IntegratorComponentSpace::Cartesian
+            },
+            env: env.clone(),
+            programs,
+            rand,
+            columns,
+        }),
     });
     match items.get(2) {
         None => Ok(Val::DynPose(DynPose::pose_node(node))),
@@ -5233,6 +5251,9 @@ mod tests {
         let mut legacy_state = MotionState::default();
         let mut dense_state = MotionState::default();
         let mut dense_n2 = None;
+        let DynNode::StockIntegrator { data } = &**d.node() else { panic!() };
+        let columns = data.columns;
+        let mut dense_components = [0.0, 0.0];
 
         for tick in 0..120 {
             let tau = tick as f64 * dt;
@@ -5240,9 +5261,11 @@ mod tests {
 
             let readers = MotionReaders::for_row_n2(schema.clone(), [dense_n2, None]);
             let mut next_n2 = None;
+            let mut col_writes = Vec::new();
             let mut ignore_dyn = |_, _| {};
             let mut ignore_val = |_, _| {};
             let mut write_n2 = |_, value| next_n2 = Some(value);
+            let mut write_col = |column, value| col_writes.push((column, value));
             let mut step = MotionStepCtx {
                 state: &mut dense_state,
                 sig: &sig,
@@ -5251,14 +5274,19 @@ mod tests {
                 tick_rate: DEFAULT_TICK_RATE,
                 mirror_legacy: false,
                 write_n2: &mut write_n2,
+                write_col: &mut write_col,
                 write_dyn: &mut ignore_dyn,
                 write_val: &mut ignore_val,
             };
             step_motion_in(d.node(), tau, dt, &mut step).unwrap();
             dense_n2 = next_n2;
+            for (column, value) in col_writes {
+                dense_components[usize::from(column == columns[1])] = value;
+            }
 
             let legacy_pose = dyn_pose(&d, tau + dt, &legacy_state, &sig).unwrap();
-            let dense_readers = MotionReaders::for_row_n2(schema.clone(), [dense_n2, None]);
+            let dense_readers = MotionReaders::for_row_n2(schema.clone(), [dense_n2, None])
+                .with_components(columns, dense_components);
             let dense_pose = dyn_pose_in(
                 &d,
                 tau + dt,
@@ -5275,8 +5303,8 @@ mod tests {
         // The b component lowers to an aux program (ChanX/ChanY + Atan2);
         // the driver feeds it the SigEnv's channel value per eval.
         let Val::DynPose(d) = ev("(vel (polar 2 (angle-of (- (live $tgt) pos))))") else { panic!() };
-        let DynNode::Vel { programs, .. } = &**d.node() else { panic!() };
-        let (ap, bp) = programs.get().unwrap().as_ref().unwrap();
+        let DynNode::StockIntegrator { data } = &**d.node() else { panic!() };
+        let (ap, bp) = data.programs.get().unwrap().as_ref().unwrap();
         assert!(ap.aux_free() && !bp.aux_free(), "channel read lowered as aux");
 
         let mut sig = SigEnv::default();
@@ -5291,9 +5319,11 @@ mod tests {
         let p = dyn_pose(&d, 1.0, &st, &sig).unwrap();
         assert!((p.x - 2.0).abs() < 1e-6, "homed toward +x at speed 2: {:?}", p);
         assert!(p.angle_or(90.0).abs() < 15.0, "heading tracks the target: {:?}", p);
-        // a missing channel bails to the interpreter, which errors — parity
+        // Pose reads consume the settled component values from the step;
+        // they do not re-read the channel.
         let empty = SigEnv::default();
-        assert!(dyn_pose(&d, 1.0, &st, &empty).is_err());
+        let settled = dyn_pose(&d, 1.0, &st, &empty).unwrap();
+        assert_eq!(settled.theta, p.theta);
     }
 
     #[test]
@@ -5302,8 +5332,8 @@ mod tests {
         // through the aux slice while the step keeps the interpreted advance
         let Val::DynPose(d) =
             ev("(vel (cart (evolve 30 (fn [s c] (+ s (* 60 (:dt c))))) 0))") else { panic!() };
-        let DynNode::Vel { programs, .. } = &**d.node() else { panic!() };
-        let (ap, _) = programs.get().unwrap().as_ref().unwrap();
+        let DynNode::StockIntegrator { data } = &**d.node() else { panic!() };
+        let (ap, _) = data.programs.get().unwrap().as_ref().unwrap();
         assert!(!ap.aux_free(), "evolve read lowered as aux");
 
         let sig = SigEnv::default();

@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 fn root_chain_vel(node: &Rc<DynNode>) -> Option<&Rc<DynNode>> {
     match &**node {
-        DynNode::Vel { .. } => Some(node),
+        DynNode::StockIntegrator { .. } => Some(node),
         DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
             root_chain_vel(child)
         }
@@ -22,7 +22,7 @@ fn node_name(node: &DynNode) -> &'static str {
         DynNode::Const(_) => "const",
         DynNode::Linear { .. } => "linear",
         DynNode::ClosedPt { .. } => "closed-pt",
-        DynNode::Vel { .. } => "vel",
+        DynNode::StockIntegrator { .. } => "vel",
         DynNode::Translate { .. } => "translate",
         DynNode::Path { .. } => "path",
         DynNode::Frame(..) => "frame",
@@ -59,8 +59,8 @@ fn census(sim: &Sim, label: &str) {
         scanned += 1;
         if let Some(vel) = root_chain_vel(&root) {
             vel_match += 1;
-            if let DynNode::Vel { programs, .. } = &**vel {
-                if let Some(Some((ap, _))) = programs.get() {
+            if let DynNode::StockIntegrator { data } = &**vel {
+                if let Some(Some((ap, _))) = data.programs.get() {
                     vel_compiled += 1;
                     *groups.entry(Rc::as_ptr(ap) as usize).or_default() += 1;
                 }

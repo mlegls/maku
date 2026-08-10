@@ -151,6 +151,11 @@ pub struct EntityStore {
     birth: Vec<u64>,
     motion_birth: Vec<u64>,
     dyn_col_epochs: Vec<Vec<u64>>,
+    /// Component columns of the row's motion integrator plus their resolved
+    /// num-field slots, cached at figure install — readers are per-tick hot
+    /// and must not re-walk the figure tree or hash column names. Slots are
+    /// filled by the World install wrappers (the store cannot see fields).
+    integrator_cols: Vec<Option<([ColName; 2], [usize; 2])>>,
     scanned: Vec<bool>,
     specs: EntitySpecStore,
     sampled_pose: [Vec<Option<Pose>>; 2],
@@ -367,6 +372,7 @@ impl EntityStore {
             birth: Vec::with_capacity(max),
             motion_birth: Vec::with_capacity(max),
             dyn_col_epochs: Vec::with_capacity(max),
+            integrator_cols: Vec::with_capacity(max),
             scanned: Vec::with_capacity(max),
             specs: EntitySpecStore::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
@@ -497,8 +503,21 @@ impl EntityStore {
     }
 
     pub fn set_dyn_figure(&mut self, row: usize, dyn_figure: DynFigure) {
+        if let Some(slot) = self.integrator_cols.get_mut(row) {
+            *slot = integrator_figure_columns(&dyn_figure).map(|names| (names, [usize::MAX; 2]));
+        }
         if let Some(slot) = self.specs.dyn_figure.get_mut(row) {
             *slot = dyn_figure;
+        }
+    }
+
+    pub fn integrator_cols(&self, row: usize) -> Option<([ColName; 2], [usize; 2])> {
+        self.integrator_cols.get(row).copied().flatten()
+    }
+
+    pub fn set_integrator_slots(&mut self, row: usize, slots: [usize; 2]) {
+        if let Some(Some((_, cached))) = self.integrator_cols.get_mut(row) {
+            *cached = slots;
         }
     }
 
@@ -807,6 +826,8 @@ impl EntityStore {
         self.birth[i] = birth;
         self.motion_birth[i] = birth;
         self.dyn_col_epochs[i] = vec![birth; self.specs.dyn_cols[i].len()];
+        self.integrator_cols[i] =
+            integrator_figure_columns(&self.specs.dyn_figure[i]).map(|names| (names, [usize::MAX; 2]));
         self.scanned[i] = scanned;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
@@ -843,6 +864,9 @@ impl EntityStore {
         self.birth.push(birth);
         self.motion_birth.push(birth);
         self.dyn_col_epochs.push(vec![birth; self.specs.dyn_cols[i].len()]);
+        self.integrator_cols.push(
+            integrator_figure_columns(&self.specs.dyn_figure[i]).map(|names| (names, [usize::MAX; 2])),
+        );
         self.scanned.push(scanned);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
@@ -878,6 +902,7 @@ impl Clone for EntityStore {
             birth: self.birth.clone(),
             motion_birth: self.motion_birth.clone(),
             dyn_col_epochs: self.dyn_col_epochs.clone(),
+            integrator_cols: self.integrator_cols.clone(),
             scanned: self.scanned.clone(),
             specs: self.specs.clone(),
             sampled_pose: self.sampled_pose.clone(),
@@ -1242,6 +1267,7 @@ impl World {
             self.entities.birth.truncate(max_entities);
             self.entities.motion_birth.truncate(max_entities);
             self.entities.dyn_col_epochs.truncate(max_entities);
+            self.entities.integrator_cols.truncate(max_entities);
             self.entities.scanned.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
@@ -1302,6 +1328,9 @@ impl World {
         if self.entities.dyn_col_epochs.capacity() < max_entities {
             self.entities.dyn_col_epochs.reserve_exact(max_entities - self.entities.dyn_col_epochs.capacity());
         }
+        if self.entities.integrator_cols.capacity() < max_entities {
+            self.entities.integrator_cols.reserve_exact(max_entities - self.entities.integrator_cols.capacity());
+        }
         if self.entities.scanned.capacity() < max_entities {
             self.entities.scanned.reserve_exact(max_entities - self.entities.scanned.capacity());
         }
@@ -1339,10 +1368,10 @@ impl World {
     ) -> Result<usize, String> {
         let motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
         let scanned = is_scanned_figure(&dyn_figure);
-        if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
+        let row = if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
             self.clear_sym_fields_at(i);
-            Ok(self.entities.reuse_free_row(
+            self.entities.reuse_free_row(
                 slot,
                 dyn_figure,
                 self.tick,
@@ -1352,7 +1381,7 @@ impl World {
                 collider_projector,
                 motion_schema,
                 overrides,
-            ))
+            )
         } else {
             self.entities.push_row(
                 dyn_figure,
@@ -1363,8 +1392,24 @@ impl World {
                 collider_projector,
                 motion_schema,
                 overrides,
-            )
+            )?
+        };
+        self.resolve_integrator_slots(row);
+        Ok(row)
+    }
+
+    /// Fill the row's cached integrator column slots (the entity store
+    /// cannot reach the num-field table). Call after any figure install.
+    pub fn resolve_integrator_slots(&mut self, row: usize) {
+        if let Some((names, _)) = self.entities.integrator_cols(row) {
+            let slots = [self.intern_col_slot(names[0]), self.intern_col_slot(names[1])];
+            self.entities.set_integrator_slots(row, slots);
         }
+    }
+
+    pub fn set_entity_dyn_figure(&mut self, row: usize, dyn_figure: DynFigure) {
+        self.entities.set_dyn_figure(row, dyn_figure);
+        self.resolve_integrator_slots(row);
     }
 
     pub fn cull_at(&mut self, i: usize) {
@@ -1422,6 +1467,16 @@ impl World {
 
     pub fn col_set_sym_at(&mut self, bullet_idx: usize, name: ColName, v: f64) {
         let slot = self.intern_col_slot(name);
+        self.col_set_slot_at(slot, bullet_idx, v);
+    }
+
+    /// Slot-resolved read for hot loops with pre-resolved column slots.
+    pub fn col_get_slot_at(&self, slot: usize, bullet_idx: usize) -> Option<f64> {
+        self.fields.num_values.get(slot)?.get(bullet_idx).copied().flatten()
+    }
+
+    /// Slot-resolved write for hot loops that intern once per batch.
+    pub fn col_set_slot_at(&mut self, slot: usize, bullet_idx: usize, v: f64) {
         if self.entities.get(bullet_idx).is_none() {
             return;
         }

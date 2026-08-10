@@ -2927,9 +2927,17 @@
             v => panic!("bad player channel: {:?}", v),
         };
         assert!((x_wall + 2.0).abs() < 0.05, "parked at the wall: {}", x_wall);
+        let pos_key = sim.world.entities.motion_schema(0).unwrap().n2_keys.iter().copied()
+            .find(|key| matches!(key, MotionStateKey::Node(_)))
+            .unwrap();
+        let at_wall = sim.world.entities.state_n2(0, pos_key).unwrap();
+        assert_eq!(at_wall[0], -2.0, "integrator state itself is clamped each tick");
         // reverse for half a second: must move ~2 units immediately
         inputs.set_num("move-x", 1.0);
-        for _ in 0..60 {
+        sim.step_with(&inputs).unwrap();
+        let first_back = sim.world.entities.state_n2(0, pos_key).unwrap();
+        assert_eq!(first_back[0].to_bits(), (-2.0 + 4.0 / DEFAULT_TICK_RATE).to_bits());
+        for _ in 1..60 {
             sim.step_with(&inputs).unwrap();
         }
         let x_back = match sim.channel_val("player") {
@@ -3500,9 +3508,9 @@
                     DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
                         node = child
                     }
-                    DynNode::Vel { programs, rand, .. } => {
-                        let (ap, bp) = programs.get().unwrap().as_ref().expect("rand vel compiled");
-                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(rand).to_vec());
+                    DynNode::StockIntegrator { data } => {
+                        let (ap, bp) = data.programs.get().unwrap().as_ref().expect("rand vel compiled");
+                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(&data.rand).to_vec());
                     }
                     other => panic!("unexpected node {other:?}"),
                 }
@@ -3549,9 +3557,10 @@
                     DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
                         node = child
                     }
-                    DynNode::Vel { programs, rand, polar, .. } => {
-                        let (ap, bp) = programs.get().unwrap().as_ref().expect("vel compiled");
-                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(rand).to_vec(), *polar);
+                    DynNode::StockIntegrator { data } => {
+                        let (ap, bp) = data.programs.get().unwrap().as_ref().expect("vel compiled");
+                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(&data.rand).to_vec(),
+                            matches!(data.space, IntegratorComponentSpace::Polar));
                     }
                     other => panic!("unexpected node {other:?}"),
                 }
@@ -3616,7 +3625,7 @@
                     DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
                         node = child
                     }
-                    DynNode::Vel { rand, .. } => return caps_of(rand).to_vec(),
+                    DynNode::StockIntegrator { data } => return caps_of(&data.rand).to_vec(),
                     other => panic!("unexpected node {other:?}"),
                 }
             }
@@ -3744,6 +3753,52 @@
         assert_eq!(dyn_field_epoch(&sim, 0, "opacity"), epoch);
         let expected = 1.0 - 0.5 * sim.world.entity_tau(0, sim.world.tick);
         assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
+    }
+
+    /// CONCURRENT integrators in one motion tree would share :vel-x/:vel-y
+    /// and cross-wire columns and headings — spawn fails loudly instead.
+    /// Stages segments are mutually exclusive and may share (t08 fairies).
+    #[test]
+    fn concurrent_integrators_error_at_spawn() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel c[10 0] (vel c[0 10])) {}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("concurrent integrators"), "{err}");
+    }
+
+    /// Sequential integrators across stages segments share columns safely:
+    /// only the active stage steps and writes.
+    #[test]
+    fn staged_integrators_share_columns() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn ((pose c[0 0])
+          (stages
+            (stage 0.05 (vel c[0 -3]))
+            (forever (vel c[0 1.5]))))
+         {}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..12 {
+            sim.step().unwrap();
+        }
+        assert!(sim.world.entities.is_alive(0));
+    }
+
+    /// The integrator's component columns reject user fields on the same
+    /// names — a card writing :vel-x would be silently overwritten.
+    #[test]
+    fn integrator_columns_are_reserved() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel c[10 0]) {:vel-x 5}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let err = sim.step().unwrap_err();
+        assert!(err.contains("reserved by the motion integrator"), "{err}");
     }
 
     /// (soft-cull b dur) is library code: the opacity fade runs on the
@@ -5255,6 +5310,54 @@ fn vel_motion_writes_dense_state_slot() {
     let [x, y] = sim.world.entities.state_n2(0, key).unwrap();
     assert!((x - (3.0 / DEFAULT_TICK_RATE)).abs() < 1e-9, "dense vel x: {x}");
     assert_eq!(y, 0.0);
+}
+
+#[test]
+fn vel_components_materialize_the_values_consumed_by_the_integrator() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel c[(+ 2 t) (- 1 (* 0.5 t))])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    let mut prior = [0.0, 0.0];
+    for _ in 0..5 {
+        sim.step().unwrap();
+        let vx = sim.world.col_get_at(0, "vel-x").unwrap();
+        let vy = sim.world.col_get_at(0, "vel-y").unwrap();
+        let key = sim.world.entities.motion_schema(0).unwrap().n2_keys[0];
+        let next = sim.world.entities.state_n2(0, key).unwrap();
+        assert_eq!(next[0].to_bits(), (prior[0] + vx / DEFAULT_TICK_RATE).to_bits());
+        assert_eq!(next[1].to_bits(), (prior[1] + vy / DEFAULT_TICK_RATE).to_bits());
+        prior = next;
+    }
+}
+
+#[test]
+fn sited_evolve_component_advances_once_and_materializes_its_settled_value() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel p[3 (slew 720 0 90)])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let schema = sim.world.entities.motion_schema(0).unwrap();
+    let site = schema.val_keys.iter().copied()
+        .find(|key| matches!(key, MotionStateKey::ScanSite { .. }))
+        .unwrap();
+    let cell = sim.world.entities.state_val(0, site).unwrap();
+    let Val::Num(angle) = cell.state else { panic!("numeric slew state") };
+    assert_eq!(angle, 6.0);
+    let (s, c) = angle.to_radians().sin_cos();
+    let vx = 3.0 * c;
+    let vy = 3.0 * s;
+    assert_eq!(sim.world.col_get_at(0, "vel-x").unwrap().to_bits(), vx.to_bits());
+    assert_eq!(sim.world.col_get_at(0, "vel-y").unwrap().to_bits(), vy.to_bits());
+    let pos_key = schema.n2_keys.iter().copied()
+        .find(|key| matches!(key, MotionStateKey::Node(_)))
+        .unwrap();
+    let pos = sim.world.entities.state_n2(0, pos_key).unwrap();
+    assert_eq!(pos[0].to_bits(), (vx / DEFAULT_TICK_RATE).to_bits());
+    assert_eq!(pos[1].to_bits(), (vy / DEFAULT_TICK_RATE).to_bits());
 }
 
 #[test]

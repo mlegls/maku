@@ -94,6 +94,14 @@ pub struct Sim {
 
 type MotionBatchKey = (MotionProgramIdentity, MotionProgramIdentity, bool);
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct IntegratorBatchKey {
+    a: MotionProgramIdentity,
+    b: MotionProgramIdentity,
+    source_is_polar: bool,
+    captures: Vec<u64>,
+}
+
 /// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
 /// chain of constant wrappers over one compiled-integrand Vel node step as
 /// lanes of a single batched program run, grouped by full typed program/plan
@@ -105,16 +113,16 @@ struct VelBatchScratch {
     /// Canonical ids are minted only after complete typed program/plan
     /// comparison, so map and last-group lookup stay allocation-free and
     /// never depend on Rc addresses.
-    index: crate::fxhash::FxHashMap<MotionBatchKey, usize>,
+    index: crate::fxhash::FxHashMap<IntegratorBatchKey, usize>,
     /// Contiguous spawn groups normally bypass the map.
-    last: Option<(MotionBatchKey, usize)>,
+    last: Option<(IntegratorBatchKey, usize)>,
     pool: Vec<VelBatchGroup>,
     regs: Vec<f64>,
 }
 
 struct VelBatchGroup {
     plan: VelStepPlan,
-    /// (row, n2 slot) per lane.
+    /// (row, position n2 slot) per lane.
     rows: Vec<(usize, usize)>,
     tau: Vec<f64>,
     pos: Vec<[f64; 2]>,
@@ -155,11 +163,16 @@ impl VelBatchScratch {
         tau: f64,
         pos: [f64; 2],
     ) {
-        let key = (plan.ap.identity(), plan.bp.identity(), plan.polar);
-        let idx = match self.last {
-            Some((last_key, idx)) if last_key == key => idx,
+        let key = IntegratorBatchKey {
+            a: plan.ap.identity(),
+            b: plan.bp.identity(),
+            source_is_polar: plan.polar,
+            captures: plan.caps.iter().map(|value| value.to_bits()).collect(),
+        };
+        let idx = match &self.last {
+            Some((last_key, idx)) if *last_key == key => *idx,
             _ => {
-                let idx = *self.index.entry(key).or_insert_with(|| {
+                let idx = *self.index.entry(key.clone()).or_insert_with(|| {
                     let owned = plan.to_plan();
                     let mut group = self.pool.pop().unwrap_or_else(|| VelBatchGroup {
                         plan: owned.clone(),
@@ -314,18 +327,6 @@ impl ClosedPoseScratch {
 /// whole schema being that single n2 cell at slot 0 — resolved without
 /// hashing. Anything else takes the keyed lookup.
 fn vel_chain_n2_slot(schema: &MotionStateSchema, vel_ptr: usize) -> Option<usize> {
-    if schema.n2_keys.len() == 1 && schema.dyn_keys.is_empty() && schema.val_keys.is_empty() {
-        debug_assert_eq!(
-            schema
-                .node_ids
-                .get(&vel_ptr)
-                .and_then(|id| schema.n2_slots.get(&MotionStateKey::Node(*id)))
-                .map(|s| s.0 as usize),
-            Some(0),
-            "single-cell schema's n2 slot is not the Vel integrator"
-        );
-        return Some(0);
-    }
     let id = schema.node_ids.get(&vel_ptr).copied()?;
     Some(schema.n2_slots.get(&MotionStateKey::Node(id))?.0 as usize)
 }
@@ -696,7 +697,7 @@ impl Sim {
     }
 
     fn motion_readers_inner(&self, row: usize) -> MotionReaders {
-        self.world.entities.row_motion_readers(row)
+        entity_motion_readers(row, &self.world)
     }
 
     /// pos_only pose fast path: a wrapper-chain-over-Vel row's position is
@@ -1001,7 +1002,8 @@ impl Sim {
         if self.world.entities.overrides(row).is_some() { return None; }
         let plan = vel_step_plan(dyn_figure, sig)?;
         let schema = self.world.entities.motion_schema(row)?;
-        let slot = vel_chain_n2_slot(schema, Rc::as_ptr(plan.vel) as usize)?;
+        let ptr = Rc::as_ptr(plan.vel) as usize;
+        let slot = vel_chain_n2_slot(schema, ptr)?;
         Some((plan, slot))
     }
 
@@ -1019,6 +1021,11 @@ impl Sim {
         let mut regs = std::mem::take(&mut self.vel_batch.regs);
         for g in &mut groups {
             let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
+            // component column slots resolved once per group, not per lane
+            let col_slots = [
+                self.world.intern_col_slot(g.plan.columns[0]),
+                self.world.intern_col_slot(g.plan.columns[1]),
+            ];
             run_lanes(g.plan.ap.backend(), 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.va);
             run_lanes(g.plan.bp.backend(), 0.0, &g.tau, &g.pos, &g.caps, &mut regs, &mut g.vb);
             for l in 0..g.rows.len() {
@@ -1047,6 +1054,8 @@ impl Sim {
                 self.world
                     .entities
                     .set_state_n2_at_slot(slot, row, [x + vx * dt, y + vy * dt]);
+                self.world.col_set_slot_at(col_slots[0], row, vx);
+                self.world.col_set_slot_at(col_slots[1], row, vy);
             }
             if let Some(f) = probe {
                 crate::interp::profile::close("dyn:vel-batch", f);
@@ -1250,7 +1259,7 @@ impl Sim {
         self.world.entities.set_motion_schema(row, motion_schema);
         self.world.entities.set_sampled_pose(row, self.world.tick, Some(anchor));
         self.world.entities.set_scanned(row, scanned);
-        self.world.entities.set_dyn_figure(row, dyn_figure);
+        self.world.set_entity_dyn_figure(row, dyn_figure);
         self.world.entities.reset_motion_birth(row, self.world.tick);
         Ok(())
     }
@@ -2058,8 +2067,10 @@ impl Sim {
                 let readers = self.motion_readers(i);
                 let mut state = MotionState::default();
                 let mut n2_writes = Vec::new();
+                let mut col_writes = Vec::new();
                 let mut val_writes = Vec::new();
                 let mut write_n2 = |key, value| n2_writes.push((key, value));
+                let mut write_col = |column, value| col_writes.push((column, value));
                 let mut ignore_dyn = |_, _| {};
                 let mut write_val = |key, value| val_writes.push((key, value));
                 let tick_rate = self.world.tick_rate();
@@ -2074,6 +2085,7 @@ impl Sim {
                     tick_rate,
                     mirror_legacy: false,
                     write_n2: &mut write_n2,
+                    write_col: &mut write_col,
                     write_dyn: &mut ignore_dyn,
                     write_val: &mut write_val,
                 };
@@ -2083,6 +2095,9 @@ impl Sim {
                 }
                 for (key, value) in val_writes {
                     self.world.entities.set_state_val(i, key, value);
+                }
+                for (column, value) in col_writes {
+                    self.world.col_set_sym_at(i, column, value);
                 }
             }
         }

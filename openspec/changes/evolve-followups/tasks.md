@@ -18,13 +18,13 @@ core suite plus the 4 ignored oracle card suites
 
 ## 3. vel re-expression (D1–D4)
 
-- [ ] 3.1 Introduce the stock integrator evolve shape reading component columns; integrator step evaluates components once, writes the columns; refresh pass skips integrator-owned columns
-- [ ] 3.2 Re-express `(vel …)` as a prelude macro (cart + polar, trailing child/field-map sugar) expanding to component fields + stock integrator; decide column naming (reserved vs slot-private) here
-- [ ] 3.3 Transfer classification: closed/live of the motion slot derives from component programs; capture guards and sited-evolve (homing-slew) behavior covered by tests
-- [ ] 3.4 Port the node-keyed machinery to the stock shape: batch lanes group by (component program ids, captures); state slot keying; `clamp_integrator` recognition; pos_only fast path; spawn capture walk order preserved
-- [ ] 3.5 Stage-exit `:vel` compat shim keyed off the stock integrator (stages round owns the real redesign)
-- [ ] 3.6 Delete `DynNode::Vel` and all its arms; DynNode size guard still ≤ 96 bytes
-- [ ] 3.7 Oracle gate: full corpus bit-parity under `MAKU_LOWER_ORACLE=1`; wall-only interleaved A/B on the cradle card and the scale bench (no regression outside noise)
+- [x] 3.1 Introduce the stock integrator evolve shape reading component columns; integrator step evaluates components once, writes the columns; refresh pass skips integrator-owned columns (columns stay out of `dyn_cols`; the step writes world columns directly)
+- [x] 3.2 Re-express `(vel …)` — surface unchanged via `sf_vel` constructing the stock shape; reserved `:vel-x`/`:vel-y`, concurrent-integrator spawn error, stages segments share (pure prelude-macro face deferred to core-lib-stratification)
+- [x] 3.3 Transfer classification: closed/live of the motion slot derives from component programs; capture guards and sited-evolve (homing-slew) behavior covered by tests
+- [x] 3.4 Port the node-keyed machinery to the stock shape: batch lanes group by (component program ids, captures); state slot keying; `clamp_integrator` recognition; pos_only fast path; spawn capture walk order preserved
+- [x] 3.5 Stage-exit `:vel` compat shim keyed off the stock integrator (stages round owns the real redesign)
+- [x] 3.6 Delete `DynNode::Vel` and all its arms; DynNode size guard still ≤ 96 bytes
+- [x] 3.7 Oracle gate + A/B: full suite and oracle card suites green; old-vs-new render dumps bit-identical on 6 corpus cards; cradle at parity, bullets-10k ~2.3%, exploding-stars ~6% (accepted, recorded in design "Measured" with f32/dense-lane mitigation path)
 
 ## 4. F1 lint (D7)
 

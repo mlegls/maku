@@ -27,6 +27,8 @@ pub struct MotionNodeId(pub u32);
 pub enum MotionStateKey {
     /// Stable lowered node id for dense entity state.
     Node(MotionNodeId),
+    /// The stock integrator's current-tick evaluated Cartesian components.
+    IntegratorComponents(MotionNodeId),
     /// Expression-local stateful sites under a scanned node. These are
     /// discovered from sited evolves during expression lowering.
     ScanSite { base: MotionNodeId, index: u32 },
@@ -174,10 +176,23 @@ enum ReaderBacking {
 #[derive(Clone)]
 pub struct MotionReaders {
     backing: ReaderBacking,
+    components: Option<([ColName; 2], [f64; 2])>,
     pub node_ids: Rc<RefCell<FxHashMap<usize, MotionNodeId>>>,
 }
 
 impl MotionReaders {
+    pub fn component(&self, column: ColName) -> Option<f64> {
+        let (names, values) = self.components?;
+        if names[0] == column { Some(values[0]) }
+        else if names[1] == column { Some(values[1]) }
+        else { None }
+    }
+
+    pub fn with_components(mut self, names: [ColName; 2], values: [f64; 2]) -> MotionReaders {
+        self.components = Some((names, values));
+        self
+    }
+
     pub fn n2(&self, key: MotionStateKey) -> Option<[f64; 2]> {
         match &self.backing {
             ReaderBacking::Empty => None,
@@ -222,6 +237,7 @@ impl MotionReaders {
     pub fn legacy() -> MotionReaders {
         MotionReaders {
             backing: ReaderBacking::Empty,
+            components: None,
             node_ids: Rc::new(RefCell::new(FxHashMap::default())),
         }
     }
@@ -229,13 +245,14 @@ impl MotionReaders {
     /// Readers for a row whose schema holds no state cells — the common
     /// stateless-bullet case: no snapshot, just the shared node-id map.
     pub fn stateless(node_ids: Rc<RefCell<FxHashMap<usize, MotionNodeId>>>) -> MotionReaders {
-        MotionReaders { backing: ReaderBacking::Empty, node_ids }
+        MotionReaders { backing: ReaderBacking::Empty, components: None, node_ids }
     }
 
     pub(crate) fn for_row_snapshot(snapshot: RowStateSnapshot) -> MotionReaders {
         let node_ids = snapshot.schema.shared_node_ids();
         MotionReaders {
             backing: ReaderBacking::Row(Rc::new(snapshot)),
+            components: None,
             node_ids,
         }
     }
@@ -249,6 +266,7 @@ impl MotionReaders {
         let node_ids = schema.shared_node_ids();
         MotionReaders {
             backing: ReaderBacking::RowN2 { schema, n2 },
+            components: None,
             node_ids,
         }
     }
@@ -322,6 +340,7 @@ pub struct MotionStepCtx<'a> {
     pub tick_rate: f64,
     pub mirror_legacy: bool,
     pub write_n2: &'a mut dyn FnMut(MotionStateKey, [f64; 2]),
+    pub write_col: &'a mut dyn FnMut(ColName, f64),
     pub write_dyn: &'a mut dyn FnMut(MotionStateKey, DynPose),
     pub write_val: &'a mut dyn FnMut(MotionStateKey, EvolveCell),
 }
@@ -369,6 +388,11 @@ pub(crate) fn state_key_for_node(ptr: usize, readers: &MotionReaders) -> MotionS
         return MotionStateKey::Node(id);
     }
     panic!("motion node has no stable lowered id for pointer {ptr:#x}")
+}
+
+fn integrator_component_key(ptr: usize, readers: &MotionReaders) -> MotionStateKey {
+    let MotionStateKey::Node(id) = state_key_for_node(ptr, readers) else { unreachable!() };
+    MotionStateKey::IntegratorComponents(id)
 }
 
 /// Rand-as-capture-slots (compiled-dyn milestone B, input slots): a node's
@@ -648,15 +672,9 @@ pub enum DynNode {
         programs: OnceCell<Option<(Rc<MotionProgram>, Rc<MotionProgram>)>>,
         rand: Option<Rc<RandCell>>,
     },
-    /// Integrated velocity (Scanned): components over slot-bound t.
-    Vel {
-        a: Form,
-        b: Form,
-        polar: bool,
-        env: Env,
-        programs: OnceCell<Option<(Rc<MotionProgram>, Rc<MotionProgram>)>>,
-        rand: Option<Rc<RandCell>>,
-    },
+    /// The recognized stock evolve `p += v·dt`. Component evaluation and
+    /// materialization are owned by this node's step.
+    StockIntegrator { data: Rc<StockIntegratorData> },
     /// Point-translation (the `+` of the two-op algebra): θ untouched.
     Translate { dx: f64, dy: f64, child: Rc<DynNode> },
     /// Sample a curve dyn at u = progress(t). This is the point-motion
@@ -689,6 +707,29 @@ pub enum DynNode {
     /// SCANNED.md's `stages`: segment list with per-entity (idx, epoch) state.
     /// Closure segments are lowered at construction with fixed exit-pose cells.
     Stages { segs: Vec<StageSeg> },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum IntegratorComponentSpace {
+    Cartesian,
+    Polar,
+}
+
+#[derive(Debug)]
+pub struct StockIntegratorData {
+    pub a: Form,
+    pub b: Form,
+    pub space: IntegratorComponentSpace,
+    pub env: Env,
+    pub programs: OnceCell<Option<(Rc<MotionProgram>, Rc<MotionProgram>)>>,
+    pub rand: Option<Rc<RandCell>>,
+    pub columns: [ColName; 2],
+}
+
+impl StockIntegratorData {
+    fn source_is_polar(&self) -> bool {
+        matches!(self.space, IntegratorComponentSpace::Polar)
+    }
 }
 
 /// `(evolve init step)` — the kernel's stateful signal constructor.
@@ -900,7 +941,7 @@ fn seed_dyn_node_ids_with_ptr(
         | DynNode::Linear { .. }
         | DynNode::Live { .. }
         | DynNode::LiveStream { .. }
-        | DynNode::Vel { .. }
+        | DynNode::StockIntegrator { .. }
         | DynNode::ClosedPt { .. }
         | DynNode::FnPose(_)
         | DynNode::Evolve(_)
@@ -912,10 +953,10 @@ pub fn collect_node_state(node: &Rc<DynNode>, schema: &mut MotionStateSchema) {
     let base = Rc::as_ptr(node) as usize;
     let node_id = schema.intern_node(base);
     match &**node {
-        DynNode::Vel { a, b, .. } => {
+        DynNode::StockIntegrator { data } => {
             schema.intern_n2(MotionStateKey::Node(node_id));
-            let index = collect_scan_sites(a, node_id, 0, schema);
-            collect_scan_sites(b, node_id, index, schema);
+            let index = collect_scan_sites(&data.a, node_id, 0, schema);
+            collect_scan_sites(&data.b, node_id, index, schema);
         }
         DynNode::ClosedPt { a, b, .. } => {
             let index = collect_scan_sites(a, node_id, 0, schema);
@@ -1312,12 +1353,13 @@ thread_local! {
 /// can run as lanes of one batched program run.
 #[derive(Clone)]
 pub struct VelStepPlan {
-    /// The Vel node itself: its address keys the n2 state slot, and the
-    /// oracle re-runs its integrand through the interpreter.
+    /// The stock node itself: its lowered id keys the state slots, and the
+    /// oracle re-runs its components through the interpreter.
     pub vel: Rc<DynNode>,
     pub ap: Rc<MotionProgram>,
     pub bp: Rc<MotionProgram>,
     pub polar: bool,
+    pub columns: [ColName; 2],
 }
 
 /// A borrowed classification — the per-row scan only clones the Rcs when a
@@ -1328,6 +1370,7 @@ pub struct VelStepPlanRef<'a> {
     pub ap: &'a Rc<MotionProgram>,
     pub bp: &'a Rc<MotionProgram>,
     pub polar: bool,
+    pub columns: [ColName; 2],
     pub caps: &'a [f64],
 }
 
@@ -1338,6 +1381,7 @@ impl VelStepPlanRef<'_> {
             ap: self.ap.clone(),
             bp: self.bp.clone(),
             polar: self.polar,
+            columns: self.columns,
         }
     }
 }
@@ -1350,9 +1394,9 @@ pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlan
     loop {
         match &**node {
             DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
-            DynNode::Vel { a, b, polar, env, programs, rand } => {
-                let (ap, bp) = programs
-                    .get_or_init(|| lower_motion_program_pair(a, b, env, sig, true, true))
+            DynNode::StockIntegrator { data } => {
+                let (ap, bp) = data.programs
+                    .get_or_init(|| lower_motion_program_pair(&data.a, &data.b, &data.env, sig, true, true))
                     .as_ref()?;
                 // aux programs never batch: the step must run the
                 // interpreted scan advance, and channel fetches are
@@ -1360,7 +1404,14 @@ pub fn vel_step_plan<'a>(fig: &'a DynFigure, sig: &SigEnv) -> Option<VelStepPlan
                 if !ap.aux_free() || !bp.aux_free() {
                     return None;
                 }
-                return Some(VelStepPlanRef { vel: node, ap, bp, polar: *polar, caps: caps_of(rand) });
+                return Some(VelStepPlanRef {
+                    vel: node,
+                    ap,
+                    bp,
+                    polar: data.source_is_polar(),
+                    columns: data.columns,
+                    caps: caps_of(&data.rand),
+                });
             }
             _ => return None,
         }
@@ -1414,7 +1465,7 @@ pub fn vel_chain_ptr(fig: &DynFigure) -> Option<usize> {
     loop {
         match &**node {
             DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => node = child,
-            DynNode::Vel { .. } => return Some(Rc::as_ptr(node) as usize),
+            DynNode::StockIntegrator { .. } => return Some(Rc::as_ptr(node) as usize),
             _ => return None,
         }
     }
@@ -1448,14 +1499,14 @@ pub fn oracle_check_vel_step(
     readers: &MotionReaders,
     tick_rate: f64,
 ) -> Result<(), String> {
-    let DynNode::Vel { a, b, polar, env, rand, .. } = vel else {
+    let DynNode::StockIntegrator { data } = vel else {
         return Ok(());
     };
-    let (a, b) = &oracle_forms(a, b, caps_of(rand));
+    let (a, b) = &oracle_forms(&data.a, &data.b, caps_of(&data.rand));
     let key = vel as *const DynNode as usize;
     let mut state = MotionState::default();
     let ((ivx, ivy), _) = advance_sites_with_writes(&mut state, key, dt, readers.clone(), false, |scan| {
-        eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some(pos), tick_rate)
+        eval_pt_at_rate(a, b, data.source_is_polar(), &data.env, sig, tau, 0.0, Some(scan), Some(pos), tick_rate)
     })?;
     assert_num_close("vel-batch/a", a, got.0, ivx);
     assert_num_close("vel-batch/b", b, got.1, ivy);
@@ -1642,9 +1693,9 @@ fn dyn_node_name(d: &DynNode) -> &'static str {
             Some(Some(_)) => "dyn:closed-pt-c",
             _ => "dyn:closed-pt",
         },
-        DynNode::Vel { programs, .. } => match programs.get() {
-            Some(Some(_)) => "dyn:vel-c",
-            _ => "dyn:vel",
+        DynNode::StockIntegrator { data } => match data.programs.get() {
+            Some(Some(_)) => "dyn:stock-integrator-c",
+            _ => "dyn:stock-integrator",
         },
         DynNode::Translate { .. } => "dyn:translate",
         DynNode::Path { .. } => "dyn:path",
@@ -1765,7 +1816,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             )?;
             Ok(Pose::oriented(x, y, (y2 - y).atan2(x2 - x).to_degrees()))
         }
-        DynNode::Vel { a, b, polar, env, programs, rand } => {
+        DynNode::StockIntegrator { data } => {
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
             let [x, y] = readers.n2(dense_key)
@@ -1775,70 +1826,19 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 })
                 .unwrap_or([0.0, 0.0]);
             if !ctx.need_theta {
-                // (x, y) come from the integrator state; the integrand
-                // eval below only feeds the heading.
                 return Ok(Pose::point(x, y));
             }
-            if let Some((ap, bp)) = programs
-                .get_or_init(|| lower_motion_program_pair(a, b, env, sig, true, true))
-                .as_ref()
-            {
-                // aux values (scan cells, channels) fetch per eval; a
-                // missing/mistyped value bails to the interpreted path
-                let fetched = AUX_A.with(|aa| {
-                    AUX_B.with(|ab| {
-                        let (mut aa, mut ab) = (aa.borrow_mut(), ab.borrow_mut());
-                        if !fetch_aux(ap, key, state, sig, readers, &mut aa)
-                            || !fetch_aux(bp, key, state, sig, readers, &mut ab)
-                        {
-                            return None;
-                        }
-                        Some(eval_motion_program_pair(
-                            ap,
-                            bp,
-                            *polar,
-                            tau,
-                            u,
-                            Some((x, y)),
-                            caps_of(rand),
-                            &aa,
-                            &ab,
-                        ))
-                    })
-                });
-                if let Some((vx, vy)) = fetched {
-                    if oracle_enabled() {
-                        let (a, b) = &oracle_forms(a, b, caps_of(rand));
-                        let (ivx, ivy) = eval_pt_at_rate(
-                            a,
-                            b,
-                            *polar,
-                            env,
-                            sig,
-                            tau,
-                            u,
-                            Some(read_scan_in(state, key, readers.clone())),
-                            Some((x, y)),
-                            tick_rate,
-                        )?;
-                        assert_num_close("vel/a", a, vx, ivx);
-                        assert_num_close("vel/b", b, vy, ivy);
-                    }
-                    return Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()));
-                }
-            }
-            let (vx, vy) = eval_pt_at_rate(
-                a,
-                b,
-                *polar,
-                env,
-                sig,
-                tau,
-                u,
-                Some(read_scan_in(state, key, readers.clone())),
-                Some((x, y)),
-                tick_rate,
-            )?;
+            let component_key = integrator_component_key(key, readers);
+            let [vx, vy] = match (
+                readers.component(data.columns[0]),
+                readers.component(data.columns[1]),
+            ) {
+                (Some(vx), Some(vy)) => [vx, vy],
+                _ => match state.get(&component_key) {
+                    Some(Cell::N(v)) => *v,
+                    _ => [0.0, 0.0],
+                },
+            };
             Ok(Pose::oriented(x, y, vy.atan2(vx).to_degrees()))
         }
         DynNode::Live { channel } => {
@@ -2031,6 +2031,7 @@ pub fn step_motion(
         tick_rate: TickTiming::default().rate(),
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
+        write_col: &mut |_, _| {},
         write_dyn: &mut ignore_dyn,
         write_val: &mut ignore_val,
     };
@@ -2044,15 +2045,19 @@ pub fn step_motion_in(
     ctx: &mut MotionStepCtx<'_>,
 ) -> Result<(), String> {
     match d {
-        DynNode::Vel { a, b, polar, env, programs, rand } => {
+        DynNode::StockIntegrator { data } => {
+            let (a, b, env, programs, rand) = (&data.a, &data.b, &data.env, &data.programs, &data.rand);
+            let polar = data.source_is_polar();
             let key = d as *const DynNode as usize;
             let dense_key = ctx.node_key(key);
+            let component_key = integrator_component_key(key, ctx.readers);
             let state = &mut *ctx.state;
             let sig = ctx.sig;
             let readers = ctx.readers;
             let tick_rate = ctx.tick_rate;
             let mirror_legacy = ctx.mirror_legacy;
             let write_n2 = &mut *ctx.write_n2;
+            let write_col = &mut *ctx.write_col;
             let write_val = &mut *ctx.write_val;
             let [x, y] = readers.n2(dense_key)
                 .or_else(|| match state.get(&dense_key) {
@@ -2070,11 +2075,11 @@ pub fn step_motion_in(
                 .filter(|(ap, bp)| ap.aux_free() && bp.aux_free())
             {
                 let (vx, vy) =
-                    eval_motion_program_pair(ap, bp, *polar, tau, 0.0, Some((x, y)), caps_of(rand), &[], &[]);
+                    eval_motion_program_pair(ap, bp, polar, tau, 0.0, Some((x, y)), caps_of(rand), &[], &[]);
                 if oracle_enabled() {
                     let (a, b) = &oracle_forms(a, b, caps_of(rand));
                     let ((ivx, ivy), _) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                        eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
+                        eval_pt_at_rate(a, b, polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
                     })?;
                     assert_num_close("vel-step/a", a, vx, ivx);
                     assert_num_close("vel-step/b", b, vy, ivy);
@@ -2082,7 +2087,7 @@ pub fn step_motion_in(
                 (vx, vy)
             } else {
                 let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                    eval_pt_at_rate(a, b, *polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
+                    eval_pt_at_rate(a, b, polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
                 })?;
                 for (key, value) in writes.n2 {
                     write_n2(key, value);
@@ -2095,11 +2100,14 @@ pub fn step_motion_in(
             let next = [x + vx * dt, y + vy * dt];
             // the state map is only read back on the legacy path (Empty
             // readers); the sim path reads through the snapshot and applies
-            // the buffered write_n2 to the world's columns
+            // the buffered writes to the world's columns
             if mirror_legacy {
+                state.insert(component_key, Cell::N([vx, vy]));
                 state.insert(dense_key, Cell::N(next));
             }
             write_n2(dense_key, next);
+            write_col(data.columns[0], vx);
+            write_col(data.columns[1], vy);
             Ok(())
         }
         DynNode::RotExpr { form, env, program, rand: _ } => {
@@ -2298,6 +2306,7 @@ pub fn step_dyn_figure(
         tick_rate: TickTiming::default().rate(),
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
+        write_col: &mut |_, _| {},
         write_dyn: &mut ignore_dyn,
         write_val: &mut ignore_val,
     };
@@ -2332,7 +2341,7 @@ pub(crate) fn clamp_integrator(
     write_n2: &mut dyn FnMut(MotionStateKey, [f64; 2]),
 ) {
     match &**d {
-        DynNode::Vel { .. } => {
+        DynNode::StockIntegrator { .. } => {
             let key = Rc::as_ptr(d) as *const DynNode as usize;
             let dense_key = state_key_for_node(key, readers);
             if let Some([x, y]) = match state.get(&dense_key) {
@@ -2422,9 +2431,101 @@ pub(crate) fn advance_sites_with_writes<T>(
     r.map(|value| (value, ScanWrites { n2: io.n2_writes, val: io.val_writes }))
 }
 
+pub fn integrator_columns(d: &DynNode) -> Option<[ColName; 2]> {
+    match d {
+        DynNode::StockIntegrator { data } => Some(data.columns),
+        DynNode::Path { curve, .. }
+        | DynNode::Translate { child: curve, .. }
+        | DynNode::ConstFrame { child: curve, .. }
+        | DynNode::Clamp { child: curve, .. } => integrator_columns(curve),
+        DynNode::Stages { segs } => segs.iter().find_map(|seg| {
+            let StageMake::Ready(d) = &seg.make;
+            integrator_columns(d.node())
+        }),
+        DynNode::Frame(a, b) => integrator_columns(a).or_else(|| integrator_columns(b)),
+        _ => None,
+    }
+}
+
+pub fn integrator_figure_columns(d: &DynFigure) -> Option<[ColName; 2]> {
+    integrator_columns(d.pose_dyn()).or_else(|| {
+        d.curve().and_then(|curve| match &curve.eval {
+            CurveEval::Expr(shape) => integrator_columns(shape.node()),
+            CurveEval::Straight => None,
+        })
+    })
+}
+
+/// Columns claimed by integrators that can be ACTIVE at the same instant.
+/// Stages segments are mutually exclusive, so integrators in different
+/// segments may share component columns (only the active one steps and
+/// writes); concurrent claims (Frame parent+child, both Frame sides) would
+/// cross-wire columns and headings and are an error.
+pub fn concurrent_integrator_columns(d: &DynNode) -> Result<Vec<ColName>, String> {
+    fn merge(mut a: Vec<ColName>, b: Vec<ColName>, concurrent: bool) -> Result<Vec<ColName>, String> {
+        for column in b {
+            if a.contains(&column) {
+                if concurrent {
+                    return Err(
+                        "spawn: concurrent integrators in one motion tree are not supported \
+                         (their component columns would collide)"
+                            .into(),
+                    );
+                }
+            } else {
+                a.push(column);
+            }
+        }
+        Ok(a)
+    }
+    match d {
+        DynNode::StockIntegrator { data } => Ok(data.columns.to_vec()),
+        DynNode::Path { curve, .. } => concurrent_integrator_columns(curve),
+        DynNode::Stages { segs } => {
+            let mut out = Vec::new();
+            for seg in segs {
+                let StageMake::Ready(d) = &seg.make;
+                out = merge(out, concurrent_integrator_columns(d.node())?, false)?;
+            }
+            Ok(out)
+        }
+        DynNode::Translate { child, .. }
+        | DynNode::ConstFrame { child, .. }
+        | DynNode::Clamp { child, .. } => concurrent_integrator_columns(child),
+        DynNode::Frame(a, b) => merge(
+            concurrent_integrator_columns(a)?,
+            concurrent_integrator_columns(b)?,
+            true,
+        ),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Validates concurrency and returns every column any integrator in the
+/// figure claims (for reserved-name checks) without building `DynNum`s.
+pub fn concurrent_integrator_figure_columns(d: &DynFigure) -> Result<Vec<ColName>, String> {
+    let mut pose = concurrent_integrator_columns(d.pose_dyn())?;
+    if let Some(curve) = d.curve() {
+        if let CurveEval::Expr(shape) = &curve.eval {
+            let curve_cols = concurrent_integrator_columns(shape.node())?;
+            for column in curve_cols {
+                if pose.contains(&column) {
+                    return Err(
+                        "spawn: concurrent integrators in one motion tree are not supported \
+                         (their component columns would collide)"
+                            .into(),
+                    );
+                }
+                pose.push(column);
+            }
+        }
+    }
+    Ok(pose)
+}
+
 pub fn is_scanned(d: &DynNode) -> bool {
     match d {
-        DynNode::Vel { .. }
+        DynNode::StockIntegrator { .. }
         | DynNode::RotExpr { .. }
         | DynNode::Stages { .. }
         | DynNode::Path { .. }

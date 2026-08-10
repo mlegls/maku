@@ -1,17 +1,24 @@
 ## ADDED Requirements
 
 ### Requirement: vel is the stock integrator evolve over component columns
-`vel` SHALL be a prelude macro, not an engine node: its expansion installs the
-component expressions as dyn entity field columns and sets the motion slot to
-the single stock integrator evolve `p(τ+dt) = p(τ) + v·dt` reading those
-columns. Polar components SHALL convert polar→cart inside the component
-programs, keeping exactly one recognized integrator shape. Position remains a
-per-slot stateful dyn: epochs, closed/live classification, and segment history
-are unchanged by the re-expression. The closed/live classification of the
-motion slot SHALL derive from the component programs (all-closed components →
-replayable exactly as before; channel-reading components → live). Spatial
-`clamp` SHALL continue to compose inside the integrator step (state clamped
-per tick, no wind-up).
+`vel` SHALL denote the single stock integrator evolve
+`p(τ+dt) = p(τ) + v·dt` over per-entity component columns
+(`:vel-x`/`:vel-y`): the surface form constructs the one recognized
+integrator shape whose components are dyn programs and whose settled values
+are readable entity columns. (The engine constructs the recognized shape
+directly from the `vel` surface form; a pure prelude-macro face over raw
+`evolve` is deferred to the kernel-shrink worklist and must not change this
+contract.) The component columns are RESERVED: user fields on those names
+are a spawn error, and CONCURRENT integrators in one motion tree (frame
+parent+child) are a spawn error — `stages` segments are mutually exclusive
+and SHALL share the columns (only the active segment steps and writes).
+Polar components convert polar→cart inside the integrator's component
+evaluation. Position remains a per-slot stateful dyn: epochs, closed/live
+classification, and segment history are unchanged by the re-expression. The
+closed/live classification of the motion slot SHALL derive from the
+component programs (all-closed components → replayable exactly as before;
+channel-reading components → live). Spatial `clamp` SHALL continue to
+compose inside the integrator step (state clamped per tick, no wind-up).
 
 #### Scenario: Surface and behavior are unchanged
 - **WHEN** a card uses `(vel c[vx vy])`, `(vel p[r θ])`, or the trailing
@@ -28,6 +35,17 @@ per tick, no wind-up).
 - **WHEN** a `clamp` wraps a vel-shaped motion
 - **THEN** the clamp applies to integrator state each tick (no wind-up),
   recognized from the stock integrator shape rather than a `Vel` node
+
+#### Scenario: Concurrent integrators fail loudly
+- **WHEN** a motion tree carries two integrators active at the same instant
+  (e.g. a `vel` frame with a `vel` child)
+- **THEN** spawn errors instead of silently cross-wiring their shared
+  component columns
+
+#### Scenario: Staged integrators share columns
+- **WHEN** different `stages` segments each use `vel`
+- **THEN** the card loads and runs — only the active segment's integrator
+  steps and writes the component columns
 
 ### Requirement: The integrator owns one component evaluation per tick
 Vel component programs SHALL be evaluated exactly once per tick, during the
