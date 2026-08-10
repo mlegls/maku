@@ -270,7 +270,7 @@ pub enum NumDynRepr {
     /// A spawn-meta signal shared by a spawn group: an array-valued result
     /// binds per element with the style-axis rules (§5/F15), selected by
     /// the element's repeater path / flat index captured at spawn.
-    AxisSel { form: Form, env: Env, path: Rc<[(usize, usize)]>, flat: usize },
+    AxisSel { form: Form, env: Env },
 }
 
 #[derive(Debug, Clone)]
@@ -344,15 +344,10 @@ impl Dyn<f64> {
 
     /// The same signal bound to one spawn element: array results select
     /// by the element's axis position instead of erroring.
-    pub fn with_axis(&self, path: &[(usize, usize)], flat: usize) -> DynNum {
+    pub fn with_axis(&self) -> DynNum {
         match &self.repr {
             NumDynRepr::Expr { form, env } => Dyn {
-                repr: NumDynRepr::AxisSel {
-                    form: form.clone(),
-                    env: env.clone(),
-                    path: path.into(),
-                    flat,
-                },
+                repr: NumDynRepr::AxisSel { form: form.clone(), env: env.clone() },
             },
             _ => self.clone(),
         }
@@ -423,6 +418,43 @@ impl Dyn<Figure> {
         match &self.repr {
             FigureDynRepr::Curve { curve, .. } => Some(curve),
             FigureDynRepr::Pose(_) => None,
+        }
+    }
+
+    pub fn row_framed(&self) -> DynFigure {
+        match &self.repr {
+            FigureDynRepr::Pose(d) => {
+                DynFigure::pose_node(Rc::new(DynNode::RowFrame(d.node().clone())))
+            }
+            FigureDynRepr::Curve { frame, curve } => DynFigure::figure_curve(
+                DynPose::pose_node(Rc::new(DynNode::RowFrame(frame.node().clone()))),
+                curve.clone(),
+            ),
+        }
+    }
+
+    /// Peel constant root wrappers into entity-row data. Repeater geometry
+    /// commonly differs only in this root pose, so the remaining template
+    /// can be shared by the whole spawn group.
+    pub fn split_root_frame(&self) -> (DynFigure, Pose) {
+        fn split(node: &Rc<DynNode>) -> (Rc<DynNode>, Pose) {
+            match &**node {
+                DynNode::ConstFrame { pose, child, .. } => (child.clone(), *pose),
+                DynNode::Translate { dx, dy, child } => {
+                    (child.clone(), Pose::point(*dx, *dy))
+                }
+                _ => (node.clone(), Pose::IDENTITY),
+            }
+        }
+        match &self.repr {
+            FigureDynRepr::Pose(d) => {
+                let (node, frame) = split(d.node());
+                (DynFigure::pose_node(node), frame)
+            }
+            FigureDynRepr::Curve { frame, curve } => {
+                let (node, root) = split(frame.node());
+                (DynFigure::figure_curve(DynPose::pose_node(node), curve.clone()), root)
+            }
         }
     }
 

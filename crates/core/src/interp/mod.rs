@@ -267,6 +267,7 @@ pub(crate) fn flatten_collider_projectors(
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
     pub rng_key: u64,
+    pub captures: Rc<[f64]>,
     pub collider_projector_spec: ColliderProjectorValue,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
@@ -381,6 +382,8 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub rng_key: u64,
+    pub captures: Rc<[f64]>,
+    pub axis: Option<SpawnAxis>,
     pub cache_policy: EntityCachePolicy,
     pub sym_fields: Vec<(FieldName, Symbol)>,
     pub cols: Vec<(ColName, f64)>,
@@ -1984,7 +1987,7 @@ pub(crate) fn entity_view(i: usize, world: &World, sig: &SigEnv) -> Result<Val, 
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()).pos_only(),
+        world.motion_eval_ctx(i, &state, &sig, &readers).pos_only(),
     )?;
     let vel = world.entity_velocity_from_samples(i, world.tick);
     let mut view = vec![
@@ -3220,7 +3223,7 @@ pub(crate) fn entity_pose_at(i: usize, world: &World, sig: &SigEnv) -> Result<Po
     let p = dyn_figure_pose_in(
         dyn_figure,
         tau,
-        MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()).pos_only(),
+        world.motion_eval_ctx(i, &state, &sig, &readers).pos_only(),
     )?;
     Ok(Pose::point(p.x, p.y))
 }
@@ -3610,10 +3613,19 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
         ActionV::Spawn { entities } => {
             let mut handles = Vec::new();
             for spec in entities {
-                let dyn_figure = spec.dyn_figure.framed(ctx.ambient);
+                let (template, elem_frame) = spec.dyn_figure.split_root_frame();
+                let frame = ctx.ambient.compose(&elem_frame);
+                let (dyn_figure, root_frame) = if frame == Pose::IDENTITY && spec.axis.is_none() {
+                    (template, None)
+                } else {
+                    (template.row_framed(), Some(frame))
+                };
                 let row = world.install_entity(
                     dyn_figure,
                     spec.rng_key,
+                    spec.captures.clone(),
+                    root_frame,
+                    spec.axis.clone(),
                     spec.cache_policy.clone(),
                     spec.dyn_cols.clone(),
                     spec.collider_projector.clone(),
@@ -3653,6 +3665,7 @@ pub fn exec_instant(a: &ActionV, ctx: &mut Ctx, world: &mut World) -> Result<Val
             world.pending_writes.push(PendingWrite::Remat {
                 target: *target,
                 spec: spec.clone(),
+                shared_motion: None,
             });
             Ok(Val::Nothing)
         }
@@ -5269,6 +5282,8 @@ mod tests {
             let mut step = MotionStepCtx {
                 state: &mut dense_state,
                 sig: &sig,
+                capture_layout: None,
+                captures: &[],
                 world: None,
                 readers: &readers,
                 tick_rate: DEFAULT_TICK_RATE,

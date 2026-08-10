@@ -110,7 +110,7 @@ fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
             node,
             tau,
             0.0,
-            MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate()),
+            world.motion_eval_ctx(i, &state, &sig, &readers),
         ) {
             return p;
         }

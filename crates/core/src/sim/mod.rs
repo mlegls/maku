@@ -100,7 +100,6 @@ struct IntegratorBatchKey {
     a: MotionProgramIdentity,
     b: MotionProgramIdentity,
     source_is_polar: bool,
-    captures: Vec<u64>,
 }
 
 /// Scan-step batching (compiled-dyn milestone B): rows whose figure is a
@@ -168,7 +167,6 @@ impl VelBatchScratch {
             a: plan.ap.identity(),
             b: plan.bp.identity(),
             source_is_polar: plan.polar,
-            captures: plan.caps.iter().map(|value| value.to_bits()).collect(),
         };
         let idx = match &self.last {
             Some((last_key, idx)) if *last_key == key => *idx,
@@ -252,7 +250,7 @@ enum RowClass {
 }
 
 fn classify_row(fig: &DynFigure, sig: &SigEnv) -> RowClass {
-    if closed_chain_plan(fig, sig).is_some() {
+    if closed_chain_plan(fig, sig, None, &[]).is_some() {
         RowClass::Closed
     } else if vel_chain_ptr(fig).is_some() {
         RowClass::VelChain
@@ -738,7 +736,7 @@ impl Sim {
         let schema = self.world.motion_schema(row)?;
         let slot = vel_chain_n2_slot(schema, ptr)?;
         let state = self.world.entities.state_n2_at_slot(slot, row);
-        let p = wrapper_chain_pos_pose(fig.pose_dyn(), state);
+        let p = wrapper_chain_pos_pose(fig.pose_dyn(), state, self.world.root_frame(row));
         if oracle_enabled() {
             let readers = self.motion_readers(row);
             let mstate = MotionState::default();
@@ -746,7 +744,7 @@ impl Sim {
             let want = dyn_figure_pose_in(
                 fig,
                 tau,
-                MotionEvalCtx::with_tick_rate(&mstate, &sig, &readers, self.world.tick_rate()).pos_only(),
+                self.world.motion_eval_ctx(row, &mstate, &sig, &readers).pos_only(),
             )
             .ok()?;
             assert_eq!(p, want, "fast pos_only pose diverged from interpreter for row {row}");
@@ -794,7 +792,12 @@ impl Sim {
             }
             // re-derive the plan (cheap for closed rows: the OnceCell is
             // warm); classification above only cached the boolean
-            let Some(plan) = closed_chain_plan(fig, sig) else {
+            let Some(plan) = closed_chain_plan(
+                fig,
+                sig,
+                self.world.capture_layout(i),
+                self.world.captures(i),
+            ) else {
                 continue;
             };
             let tau = self.world.entity_motion_tau(i, tick);
@@ -822,7 +825,12 @@ impl Sim {
             if Rc::as_ptr(fig.pose_dyn()) != root {
                 continue;
             }
-            let Some(plan) = closed_chain_plan(fig, sig) else {
+            let Some(plan) = closed_chain_plan(
+                fig,
+                sig,
+                self.world.capture_layout(i),
+                self.world.captures(i),
+            ) else {
                 continue;
             };
             let tau = self.world.entity_motion_tau(i, tick);
@@ -841,7 +849,6 @@ impl Sim {
         }
         s.out.resize(self.world.entities.len(), None);
         let oracle = oracle_enabled();
-        let tick_rate = self.world.tick_rate();
         let mut regs = std::mem::take(&mut s.regs);
         for g in &mut s.groups {
             let probe = crate::interp::profile::enabled().then(crate::interp::profile::open);
@@ -863,7 +870,11 @@ impl Sim {
                     .world
                     .dyn_figure(row)
                     .ok_or_else(|| format!("closed pose fill: missing dyn figure for row {row}"))?;
-                let p = wrapper_chain_pos_pose(fig.pose_dyn(), [x, y]);
+                let p = wrapper_chain_pos_pose(
+                    fig.pose_dyn(),
+                    [x, y],
+                    self.world.root_frame(row),
+                );
                 if oracle {
                     let readers = self.motion_readers(row);
                     let mstate = MotionState::default();
@@ -873,7 +884,7 @@ impl Sim {
                     let Ok(want) = dyn_figure_pose_in(
                         fig,
                         g.tau[l],
-                        MotionEvalCtx::with_tick_rate(&mstate, &sig, &readers, tick_rate).pos_only(),
+                        self.world.motion_eval_ctx(row, &mstate, &sig, &readers).pos_only(),
                     ) else {
                         continue;
                     };
@@ -974,13 +985,7 @@ impl Sim {
                         match dyn_figure_pose_in(
                             dyn_figure,
                             tau,
-                            MotionEvalCtx::with_tick_rate(
-                                &state,
-                                row_sig,
-                                &readers,
-                                self.world.tick_rate(),
-                            )
-                            .pos_only(),
+                            self.world.motion_eval_ctx(i, &state, row_sig, &readers).pos_only(),
                         ) {
                             Ok(p) => p.x.abs() <= PLAYFIELD && p.y.abs() <= PLAYFIELD,
                             Err(e) => {
@@ -1023,9 +1028,11 @@ impl Sim {
         dyn_figure: &'a DynFigure,
         row: usize,
         sig: &SigEnv,
+        capture_layout: Option<&'a CaptureLayout>,
+        captures: &'a [f64],
     ) -> Option<(VelStepPlanRef<'a>, usize)> {
         if self.world.overrides(row).is_some() { return None; }
-        let plan = vel_step_plan(dyn_figure, sig)?;
+        let plan = vel_step_plan(dyn_figure, sig, capture_layout, captures)?;
         let schema = self.world.motion_schema(row)?;
         let ptr = Rc::as_ptr(plan.vel) as usize;
         let slot = vel_chain_n2_slot(schema, ptr)?;
@@ -1065,8 +1072,10 @@ impl Sim {
                 let [x, y] = g.pos[l];
                 if oracle {
                     let readers = self.motion_readers(row);
+                    let stride = g.plan.ap.n_inputs();
                     oracle_check_vel_step(
                         &g.nodes[l],
+                        &g.caps[l * stride..(l + 1) * stride],
                         g.tau[l],
                         dt,
                         (x, y),
@@ -1127,6 +1136,7 @@ impl Sim {
             return Ok(());
         }
         let closed_sig = SigEnv { defs: self.ctx.sig.defs.clone(), ..SigEnv::default() };
+        let mut shared_motion = crate::fxhash::FxHashMap::<usize, DynFigure>::default();
         let mut fuel: u32 = 100_000;
         for write in pending {
             match write {
@@ -1134,13 +1144,17 @@ impl Sim {
                     Self::bill_pending_write(&mut fuel)?;
                     self.apply_pending_field(target, col, f, &closed_sig)?;
                 }
-                PendingWrite::Remat { target, spec } => {
+                PendingWrite::Remat { target, spec, shared_motion: shared_key } => {
                     let Some(row) = self.world.find(target) else {
                         continue;
                     };
                     if let Some(motion) = spec.motion {
                         Self::bill_pending_write(&mut fuel)?;
-                        self.apply_pending_motion(row, motion, &closed_sig)?;
+                        let cached = shared_key.and_then(|key| shared_motion.get(&key).cloned());
+                        let template = self.apply_pending_motion(row, motion, &closed_sig, cached)?;
+                        if let Some(key) = shared_key {
+                            shared_motion.entry(key).or_insert(template);
+                        }
                     }
                     for (col, f) in spec.fields {
                         Self::bill_pending_write(&mut fuel)?;
@@ -1241,7 +1255,8 @@ impl Sim {
         row: usize,
         motion: Val,
         closed_sig: &SigEnv,
-    ) -> Result<(), String> {
+        shared_template: Option<DynFigure>,
+    ) -> Result<DynFigure, String> {
         let (exit, anchor) = {
             let dyn_figure = self
                 .world
@@ -1255,7 +1270,7 @@ impl Sim {
             let p = dyn_figure_pose_in(
                 &dyn_figure,
                 tau,
-                MotionEvalCtx::with_tick_rate(&state, &sig, &readers, self.world.tick_rate()),
+                self.world.motion_eval_ctx(row, &state, &sig, &readers),
             )?;
             let vel = self.world.entity_velocity_from_samples(row, self.world.tick);
             let heading = if vel.0 == 0.0 && vel.1 == 0.0 {
@@ -1270,26 +1285,35 @@ impl Sim {
             ]));
             (exit, Pose::oriented(p.x, p.y, heading))
         };
-        let new_dyn = match motion {
-            Val::Fn { .. } | Val::Builtin(_) => {
-                let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
-                let base = rng_mix(
-                    rng_mix(self.world.entities.rng_key(row), rng_domain::FIELD),
-                    self.world.tick,
-                );
-                let mut call_world = World::for_eval_keyed(self.world.tick_rate(), base);
-                as_dyn_pose(apply_fn(motion, &[exit], &mut call_ctx, &mut call_world, false)?)?
+        let template = match shared_template {
+            Some(template) => template,
+            None => {
+                let new_dyn = match motion {
+                    Val::Fn { .. } | Val::Builtin(_) => {
+                        let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
+                        let base = rng_mix(
+                            rng_mix(self.world.entities.rng_key(row), rng_domain::FIELD),
+                            self.world.tick,
+                        );
+                        let mut call_world = World::for_eval_keyed(self.world.tick_rate(), base);
+                        as_dyn_pose(apply_fn(motion, &[exit], &mut call_ctx, &mut call_world, false)?)?
+                    }
+                    direct => as_dyn_pose(direct)?,
+                };
+                DynFigure::pose(new_dyn)
             }
-            direct => as_dyn_pose(direct)?,
         };
-        let dyn_figure = DynFigure::pose(DynPose::pose_node(Rc::new(DynNode::Frame(
-            Rc::new(DynNode::Const(anchor)),
-            new_dyn.into_node(),
-        ))));
-        self.world.replace_entity_figure(row, dyn_figure);
+        let shared_template = template.clone();
+        let rng_key = self.world.entities.rng_key(row);
+        let (template, captures) = match draw_compiled_rand_geometry(&template, rng_key) {
+            Some(captures) => (template, captures),
+            None => (instantiate_rand_geometry(&template, rng_key), Rc::from([])),
+        };
+        let dyn_figure = template.row_framed();
+        self.world.replace_entity_figure(row, dyn_figure, captures, Some(anchor));
         self.world.entities.set_sampled_pose(row, self.world.tick, Some(anchor));
         self.world.entities.reset_motion_birth(row, self.world.tick);
-        Ok(())
+        Ok(shared_template)
     }
 
     fn run_standing_rules(&mut self) -> Result<(), String> {
@@ -1482,8 +1506,14 @@ impl Sim {
                 assert!(remat_specs_match(&plan.spec, spec),
                     "compiled deftick remat slots/values mismatch for {:?}", form);
             }
+            let shared_motion = Some(plan as *const _ as usize);
+            self.world.pending_writes.extend(actual.into_iter().map(|(target, spec)| {
+                PendingWrite::Remat { target, spec, shared_motion }
+            }));
+            Ok(())
+        } else {
+            self.exec_tick_value(value)
         }
-        self.exec_tick_value(value)
     }
 
     /// Gather and execute the typed filter plan in row-index order.
@@ -1639,6 +1669,7 @@ impl Sim {
                     self.world.pending_writes.push(PendingWrite::Remat {
                         target: self.world.entity_ref(row),
                         spec: plan.spec.clone(),
+                        shared_motion: Some(plan as *const _ as usize),
                     });
                 }
                 self.render_scratch.match_rows = rows;
@@ -2159,7 +2190,15 @@ impl Sim {
                 let Some(dyn_figure) = self.world.dyn_figure(i).cloned() else {
                     continue;
                 };
-                if let Some((plan, slot)) = self.vel_batch_lane(&dyn_figure, i, &sig) {
+                let capture_layout = self.world.capture_layout_rc(i);
+                let captures = self.world.captures_rc(i);
+                if let Some((plan, slot)) = self.vel_batch_lane(
+                    &dyn_figure,
+                    i,
+                    &sig,
+                    Some(&capture_layout),
+                    &captures,
+                ) {
                     let pos = self.world.entities.state_n2_at_slot(slot, i);
                     self.vel_batch.push_lane(plan, i, slot, tau, pos);
                     continue;
@@ -2184,6 +2223,8 @@ impl Sim {
                 let mut motion = MotionStepCtx {
                     state: &mut state,
                     sig,
+                    capture_layout: Some(&capture_layout),
+                    captures: &captures,
                     world: Some(&mut self.world),
                     readers: &readers,
                     tick_rate,
@@ -2244,7 +2285,7 @@ impl Sim {
                     if let Ok(p) = dyn_figure_pose_in(
                         dyn_figure,
                         tau,
-                        MotionEvalCtx::with_tick_rate(&state, row_sig, &readers, self.world.tick_rate()),
+                        self.world.motion_eval_ctx(i, &state, row_sig, &readers),
                     ) {
                         let cap = (window * self.world.tick_rate()).ceil() as usize + 1;
                         self.world.entities.push_trace_sample(i, p, cap);

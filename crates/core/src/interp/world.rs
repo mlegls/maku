@@ -13,7 +13,7 @@ pub const DEFAULT_TICK_RATE: f64 = 120.0;
 #[derive(Clone, Debug)]
 pub enum PendingWrite {
     Field { target: EntityRef, col: ColName, f: Val },
-    Remat { target: EntityRef, spec: RematSpec },
+    Remat { target: EntityRef, spec: RematSpec, shared_motion: Option<usize> },
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +145,12 @@ pub struct EntityCachePolicy {
     pub trace: Option<TracePolicy>,
 }
 
+#[derive(Clone, Debug)]
+pub struct SpawnAxis {
+    pub path: Rc<[(usize, usize)]>,
+    pub flat: usize,
+}
+
 pub struct EntityStore {
     generation: Vec<u32>,
     alive: Vec<bool>,
@@ -159,6 +165,9 @@ pub struct EntityStore {
     /// filled by the World install wrappers (the store cannot see fields).
     integrator_cols: Vec<Option<([ColName; 2], [usize; 2])>>,
     spec_id: Vec<SpecId>,
+    captures: Vec<Rc<[f64]>>,
+    root_frame: Vec<Option<Pose>>,
+    spawn_axis: Vec<Option<SpawnAxis>>,
     sampled_pose: [Vec<Option<Pose>>; 2],
     /// The tick each sampled_pose slot was last written for. The ring is
     /// parity-indexed; without these tags a read at the wrong tick (the
@@ -186,6 +195,7 @@ struct EntitySpecData {
     dyn_cols: Rc<[(ColName, DynNum)]>,
     collider_projector: ColliderProjector,
     motion_schema: Rc<MotionStateSchema>,
+    capture_layout: Rc<CaptureLayout>,
     overrides: Option<Rc<FxHashMap<u64, u64>>>,
     scanned: bool,
 }
@@ -237,14 +247,138 @@ fn option_rc_ptr_eq<T: ?Sized>(a: Option<&Rc<T>>, b: Option<&Rc<T>>) -> bool {
     }
 }
 
+fn pose_identity_eq(a: &Pose, b: &Pose) -> bool {
+    a.x.to_bits() == b.x.to_bits()
+        && a.y.to_bits() == b.y.to_bits()
+        && match (a.theta, b.theta) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+}
+
+fn form_identity_eq(a: &Form, b: &Form) -> bool {
+    match (a, b) {
+        (Form::Num(a), Form::Num(b)) => a.to_bits() == b.to_bits(),
+        (Form::Str(a), Form::Str(b))
+        | (Form::Sym(a), Form::Sym(b))
+        | (Form::Kw(a), Form::Kw(b)) => a == b,
+        (Form::Bool(a), Form::Bool(b)) => a == b,
+        (Form::List(a), Form::List(b)) | (Form::Vector(a), Form::Vector(b)) => {
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| form_identity_eq(a, b))
+        }
+        (Form::Map(a), Form::Map(b)) => a.len() == b.len()
+            && a.iter().zip(b.iter()).all(|((ak, av), (bk, bv))| {
+                form_identity_eq(ak, bk) && form_identity_eq(av, bv)
+            }),
+        _ => false,
+    }
+}
+
+fn val_identity_eq(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Num(a), Val::Num(b)) => a.to_bits() == b.to_bits(),
+        (Val::Kw(a), Val::Kw(b)) => a == b,
+        (Val::Pose(a), Val::Pose(b)) => pose_identity_eq(a, b),
+        (Val::Handle(a), Val::Handle(b)) => a == b,
+        (Val::Nothing, Val::Nothing) => true,
+        _ => false,
+    }
+}
+
+fn form_env_identity_eq(form: &Form, a: &Env, b: &Env) -> bool {
+    match form {
+        Form::Sym(name) => match (a.lookup(name), b.lookup(name)) {
+            (None, None) => true,
+            (Some(a), Some(b)) => val_identity_eq(&a, &b),
+            _ => false,
+        },
+        Form::List(items) | Form::Vector(items) => {
+            items.iter().all(|item| form_env_identity_eq(item, a, b))
+        }
+        Form::Map(items) => items.iter().all(|(key, value)| {
+            form_env_identity_eq(key, a, b) && form_env_identity_eq(value, a, b)
+        }),
+        _ => true,
+    }
+}
+
+fn dyn_num_identity_eq(a: &DynNum, b: &DynNum) -> bool {
+    match (a.repr(), b.repr()) {
+        (NumDynRepr::Const(a), NumDynRepr::Const(b)) => a.to_bits() == b.to_bits(),
+        (
+            NumDynRepr::Expr { form: af, env: ae },
+            NumDynRepr::Expr { form: bf, env: be },
+        )
+        | (
+            NumDynRepr::AxisSel { form: af, env: ae },
+            NumDynRepr::AxisSel { form: bf, env: be },
+        ) => form_identity_eq(af, bf)
+            && (ae.identity() == be.identity() || form_env_identity_eq(af, ae, be)),
+        _ => false,
+    }
+}
+
+fn dyn_cols_identity_eq(a: &Rc<[(ColName, DynNum)]>, b: &Rc<[(ColName, DynNum)]>) -> bool {
+    Rc::ptr_eq(a, b)
+        || a.len() == b.len()
+            && a.iter().zip(b.iter()).all(|((ak, av), (bk, bv))| {
+                ak == bk && dyn_num_identity_eq(av, bv)
+            })
+}
+
+fn empty_projectors(projectors: &Rc<[ColliderProjectorValue]>) -> bool {
+    projectors.iter().all(|value| {
+        matches!(&value.expr, ColliderProjectorExpr::Stable(slots) if slots.is_empty())
+    })
+}
+
+fn projector_identity_eq(a: &ColliderProjector, b: &ColliderProjector) -> bool {
+    Rc::ptr_eq(&a.projectors, &b.projectors)
+        || empty_projectors(&a.projectors) && empty_projectors(&b.projectors)
+}
+
+fn root_node(node: &Rc<DynNode>) -> &Rc<DynNode> {
+    match &**node {
+        DynNode::RowFrame(child) => child,
+        _ => node,
+    }
+}
+
+fn row_template_eq(a: &Rc<DynNode>, b: &Rc<DynNode>) -> bool {
+    Rc::ptr_eq(a, b) || match (&**a, &**b) {
+        (DynNode::Const(a), DynNode::Const(b)) => pose_identity_eq(a, b),
+        _ => false,
+    }
+}
+
+fn spec_memo_key(node: &Rc<DynNode>) -> usize {
+    match &**node {
+        DynNode::RowFrame(child) => match &**child {
+            DynNode::Const(pose) => rng_mix(
+                rng_mix(pose.x.to_bits(), pose.y.to_bits()),
+                pose.theta.map(f64::to_bits).unwrap_or(u64::MAX),
+            ) as usize,
+            _ => Rc::as_ptr(child) as usize,
+        },
+        _ => Rc::as_ptr(node) as usize,
+    }
+}
+
 fn figure_identity_eq(a: &DynFigure, b: &DynFigure) -> bool {
     match (a.repr(), b.repr()) {
-        (FigureDynRepr::Pose(a), FigureDynRepr::Pose(b)) => Rc::ptr_eq(a.node(), b.node()),
+        (FigureDynRepr::Pose(a), FigureDynRepr::Pose(b)) => {
+            Rc::ptr_eq(a.node(), b.node())
+                || matches!((&**a.node(), &**b.node()), (DynNode::RowFrame(_), DynNode::RowFrame(_)))
+                    && row_template_eq(root_node(a.node()), root_node(b.node()))
+        }
         (
             FigureDynRepr::Curve { frame: af, curve: ac },
             FigureDynRepr::Curve { frame: bf, curve: bc },
         ) => {
-            Rc::ptr_eq(af.node(), bf.node())
+            (Rc::ptr_eq(af.node(), bf.node())
+                || matches!((&**af.node(), &**bf.node()), (DynNode::RowFrame(_), DynNode::RowFrame(_)))
+                    && row_template_eq(root_node(af.node()), root_node(bf.node())))
                 && match (&ac.eval, &bc.eval) {
                     (crate::model::CurveEval::Straight, crate::model::CurveEval::Straight) => true,
                     (crate::model::CurveEval::Expr(a), crate::model::CurveEval::Expr(b)) => {
@@ -294,8 +428,8 @@ impl SpecStore {
         overrides: Option<&Rc<FxHashMap<u64, u64>>>,
     ) -> bool {
         figure_identity_eq(&spec.dyn_figure, dyn_figure)
-            && Rc::ptr_eq(&spec.dyn_cols, dyn_cols)
-            && Rc::ptr_eq(&spec.collider_projector.projectors, &collider_projector.projectors)
+            && dyn_cols_identity_eq(&spec.dyn_cols, dyn_cols)
+            && projector_identity_eq(&spec.collider_projector, collider_projector)
             && cache_policy_eq(&spec.cache_policy, cache_policy)
             && option_rc_ptr_eq(spec.overrides.as_ref(), overrides)
     }
@@ -307,14 +441,19 @@ impl SpecStore {
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
         overrides: Option<Rc<FxHashMap<u64, u64>>>,
-        derived: Option<(Rc<MotionStateSchema>, bool)>,
+        derived: Option<(Rc<MotionStateSchema>, Rc<CaptureLayout>, bool)>,
     ) -> SpecId {
-        let root = dyn_figure.pose_dyn().clone();
-        let key = Rc::as_ptr(&root) as usize;
+        let key = spec_memo_key(dyn_figure.pose_dyn());
+        let root = root_node(dyn_figure.pose_dyn()).clone();
         let hit = self.memo.get(&key).and_then(|hints| {
             hints.iter().find_map(|hint| {
                 let figure = hint.figure.upgrade()?;
-                if !Rc::ptr_eq(&figure, &root) { return None; }
+                let same_root = if matches!(&**dyn_figure.pose_dyn(), DynNode::RowFrame(_)) {
+                    row_template_eq(&figure, &root)
+                } else {
+                    Rc::ptr_eq(&figure, &root)
+                };
+                if !same_root { return None; }
                 self.data(hint.id)
                     .filter(|stored| Self::same_components(
                         stored,
@@ -332,8 +471,9 @@ impl SpecStore {
             *refs = refs.checked_add(1).expect("entity spec refcount overflow");
             return id;
         }
-        let (motion_schema, scanned) = derived.unwrap_or_else(|| (
+        let (motion_schema, capture_layout, scanned) = derived.unwrap_or_else(|| (
             Rc::new(collect_motion_state_schema(&dyn_figure)),
+            Rc::new(super::spawn::capture_layout_geometry(&dyn_figure)),
             is_scanned_figure(&dyn_figure),
         ));
         let spec = EntitySpecData {
@@ -342,6 +482,7 @@ impl SpecStore {
             dyn_cols,
             collider_projector,
             motion_schema,
+            capture_layout,
             overrides,
             scanned,
         };
@@ -372,6 +513,7 @@ impl SpecStore {
             dyn_cols,
             collider_projector,
             motion_schema,
+            capture_layout,
             overrides,
             scanned,
         } = spec;
@@ -381,7 +523,7 @@ impl SpecStore {
             dyn_cols,
             collider_projector,
             overrides,
-            Some((motion_schema, scanned)),
+            Some((motion_schema, capture_layout, scanned)),
         )
     }
 
@@ -391,7 +533,7 @@ impl SpecStore {
         if entry.refs != 0 { return; }
         let slot = &mut self.slots[id.index as usize];
         let entry = slot.entry.take().expect("zero-ref spec entry");
-        let root_key = Rc::as_ptr(entry.spec.dyn_figure.pose_dyn()) as usize;
+        let root_key = spec_memo_key(entry.spec.dyn_figure.pose_dyn());
         if let Some(hints) = self.memo.get_mut(&root_key) {
             hints.retain(|hint| hint.id != id);
             if hints.is_empty() { self.memo.remove(&root_key); }
@@ -542,6 +684,9 @@ impl EntityStore {
             dyn_col_epochs: Vec::with_capacity(max),
             integrator_cols: Vec::with_capacity(max),
             spec_id: Vec::with_capacity(max),
+            captures: Vec::with_capacity(max),
+            root_frame: Vec::with_capacity(max),
+            spawn_axis: Vec::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
             sampled_pose_tick: [u64::MAX, u64::MAX],
             trace_cache: TraceCache::with_capacity(max),
@@ -613,6 +758,22 @@ impl EntityStore {
 
     pub fn spec_id(&self, row: usize) -> Option<SpecId> {
         self.spec_id.get(row).copied()
+    }
+
+    pub fn captures(&self, row: usize) -> &[f64] {
+        self.captures.get(row).map(|v| v.as_ref()).unwrap_or(&[])
+    }
+
+    pub fn captures_rc(&self, row: usize) -> Rc<[f64]> {
+        self.captures.get(row).cloned().unwrap_or_else(|| Rc::from([]))
+    }
+
+    pub fn root_frame(&self, row: usize) -> Option<Pose> {
+        self.root_frame.get(row).copied().flatten()
+    }
+
+    pub fn spawn_axis(&self, row: usize) -> Option<&SpawnAxis> {
+        self.spawn_axis.get(row)?.as_ref()
     }
 
     pub fn dyn_col_epoch(&self, row: usize, index: usize) -> Option<u64> {
@@ -901,6 +1062,9 @@ impl EntityStore {
         spec_id: SpecId,
         birth: u64,
         rng_key: u64,
+        captures: Rc<[f64]>,
+        root_frame: Option<Pose>,
+        spawn_axis: Option<SpawnAxis>,
         dyn_cols_len: usize,
         integrator_cols: Option<[ColName; 2]>,
         motion_schema: &MotionStateSchema,
@@ -912,6 +1076,9 @@ impl EntityStore {
         self.freed_at[i] = None;
         self.birth[i] = birth;
         self.rng_key[i] = rng_key;
+        self.captures[i] = captures;
+        self.root_frame[i] = root_frame;
+        self.spawn_axis[i] = spawn_axis;
         self.motion_birth[i] = birth;
         self.dyn_col_epochs[i] = vec![birth; dyn_cols_len];
         self.integrator_cols[i] = integrator_cols.map(|names| (names, [usize::MAX; 2]));
@@ -926,6 +1093,9 @@ impl EntityStore {
         spec_id: SpecId,
         birth: u64,
         rng_key: u64,
+        captures: Rc<[f64]>,
+        root_frame: Option<Pose>,
+        spawn_axis: Option<SpawnAxis>,
         dyn_cols_len: usize,
         integrator_cols: Option<[ColName; 2]>,
         motion_schema: &MotionStateSchema,
@@ -939,6 +1109,9 @@ impl EntityStore {
         self.freed_at.push(None);
         self.birth.push(birth);
         self.rng_key.push(rng_key);
+        self.captures.push(captures);
+        self.root_frame.push(root_frame);
+        self.spawn_axis.push(spawn_axis);
         self.motion_birth.push(birth);
         self.dyn_col_epochs.push(vec![birth; dyn_cols_len]);
         self.integrator_cols.push(integrator_cols.map(|names| (names, [usize::MAX; 2])));
@@ -980,6 +1153,9 @@ impl Clone for EntityStore {
             dyn_col_epochs: self.dyn_col_epochs.clone(),
             integrator_cols: self.integrator_cols.clone(),
             spec_id: self.spec_id.clone(),
+            captures: self.captures.clone(),
+            root_frame: self.root_frame.clone(),
+            spawn_axis: self.spawn_axis.clone(),
             sampled_pose: self.sampled_pose.clone(),
             sampled_pose_tick: self.sampled_pose_tick,
             trace_cache: self.trace_cache.clone(),
@@ -1394,6 +1570,9 @@ impl World {
                 }
             }
             self.entities.spec_id.truncate(max_entities);
+            self.entities.captures.truncate(max_entities);
+            self.entities.root_frame.truncate(max_entities);
+            self.entities.spawn_axis.truncate(max_entities);
             self.entities.generation.truncate(max_entities);
             self.entities.alive.truncate(max_entities);
             self.entities.freed_at.truncate(max_entities);
@@ -1444,6 +1623,15 @@ impl World {
         self.entities.max = max_entities;
         if self.entities.spec_id.capacity() < max_entities {
             self.entities.spec_id.reserve_exact(max_entities - self.entities.spec_id.capacity());
+        }
+        if self.entities.captures.capacity() < max_entities {
+            self.entities.captures.reserve_exact(max_entities - self.entities.captures.capacity());
+        }
+        if self.entities.root_frame.capacity() < max_entities {
+            self.entities.root_frame.reserve_exact(max_entities - self.entities.root_frame.capacity());
+        }
+        if self.entities.spawn_axis.capacity() < max_entities {
+            self.entities.spawn_axis.reserve_exact(max_entities - self.entities.spawn_axis.capacity());
         }
         if self.entities.generation.capacity() < max_entities {
             self.entities.generation.reserve_exact(max_entities - self.entities.generation.capacity());
@@ -1507,6 +1695,60 @@ impl World {
 
     pub fn motion_schema(&self, row: usize) -> Option<&MotionStateSchema> {
         Some(self.spec_data(row)?.motion_schema.as_ref())
+    }
+
+    pub fn capture_layout(&self, row: usize) -> Option<&CaptureLayout> {
+        Some(self.spec_data(row)?.capture_layout.as_ref())
+    }
+
+    pub fn captures(&self, row: usize) -> &[f64] {
+        self.entities.captures(row)
+    }
+
+    pub fn captures_rc(&self, row: usize) -> Rc<[f64]> {
+        self.entities.captures_rc(row)
+    }
+
+    pub fn capture_layout_rc(&self, row: usize) -> Rc<CaptureLayout> {
+        self.spec_data(row)
+            .map(|spec| spec.capture_layout.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn root_frame(&self, row: usize) -> Option<Pose> {
+        self.entities.root_frame(row)
+    }
+
+    pub fn spawn_axis(&self, row: usize) -> Option<&SpawnAxis> {
+        self.entities.spawn_axis(row)
+    }
+
+    pub fn motion_eval_ctx<'a>(
+        &'a self,
+        row: usize,
+        state: &'a MotionState,
+        sig: &'a SigEnv,
+        readers: &'a MotionReaders,
+    ) -> MotionEvalCtx<'a> {
+        MotionEvalCtx::with_tick_rate(state, sig, readers, self.tick_rate()).with_row(
+            self.capture_layout(row).expect("live row capture layout"),
+            self.captures(row),
+            self.root_frame(row),
+        )
+    }
+
+    pub fn curve_eval_ctx<'a>(
+        &'a self,
+        row: usize,
+        state: &'a MotionState,
+        sig: &'a SigEnv,
+        readers: &'a MotionReaders,
+    ) -> MotionEvalCtx<'a> {
+        MotionEvalCtx::with_tick_rate(state, sig, readers, self.tick_rate()).with_row(
+            self.capture_layout(row).expect("live row capture layout"),
+            self.captures(row),
+            None,
+        )
     }
 
     fn motion_schema_rc(&self, row: usize) -> Option<Rc<MotionStateSchema>> {
@@ -1608,15 +1850,25 @@ impl World {
         self.replace_spec(row, next);
     }
 
-    pub fn replace_entity_figure(&mut self, row: usize, dyn_figure: DynFigure) {
+    pub fn replace_entity_figure(
+        &mut self,
+        row: usize,
+        dyn_figure: DynFigure,
+        captures: Rc<[f64]>,
+        root_frame: Option<Pose>,
+    ) {
         let Some(mut spec) = self.derived_spec(row) else { return };
         spec.motion_schema = Rc::new(collect_motion_state_schema(&dyn_figure));
+        spec.capture_layout = Rc::new(super::spawn::capture_layout_geometry(&dyn_figure));
+        assert_eq!(spec.capture_layout.width(), captures.len(), "row captures disagree with remat spec layout");
         spec.scanned = is_scanned_figure(&dyn_figure);
         spec.dyn_figure = dyn_figure;
         let schema = spec.motion_schema.clone();
         let integrator = integrator_figure_columns(&spec.dyn_figure);
         let next = self.specs.mint_data(spec);
         self.replace_spec(row, next);
+        self.entities.captures[row] = captures;
+        self.entities.root_frame[row] = root_frame;
         self.entities.integrator_cols[row] = integrator.map(|names| (names, [usize::MAX; 2]));
         self.entities.reset_motion_state(row, &schema);
         self.resolve_integrator_slots(row);
@@ -1626,6 +1878,9 @@ impl World {
         &mut self,
         dyn_figure: DynFigure,
         rng_key: u64,
+        captures: Rc<[f64]>,
+        root_frame: Option<Pose>,
+        spawn_axis: Option<SpawnAxis>,
         cache_policy: EntityCachePolicy,
         dyn_cols: Rc<[(ColName, DynNum)]>,
         collider_projector: ColliderProjector,
@@ -1643,6 +1898,7 @@ impl World {
         let stored = self.specs.data(spec_id).expect("new entity spec");
         let dyn_cols_len = stored.dyn_cols.len();
         let motion_schema = stored.motion_schema.clone();
+        assert_eq!(stored.capture_layout.width(), captures.len(), "row captures disagree with spec layout");
         let row = if let Some((slot, i)) = self.entities.reusable_free_row(self.tick) {
             self.clear_num_fields_at(i);
             self.clear_sym_fields_at(i);
@@ -1651,6 +1907,9 @@ impl World {
                 spec_id,
                 self.tick,
                 rng_key,
+                captures.clone(),
+                root_frame,
+                spawn_axis.clone(),
                 dyn_cols_len,
                 integrator,
                 &motion_schema,
@@ -1662,6 +1921,9 @@ impl World {
                 spec_id,
                 self.tick,
                 rng_key,
+                captures,
+                root_frame,
+                spawn_axis,
                 dyn_cols_len,
                 integrator,
                 &motion_schema,
@@ -2066,6 +2328,7 @@ mod tests {
     fn spec_data(figure: DynFigure) -> EntitySpecData {
         EntitySpecData {
             motion_schema: Rc::new(collect_motion_state_schema(&figure)),
+            capture_layout: Rc::new(super::super::spawn::capture_layout_geometry(&figure)),
             scanned: is_scanned_figure(&figure),
             dyn_figure: figure,
             cache_policy: EntityCachePolicy::default(),
@@ -2085,6 +2348,9 @@ mod tests {
             world.install_entity(
                 figure.clone(),
                 key,
+                Rc::from([]),
+                None,
+                None,
                 EntityCachePolicy::default(),
                 dyn_cols.clone(),
                 projector.clone(),

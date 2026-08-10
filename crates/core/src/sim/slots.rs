@@ -141,12 +141,7 @@ fn semantic_dyn_field(
     let mut row_sig = None;
     let row_sig = sig.for_row(world.overrides(row), &mut row_sig);
     match dyn_num.repr() {
-        NumDynRepr::AxisSel {
-            form,
-            env,
-            path,
-            flat,
-        } => {
+        NumDynRepr::AxisSel { form, env } => {
             let key = (row_sig.overrides.is_none())
                 .then(|| form_identity(form).map(|form| (form, env.identity(), tau.to_bits())))
                 .flatten();
@@ -162,7 +157,11 @@ fn semantic_dyn_field(
                     value
                 }
             };
-            value.and_then(|value| axis_select_val(&value, path, *flat).num())
+            value.and_then(|value| {
+                let axis = world.spawn_axis(row)
+                    .ok_or_else(|| "dyn meta field: missing spawn axis input".to_string())?;
+                axis_select_val(&value, &axis.path, axis.flat).num()
+            })
         }
         _ => eval_dyn_with_tick_rate(dyn_num, tau, &state, row_sig, tick_rate),
     }
@@ -329,9 +328,23 @@ fn sample_curve_collider_frac(
     tau: f64,
     sig: &SigEnv,
     projection: &CapsuleChainSlot,
+    frame: Pose,
+    capture_layout: Option<&CaptureLayout>,
+    captures: &[f64],
     tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
-    sample_curve_projection(dyn_figure, tau, sig, 1.0, &projection.sample_set, projection.u_max, tick_rate)
+    sample_curve_projection(
+        dyn_figure,
+        tau,
+        sig,
+        1.0,
+        &projection.sample_set,
+        projection.u_max,
+        frame,
+        capture_layout,
+        captures,
+        tick_rate,
+    )
 }
 
 fn sample_curve_projection(
@@ -341,16 +354,23 @@ fn sample_curve_projection(
     frac: f64,
     sample_set: &SampleSet,
     u_max: f64,
+    frame: Pose,
+    capture_layout: Option<&CaptureLayout>,
+    captures: &[f64],
     tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
+    let curve = dyn_figure.curve()?;
     let state = MotionState::default();
-    let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, tick_rate).ok()? else {
-        return None;
+    let readers = MotionReaders::for_figure(dyn_figure);
+    let ctx = MotionEvalCtx::with_tick_rate(&state, sig, &readers, tick_rate);
+    let ctx = match capture_layout {
+        Some(layout) => ctx.with_row(layout, captures, None),
+        None => ctx,
     };
     if frac <= 0.0 {
         return None;
     }
-    let us: Vec<f64> = match (&curve.spec.domain, sample_set) {
+    let us: Vec<f64> = match (&curve.domain, sample_set) {
         (_, SampleSet::Values(vals)) => {
             if vals.is_empty() {
                 return None;
@@ -376,8 +396,8 @@ fn sample_curve_projection(
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = eval_curve_pose_with_tick_rate(&curve.spec.eval, tau, u, &state, sig, tick_rate).ok()?;
-        let w = curve.frame.compose(&local);
+        let local = eval_curve_pose_in(&curve.eval, tau, u, ctx).ok()?;
+        let w = frame.compose(&local);
         pts.push((w.x, w.y));
     }
     Some(pts)
@@ -552,6 +572,8 @@ pub fn eval_collider_slot(
     pose: Pose,
     trace: &[Pose],
     traced: bool,
+    capture_layout: Option<&CaptureLayout>,
+    captures: &[f64],
     tick_rate: f64,
 ) -> ColliderData {
     match slot.repr() {
@@ -565,8 +587,8 @@ pub fn eval_collider_slot(
                 let state = MotionState::default();
                 let radius = eval_dyn_with_tick_rate(radius, tau, &state, sig, tick_rate).unwrap_or(0.0);
                 capsule_chain_collider_data(
-                    dyn_figure, projection.layer, radius, curve_slot, tau, sig, scale, trace, traced,
-                    tick_rate,
+                    dyn_figure, projection.layer, radius, curve_slot, tau, sig, scale, pose, trace,
+                    traced, capture_layout, captures, tick_rate,
                 )
             }
         },
@@ -612,8 +634,11 @@ pub(super) fn capsule_chain_collider_data(
     tau: f64,
     sig: &SigEnv,
     scale: f64,
+    pose: Pose,
     trace: &[Pose],
     traced: bool,
+    capture_layout: Option<&CaptureLayout>,
+    captures: &[f64],
     tick_rate: f64,
 ) -> ColliderData {
     match dyn_figure.repr() {
@@ -630,7 +655,9 @@ pub(super) fn capsule_chain_collider_data(
             }
         }
         FigureDynRepr::Curve { .. } => {
-            let Some(points) = sample_curve_collider_frac(dyn_figure, tau, sig, curve_slot, tick_rate)
+            let Some(points) = sample_curve_collider_frac(
+                dyn_figure, tau, sig, curve_slot, pose, capture_layout, captures, tick_rate,
+            )
             else {
                 return ColliderData::None;
             };

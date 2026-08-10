@@ -7,12 +7,12 @@
   `resolve_node_pose` re-plumb (investigate call-site semantics first).
 - [x] 2. Slice 1 gates: core suite + `MAKU_LOWER_ORACLE=1` + ignored
   release oracle card suites green; commit.
-- [ ] 3. Slice 2 — captures to rows: spec capture layout in per-leaf
+- [x] 3. Slice 2 — captures to rows: spec capture layout in per-leaf
   walk order, per-row capture vector, shared trees for rand-bearing
   compiled-path groups, ambient frame as row data, axis as row input,
   `instantiate_rand` demoted to cap drawing; Bail path keeps
   per-element specs.
-- [ ] 4. Slice 2 gates: same suites, plus RNG bit-parity — same-seed
+- [x] 4. Slice 2 gates: same suites, plus RNG bit-parity — same-seed
   cross-commit A/B on rand-heavy cards must be bit-identical (this
   round, unlike the RNG round, changes no draw keying).
 - [ ] 5. Slice 3 — explicit-id re-keying: closed-pose class cache,

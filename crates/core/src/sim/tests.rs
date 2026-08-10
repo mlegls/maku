@@ -39,6 +39,30 @@
         sim.world.dyn_figure(row).unwrap()
     }
 
+    fn row_pose(sim: &Sim, row: usize, tau: f64, sig: &SigEnv) -> Pose {
+        let state = MotionState::default();
+        let readers = sim.motion_readers(row);
+        dyn_figure_pose_in(
+            dyn_figure(sim, row),
+            tau,
+            sim.world.motion_eval_ctx(row, &state, sig, &readers),
+        )
+        .unwrap()
+    }
+
+    fn assert_rows_share_spec(sim: &Sim, rows: &[usize]) {
+        let first = rows[0];
+        let id = sim.world.spec_id(first).unwrap();
+        let figure = dyn_figure(sim, first).pose_dyn();
+        let schema = sim.world.motion_schema(first).unwrap();
+        for &row in &rows[1..] {
+            assert!(Rc::ptr_eq(figure, dyn_figure(sim, row).pose_dyn()),
+                "row {row} has another tree: first={figure:?}, row={:?}", dyn_figure(sim, row).pose_dyn());
+            assert_eq!(sim.world.spec_id(row), Some(id), "row {row} has another spec");
+            assert!(std::ptr::eq(schema, sim.world.motion_schema(row).unwrap()));
+        }
+    }
+
     fn assert_render_rows_eq(a: &RenderRow, b: &RenderRow) {
         match (&a.data, &b.data) {
             (
@@ -247,8 +271,7 @@
         assert_eq!(sim.world.entities.birth(0), Some(0));
         assert_eq!(style(&sim, 0).family, "gem");
         assert_eq!(style(&sim, 0).color, "yellow");
-        let state = MotionState::default();
-        let p = dyn_figure_pose(dyn_figure(&sim, 0), 1.0, &state, &sig).unwrap();
+        let p = row_pose(&sim, 0, 1.0, &sig);
         let ang = (0.4f64).to_radians();
         assert!((p.x - 4.0 * ang.cos()).abs() < 1e-9, "x: {}", p.x);
         assert!((p.y - (2.0 + 4.0 * ang.sin())).abs() < 1e-9, "y: {}", p.y);
@@ -333,8 +356,7 @@
             .filter(|(i, _)| style(&sim, *i).family == "star")
             .map(|(i, _)| i)
             .collect();
-        let state = MotionState::default();
-        let p = dyn_figure_pose(dyn_figure(&sim, ring[0]), 0.0, &state, &sig).unwrap();
+        let p = row_pose(&sim, ring[0], 0.0, &sig);
         assert!((p.x - 0.5).abs() < 0.02 && (p.y - 1.0).abs() < 0.02, "ring anchor: {:?}", p);
     }
 
@@ -2837,8 +2859,7 @@
                 sim.step_with(&inputs).unwrap();
             }
             let sig = SigEnv::default();
-            let state = MotionState::default();
-            let p = dyn_figure_pose(dyn_figure(&sim, 0), 0.5, &state, &sig).unwrap();
+            let p = row_pose(&sim, 0, 0.5, &sig);
             assert!(
                 p.x.abs() < 1e-9 && (p.y - 2.0).abs() < 1e-9,
                 "{}: fired from (0,3) toward the player below: {:?}",
@@ -2864,9 +2885,8 @@
             b.step().unwrap();
         }
         let sig = SigEnv::default();
-        let state = MotionState::default();
-        let pa = dyn_figure_pose(dyn_figure(&a, 0), 0.5, &state, &sig).unwrap();
-        let pb = dyn_figure_pose(dyn_figure(&b, 0), 0.5, &state, &sig).unwrap();
+        let pa = row_pose(&a, 0, 0.5, &sig);
+        let pb = row_pose(&b, 0, 0.5, &sig);
         assert!((pa.x - pb.x).abs() < 1e-12 && (pa.y - pb.y).abs() < 1e-12);
         // rot 90 turns +x motion into +y, from anchor (0,1): at t=0.5 â (0, 1.5)
         assert!(pa.x.abs() < 1e-9 && (pa.y - 1.5).abs() < 1e-9, "got {:?}", pa);
@@ -3547,16 +3567,23 @@
             sim.step().unwrap();
         }
         assert_eq!(live_count(&sim), 8);
+        assert_rows_share_spec(&sim, &(0..8).collect::<Vec<_>>());
         let vel_parts = |row: usize| {
             let mut node = dyn_figure(&sim, row).pose_dyn();
             loop {
                 match &**node {
-                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
-                        node = child
-                    }
+                    DynNode::ConstFrame { child, .. }
+                    | DynNode::Translate { child, .. }
+                    | DynNode::RowFrame(child) => node = child,
                     DynNode::StockIntegrator { data } => {
-                        let (ap, bp) = data.programs.get().unwrap().as_ref().expect("rand vel compiled");
-                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(&data.rand).to_vec());
+                        let Some(RandCell::Compiled(ex)) = data.rand.as_deref() else {
+                            panic!("expected compiled rand")
+                        };
+                        return (
+                            Rc::as_ptr(&ex.programs[0]),
+                            Rc::as_ptr(&ex.programs[1]),
+                            sim.world.captures(row).to_vec(),
+                        );
                     }
                     other => panic!("unexpected node {other:?}"),
                 }
@@ -3564,6 +3591,12 @@
         };
         let (ap0, bp0, caps0) = vel_parts(0);
         assert_eq!(caps0.len(), 2, "two rand sites -> two capture slots");
+        for row in 1..8 {
+            assert!(!Rc::ptr_eq(
+                &sim.world.captures_rc(0),
+                &sim.world.captures_rc(row),
+            ));
+        }
         assert!(caps0[0] >= 1.0 && caps0[0] < 2.0);
         assert!(caps0[1] == -1.0 || caps0[1] == 1.0);
         let mut distinct = false;
@@ -3573,6 +3606,29 @@
             distinct |= caps[0] != caps0[0];
         }
         assert!(distinct, "capture draws must differ across the group");
+    }
+
+    #[test]
+    fn moving_spawner_uses_row_frames_and_reuses_one_spec() {
+        const CARD: &str = r#"
+(def shot (still))
+(defpattern p []
+  (let [spawners (spawn (linear c[120 0]))]
+    (seq
+      (wait (ticks 1))
+      (dotimes [i 3 :every (ticks 1)]
+        (in-frame (first spawners) (spawn shot))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..5 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 4);
+        assert_rows_share_spec(&sim, &[1, 2, 3]);
+        let frames = (1..4).map(|row| sim.world.root_frame(row)).collect::<Vec<_>>();
+        assert!(frames.iter().all(Option::is_some));
+        assert!(frames.windows(2).any(|pair| pair[0] != pair[1]),
+            "moving spawner did not store distinct row poses: {frames:?}");
     }
 
     /// Structural interning + env-capture slots: spawn sites that differ
@@ -3596,17 +3652,28 @@
             sim.step().unwrap();
         }
         assert_eq!(live_count(&sim), 12);
+        assert_rows_share_spec(&sim, &[0, 1, 2, 3]);
+        assert_rows_share_spec(&sim, &[4, 5, 6, 7]);
+        assert_rows_share_spec(&sim, &[8, 9, 10, 11]);
         let vel_parts = |row: usize| {
             let mut node = dyn_figure(&sim, row).pose_dyn();
             loop {
                 match &**node {
-                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
-                        node = child
-                    }
+                    DynNode::ConstFrame { child, .. }
+                    | DynNode::Translate { child, .. }
+                    | DynNode::RowFrame(child) => node = child,
                     DynNode::StockIntegrator { data } => {
-                        let (ap, bp) = data.programs.get().unwrap().as_ref().expect("vel compiled");
-                        return (Rc::as_ptr(ap), Rc::as_ptr(bp), caps_of(&data.rand).to_vec(),
-                            matches!(data.space, IntegratorComponentSpace::Polar));
+                        let (ap, bp) = data.programs
+                            .get()
+                            .unwrap()
+                            .as_ref()
+                            .expect("env-capture vel compiled");
+                        return (
+                            Rc::as_ptr(ap),
+                            Rc::as_ptr(bp),
+                            caps_of(&data.rand).to_vec(),
+                            matches!(data.space, IntegratorComponentSpace::Polar),
+                        );
                     }
                     other => panic!("unexpected node {other:?}"),
                 }
@@ -3714,18 +3781,7 @@
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), 8);
-        let speed = |row: usize| {
-            let mut node = dyn_figure(&sim, row).pose_dyn();
-            loop {
-                match &**node {
-                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
-                        node = child
-                    }
-                    DynNode::StockIntegrator { data } => return caps_of(&data.rand)[0],
-                    other => panic!("unexpected node {other:?}"),
-                }
-            }
-        };
+        let speed = |row: usize| sim.world.captures(row)[0];
         let first = speed(0);
         assert!((1..8).any(|row| speed(row) != first));
     }
@@ -3750,11 +3806,18 @@
                     stack.push(a.clone());
                     stack.push(b.clone());
                 }
-                DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
-                    stack.push(child.clone())
+                DynNode::ConstFrame { child, .. }
+                | DynNode::Translate { child, .. }
+                | DynNode::RowFrame(child) => stack.push(child.clone()),
+                DynNode::ClosedPt { .. } | DynNode::StockIntegrator { .. } => {
+                    let range = sim.world.capture_layout(0).unwrap().range(&node).unwrap();
+                    let value = sim.world.captures(0)[range.offset];
+                    match &*node {
+                        DynNode::ClosedPt { .. } => pose_cap = Some(value),
+                        DynNode::StockIntegrator { .. } => vel_cap = Some(value),
+                        _ => unreachable!(),
+                    }
                 }
-                DynNode::ClosedPt { rand, .. } => pose_cap = Some(caps_of(rand)[0]),
-                DynNode::StockIntegrator { data } => vel_cap = Some(caps_of(&data.rand)[0]),
                 _ => {}
             }
         }
@@ -3798,15 +3861,23 @@
             let mut node = dyn_figure(&sim, row).pose_dyn();
             loop {
                 match &**node {
-                    DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
-                        node = child
-                    }
+                    DynNode::ConstFrame { child, .. }
+                    | DynNode::Translate { child, .. }
+                    | DynNode::RowFrame(child) => node = child,
                     DynNode::StockIntegrator { data } => return caps_of(&data.rand).to_vec(),
                     other => panic!("unexpected node {other:?}"),
                 }
             }
         };
         assert!(caps_of(0).is_empty(), "bail path substitutes forms, no caps");
+        assert!((0..4).all(|row| sim.world.captures(row).is_empty()));
+        for row in 1..4 {
+            assert_ne!(sim.world.spec_id(row), sim.world.spec_id(0));
+            assert!(!Rc::ptr_eq(
+                dyn_figure(&sim, 0).pose_dyn(),
+                dyn_figure(&sim, row).pose_dyn(),
+            ));
+        }
     }
 
     #[test]
@@ -4190,7 +4261,12 @@
             let hue = sim.world.col_get_at(i, "hue").unwrap();
             let want = 100.0 * i as f64 + tau;
             assert!((hue - want).abs() < 1e-9, "entity {i}: hue {hue}, want {want}");
+            let axis = sim.world.spawn_axis(i).expect("group row has axis input");
+            assert_eq!(axis.path.as_ref(), &[(3, i)]);
+            assert_eq!(axis.flat, i);
         }
+        assert_rows_share_spec(&sim, &[0, 1, 2]);
+        assert!(matches!(sim.world.dyn_cols(0)[0].1.repr(), NumDynRepr::AxisSel { .. }));
     }
 
     /// Â§8 scope semantics under the guard-unwind rule: cancellation kills
@@ -4685,11 +4761,17 @@
 
         sim.step().unwrap();
         assert_eq!(sim.world.col_get_at(0, "hp"), Some(1.0), "remat stays boundary-queued");
+        let mut shared_keys = Vec::new();
         let queued = sim.world.pending_writes.iter().map(|write| match write {
-            PendingWrite::Remat { target, spec } => (target.row, spec.fields.len()),
+            PendingWrite::Remat { target, spec, shared_motion } => {
+                shared_keys.push(*shared_motion);
+                (target.row, spec.fields.len())
+            }
             other => panic!("unexpected queued batch remat: {other:?}"),
         }).collect::<Vec<_>>();
         assert_eq!(queued, vec![(0, 2), (2, 2)], "oracle must not double-queue remats");
+        assert!(shared_keys[0].is_some());
+        assert_eq!(shared_keys[0], shared_keys[1]);
 
         sim.step().unwrap();
         assert_eq!(sim.world.col_get_at(0, "hp"), Some(3.0));
@@ -4697,6 +4779,8 @@
         assert_eq!(sim.world.col_get_at(2, "hp"), Some(6.0));
         assert_eq!(sim.world.entity_motion_tau(0, sim.world.tick), 1.0 / DEFAULT_TICK_RATE);
         assert_eq!(dyn_field_epoch(&sim, 0, "opacity"), sim.world.tick - 1);
+        assert_eq!(sim.world.spec_id(0), sim.world.spec_id(2),
+            "row-independent masked remat plan must share one spec");
         assert_eq!(sim.world.pending_writes.len(), 2, "one next-tick remat per selected row");
     }
 

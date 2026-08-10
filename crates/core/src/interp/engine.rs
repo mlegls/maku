@@ -94,10 +94,18 @@ pub(crate) fn special(
             let tau = world.entity_motion_tau(i, world.tick);
             let readers = entity_motion_readers(i, world);
             let state = MotionState::default();
-            let mctx = MotionEvalCtx::with_tick_rate(&state, &ctx.sig, &readers, world.tick_rate());
-            let anchor = dyn_figure_pose_in(dyn_figure, tau, mctx)?;
+            let anchor = dyn_figure_pose_in(
+                dyn_figure,
+                tau,
+                world.motion_eval_ctx(i, &state, &ctx.sig, &readers),
+            )?;
             let at = |uu: f64| -> Result<Pose, String> {
-                let local = eval_curve_pose_with_tick_rate(&curve.eval, tau, uu, &state, &ctx.sig, world.tick_rate())?;
+                let local = eval_curve_pose_in(
+                    &curve.eval,
+                    tau,
+                    uu,
+                    world.curve_eval_ctx(i, &state, &ctx.sig, &readers),
+                )?;
                 Ok(anchor.compose(&local))
             };
             let p0 = at(u)?;
@@ -198,8 +206,7 @@ pub(crate) fn special(
                 let Ok(p) = dyn_figure_pose_in(
                     dyn_figure,
                     tau,
-                    MotionEvalCtx::with_tick_rate(&state, &sig, &readers, world.tick_rate())
-                        .pos_only(),
+                    world.motion_eval_ctx(i, &state, &sig, &readers).pos_only(),
                 ) else {
                     continue;
                 };
@@ -618,11 +625,17 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
     }
     let tau = world.entity_motion_tau(i, world.tick);
     let state = MotionState::default();
-    let Figure::Curve(curve) = eval_dyn_with_tick_rate(dyn_figure, tau, &state, sig, world.tick_rate())
-        .map_err(|err| format!("render: curve-samples could not sample curve: {err}"))?
-    else {
+    let readers = entity_motion_readers(i, world);
+    let Some(curve_spec) = dyn_figure.curve() else {
         return Err("render: curve-samples entity is not a live curve".into());
     };
+    let frame = dyn_figure_pose_in(
+        dyn_figure,
+        tau,
+        world.motion_eval_ctx(i, &state, sig, &readers),
+    )
+    .map_err(|err| format!("render: curve-samples could not sample curve: {err}"))?;
+    let curve = Curve { frame, spec: curve_spec.clone() };
     let min = match &curve.spec.domain {
         CurveDomain::Range { min, .. } => *min,
         CurveDomain::Values(vals) => *vals.first().ok_or("render: curve-samples empty domain")?,
@@ -643,8 +656,13 @@ fn sample_curve_shape(samples: &CurveSamples, world: &World, sig: &SigEnv) -> Re
     };
     let mut pts = Vec::with_capacity(us.len());
     for u in us {
-        let local = eval_curve_pose_with_tick_rate(&curve.spec.eval, tau, u, &state, sig, world.tick_rate())
-            .map_err(|err| format!("render: curve-samples could not evaluate curve: {err}"))?;
+        let local = eval_curve_pose_in(
+            &curve.spec.eval,
+            tau,
+            u,
+            world.curve_eval_ctx(i, &state, sig, &readers),
+        )
+        .map_err(|err| format!("render: curve-samples could not evaluate curve: {err}"))?;
         let w = curve.frame.compose(&local);
         pts.push((w.x, w.y));
     }

@@ -838,6 +838,8 @@ fn project_colliders(
     pose: Pose,
     trace: &[Pose],
     traced: bool,
+    capture_layout: Option<&CaptureLayout>,
+    captures: &[f64],
     tick_rate: f64,
     mut emit: impl FnMut(ColliderData),
 ) {
@@ -902,8 +904,11 @@ fn project_colliders(
                     tau,
                     sig,
                     scale,
+                    pose,
                     trace,
                     traced,
+                    capture_layout,
+                    captures,
                     tick_rate,
                 ));
             }
@@ -962,6 +967,8 @@ fn materialize_colliders_into(
             pose,
             trace,
             traced,
+            world.capture_layout(row),
+            world.captures(row),
             tick_rate,
         )
     }));
@@ -1005,13 +1012,9 @@ impl Sim {
                 dyn_figure_pose_in(
                     dyn_figure,
                     tau,
-                    MotionEvalCtx::with_tick_rate(
-                        &MotionState::default(),
-                        row_sig,
-                        &readers,
-                        self.world.tick_rate(),
-                    )
-                    .pos_only(),
+                    self.world
+                        .motion_eval_ctx(row, &MotionState::default(), row_sig, &readers)
+                        .pos_only(),
                 )?
             };
             self.world.entities.set_sampled_pose(row, tick, Some(pose));
@@ -1124,13 +1127,9 @@ impl Sim {
                 dyn_figure_pose_in(
                     dyn_figure,
                     tau,
-                    MotionEvalCtx::with_tick_rate(
-                        &MotionState::default(),
-                        row_sig,
-                        &readers,
-                        self.world.tick_rate(),
-                    )
-                    .pos_only(),
+                    self.world
+                        .motion_eval_ctx(row, &MotionState::default(), row_sig, &readers)
+                        .pos_only(),
                 )?
             };
             self.world.entities.set_sampled_pose(row, tick, Some(pose));
@@ -1182,6 +1181,8 @@ impl Sim {
                         pose,
                         trace,
                         traced,
+                        self.world.capture_layout(row),
+                        self.world.captures(row),
                         self.world.tick_rate(),
                         |collider| self.collider_scratch.rows.push(collider),
                     );
@@ -1220,6 +1221,8 @@ impl Sim {
                             pose,
                             trace,
                             traced,
+                            self.world.capture_layout(row),
+                            self.world.captures(row),
                             tick_rate,
                             |collider| self.collider_scratch.rows.push(collider),
                         );

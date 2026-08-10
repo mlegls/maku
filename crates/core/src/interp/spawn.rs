@@ -118,7 +118,10 @@ fn plan_spawn(
     for (i, e) in elems.iter_mut().enumerate() {
         e.rng_key = rng_mix(spawn_key, i as u64);
         if dyn_figure_has_rand(&e.dyn_figure) {
-            e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, e.rng_key);
+            match draw_compiled_rand_geometry(&e.dyn_figure, e.rng_key) {
+                Some(captures) => e.captures = captures,
+                None => e.dyn_figure = instantiate_rand_geometry(&e.dyn_figure, e.rng_key),
+            }
         }
     }
     Ok(SpawnPlan {
@@ -206,13 +209,13 @@ fn build_entity_specs(
             cols.iter().map(|(k, v)| (world.intern_col(k.as_ref()), axis_num(v, e, i))).collect()
         })
         .collect();
+    let group = elems.len();
     let dyn_cols: Rc<[(ColName, DynNum)]> = dyn_cols
         .into_iter()
-        .map(|(k, v)| (world.intern_col(k.as_ref()), v))
+        .map(|(k, v)| (world.intern_col(k.as_ref()), if group > 1 { v.with_axis() } else { v }))
         .collect::<Vec<_>>()
         .into();
     let shared_collider_projectors: Rc<[ColliderProjectorValue]> = explicit_colliders.into();
-    let group = elems.len();
     let entities = elems
         .into_iter()
         .zip(styles)
@@ -243,14 +246,10 @@ fn build_entity_specs(
             let mut cols = cols;
             let mut elem_dyn_cols = dyn_cols.iter().cloned().collect::<Vec<_>>();
             let mut dyn_cols_changed = false;
-            if group > 1 && !elem_dyn_cols.is_empty() {
-                // shared meta signals bind per element: array-valued
-                // results select by the element's axis position
-                for (_, d) in elem_dyn_cols.iter_mut() {
-                    *d = d.with_axis(&e.path, flat);
-                }
-                dyn_cols_changed = true;
-            }
+            let axis = (group > 1).then(|| SpawnAxis {
+                path: e.path.clone().into(),
+                flat,
+            });
             for (key, seed) in e.fields.iter() {
                 match seed {
                     FieldSeed::Num(n) => {
@@ -294,6 +293,8 @@ fn build_entity_specs(
             Ok(EntitySpec {
                 dyn_figure: e.dyn_figure,
                 rng_key: e.rng_key,
+                captures: e.captures,
+                axis,
                 cache_policy: e.cache_policy,
                 sym_fields,
                 cols,
@@ -365,6 +366,7 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure,
                 rng_key: 0,
+                captures: Rc::from([]),
                 collider_projector_spec: colliders,
                 cache_policy,
                 path: path.clone(),
@@ -376,6 +378,7 @@ pub(crate) fn flatten_elems(
             out.push(SpawnElem {
                 dyn_figure: as_dyn_figure(other)?,
                 rng_key: 0,
+                captures: Rc::from([]),
                 collider_projector_spec: ColliderProjectorValue::empty(),
                 cache_policy: EntityCachePolicy::default(),
                 path: path.clone(),
@@ -406,7 +409,7 @@ pub(crate) fn dyn_has_rand(d: &DynNode) -> bool {
         DynNode::RotExpr { form, .. } => form_has_rand(form),
         DynNode::Translate { child, .. } => dyn_has_rand(child),
         DynNode::Frame(a, b) => dyn_has_rand(a) || dyn_has_rand(b),
-        DynNode::ConstFrame { child, .. } => dyn_has_rand(child),
+        DynNode::ConstFrame { child, .. } | DynNode::RowFrame(child) => dyn_has_rand(child),
         _ => false,
     }
 }
@@ -556,6 +559,81 @@ pub(crate) fn subst_rand(f: &Form, elem_key: u64, site: &mut u64) -> Form {
     }
 }
 
+fn walk_compiled_rand(
+    d: &Rc<DynNode>,
+    elem_key: Option<u64>,
+    node_n: &mut u64,
+    layout: &mut CaptureLayout,
+    captures: &mut Vec<f64>,
+) -> bool {
+    let mut leaf = |rand: &Option<Rc<RandCell>>, node: &DynNode| {
+        let ordinal = *node_n;
+        *node_n += 1;
+        match rand.as_deref() {
+            Some(RandCell::Compiled(ex)) => {
+                layout.insert(node, ex.sites.len() + ex.env_caps.len());
+                if let Some(elem_key) = elem_key {
+                    let key = rng_mix(elem_key, rng_mix(rng_domain::NODE, ordinal));
+                    captures.extend(draw_caps(ex, key).iter().copied());
+                }
+                true
+            }
+            Some(RandCell::Bail) => false,
+            _ => true,
+        }
+    };
+    match &**d {
+        DynNode::ClosedPt { rand, .. } => leaf(rand, d),
+        DynNode::StockIntegrator { data } => leaf(&data.rand, d),
+        DynNode::RotExpr { rand, .. } => leaf(rand, d),
+        DynNode::Translate { child, .. }
+        | DynNode::ConstFrame { child, .. }
+        | DynNode::RowFrame(child) => walk_compiled_rand(child, elem_key, node_n, layout, captures),
+        DynNode::Frame(a, b) => {
+            walk_compiled_rand(a, elem_key, node_n, layout, captures)
+                && walk_compiled_rand(b, elem_key, node_n, layout, captures)
+        }
+        _ => true,
+    }
+}
+
+pub(crate) fn capture_layout_geometry(d: &DynFigure) -> CaptureLayout {
+    let mut layout = CaptureLayout::default();
+    let mut captures = Vec::new();
+    let mut node_n = 0;
+    match d.repr() {
+        FigureDynRepr::Pose(p) => { walk_compiled_rand(p.node(), None, &mut node_n, &mut layout, &mut captures); }
+        FigureDynRepr::Curve { frame, curve } => {
+            walk_compiled_rand(frame.node(), None, &mut node_n, &mut layout, &mut captures);
+            if let CurveEval::Expr(shape) = &curve.eval {
+                walk_compiled_rand(shape.node(), None, &mut node_n, &mut layout, &mut captures);
+            }
+        }
+    }
+    layout
+}
+
+pub(crate) fn draw_compiled_rand_geometry(d: &DynFigure, elem_key: u64) -> Option<Rc<[f64]>> {
+    let mut layout = CaptureLayout::default();
+    let mut captures = Vec::new();
+    let mut node_n = 0;
+    let compiled = match d.repr() {
+        FigureDynRepr::Pose(p) => {
+            walk_compiled_rand(p.node(), Some(elem_key), &mut node_n, &mut layout, &mut captures)
+        }
+        FigureDynRepr::Curve { frame, curve } => {
+            walk_compiled_rand(frame.node(), Some(elem_key), &mut node_n, &mut layout, &mut captures)
+                && match &curve.eval {
+                    CurveEval::Straight => true,
+                    CurveEval::Expr(shape) => walk_compiled_rand(
+                        shape.node(), Some(elem_key), &mut node_n, &mut layout, &mut captures,
+                    ),
+                }
+        }
+    };
+    compiled.then(|| captures.into())
+}
+
 /// Each signal-bearing leaf gets its own key — `mix(elem_key, NODE, ordinal)`
 /// in instantiation walk order — so sibling nodes' site-0 draws don't alias.
 pub(crate) fn instantiate_rand(d: &Rc<DynNode>, elem_key: u64, node_n: &mut u64) -> Rc<DynNode> {
@@ -664,6 +742,9 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, elem_key: u64, node_n: &mut u64)
             rot: *rot,
             child: instantiate_rand(child, elem_key, node_n),
         }),
+        DynNode::RowFrame(child) => Rc::new(DynNode::RowFrame(
+            instantiate_rand(child, elem_key, node_n),
+        )),
         _ => d.clone(),
     }
 }

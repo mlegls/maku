@@ -10,9 +10,9 @@ use std::rc::Rc;
 fn root_chain_vel(node: &Rc<DynNode>) -> Option<&Rc<DynNode>> {
     match &**node {
         DynNode::StockIntegrator { .. } => Some(node),
-        DynNode::ConstFrame { child, .. } | DynNode::Translate { child, .. } => {
-            root_chain_vel(child)
-        }
+        DynNode::ConstFrame { child, .. }
+        | DynNode::Translate { child, .. }
+        | DynNode::RowFrame(child) => root_chain_vel(child),
         _ => None,
     }
 }
@@ -27,6 +27,7 @@ fn node_name(node: &DynNode) -> &'static str {
         DynNode::Path { .. } => "path",
         DynNode::Frame(..) => "frame",
         DynNode::ConstFrame { .. } => "const-frame",
+        DynNode::RowFrame(..) => "row-frame",
         DynNode::Live { .. } | DynNode::LiveStream { .. } => "live",
         DynNode::Clamp { .. } => "clamp",
         DynNode::RotExpr { .. } => "rot-expr",
