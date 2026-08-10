@@ -14,7 +14,7 @@ core suite plus the 4 ignored oracle card suites
 
 ## 2. Soft-cull fades (D6)
 
-- [ ] 2.1 Implement `soft-cull` in `crates/core/lib` (opacity-fade remat + deadline field + stock cull rule); test fade-from-event-tick and deadline cull
+- [x] 2.1 Implement `soft-cull` in `crates/core/lib` (opacity-fade remat + deadline field + stock cull rule); test fade-from-event-tick and deadline cull
 
 ## 3. vel re-expression (D1–D4)
 

@@ -343,6 +343,23 @@
                                   (<= (default (:lives e) 1) 0)
                                   (< (default (:game-over-fired e) 0) 1))))))
 
+;; (soft-cull b dur): fade out over dur seconds from the current opacity,
+;; then cull at the deadline. Pure library code over two contracts: the
+;; fade's t restarts at the install tick (per-dyn-field epochs), and
+;; :cull-at is a deadline column like :iframe-until. The opacity is
+;; snapped into a binding at the call — a captured dyn evaluates against
+;; its env only (no world reads), so the snap must happen action-side.
+(defn soft-cull [b dur]
+  (let [o (default (:opacity b) 1)]
+    (seq
+      (remat b {:opacity (lerp 0 dur t o 0)})
+      (set-col b :cull-at (+ $tick (* dur 120))))))
+
+(deftick
+  (map (fn [e] (cull e))
+       (entities-where (fn [e] (* (> (default (:cull-at e) 0) 0)
+                                  (>= (:tick e) (default (:cull-at e) 0)))))))
+
 ;; ---------------------------------------------------------------------
 ;; (phases (:label opts? body… (finally …)?) …) — the boss-shaped layer
 ;; over the bare `states` FSM, defined HERE because what a "phase" means

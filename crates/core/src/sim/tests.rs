@@ -3746,6 +3746,41 @@
         assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
     }
 
+    /// (soft-cull b dur) is library code: the opacity fade runs on the
+    /// field's install-tick epoch and the deadline rule culls the row.
+    #[test]
+    fn soft_cull_fades_then_culls() {
+        const CARD: &str = r#"
+(import "touhou")
+(defpattern p []
+  (let [bs (spawn (still) {:opacity 0.8})]
+    (seq (wait (ticks 5))
+         (soft-cull (first bs) 0.05))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        while sim.world.entities.dyn_cols(0).is_empty() {
+            sim.step().unwrap();
+        }
+        let epoch = dyn_field_epoch(&sim, 0, "opacity");
+        assert!(epoch > sim.world.entities.birth(0).unwrap());
+        // fade starts at the event tick from the snapped opacity: 0.8 at
+        // tau_field 0, linear to 0 over 0.05s (6 ticks at 120Hz)
+        let tau = (sim.world.tick - epoch) as f64 / sim.world.tick_rate();
+        let expected = 0.8 * (1.0 - (tau / 0.05).clamp(0.0, 1.0));
+        let actual = sim.world.col_get_at(0, "opacity").unwrap();
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "tau={tau} expected={expected} actual={actual}"
+        );
+        let deadline = sim.world.col_get_at(0, "cull-at").unwrap() as u64;
+        while sim.world.tick < deadline {
+            assert!(sim.world.entities.is_alive(0));
+            sim.step().unwrap();
+        }
+        sim.step().unwrap();
+        assert!(!sim.world.entities.is_alive(0));
+    }
+
     /// Dyn-valued top-level numeric fields are evaluated into SoA fields;
     /// rules/colliders read those fields like any other entity meta.
     #[test]
