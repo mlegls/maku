@@ -117,3 +117,142 @@ spec in `openspec/specs/language/spec.md` is authoritative where they overlap.
   representation owns stable spec identity and dense row bindings. Batch
   grouping, state lookup, and projector memoization must key explicit
   spec/program/plan ids rather than `Rc<DynNode>` pointer identity.
+
+---
+
+# Round design (2026-08 pick-up)
+
+Bound to the current tree by a seam survey (2026-08-10). Starting facts
+that shaped the slices: the *program* half of the flip already landed in
+round 22 — batch keys are explicit `MotionProgramIdentity`, all three
+intern tables are structural — so this round is entirely about *node and
+storage* identity. The load-bearing seams: `MotionNodeId` is minted by
+`Rc::as_ptr` interning (`motion.rs collect_node_state`), a
+content-identical `MotionStateSchema` is allocated per entity
+(`world.rs install_entity`), `instantiate_rand` re-`Rc::new`s the whole
+figure spine per element even on the compiled path (programs shared,
+nodes not), `dyn_cols` gets an unconditional fresh Rc per element
+(`spawn.rs build_entity_specs`) which silently makes the `slots.rs` plan
+memo per-entity and unbounded, `ClosedPoseScratch::class` holds raw
+`*const DynNode` across ticks (latent ABA), and `exec.rs
+resolve_node_pose` scans every live row's schema to find a node's
+carrier.
+
+## D1 — Spec table: identity, minting, lifetime
+
+`World.specs: SpecStore` — slotted table of `EntitySpec { dyn_figure,
+motion_schema: Rc<MotionStateSchema>, dyn_cols, collider_projector,
+cache_policy, overrides, capture_layout }`. Rows hold
+`spec_id: SpecId(index: u32, gen: u32)`.
+
+- **Minting** happens where `build_entity_specs` runs today (spawn) and
+  at remat rebuild. Front-end memo: a Weak-guarded map keyed on the
+  figure-template Rc pointer (+ the other component identities), same
+  pattern as the collision projection-plan cache — repeated spawns from
+  a stable template reuse their spec without structural work.
+- **Lifetime**: rows hold a refcount on their spec entry. `cull`
+  releases the row's spec reference immediately (today dead rows pin
+  trees until slot reuse). At refcount zero the entry frees, the slot
+  goes on a free list, and its generation bumps — so a spawn-loop card
+  that constructs a fresh figure every call (fresh Rc, memo miss) mints
+  and frees specs and the table stays bounded by the live population.
+  Cross-tick caches key the full `SpecId` including generation, which
+  retires the ABA class outright.
+- **Structural cross-site fusing is a non-goal this round**: batch-lane
+  fusing across sites already comes from structural program interning
+  (round 22); spec-level structural interning would only dedup memory
+  between simultaneously-live identical sites and can layer on later
+  behind the same SpecId surface. This is the recorded fold of
+  `spec-store-dedup` — the table is the dedup mechanism, no parallel
+  sharing scheme.
+
+## D2 — Per-spec schemas; node identity stays pointer-keyed *within* a spec
+
+`MotionStateSchema` (with its `node_ids` map) is built once per spec
+over the spec's shared tree and shared by every row. Pointer-keyed
+`node_ids` is fine at spec scope: the spec owns its immutable tree, so
+pointers are stable for the spec's lifetime; what was broken was
+per-entity schemas and *cross*-entity pointer lookup. Rows reach their
+schema via `spec_id` (O(1)); state cells remain the dense
+`[slot][row]` columns; the eval-time `state_key_for_node` contract is
+unchanged. `MotionNodeId` therefore does NOT need a fragile
+walk-ordinal assignment at eval time (which would break on
+conditionally-visited subtrees like stage segments).
+
+`resolve_node_pose` (exec.rs) must lose its O(live-rows) scan, and
+under shared trees "which row carries this node pointer" becomes
+ambiguous — the call site must already know its row (or resolve via
+spec_id + row context). Slice 1 investigates the actual call-site
+semantics and re-plumbs; this is the one place the design is bound
+during implementation rather than up front.
+
+## D3 — Captures move to the row; the spine stops cloning
+
+The spec's tree keeps `RandCell::Compiled` (spec) nodes everywhere; the
+per-entity data becomes one capture vector per row (`Rc<[f64]>` or
+arena range), laid out by the spec's `capture_layout`: per rand-bearing
+node, an offset + length, in exactly the per-leaf walk order the RNG
+round established (`instantiate_rand`'s `node_n` ordering) — draws use
+the same `rng_mix(elem_key, mix(NODE, ordinal))` keys and site
+numbering, so every drawn value is bit-identical to today's. Eval
+threads the row's captures + layout through the motion eval context;
+`caps_of(&node.rand)` becomes a lookup of the node's slice in the row
+vector. `RandCell::Caps` stays as the fallback for non-row-owned nodes
+(ad-hoc direct eval) and the `Bail` path keeps per-element substituted
+trees — those elements mint per-element specs, correct and bounded via
+refcounting, just not shared.
+
+Two per-element specializations that currently force clones become row
+data: the ambient spawn frame (`framed(ctx.ambient)` wrapper) becomes a
+per-row pose applied at the eval root instead of a per-spawn-call
+wrapper node, and the `with_axis` group rebinding becomes a per-row
+axis input (it already scatters as a lane input in the batch path) —
+grouped spawns (rings, the common case) MUST share one spec.
+
+## D4 — Explicit-id re-keying
+
+- `ClosedPoseScratch::class`/`candidates`: raw `*const DynNode` →
+  `SpecId` (generation included).
+- `slots.rs` dyn-field plan memo and the collision projector front-end
+  memo: keyed per spec (their payloads now genuinely shared per spec,
+  so the maps stop growing with entity count).
+- `vel_chain` state-slot resolution: per-spec, not per-row-pointer.
+- `examples/dbg.rs` pointer histograms become spec-id histograms.
+- Host-visible `Rc::ptr_eq` contracts (RenderSchema, EventLog) are NOT
+  entity layout and stay untouched.
+
+## D5 — Snapshot/clone
+
+`EntityStore::clone` drops six Rc-bump columns for one `Vec<SpecId>` +
+one captures column; `SpecStore` clones as slot-vector Rc bumps. All
+pointer-keyed scratch is already dropped on `Sim::clone` and rebuilt,
+so restore semantics are unchanged by construction.
+
+## D6 — Remat
+
+The remat drain rebuilds a figure mid-life; it mints-or-memoizes a spec
+through the same path as spawn, swaps the row's `spec_id` (releasing
+the old ref), resets state cells per the new schema, and redraws/copies
+captures per the remat semantics already in place. Masked batch remats
+go through the same spec mint once per plan, not per row.
+
+## Slices
+
+1. **Spec table**: `SpecStore` + `spec_id` column; `EntitySpecStore`'s
+   six columns collapse; per-spec `MotionStateSchema`; install/cull/
+   reuse/remat/clone plumbing; refcount + generational ids;
+   `resolve_node_pose` re-plumb. Rand-bearing elements mint per-element
+   specs in this slice (trees still cloned) — correct, bounded,
+   rand-free groups already share.
+2. **Captures to rows**: capture layout on the spec, row capture
+   vector, shared trees for rand-bearing groups, ambient-frame row
+   data, axis input; `instantiate_rand` demoted to drawing caps. RNG
+   bit-parity gate (same-seed cross-commit A/B on rand-heavy cards).
+3. **Re-keying + retirement**: SpecId keys in closed-pose class /
+   slots memo / collision front-end / vel-chain slots; representation
+   tests rewritten (the round-22 tests that walk node shapes); perf
+   walls.
+
+Each slice lands oracle-green (`MAKU_LOWER_ORACLE=1` core suite + the
+ignored release card suites) before the next starts; the round's wall
+verdict is interleaved A/B per `openspec/specs/perf/spec.md`.
