@@ -462,7 +462,16 @@ pub fn materialize_collider_defs_into(
                     }),
                     _ => None,
                 };
-                let mut run_world = World::for_eval(tick_rate);
+                let mut run_world = match row {
+                    Some(row) => World::for_eval_keyed(
+                        tick_rate,
+                        rng_mix(
+                            rng_mix(world.entities.rng_key(row), rng_domain::COLLIDER),
+                            world.tick,
+                        ),
+                    ),
+                    None => World::for_eval(tick_rate),
+                };
                 run_world.symbols = world.symbols.clone();
                 let mut last = Val::Nothing;
                 for form in body.iter() {
@@ -494,7 +503,16 @@ pub fn materialize_collider_defs_into(
                 let mut run_ctx = Ctx::default();
                 run_ctx.sig = sig.clone();
                 run_ctx.projector_scope = scope.clone();
-                let mut run_world = World::for_eval(tick_rate);
+                let mut run_world = match row {
+                    Some(row) => World::for_eval_keyed(
+                        tick_rate,
+                        rng_mix(
+                            rng_mix(world.entities.rng_key(row), rng_domain::COLLIDER),
+                            world.tick,
+                        ),
+                    ),
+                    None => World::for_eval(tick_rate),
+                };
                 run_world.symbols = world.symbols.clone();
                 for (pred, child) in clauses.iter() {
                     let enabled = match pred {

@@ -1,6 +1,6 @@
 //! A scrubbable session: the sim as a deterministic fold over TWO tapes
 //! (design.md §11) — the input tape (one `Inputs` per tick) and the command
-//! tape (program changes: add/swap, stamped with the tick they landed on).
+//! tape (program changes and seed resets, stamped with the tick they landed on).
 //! Any tick is reachable as nearest-snapshot + re-step, and program changes
 //! re-apply during the re-step, so scrubbing back across an (add ...) or
 //! (swap ...) boundary reproduces the layered/swapped timeline exactly.
@@ -22,6 +22,7 @@ pub const MAX_SNAPS: usize = 240;
 enum ProgCmd {
     Add(String),
     Swap(String),
+    Seed(u64),
     ResizeEntities(usize),
 }
 
@@ -105,6 +106,7 @@ impl Session {
                 match cmd {
                     ProgCmd::Add(src) => sim.add_forms(card_src, src)?,
                     ProgCmd::Swap(src) => sim.swap_forms(card_src, src)?,
+                    ProgCmd::Seed(seed) => sim.reset_rng(*seed),
                     ProgCmd::ResizeEntities(max) => sim.resize_entity_capacity(*max)?,
                 }
             }
@@ -190,6 +192,13 @@ impl Session {
         read_all(&src).map_err(|e| e.to_string())?;
         let t = self.tick().ok_or("nothing running")?;
         self.cmds.push((t, ProgCmd::Swap(src)));
+        Ok(())
+    }
+
+    pub fn record_seed(&mut self, seed: u64) -> Result<(), String> {
+        let t = self.tick().ok_or("nothing running")?;
+        self.cmds.push((t, ProgCmd::Seed(seed)));
+        self.sim.as_mut().unwrap().reset_rng(seed);
         Ok(())
     }
 
@@ -306,6 +315,37 @@ mod tests {
             .collect();
         assert_eq!(y_births, y_births_after, "identical birth ticks (130)");
         assert_eq!(y_births_after[0], 130);
+    }
+
+    #[test]
+    fn seek_across_seed_reset_is_exact() {
+        let mut sess = Session::default();
+        sess.start(Sim::load(CARD, Some("a")).unwrap());
+        for _ in 0..20 {
+            sess.advance(CARD).unwrap();
+        }
+        sess.record_seed(0x1234_5678_9abc_def0).unwrap();
+        sess.record_add("(spawn (circle 3 (linear c[(rand 1 2) 0])) {:hp (rand 0 1)})".into()).unwrap();
+        for _ in 0..20 {
+            sess.advance(CARD).unwrap();
+        }
+        let state = |sess: &Session| {
+            let world = &sess.sim.as_ref().unwrap().world;
+            let rows = world.entities.iter().enumerate().map(|(row, _)| (
+                world.entities.rng_key(row),
+                world.entities.birth(row),
+                world.entities.generation(row),
+                world.entities.is_alive(row),
+                world.col_get_at(row, "hp").map(f64::to_bits),
+            )).collect::<Vec<_>>();
+            (world.seed, rows)
+        };
+        let expected = state(&sess);
+
+        sess.seek(CARD, 10).unwrap();
+        assert_ne!(sess.sim.as_ref().unwrap().world.seed, expected.0);
+        sess.seek(CARD, 40).unwrap();
+        assert_eq!(state(&sess), expected);
     }
 
     /// Swaps replay too: rewind past a swap, step forward, and the program

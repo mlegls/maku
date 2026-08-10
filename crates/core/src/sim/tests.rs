@@ -2653,6 +2653,52 @@
     }
 
     #[test]
+    fn evolve_rand_walks_and_scrubs_exactly() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (circle 2
+           (evolve (cart 0 0)
+             (fn [s c] (cart (+ (:x s) (rand -1 1)) 0))))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        let mut walked = Vec::new();
+        for _ in 0..8 {
+            sim.step().unwrap();
+            if let Some(schema) = sim.world.entities.motion_schema(0) {
+                if let Some(cell) = sim.world.entities.state_val(0, schema.val_keys[0]) {
+                    let Val::Pose(p) = cell.state else { panic!("pose evolve state") };
+                    walked.push(p.x.to_bits());
+                }
+            }
+        }
+        assert!(walked.windows(2).all(|pair| pair[0] != pair[1]), "evolve changes each tick");
+
+        let values = (0..2).map(|row| {
+            let schema = sim.world.entities.motion_schema(row).unwrap();
+            let cell = sim.world.entities.state_val(row, schema.val_keys[0]).unwrap();
+            let Val::Pose(p) = cell.state else { panic!("pose evolve state") };
+            p.x.to_bits()
+        }).collect::<Vec<_>>();
+        assert_ne!(values[0], values[1], "entities have distinct walks");
+
+        let mut replay = sim.clone();
+        for _ in 0..20 {
+            sim.step().unwrap();
+            replay.step().unwrap();
+        }
+        for row in 0..2 {
+            let a_schema = sim.world.entities.motion_schema(row).unwrap();
+            let b_schema = replay.world.entities.motion_schema(row).unwrap();
+            let a = sim.world.entities.state_val(row, a_schema.val_keys[0]).unwrap();
+            let b = replay.world.entities.state_val(row, b_schema.val_keys[0]).unwrap();
+            let (Val::Pose(ap), Val::Pose(bp)) = (a.state, b.state) else {
+                panic!("pose evolve state")
+            };
+            assert_eq!((a.tick, ap.x.to_bits(), ap.y.to_bits()), (b.tick, bp.x.to_bits(), bp.y.to_bits()));
+        }
+    }
+
+    #[test]
     fn evolve_snapshot_restore_is_deterministic() {
         const CARD: &str = r#"
 (defpattern p []

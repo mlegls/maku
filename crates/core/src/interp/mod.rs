@@ -5275,6 +5275,7 @@ mod tests {
                 world: None,
                 readers: &readers,
                 tick_rate: DEFAULT_TICK_RATE,
+                rng_base: None,
                 mirror_legacy: false,
                 write_n2: &mut write_n2,
                 write_col: &mut write_col,

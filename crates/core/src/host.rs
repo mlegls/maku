@@ -329,6 +329,26 @@ impl Instance {
                     Err(e) => self.status = format!("swap error: {}", e),
                 }
             }
+            "seed" => {
+                let seed = match items.get(1) {
+                    Some(Form::Num(n))
+                        if n.is_finite()
+                            && *n >= 0.0
+                            && *n < u64::MAX as f64
+                            && n.fract() == 0.0 => {
+                        Some(*n as u64)
+                    }
+                    Some(Form::Str(s)) | Some(Form::Sym(s)) => s.parse::<u64>().ok(),
+                    _ => None,
+                };
+                match seed {
+                    Some(seed) => match self.session.record_seed(seed) {
+                        Ok(()) => self.status = format!("seed {}", seed),
+                        Err(e) => self.status = format!("seed error: {}", e),
+                    },
+                    None => self.status = "seed error: expected u64".into(),
+                }
+            }
             "seek" => {
                 if let Some(Form::Num(n)) = items.get(1) {
                     self.seek((*n).max(0.0) as u64);

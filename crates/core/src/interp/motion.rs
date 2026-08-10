@@ -338,6 +338,7 @@ pub struct MotionStepCtx<'a> {
     pub world: Option<&'a mut World>,
     pub readers: &'a MotionReaders,
     pub tick_rate: f64,
+    pub rng_base: Option<u64>,
     pub mirror_legacy: bool,
     pub write_n2: &'a mut dyn FnMut(MotionStateKey, [f64; 2]),
     pub write_col: &'a mut dyn FnMut(ColName, f64),
@@ -407,8 +408,9 @@ fn integrator_component_key(ptr: usize, readers: &MotionReaders) -> MotionStateK
 #[derive(Debug)]
 pub enum RandCell {
     /// Spec node: extraction + lowering, built at construction. The node's
-    /// own forms stay untouched (direct signal evaluation outside spawn
-    /// keeps per-eval rand semantics).
+    /// own forms stay untouched. Uncaptured rand in rowless signal contexts
+    /// is a deterministic constant; rowful scratch contexts draw keyed
+    /// per-entity-per-tick randomness.
     Compiled(ExtractedSig),
     /// Rand present but the marker forms didn't lower: spawn instantiation
     /// falls back to per-entity form substitution, the pre-slot path.
@@ -764,7 +766,7 @@ pub(crate) fn evolve_step_ctx(k: u64, dt: f64) -> Val {
     ]))
 }
 
-fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate: f64, world: Option<&mut World>) -> Result<Val, String> {
+fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate: f64, world: Option<&mut World>, rng_base: Option<u64>) -> Result<Val, String> {
     let step_ctx = evolve_step_ctx(k, 1.0 / tick_rate);
     let mut call_ctx = Ctx {
         sig: sig.clone(),
@@ -776,11 +778,21 @@ fn apply_evolve_step(ev: &EvolveDyn, state: Val, k: u64, sig: &SigEnv, tick_rate
         deferred: Vec::new(),
         projector_scope: None,
     };
-    let mut fallback = World::for_eval(tick_rate);
-    apply_fn(ev.step.clone(), &[state, step_ctx], &mut call_ctx, world.unwrap_or(&mut fallback), false)
+    let mut fallback = match rng_base {
+        Some(base) => World::for_eval_keyed(tick_rate, base),
+        None => World::for_eval(tick_rate),
+    };
+    let run_world = match world {
+        Some(world) => {
+            if let Some(base) = rng_base { world.rebase_rng(base); }
+            world
+        }
+        None => &mut fallback,
+    };
+    apply_fn(ev.step.clone(), &[state, step_ctx], &mut call_ctx, run_world, false)
 }
 
-fn resolve_evolve_init(ev: &EvolveDyn, sig: &SigEnv, tick_rate: f64, world: Option<&mut World>) -> Result<Val, String> {
+fn resolve_evolve_init(ev: &EvolveDyn, sig: &SigEnv, tick_rate: f64, world: Option<&mut World>, rng_base: Option<u64>) -> Result<Val, String> {
     match &ev.init {
         EvolveInit::Value(value) => Ok(value.clone()),
         EvolveInit::Thunk { form, env } => {
@@ -794,8 +806,18 @@ fn resolve_evolve_init(ev: &EvolveDyn, sig: &SigEnv, tick_rate: f64, world: Opti
                 deferred: Vec::new(),
                 projector_scope: None,
                     };
-            let mut fallback = World::for_eval(tick_rate);
-            evaluate(form, env, &mut call_ctx, world.unwrap_or(&mut fallback))
+            let mut fallback = match rng_base {
+                Some(base) => World::for_eval_keyed(tick_rate, base),
+                None => World::for_eval(tick_rate),
+            };
+            let run_world = match world {
+                Some(world) => {
+                    if let Some(base) = rng_base { world.rebase_rng(base); }
+                    world
+                }
+                None => &mut fallback,
+            };
+            evaluate(form, env, &mut call_ctx, run_world)
         }
     }
 }
@@ -810,9 +832,9 @@ pub fn evolve_value(ev: &EvolveDyn, tau: f64, sig: &SigEnv, tick_rate: f64) -> R
     }
     let closed_sig = SigEnv { defs: sig.defs.clone(), ..SigEnv::default() };
     let n = evolve_tick(tau, tick_rate);
-    let mut s = resolve_evolve_init(ev, &closed_sig, tick_rate, None)?;
+    let mut s = resolve_evolve_init(ev, &closed_sig, tick_rate, None, None)?;
     for k in 0..n {
-        s = apply_evolve_step(ev, s, k, &closed_sig, tick_rate, None)?;
+        s = apply_evolve_step(ev, s, k, &closed_sig, tick_rate, None, None)?;
     }
     Ok(s)
 }
@@ -2029,6 +2051,7 @@ pub fn step_motion(
         world: None,
         readers: &readers,
         tick_rate: TickTiming::default().rate(),
+        rng_base: None,
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
         write_col: &mut |_, _| {},
@@ -2266,15 +2289,22 @@ pub fn step_motion_in(
             let closed_sig = SigEnv { defs: ctx.sig.defs.clone(), ..SigEnv::default() };
             let step_sig = if ev.live { ctx.sig } else { &closed_sig };
             let mut world = if ev.live { ctx.world.as_deref_mut() } else { None };
+            // Per-cell keying: two live evolves on one row (and an init next
+            // to its first step) must not share a draw stream — mix in the
+            // stable node id and an init/step salt.
+            let cell_base = ctx.rng_base.map(|b| match dense_key {
+                MotionStateKey::Node(MotionNodeId(id)) => rng_mix(b, id as u64),
+                _ => b,
+            });
             let mut cell = ctx.readers.vals(dense_key)
                 .or_else(|| match ctx.state.get(&dense_key) {
                     Some(Cell::V(v)) => Some(v.clone()),
                     _ => None,
                 })
                 .map(Ok)
-                .unwrap_or_else(|| resolve_evolve_init(ev, step_sig, ctx.tick_rate, world.as_deref_mut()).map(|state| EvolveCell { state, tick: 0 }))?;
+                .unwrap_or_else(|| resolve_evolve_init(ev, step_sig, ctx.tick_rate, world.as_deref_mut(), cell_base.map(|b| rng_mix(b, 0))).map(|state| EvolveCell { state, tick: 0 }))?;
             if cell.tick < target_tick {
-                let next = apply_evolve_step(ev, cell.state, cell.tick, step_sig, ctx.tick_rate, world.as_deref_mut())?;
+                let next = apply_evolve_step(ev, cell.state, cell.tick, step_sig, ctx.tick_rate, world.as_deref_mut(), cell_base.map(|b| rng_mix(b, 1)))?;
                 cell = EvolveCell { state: next, tick: cell.tick + 1 };
             }
             if ctx.mirror_legacy {
@@ -2304,6 +2334,7 @@ pub fn step_dyn_figure(
         world: None,
         readers: &readers,
         tick_rate: TickTiming::default().rate(),
+        rng_base: None,
         mirror_legacy: true,
         write_n2: &mut ignore_n2,
         write_col: &mut |_, _| {},

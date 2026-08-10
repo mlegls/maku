@@ -12,11 +12,11 @@
 
 ## 3. Keyed scratch contexts
 
-- [ ] 3.1 Rowful `for_eval` sites switch to `for_eval_keyed`: evolve step/init (EVOLVE), pending-field fns and masked-update values (FIELD), collider-projector bodies (COLLIDER) — base = mix(entity rng key, domain, tick). Rowless sites (signal eval, FnPose) stay on plain `for_eval`; fix the stale motion.rs:409 comment.
+- [x] 3.1 Rowful `for_eval` sites switch to `for_eval_keyed`: evolve step/init (EVOLVE), pending-field fns and masked-update values (FIELD), collider-projector bodies (COLLIDER) — base = mix(entity rng key, domain, tick). Rowless sites (signal eval, FnPose) stay on plain `for_eval`; fix the stale motion.rs:409 comment.
 
 ## 4. Session and host
 
-- [ ] 4.1 `Sim::reset_rng` passthrough; `ProgCmd::Seed(u64)` recorded/replayed like Add/Swap; `host.rs` `seed <n>` command.
+- [x] 4.1 `Sim::reset_rng` passthrough; `ProgCmd::Seed(u64)` recorded/replayed like Add/Swap; `host.rs` `seed <n>` command.
 
 ## 5. Verification
 

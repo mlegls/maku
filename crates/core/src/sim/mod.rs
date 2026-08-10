@@ -705,6 +705,10 @@ impl Sim {
         }
     }
 
+    pub fn reset_rng(&mut self, seed: u64) {
+        self.world.reset_rng(seed);
+    }
+
     pub fn resize_entity_capacity(&mut self, max_entities: usize) -> Result<(), String> {
         self.world.resize_entity_capacity(max_entities)
     }
@@ -1193,7 +1197,11 @@ impl Sim {
                     })
                     .unwrap_or(Val::Nothing);
                 let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
-                let mut call_world = World::for_eval(self.world.tick_rate());
+                let base = rng_mix(
+                    rng_mix(self.world.entities.rng_key(row), rng_domain::FIELD),
+                    self.world.tick,
+                );
+                let mut call_world = World::for_eval_keyed(self.world.tick_rate(), base);
                 apply_fn(f, &[cur], &mut call_ctx, &mut call_world, false)?
             }
             constant => constant,
@@ -1267,7 +1275,11 @@ impl Sim {
         let new_dyn = match motion {
             Val::Fn { .. } | Val::Builtin(_) => {
                 let mut call_ctx = self.closed_call_ctx(closed_sig.clone());
-                let mut call_world = World::for_eval(self.world.tick_rate());
+                let base = rng_mix(
+                    rng_mix(self.world.entities.rng_key(row), rng_domain::FIELD),
+                    self.world.tick,
+                );
+                let mut call_world = World::for_eval_keyed(self.world.tick_rate(), base);
                 as_dyn_pose(apply_fn(motion, &[exit], &mut call_ctx, &mut call_world, false)?)?
             }
             direct => as_dyn_pose(direct)?,
@@ -1408,7 +1420,13 @@ impl Sim {
                     defs: self.ctx.sig.defs.clone(),
                     ..SigEnv::default()
                 });
-                let mut call_world = World::for_eval(self.world.tick_rate());
+                let row = self.world.find(target)
+                    .ok_or_else(|| "update oracle: missing selected row".to_string())?;
+                let base = rng_mix(
+                    rng_mix(self.world.entities.rng_key(row), rng_domain::FIELD),
+                    self.world.tick,
+                );
+                let mut call_world = World::for_eval_keyed(self.world.tick_rate(), base);
                 let fixed = match apply_fn(
                     update,
                     &[Val::Nothing],
@@ -2162,6 +2180,10 @@ impl Sim {
                 let mut ignore_dyn = |_, _| {};
                 let mut write_val = |key, value| val_writes.push((key, value));
                 let tick_rate = self.world.tick_rate();
+                let rng_base = rng_mix(
+                    rng_mix(self.world.entities.rng_key(i), rng_domain::EVOLVE),
+                    tick,
+                );
                 // live evolve steps must see the row's scoped overrides
                 let mut row_sig = None;
                 let sig = sig.for_row(self.world.entities.overrides(i), &mut row_sig);
@@ -2171,6 +2193,7 @@ impl Sim {
                     world: Some(&mut self.world),
                     readers: &readers,
                     tick_rate,
+                    rng_base: Some(rng_base),
                     mirror_legacy: false,
                     write_n2: &mut write_n2,
                     write_col: &mut write_col,
@@ -2189,6 +2212,9 @@ impl Sim {
                 }
             }
         }
+        // evolve steps rebased the live scope per row; nothing after this
+        // phase may draw without re-basing
+        self.world.mark_rng_stale();
         self.run_vel_batches(dt, &sig)?;
         if let Some(f) = probe {
             crate::interp::profile::close("phase:scan-step", f);
