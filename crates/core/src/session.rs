@@ -361,6 +361,36 @@ mod tests {
         assert_eq!(sess.sim.as_ref().unwrap().events_vec().len(), n_at_200);
     }
 
+    #[test]
+    fn dyn_field_epochs_survive_snapshot_scrub() {
+        const DYNS: &str = r#"
+(defpattern p []
+  (let [bs (spawn (still) {:opacity 0.25})]
+    (seq (wait (ticks 3))
+         (remat (first bs) {:opacity (lerp 0 1 t 1 0)}))))
+"#;
+        let mut sess = Session::default();
+        sess.snap_every = 2;
+        sess.start(Sim::load(DYNS, Some("p")).unwrap());
+        for _ in 0..10 {
+            sess.advance(DYNS).unwrap();
+        }
+        let state = |sess: &Session| {
+            let sim = sess.sim.as_ref().unwrap();
+            let col = sim.world.symbols.lookup("opacity").unwrap();
+            let dyn_cols = sim.world.entities.dyn_cols(0);
+            let index = dyn_cols.iter().position(|(candidate, _)| *candidate == col).unwrap();
+            (
+                sim.world.entities.dyn_col_epoch(0, index).unwrap(),
+                sim.world.col_get_at(0, "opacity").unwrap().to_bits(),
+            )
+        };
+        let expected = state(&sess);
+        sess.seek(DYNS, 1).unwrap();
+        sess.seek(DYNS, 10).unwrap();
+        assert_eq!(state(&sess), expected);
+    }
+
     /// Thinning keeps the snapshot set bounded with the baseline intact,
     /// and scrubbing still works against the sparser old history.
     #[test]

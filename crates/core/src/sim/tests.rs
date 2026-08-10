@@ -3669,6 +3669,83 @@
         assert_eq!(b(7).color, "green");
     }
 
+    fn dyn_field_epoch(sim: &Sim, row: usize, name: &str) -> u64 {
+        let col = sim.world.symbols.lookup(name).unwrap();
+        let dyn_cols = sim.world.entities.dyn_cols(row);
+        let index = dyn_cols.iter().position(|(candidate, _)| *candidate == col).unwrap();
+        sim.world.entities.dyn_col_epoch(row, index).unwrap()
+    }
+
+    #[test]
+    fn spawn_dyn_field_epoch_preserves_entity_time() {
+        const CARD: &str = r#"
+(defpattern p []
+  (spawn (still) {:opacity (+ 1 t)}))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..8 {
+            sim.step().unwrap();
+            let epoch = dyn_field_epoch(&sim, 0, "opacity");
+            assert_eq!(epoch, sim.world.entities.birth(0).unwrap());
+            let expected = 1.0 + sim.world.entity_tau(0, sim.world.tick);
+            assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
+        }
+    }
+
+    #[test]
+    fn remat_dyn_field_starts_at_install_tick() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (still) {:opacity 0.25})]
+    (seq (wait (ticks 3))
+         (remat (first bs) {:opacity (lerp 0 1 t 1 0)}))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        while sim.world.entities.dyn_cols(0).is_empty() {
+            sim.step().unwrap();
+        }
+        let epoch = dyn_field_epoch(&sim, 0, "opacity");
+        assert!(epoch > sim.world.entities.birth(0).unwrap());
+        let index = sim.world.entities.dyn_cols(0)
+            .iter().position(|(col, _)| *col == sim.world.symbols.lookup("opacity").unwrap()).unwrap();
+        assert_eq!(sim.world.entities.dyn_col_tau(0, index, epoch, sim.world.tick_rate()), 0.0);
+        let tau = sim.world.entities.dyn_col_tau(0, index, sim.world.tick, sim.world.tick_rate());
+        assert!((sim.world.col_get_at(0, "opacity").unwrap() - (1.0 - tau)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn set_col_can_install_a_dyn_field() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (still) {:opacity 0.25})]
+    (set-col (first bs) :opacity (nth [(- 1 t)] 0))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        while sim.world.entities.dyn_cols(0).is_empty() {
+            sim.step().unwrap();
+        }
+        assert!(dyn_field_epoch(&sim, 0, "opacity") > sim.world.entities.birth(0).unwrap());
+    }
+
+    #[test]
+    fn motion_remat_does_not_restart_dyn_field_epoch() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [bs (spawn (linear c[120 0]) {:opacity (- 1 (* 0.5 t))})]
+    (seq (wait (ticks 3))
+         (remat (first bs) (linear c[0 120])))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        sim.step().unwrap();
+        let epoch = dyn_field_epoch(&sim, 0, "opacity");
+        while sim.world.entity_motion_tau(0, sim.world.tick) == sim.world.entity_tau(0, sim.world.tick) {
+            sim.step().unwrap();
+        }
+        assert_eq!(dyn_field_epoch(&sim, 0, "opacity"), epoch);
+        let expected = 1.0 - 0.5 * sim.world.entity_tau(0, sim.world.tick);
+        assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
+    }
+
     /// Dyn-valued top-level numeric fields are evaluated into SoA fields;
     /// rules/colliders read those fields like any other entity meta.
     #[test]

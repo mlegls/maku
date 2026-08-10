@@ -48,7 +48,9 @@ Installing a dyn into a field (at spawn, via a remat field-map key, or via a
 field write) SHALL restart that field's epoch; the field's dyn runs on
 `τ_field = t − epoch_field`. Spawn-time installs anchor at birth, preserving
 existing behavior. Motion remats MUST NOT touch dyn field epochs, and field
-installs MUST NOT touch the motion slot.
+installs MUST NOT touch the motion slot. A static (number/keyword) field write
+SHALL remove any dyn occupying that field slot — last writer wins, rather than
+the dyn silently re-overwriting the static value on the next refresh.
 
 #### Scenario: Mid-life fade starts at the event
 - **WHEN** a rule remats `{:opacity (fade→0 over d)}` on a bullet at tick T

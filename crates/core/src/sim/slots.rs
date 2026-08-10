@@ -184,7 +184,6 @@ pub(super) fn refresh_dyn_field_columns(
         if !world.entities.is_alive(row) {
             continue;
         }
-        let tau = world.entity_tau(row, tick);
         let dyn_cols = world.entities.dyn_cols(row);
         if dyn_cols.is_empty() {
             continue;
@@ -217,6 +216,7 @@ pub(super) fn refresh_dyn_field_columns(
             );
         }
         for (index, (output, dyn_num)) in dyn_cols.iter().enumerate() {
+            let tau = world.entities.dyn_col_tau(row, index, tick, world.tick_rate());
             match scratch
                 .sources
                 .get(&source)

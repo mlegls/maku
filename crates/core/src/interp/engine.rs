@@ -264,11 +264,16 @@ fn parse_remat_spec_form(
         let Val::Kw(name) = evaluate(k, env, ctx, world)? else {
             return Err("remat: spec map keys must be keywords".into());
         };
-        let value = evaluate(v, env, ctx, world)?;
         if name.as_ref() == "motion" {
+            let value = evaluate(v, env, ctx, world)?;
             validate_remat_motion(&value)?;
             spec.motion = Some(value);
         } else {
+            let value = if contains_t(v) {
+                dynlike_to_val(&eval_dynlike_form(v, env, ctx, world)?)?
+            } else {
+                evaluate(v, env, ctx, world)?
+            };
             validate_remat_field_value(&value)?;
             spec.fields.push((world.intern_col(name.as_ref()), value));
         }
@@ -285,10 +290,10 @@ fn validate_remat_motion(v: &Val) -> Result<(), String> {
 }
 
 fn validate_remat_field_value(v: &Val) -> Result<(), String> {
-    if matches!(v, Val::Num(_) | Val::Kw(_) | Val::Fn { .. } | Val::Builtin(_)) {
+    if matches!(v, Val::Num(_) | Val::Kw(_) | Val::DynLike(_) | Val::Fn { .. } | Val::Builtin(_)) {
         Ok(())
     } else {
-        Err(format!("remat: field value must be number, keyword, or function, got {:?}", v))
+        Err(format!("remat: field value must be number, keyword, signal, or function, got {:?}", v))
     }
 }
 

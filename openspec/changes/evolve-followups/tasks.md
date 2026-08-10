@@ -7,10 +7,10 @@ core suite plus the 4 ignored oracle card suites
 
 ## 1. Per-dyn-field epochs (D5)
 
-- [ ] 1.1 Add per-field epoch columns to dyn-valued field slots; spawn-time installs anchor at birth (assert no behavior change on the existing card corpus)
-- [ ] 1.2 Route field-dyn evaluation through `τ_field = t − epoch_field` in the dyn-column refresh
-- [ ] 1.3 Restart the field epoch on dyn installs via remat field-map keys and field writes; motion remats leave field epochs untouched (tests: mid-life fade starts at event; fade survives motion remat)
-- [ ] 1.4 Version the snapshot format for the new epoch columns; scrub/replay tests pass
+- [x] 1.1 Add per-field epoch columns to dyn-valued field slots; spawn-time installs anchor at birth (assert no behavior change on the existing card corpus)
+- [x] 1.2 Route field-dyn evaluation through `τ_field = t − epoch_field` in the dyn-column refresh
+- [x] 1.3 Restart the field epoch on dyn installs via remat field-map keys and field writes; motion remats leave field epochs untouched (tests: mid-life fade starts at event; fade survives motion remat)
+- [x] 1.4 Version the snapshot format for the new epoch columns; scrub/replay tests pass (snapshots are in-memory `Sim` clones — `Clone` coverage is the format; scrub test added)
 
 ## 2. Soft-cull fades (D6)
 

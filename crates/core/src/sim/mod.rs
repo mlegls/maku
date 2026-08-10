@@ -1173,17 +1173,24 @@ impl Sim {
         let col_label = self.world.symbols.resolve(col).unwrap_or("<unknown>").to_string();
         match next {
             Val::Num(n) => {
+                self.world.entities.remove_dyn_col(row, col);
                 self.world.sym_field_clear_at(row, col);
                 self.world.col_set_sym_at(row, col, n);
             }
             Val::Kw(v) => {
+                self.world.entities.remove_dyn_col(row, col);
                 self.world.col_clear_sym_at(row, col);
                 let value = self.world.symbols.intern(v.as_ref());
                 self.world.sym_field_set_at(row, col, value);
             }
+            Val::DynLike(value) => {
+                let value = as_dyn_num(&value)?;
+                self.world.sym_field_clear_at(row, col);
+                self.world.entities.install_dyn_col(row, col, value, self.world.tick);
+            }
             other => {
                 return Err(format!(
-                    "change-col: :{} expected number or keyword value, got {:?}",
+                    "change-col: :{} expected number, keyword, or signal value, got {:?}",
                     col_label, other
                 ));
             }

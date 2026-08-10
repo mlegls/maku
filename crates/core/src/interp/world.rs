@@ -150,6 +150,7 @@ pub struct EntityStore {
     freed_at: Vec<Option<u64>>,
     birth: Vec<u64>,
     motion_birth: Vec<u64>,
+    dyn_col_epochs: Vec<Vec<u64>>,
     scanned: Vec<bool>,
     specs: EntitySpecStore,
     sampled_pose: [Vec<Option<Pose>>; 2],
@@ -365,6 +366,7 @@ impl EntityStore {
             freed_at: Vec::with_capacity(max),
             birth: Vec::with_capacity(max),
             motion_birth: Vec::with_capacity(max),
+            dyn_col_epochs: Vec::with_capacity(max),
             scanned: Vec::with_capacity(max),
             specs: EntitySpecStore::with_capacity(max),
             sampled_pose: [Vec::with_capacity(max), Vec::with_capacity(max)],
@@ -452,6 +454,38 @@ impl EntityStore {
 
     pub fn dyn_cols(&self, row: usize) -> Rc<[(ColName, DynNum)]> {
         self.specs.dyn_cols.get(row).cloned().unwrap_or_else(|| Rc::from([]))
+    }
+
+    pub fn dyn_col_epoch(&self, row: usize, index: usize) -> Option<u64> {
+        self.dyn_col_epochs.get(row)?.get(index).copied()
+    }
+
+    pub fn dyn_col_tau(&self, row: usize, index: usize, tick: u64, tick_rate: f64) -> f64 {
+        let epoch = self.dyn_col_epochs[row][index];
+        tick.saturating_sub(epoch) as f64 / tick_rate
+    }
+
+    pub fn install_dyn_col(&mut self, row: usize, col: ColName, value: DynNum, tick: u64) {
+        let Some(source) = self.specs.dyn_cols.get(row) else { return };
+        let mut dyn_cols = source.iter().cloned().collect::<Vec<_>>();
+        let epochs = &mut self.dyn_col_epochs[row];
+        if let Some(index) = dyn_cols.iter().position(|(name, _)| *name == col) {
+            dyn_cols[index].1 = value;
+            epochs[index] = tick;
+        } else {
+            dyn_cols.push((col, value));
+            epochs.push(tick);
+        }
+        self.specs.dyn_cols[row] = dyn_cols.into();
+    }
+
+    pub fn remove_dyn_col(&mut self, row: usize, col: ColName) {
+        let Some(source) = self.specs.dyn_cols.get(row) else { return };
+        let Some(index) = source.iter().position(|(name, _)| *name == col) else { return };
+        let mut dyn_cols = source.iter().cloned().collect::<Vec<_>>();
+        dyn_cols.remove(index);
+        self.dyn_col_epochs[row].remove(index);
+        self.specs.dyn_cols[row] = dyn_cols.into();
     }
 
     pub fn collider_projector(&self, row: usize) -> Option<&ColliderProjector> {
@@ -772,6 +806,7 @@ impl EntityStore {
         self.freed_at[i] = None;
         self.birth[i] = birth;
         self.motion_birth[i] = birth;
+        self.dyn_col_epochs[i] = vec![birth; self.specs.dyn_cols[i].len()];
         self.scanned[i] = scanned;
         self.reset_motion_state(i);
         self.clear_sampled_poses(i);
@@ -807,6 +842,7 @@ impl EntityStore {
         self.freed_at.push(None);
         self.birth.push(birth);
         self.motion_birth.push(birth);
+        self.dyn_col_epochs.push(vec![birth; self.specs.dyn_cols[i].len()]);
         self.scanned.push(scanned);
         self.sampled_pose[0].push(None);
         self.sampled_pose[1].push(None);
@@ -841,6 +877,7 @@ impl Clone for EntityStore {
             freed_at: self.freed_at.clone(),
             birth: self.birth.clone(),
             motion_birth: self.motion_birth.clone(),
+            dyn_col_epochs: self.dyn_col_epochs.clone(),
             scanned: self.scanned.clone(),
             specs: self.specs.clone(),
             sampled_pose: self.sampled_pose.clone(),
@@ -1204,6 +1241,7 @@ impl World {
             self.entities.freed_at.truncate(max_entities);
             self.entities.birth.truncate(max_entities);
             self.entities.motion_birth.truncate(max_entities);
+            self.entities.dyn_col_epochs.truncate(max_entities);
             self.entities.scanned.truncate(max_entities);
             self.entities.sampled_pose[0].truncate(max_entities);
             self.entities.sampled_pose[1].truncate(max_entities);
@@ -1260,6 +1298,9 @@ impl World {
         }
         if self.entities.motion_birth.capacity() < max_entities {
             self.entities.motion_birth.reserve_exact(max_entities - self.entities.motion_birth.capacity());
+        }
+        if self.entities.dyn_col_epochs.capacity() < max_entities {
+            self.entities.dyn_col_epochs.reserve_exact(max_entities - self.entities.dyn_col_epochs.capacity());
         }
         if self.entities.scanned.capacity() < max_entities {
             self.entities.scanned.reserve_exact(max_entities - self.entities.scanned.capacity());
