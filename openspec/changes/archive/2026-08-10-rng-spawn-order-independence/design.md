@@ -180,6 +180,23 @@ once. Land before `entity-representation-flip` so the flip doesn't bake more cap
 vectors into the sequential contract. Rollback is `git revert` of the round's commits —
 no persistent-format changes except the additive `ProgCmd::Seed` variant.
 
+## Measured
+
+Implementation round 2026-08-10, three slices plus two review fixes. All gates green at
+each slice: 363 core tests, oracle-mode suite, and the 6 ignored oracle card suites in
+release under `MAKU_LOWER_ORACLE=1`. Rand-free A/B against a worktree at the pre-change
+commit (abdump, 240 ticks): 060_polar, 040_spread, 130_bowap all bit-IDENTICAL. Wall
+interleaved A/B (1200 ticks, release): exploding-stars parity within noise (~28.7ms both);
+cradle ~1% new-over-old with overlapping samples — at the measurement floor, and cradle's
+rand-heavy trajectories differ across engines so the workloads aren't identical anyway.
+
+Two defects caught in review, both the same aliasing class (sibling contexts sharing a
+key): capture draws needed per-node keying (sibling signal nodes' site 0 aliased —
+`sibling_nodes_draw_independently` pins it), and evolve cells needed the stable node id
+plus an init/step salt mixed in (two live evolves on a row, or an init beside its first
+step, shared a stream). The lesson generalizes: every context that derives a scope from a
+shared parent key must mix in its own local ordinal before drawing.
+
 ## Open Questions
 
 None — decisions were settled at proposal level; this design binds them to seams. The one

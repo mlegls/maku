@@ -20,10 +20,10 @@
 
 ## 5. Verification
 
-- [ ] 5.1 New tests: unrelated-draws-don't-shift (extra draws in task B leave task A's render rows identical); random-walk evolve varies per tick/entity and is scrub-exact; seek across a mid-run seed reset; two-load same-seed determinism still holds.
-- [ ] 5.2 Full gates: core suite + MAKU_LOWER_ORACLE=1 + the ignored oracle card suites in release; fix any pinned tests that encoded the sequential stream.
-- [ ] 5.3 Rand-free A/B parity spot-check against pre-change worktree (abdump); interleaved wall A/B on the perf cards for the executor-mixing overhead.
+- [x] 5.1 New tests: unrelated-draws-don't-shift (extra draws in task B leave task A's render rows identical); random-walk evolve varies per tick/entity and is scrub-exact; seek across a mid-run seed reset; two-load same-seed determinism still holds.
+- [x] 5.2 Full gates: core suite + MAKU_LOWER_ORACLE=1 + the ignored oracle card suites in release; fix any pinned tests that encoded the sequential stream.
+- [x] 5.3 Rand-free A/B parity spot-check against pre-change worktree (abdump); interleaved wall A/B on the perf cards for the executor-mixing overhead.
 
 ## 6. Sync and archive
 
-- [ ] 6.1 Sync deltas into openspec/specs (determinism, session); update language/spec.md:480 rand bullet and motion comments to landed state; record measured results in design.md; archive the change.
+- [x] 6.1 Sync deltas into openspec/specs (determinism, session); update language/spec.md:480 rand bullet and motion comments to landed state; record measured results in design.md; archive the change.

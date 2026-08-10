@@ -34,13 +34,31 @@ Running the same card with the same seed and the same input trace MUST produce i
 - **WHEN** two simulations boot the same card with the same seed and step the same number of ticks with identical inputs
 - **THEN** their render outputs are equal at every tick
 
-### Requirement: RNG draws consume one sequential stream in defined order
-Random draws MUST consume the single sequential splitmix stream in the order defined by the interpreted substitution walk. Optimizations that move draws (e.g. spawn-time capture vectors over marker programs) MUST preserve the exact draw order, including bail/fallback paths.
-*Why:* the draw order IS the replay contract. Known limitation (current behavior, not a guarantee to preserve): spawn-order independence does not hold — reordering spawns shifts the stream; tracked as the `rng-spawn-order-independence` change.
+### Requirement: RNG draws are keyed by local causal context
+A random draw MUST be a stateless mix of the run seed, the drawing context's key, and a local counter — never a read of shared sequential state. Context keys MUST derive hierarchically: root tasks from the seed and their creation ordinal, forked tasks from the parent task's key and the parent's local fork count, tick rules from the rule index, and every per-tick scope from its context key mixed with the tick. A draw's value MUST be independent of how many draws other contexts performed.
+*Why:* the sequential stream made spawn order part of the replay contract; keyed draws are what let array spawning, scrubbing, and future parallel entity loops coexist. Landed 2026-08 (`rng-spawn-order-independence`): scope-based `next_rand` over `rng_mix`, task-tree keys, per-rule and per-load re-basing.
 
-#### Scenario: Capture-vector extraction
-- **WHEN** a spawn site's rand expressions are extracted to per-entity capture vectors
-- **THEN** trajectories are identical to the per-entity substitution semantics for the same seed
+#### Scenario: Unrelated draws do not shift a task's stream
+- **WHEN** two runs differ only in extra `(rand)` draws performed by a different task (or in the relative order of two spawns issued by different tasks)
+- **THEN** the unmodified task's entities render identically in both runs
+
+#### Scenario: Same seed still replays exactly
+- **WHEN** two simulations boot the same card with the same seed and identical inputs
+- **THEN** all draws, and therefore all render frames, are identical at every tick
+
+### Requirement: Entities carry rng keys and capture vectors agree on site numbering
+Each spawned element MUST receive a persistent rng key derived from the spawning scope and its element ordinal, stored in the entity store and cloned with snapshots. Capture vectors MUST draw site k from the element key, the signal node's ordinal in the figure's instantiation walk, the capture domain, and k — per-node keying, so sibling nodes' equal site numbers do not alias to the same draw. The compiled extraction (`draw_caps`) and the interpreted substitution walk (`subst_rand`) MUST assign identical site numbers to identical sites within a node. Agreement on temporal draw order is no longer required. Explicit non-goal: draw stability across card edits (edits may renumber sites; tapes are tied to a card version).
+
+#### Scenario: Bail path matches compiled captures
+- **WHEN** extraction bails and spawn falls back to form substitution
+- **THEN** the substituted constants equal the values the capture vector would have carried for the same sites, because both derive from the same element key and site numbers
+
+### Requirement: Rowful scratch evaluation contexts draw keyed randomness
+Evaluation contexts that run against a scratch world while holding an entity row (evolve step and init application, pending-field functions, masked-update values, collider-projector bodies) MUST base their draws on the entity's rng key, a domain tag, and the tick — making uncaptured rand in these contexts per-entity, per-tick, and scrub-safe. Evolve cells further mix the stable node id and an init/step salt so co-located cells never share a stream. Rowless scratch contexts (direct signal evaluation, `FnPose`) keep a fixed base: uncaptured rand there is a deterministic constant by design.
+
+#### Scenario: Random-walk evolve actually walks
+- **WHEN** an evolve step body draws `(rand -1 1)` each tick
+- **THEN** the drawn value differs across ticks and across entities, and rewinding then re-stepping to the same tick reproduces the identical value
 
 ### Requirement: Compiled-path failures fall back to interpretation exactly
 When a compiled pass cannot complete (unlowerable form, runtime kind surprise, schema violation), the driver MUST discard the compiled attempt without world effects and re-run the pass interpreted, reproducing the interpreted behavior, error, and error site exactly.
