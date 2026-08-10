@@ -1,11 +1,11 @@
 # Tasks — entity-representation-flip
 
-- [ ] 1. Slice 1 — spec table: `SpecStore` (refcount, generational ids,
+- [x] 1. Slice 1 — spec table: `SpecStore` (refcount, generational ids,
   Weak template memo), `spec_id` column replacing the six
   `EntitySpecStore` columns, per-spec `MotionStateSchema`,
   install/cull/reuse/clone plumbing, remat re-mint,
   `resolve_node_pose` re-plumb (investigate call-site semantics first).
-- [ ] 2. Slice 1 gates: core suite + `MAKU_LOWER_ORACLE=1` + ignored
+- [x] 2. Slice 1 gates: core suite + `MAKU_LOWER_ORACLE=1` + ignored
   release oracle card suites green; commit.
 - [ ] 3. Slice 2 — captures to rows: spec capture layout in per-leaf
   walk order, per-row capture vector, shared trees for rand-bearing
