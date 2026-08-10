@@ -28,7 +28,7 @@ core suite plus the 4 ignored oracle card suites
 
 ## 4. F1 lint (D7)
 
-- [ ] 4.1 Detect closed-form-integrable component programs (constants, piecewise-affine lerp profiles) at card load; emit the suggested closed rewrite; never rewrite silently (test: `(vel c[100 0])` lints, stays Scanned)
+- [x] 4.1 Detect closed-form-integrable component programs (constants, piecewise-affine lerp profiles) at card load; emit the suggested closed rewrite; never rewrite silently (Advisory confidence in the checker, `motion/scanned-closed-form`; test covers constant, lerp-profile, and quiet cases)
 
 ## 5. Map-remat masked lowering (D8)
 

@@ -34,6 +34,9 @@ pub enum CheckConfidence {
     ProvenViolation,
     UncheckedDynamic,
     CheckerLimitation,
+    /// A lint: the card is valid as written; the diagnostic names a better
+    /// equivalent. Never enforced.
+    Advisory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -52,6 +55,7 @@ pub enum DiagnosticCategory {
     FailedCoercion,
     RecursiveInference,
     UncheckedForm,
+    ScannedClosedForm,
 }
 
 impl DiagnosticCategory {
@@ -71,6 +75,7 @@ impl DiagnosticCategory {
             DiagnosticCategory::FailedCoercion => "type/failed-coercion",
             DiagnosticCategory::RecursiveInference => "type/recursive-boundary",
             DiagnosticCategory::UncheckedForm => "type/unchecked",
+            DiagnosticCategory::ScannedClosedForm => "motion/scanned-closed-form",
         }
     }
 }
@@ -297,7 +302,111 @@ pub fn check_forms(
             .unwrap_or_else(|_| form.clone()),
         );
     }
-    Checker::new(card, schema, &traced).check(&expanded)
+    let mut report = Checker::new(card, schema, &traced).check(&expanded);
+    for (index, form) in expanded.iter().enumerate() {
+        lint_scanned_closed_forms(form, &mut vec![index], &traced, &mut report);
+    }
+    report
+}
+
+/// The F1 lint — no silent strengthening: a `vel` whose components are
+/// closed-form integrable (t-free constants, or piecewise-affine lerp
+/// profiles over t) is Scanned as written but has a Closed equivalent. The
+/// compiler never rewrites (a scan stays a scan); it names the rewrite.
+/// One Scanned guide contaminates every rider by contagion, so the lint
+/// matters compositionally.
+fn lint_scanned_closed_forms(
+    form: &Form,
+    path: &mut Vec<usize>,
+    provenance: &ProvenanceMap,
+    report: &mut CheckReport,
+) {
+    let items: &[Form] = match form {
+        Form::List(items) => items,
+        Form::Vector(items) => items,
+        Form::Map(kvs) => {
+            for (index, (k, v)) in kvs.iter().enumerate() {
+                path.push(index * 2);
+                lint_scanned_closed_forms(k, path, provenance, report);
+                path.pop();
+                path.push(index * 2 + 1);
+                lint_scanned_closed_forms(v, path, provenance, report);
+                path.pop();
+            }
+            return;
+        }
+        _ => return,
+    };
+    if let Some(message) = vel_closed_form_lint(form) {
+        let origin = (0..=path.len())
+            .rev()
+            .find_map(|len| provenance.get(&path[..len]))
+            .cloned()
+            .unwrap_or_else(|| Provenance::authored(SourceSpan::synthetic("<generated>")));
+        report.diagnostics.push(TypeDiagnostic {
+            category: DiagnosticCategory::ScannedClosedForm,
+            confidence: CheckConfidence::Advisory,
+            primary_span: origin.primary_span().clone(),
+            expected: None,
+            found: None,
+            context: BoundaryContext::named(BoundaryKind::Spawn, "vel"),
+            related_spans: Vec::new(),
+            expansion_stack: origin.expansion_stack,
+            coercion_failure: None,
+            message,
+        });
+    }
+    for (index, child) in items.iter().enumerate() {
+        path.push(index);
+        lint_scanned_closed_forms(child, path, provenance, report);
+        path.pop();
+    }
+}
+
+fn vel_closed_form_lint(form: &Form) -> Option<String> {
+    let Form::List(items) = form else { return None };
+    if !matches!(items.first(), Some(Form::Sym(head)) if head.as_ref() == "vel") {
+        return None;
+    }
+    let Some(Form::List(arg)) = items.get(1) else { return None };
+    if !matches!(arg.first(), Some(Form::Sym(space)) if matches!(space.as_ref(), "cart" | "polar"))
+        || arg.len() != 3
+    {
+        return None;
+    }
+    let comps = &arg[1..3];
+    if comps.iter().all(|comp| !super::motion::contains_t(comp)) {
+        return Some(
+            "vel components are constant: Scanned as written, but the closed `linear` \
+             form is equivalent and keeps the tree scrubbable"
+                .into(),
+        );
+    }
+    if comps
+        .iter()
+        .all(|comp| !super::motion::contains_t(comp) || affine_lerp_profile(comp))
+    {
+        return Some(
+            "vel components are piecewise-affine lerp profiles: Scanned as written, \
+             but the integrated closed form is equivalent and keeps the tree scrubbable"
+                .into(),
+        );
+    }
+    None
+}
+
+/// `(lerp a b t v1 v2)` with the ambient `t` as control and t-free edges —
+/// the closed integral is piecewise quadratic in t.
+fn affine_lerp_profile(form: &Form) -> bool {
+    let Form::List(items) = form else { return false };
+    if !matches!(items.first(), Some(Form::Sym(head)) if head.as_ref() == "lerp") || items.len() != 6
+    {
+        return false;
+    }
+    matches!(&items[3], Form::Sym(ctrl) if ctrl.as_ref() == "t")
+        && [1, 2, 4, 5]
+            .iter()
+            .all(|&index| !super::motion::contains_t(&items[index]))
 }
 
 fn macro_definition_spans(
@@ -1983,6 +2092,45 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("expected Num, found Symbol"), "{error}");
+    }
+
+    /// The F1 lint: closed-form-integrable vel components are Advisory
+    /// diagnostics — never enforced, never rewritten (a scan stays a scan).
+    #[test]
+    fn f1_lint_names_closed_rewrite_and_never_enforces() {
+        let report = check("(defpattern p [] (spawn (vel (cart 100 0)) {}))");
+        let lint = report
+            .diagnostics
+            .iter()
+            .find(|d| d.category == DiagnosticCategory::ScannedClosedForm)
+            .expect("constant vel components should lint");
+        assert_eq!(lint.confidence, CheckConfidence::Advisory);
+        assert!(lint.message.contains("linear"), "{}", lint.message);
+        report.enforce(CheckMode::Enforced).unwrap();
+
+        let profile =
+            check("(defpattern p [] (spawn (vel (cart (lerp 0 1 t 100 0) 0)) {}))");
+        assert!(
+            profile
+                .diagnostics
+                .iter()
+                .any(|d| d.category == DiagnosticCategory::ScannedClosedForm
+                    && d.message.contains("lerp")),
+            "{:?}",
+            profile.diagnostics
+        );
+
+        // t-dependence outside the conservative family stays quiet
+        let stateful =
+            check("(defpattern p [] (spawn (vel (cart (* 10 t) 0)) {}))");
+        assert!(
+            !stateful
+                .diagnostics
+                .iter()
+                .any(|d| d.category == DiagnosticCategory::ScannedClosedForm),
+            "{:?}",
+            stateful.diagnostics
+        );
     }
 
     #[test]
