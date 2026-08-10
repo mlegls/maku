@@ -226,20 +226,22 @@ struct ClosedPoseScratch {
     /// Per-row results for the current phase; left empty when the phase
     /// found no closed rows, so non-closed cards pay nothing.
     out: Vec<Option<Pose>>,
-    /// Cross-tick classification cache: per row, (figure root ptr,
-    /// class). A row whose figure Rc is unchanged skips the chain walk —
-    /// figures change only at spawn/remat.
-    class: Vec<(*const DynNode, RowClass)>,
+    /// Cross-tick classification cache, once per generational spec id.
+    /// Remat and slot reuse mint a different id, so stale classifications
+    /// cannot alias a different figure.
+    class: crate::fxhash::FxHashMap<SpecId, RowClass>,
     /// Closed rows found by the tick's collect pass (collide); the cull
     /// pass re-lanes only these — validated per use against the row's
-    /// current figure root, so a remat between the phases falls back to
-    /// the per-row path.
-    candidates: Vec<(usize, *const DynNode)>,
+    /// current spec id, so a remat between the phases falls back to the
+    /// per-row path.
+    candidates: Vec<(usize, SpecId)>,
+    /// The Vel integrator n2 slot is a property of the spec's immutable
+    /// tree and schema, including a cached negative result.
+    vel_slots: std::cell::RefCell<crate::fxhash::FxHashMap<SpecId, Option<usize>>>,
 }
 
-/// Cross-tick pose classification of a row's figure, keyed by the figure
-/// root pointer in `ClosedPoseScratch::class`.
-#[derive(Clone, Copy, PartialEq)]
+/// Cross-tick pose classification of a spec's figure.
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum RowClass {
     /// Constant wrappers over one compiled aux-free ClosedPt: batch fill.
     Closed,
@@ -724,6 +726,18 @@ impl Sim {
         entity_motion_readers(row, &self.world)
     }
 
+    fn vel_chain_slot(&self, row: usize, fig: &DynFigure) -> Option<usize> {
+        let id = self.world.spec_id(row)?;
+        if let Some(slot) = self.closed_pose.vel_slots.borrow().get(&id) {
+            return *slot;
+        }
+        let slot = vel_chain_ptr(fig).and_then(|ptr| {
+            vel_chain_n2_slot(self.world.motion_schema(row)?, ptr)
+        });
+        self.closed_pose.vel_slots.borrow_mut().insert(id, slot);
+        slot
+    }
+
     /// pos_only pose fast path: a wrapper-chain-over-Vel row's position is
     /// its integrator state pushed through the constant wrappers — read
     /// directly from the n2 column, no readers or dispatch. Bit-identical
@@ -732,9 +746,7 @@ impl Sim {
     pub(crate) fn fast_pos_pose(&self, row: usize, tau: f64, sig: &SigEnv) -> Option<Pose> {
         if self.world.overrides(row).is_some() { return None; }
         let fig = self.world.dyn_figure(row)?;
-        let ptr = vel_chain_ptr(fig)?;
-        let schema = self.world.motion_schema(row)?;
-        let slot = vel_chain_n2_slot(schema, ptr)?;
+        let slot = self.vel_chain_slot(row, fig)?;
         let state = self.world.entities.state_n2_at_slot(slot, row);
         let p = wrapper_chain_pos_pose(fig.pose_dyn(), state, self.world.root_frame(row));
         if oracle_enabled() {
@@ -753,13 +765,15 @@ impl Sim {
     }
 
     /// Batched pos-only pose fill, collect pass (collide phase 0): walk
-    /// every row once, classify through the cross-tick (figure ptr →
-    /// is-closed) cache, collect closed-chain lanes and this tick's
-    /// candidate list, run the groups. Non-closed cards pay one pointer
-    /// compare per row and skip everything else.
+    /// every row once, classify through the cross-tick spec-id cache,
+    /// collect closed-chain lanes and this tick's candidate list, run the
+    /// groups. Non-closed cards pay one id lookup per row and skip everything
+    /// else.
     fn fill_closed_poses(&mut self, tick: u64, sig: &SigEnv) -> Result<(), String> {
         let n = self.world.entities.len();
         let mut s = std::mem::take(&mut self.closed_pose);
+        s.class.retain(|id, _| self.world.contains_spec(*id));
+        s.vel_slots.get_mut().retain(|id, _| self.world.contains_spec(*id));
         // Cards with no closed rows skip the scan except a rediscovery
         // sweep every 16 ticks (tick-keyed: deterministic, replay-safe).
         // Newly spawned closed rows go unbatched for at most 15 ticks —
@@ -771,7 +785,6 @@ impl Sim {
         }
         s.begin_pass();
         s.candidates.clear();
-        s.class.resize(n, (std::ptr::null(), RowClass::Other));
         for i in 0..n {
             if !self.world.entities.is_alive(i) {
                 continue;
@@ -779,13 +792,14 @@ impl Sim {
             let Some(fig) = self.world.dyn_figure(i) else {
                 continue;
             };
-            let root = Rc::as_ptr(fig.pose_dyn());
-            let class = if s.class[i].0 == root {
-                s.class[i].1
-            } else {
-                let class = classify_row(fig, sig);
-                s.class[i] = (root, class);
-                class
+            let id = self.world.spec_id(i).expect("live closed-pose row without spec");
+            let class = match s.class.get(&id).copied() {
+                Some(class) => class,
+                None => {
+                    let class = classify_row(fig, sig);
+                    s.class.insert(id, class);
+                    class
+                }
             };
             if class != RowClass::Closed {
                 continue;
@@ -802,7 +816,7 @@ impl Sim {
             };
             let tau = self.world.entity_motion_tau(i, tick);
             s.push_lane(&plan, i, tau);
-            s.candidates.push((i, root));
+            s.candidates.push((i, id));
         }
         self.run_closed_groups(s, sig)
     }
@@ -815,16 +829,13 @@ impl Sim {
         let mut s = std::mem::take(&mut self.closed_pose);
         let candidates = std::mem::take(&mut s.candidates);
         s.begin_pass();
-        for &(i, root) in &candidates {
-            if !self.world.entities.is_alive(i) {
+        for &(i, id) in &candidates {
+            if !self.world.entities.is_alive(i) || self.world.spec_id(i) != Some(id) {
                 continue;
             }
             let Some(fig) = self.world.dyn_figure(i) else {
                 continue;
             };
-            if Rc::as_ptr(fig.pose_dyn()) != root {
-                continue;
-            }
             let Some(plan) = closed_chain_plan(
                 fig,
                 sig,
@@ -908,22 +919,17 @@ impl Sim {
     /// kills only clear the alive flag — so nothing mutates n2 state or
     /// figures, and a Vel chain's pos ignores tau. The collide sample is
     /// therefore exact. Gated on the class cache validating the row's
-    /// CURRENT figure root (a swapped figure recomputes); the oracle
+    /// CURRENT generational spec id (a swapped figure recomputes); the oracle
     /// re-derives and asserts.
     fn cull_reused_pos(&mut self, row: usize, tick: u64, sig: &SigEnv) -> Option<(f64, f64)> {
         let fig = self.world.dyn_figure(row)?;
-        let root = Rc::as_ptr(fig.pose_dyn());
-        let class = match self.closed_pose.class.get(row) {
-            Some((p, c)) if *p == root => *c,
-            _ => {
-                let c = classify_row(fig, sig);
-                if self.closed_pose.class.len() <= row {
-                    self.closed_pose
-                        .class
-                        .resize(row + 1, (std::ptr::null(), RowClass::Other));
-                }
-                self.closed_pose.class[row] = (root, c);
-                c
+        let id = self.world.spec_id(row)?;
+        let class = match self.closed_pose.class.get(&id).copied() {
+            Some(class) => class,
+            None => {
+                let class = classify_row(fig, sig);
+                self.closed_pose.class.insert(id, class);
+                class
             }
         };
         if class != RowClass::VelChain {
@@ -1033,9 +1039,7 @@ impl Sim {
     ) -> Option<(VelStepPlanRef<'a>, usize)> {
         if self.world.overrides(row).is_some() { return None; }
         let plan = vel_step_plan(dyn_figure, sig, capture_layout, captures)?;
-        let schema = self.world.motion_schema(row)?;
-        let ptr = Rc::as_ptr(plan.vel) as usize;
-        let slot = vel_chain_n2_slot(schema, ptr)?;
+        let slot = self.vel_chain_slot(row, dyn_figure)?;
         Some((plan, slot))
     }
 

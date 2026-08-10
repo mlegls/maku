@@ -3580,8 +3580,8 @@
                             panic!("expected compiled rand")
                         };
                         return (
-                            Rc::as_ptr(&ex.programs[0]),
-                            Rc::as_ptr(&ex.programs[1]),
+                            ex.programs[0].identity(),
+                            ex.programs[1].identity(),
                             sim.world.captures(row).to_vec(),
                         );
                     }
@@ -3669,8 +3669,8 @@
                             .as_ref()
                             .expect("env-capture vel compiled");
                         return (
-                            Rc::as_ptr(ap),
-                            Rc::as_ptr(bp),
+                            ap.identity(),
+                            bp.identity(),
                             caps_of(&data.rand).to_vec(),
                             matches!(data.space, IntegratorComponentSpace::Polar),
                         );
@@ -3878,6 +3878,88 @@
                 dyn_figure(&sim, row).pose_dyn(),
             ));
         }
+    }
+
+    #[test]
+    fn reused_spec_slot_cannot_alias_stale_closed_pose_class() {
+        const CLOSED: &str = r#"
+(defpattern p [] (spawn (cart t 0)))
+"#;
+        let mut sim = Sim::load(CLOSED, Some("p")).unwrap();
+        for _ in 0..16 {
+            sim.step().unwrap();
+        }
+        let old = sim.world.spec_id(0).unwrap();
+        assert_eq!(sim.closed_pose.class.get(&old), Some(&RowClass::Closed));
+
+        sim.world.cull_at(0);
+        sim.resize_entity_capacity(0).unwrap();
+        sim.resize_entity_capacity(8).unwrap();
+        assert!(sim.closed_pose.class.contains_key(&old), "test did not leave a stale class warm");
+
+        let row = sim.world.install_entity(
+            DynFigure::pose_node(Rc::new(DynNode::Linear { vx: 2.0, vy: -1.0 })),
+            7,
+            Rc::from([]),
+            None,
+            None,
+            EntityCachePolicy::default(),
+            Rc::from([]),
+            ColliderProjector { projectors: Rc::from([]) },
+            None,
+        ).unwrap();
+        let next = sim.world.spec_id(row).unwrap();
+        assert_eq!(next.index, old.index, "test did not reuse the spec slot");
+        assert_ne!(next.gen, old.gen, "reused spec slot did not bump generation");
+
+        let sig = sim.ctx.sig.clone();
+        sim.fill_closed_poses(sim.world.tick, &sig).unwrap();
+        assert_eq!(sim.closed_pose.class.get(&next), Some(&RowClass::Other));
+        assert!(sim.closed_pose_at(row).is_none(), "new linear spec inherited stale Closed class");
+        let pose = row_pose(&sim, row, 0.5, &sig);
+        assert_eq!((pose.x, pose.y), (1.0, -0.5));
+    }
+
+    #[test]
+    fn row_level_memos_are_bounded_by_specs_not_entities() {
+        const CARD: &str = r#"
+(defpattern p []
+  (let [figure (cart t 0)]
+    (loop [i 0]
+      (spawn figure {:opacity (+ 1 t)})
+      (wait (ticks 1))
+      (recur (+ i 1)))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..64 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 64);
+        let specs: std::collections::HashSet<_> = (0..sim.world.entities.len())
+            .filter(|&row| sim.world.entities.is_alive(row))
+            .map(|row| sim.world.spec_id(row).unwrap())
+            .collect();
+        assert_eq!(specs.len(), 1, "stable template did not retain one spec");
+        assert_eq!(sim.dyn_field_scratch.source_len(), specs.len());
+        assert_eq!(sim.closed_pose.class.len(), specs.len());
+    }
+
+    #[test]
+    fn spawn_loop_with_fresh_figures_keeps_spec_table_bounded() {
+        const CARD: &str = r#"
+(defpattern p []
+  (loop [i 0]
+    ((pose c[20 0]) (spawn (linear c[0 0])))
+    (wait (ticks 1))
+    (recur (+ i 1))))
+"#;
+        let mut sim = Sim::load(CARD, Some("p")).unwrap();
+        for _ in 0..256 {
+            sim.step().unwrap();
+        }
+        assert_eq!(live_count(&sim), 0);
+        assert!(sim.world.specs.slot_count() <= live_count(&sim) + 3,
+            "spec slots grew with total spawns: {}", sim.world.specs.slot_count());
     }
 
     #[test]

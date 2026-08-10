@@ -1,6 +1,6 @@
 // Census: how many scanned rows match the milestone-B batchable shape
-// (ConstFrame|Translate)* -> Vel{programs: Some}, and how they group by
-// program-pair pointer within one tick.
+// (ConstFrame|Translate)* -> Vel{programs: Some}, and how rows group by
+// explicit entity spec identity.
 
 use maku::interp::DynNode;
 use maku::sim::Sim;
@@ -43,7 +43,7 @@ fn census(sim: &Sim, label: &str) {
     let mut vel_match = 0usize;
     let mut vel_compiled = 0usize;
     let mut root_kinds: HashMap<String, usize> = HashMap::new();
-    let mut groups: HashMap<usize, usize> = HashMap::new();
+    let mut groups = HashMap::new();
     for i in 0..sim.world.entities.len() {
         if !sim.world.entities.is_alive(i) {
             continue;
@@ -61,23 +61,23 @@ fn census(sim: &Sim, label: &str) {
         if let Some(vel) = root_chain_vel(&root) {
             vel_match += 1;
             if let DynNode::StockIntegrator { data } = &**vel {
-                if let Some(Some((ap, _))) = data.programs.get() {
+                if let Some(Some((_ap, _))) = data.programs.get() {
                     vel_compiled += 1;
-                    *groups.entry(Rc::as_ptr(ap) as usize).or_default() += 1;
+                    *groups.entry(sim.world.spec_id(i).unwrap()).or_default() += 1;
                 }
             }
         }
     }
-    let mut proj_ptrs: HashMap<usize, usize> = HashMap::new();
+    let mut specs = HashMap::new();
     for i in 0..sim.world.entities.len() {
-        if !sim.world.entities.is_alive(i) {
-            continue;
-        }
-        if let Some(p) = sim.world.collider_projector(i) {
-            *proj_ptrs.entry(Rc::as_ptr(&p.projectors) as *const u8 as usize).or_default() += 1;
+        if sim.world.entities.is_alive(i) {
+            *specs.entry(sim.world.spec_id(i).unwrap()).or_default() += 1;
         }
     }
-    println!("  distinct projector Rcs: {} over {} alive", proj_ptrs.len(), alive);
+    let mut rows_per_spec: Vec<usize> = specs.values().copied().collect();
+    rows_per_spec.sort_unstable_by(|a, b| b.cmp(a));
+    println!("  specs: {} over {} alive; rows/spec top: {:?}",
+        specs.len(), alive, &rows_per_spec[..rows_per_spec.len().min(12)]);
     let mut expr_kinds: HashMap<&'static str, usize> = HashMap::new();
     for i in 0..sim.world.entities.len() {
         if !sim.world.entities.is_alive(i) {

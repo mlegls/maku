@@ -125,8 +125,8 @@ pub(super) struct ColliderScratch {
     projector_hints: crate::fxhash::FxHashMap<usize, ColliderProjectorHint>,
     groups: Vec<ColliderGroup>,
     group_index: crate::fxhash::FxHashMap<ColliderProjectionKey, usize>,
-    source_groups: crate::fxhash::FxHashMap<usize, usize>,
-    last_source_group: Option<(usize, usize)>,
+    source_groups: crate::fxhash::FxHashMap<SpecId, usize>,
+    last_source_group: Option<(SpecId, usize)>,
     pool: Vec<ColliderGroup>,
     row_projection: Vec<Option<(usize, usize)>>,
     lanes: KernelLanes,
@@ -159,6 +159,7 @@ impl ColliderScratch {
         self.ranges.clear();
         self.defs.clear();
         self.group_index.clear();
+        self.projector_hints.retain(|_, hint| hint.source.strong_count() != 0);
         self.source_groups.clear();
         self.last_source_group = None;
         self.row_projection.clear();
@@ -196,6 +197,10 @@ impl ColliderScratch {
         world: &World,
         sig: &SigEnv,
     ) -> Option<Rc<ColliderProjectionPlan>> {
+        // This cross-pass compile hint intentionally remains pointer-keyed:
+        // its Weak guard validates allocation identity before every hit. Row
+        // grouping below uses generational SpecId; structural plan dedup uses
+        // ColliderProjectionKey.
         let source = Rc::as_ptr(&projector.projectors) as *const () as usize;
         if let Some(hint) = self.projector_hints.get(&source) {
             if std::ptr::eq(hint.source.as_ptr(), Rc::as_ptr(&projector.projectors)) {
@@ -229,7 +234,7 @@ impl ColliderScratch {
         sig: &SigEnv,
         tau: f64,
     ) {
-        let source = Rc::as_ptr(&projector.projectors) as *const () as usize;
+        let source = world.spec_id(row).expect("live projected row without spec");
         let group_index = match self.last_source_group {
             Some((last_source, index)) if last_source == source => index,
             _ => match self.source_groups.get(&source).copied() {
@@ -988,7 +993,7 @@ impl Sim {
         self.collider_scratch.begin_pass(n);
         let scale_sym = self.world.symbols.lookup("scale");
         let mut eligible = Vec::with_capacity(n);
-        let mut last_plan: Option<(usize, Rc<ColliderProjectionPlan>)> = None;
+        let mut last_plan: Option<(SpecId, Rc<ColliderProjectionPlan>)> = None;
         for row in 0..n {
             if !self.world.entities.is_alive(row) {
                 self.world.entities.set_sampled_pose(row, tick, None);
@@ -1025,7 +1030,7 @@ impl Sim {
                 .world
                 .collider_projector(row)
                 .ok_or_else(|| format!("colliders: missing projector for row {row}"))?;
-            let source = Rc::as_ptr(&projector.projectors) as *const () as usize;
+            let source = self.world.spec_id(row).expect("live collider row without spec");
             if last_plan
                 .as_ref()
                 .is_none_or(|(last_source, _)| *last_source != source)

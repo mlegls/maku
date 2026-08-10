@@ -25,7 +25,6 @@ struct DynFieldGroup {
     tau: Vec<f64>,
 }
 struct DynSourcePlans {
-    source: std::rc::Weak<[(ColName, DynNum)]>,
     plans: Vec<Option<Rc<DynFieldPlan>>>,
 }
 
@@ -36,13 +35,18 @@ pub(super) struct DynFieldScratch {
     groups: Vec<DynFieldGroup>,
     index: crate::fxhash::FxHashMap<DynFieldPlanKey, usize>,
     pool: Vec<DynFieldGroup>,
-    sources: crate::fxhash::FxHashMap<usize, DynSourcePlans>,
+    sources: crate::fxhash::FxHashMap<SpecId, DynSourcePlans>,
     lanes: KernelLanes,
     outputs: KernelOutputs,
     exec: KernelScratch,
 }
 
 impl DynFieldScratch {
+    #[cfg(test)]
+    pub(super) fn source_len(&self) -> usize {
+        self.sources.len()
+    }
+
     fn begin_pass(&mut self) {
         self.index.clear();
         self.pool.extend(self.groups.drain(..).map(|mut group| {
@@ -174,6 +178,7 @@ pub(super) fn refresh_dyn_field_columns(
     scratch: &mut DynFieldScratch,
 ) -> Result<(), String> {
     scratch.begin_pass();
+    scratch.sources.retain(|id, _| world.contains_spec(*id));
     let tick = world.tick;
     let oracle = oracle_enabled();
     let mut shared = None;
@@ -187,13 +192,8 @@ pub(super) fn refresh_dyn_field_columns(
         if dyn_cols.is_empty() {
             continue;
         }
-        let source = Rc::as_ptr(&dyn_cols) as *const () as usize;
-        let cached = scratch
-            .sources
-            .get(&source)
-            .and_then(|cached| cached.source.upgrade())
-            .is_some_and(|cached| Rc::ptr_eq(&cached, &dyn_cols));
-        if !cached {
+        let source = world.spec_id(row).expect("live dyn-field row without spec");
+        if !scratch.sources.contains_key(&source) {
             let plans = dyn_cols
                 .iter()
                 .map(|(output, dyn_num)| {
@@ -206,13 +206,7 @@ pub(super) fn refresh_dyn_field_columns(
                     scratch.plan(fixed, *output)
                 })
                 .collect();
-            scratch.sources.insert(
-                source,
-                DynSourcePlans {
-                    source: Rc::downgrade(&dyn_cols),
-                    plans,
-                },
-            );
+            scratch.sources.insert(source, DynSourcePlans { plans });
         }
         for (index, (output, dyn_num)) in dyn_cols.iter().enumerate() {
             let tau = world.entities.dyn_col_tau(row, index, tick, world.tick_rate());

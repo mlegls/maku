@@ -99,6 +99,8 @@ fn ambient(stack: &[TF], world: &World, sig: &SigEnv) -> Pose {
 }
 
 fn resolve_node_pose(node: &Rc<DynNode>, world: &World, sig: &SigEnv) -> Pose {
+    // Node identity is spec-internal: SpecStore indexes this immutable node
+    // pointer only while its owning specs are live.
     let key = Rc::as_ptr(node) as usize;
     let mut after = None;
     while let Some(i) = world.specs.next_node_carrier(key, after) {

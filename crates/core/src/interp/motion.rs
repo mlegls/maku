@@ -34,7 +34,7 @@ pub enum MotionStateKey {
     ScanSite { base: MotionNodeId, index: u32 },
     /// A stage segment's exit parameter cell (pos/vel), written at the stage
     /// boundary. Keyed by the slot token's stable lowered id — slot ptrs are
-    /// seeded into node_ids alongside node ptrs.
+    /// seeded into the owning spec schema's node_ids alongside node ptrs.
     StageExit { base: MotionNodeId, field: StageExitField },
 }
 
@@ -1002,6 +1002,8 @@ fn seed_reader_dyn_node_ids(d: &DynNode, readers: &MotionReaders) {
     seed_dyn_node_ids(d, &mut node_ids, &mut next);
 }
 
+// These pointer keys are local to one immutable motion tree/schema; they are
+// never row-cache or cross-spec identity.
 fn seed_reader_node_ids(
     node: &Rc<DynNode>,
     node_ids: &mut FxHashMap<usize, MotionNodeId>,
@@ -1634,7 +1636,8 @@ pub fn closed_chain_plan<'a>(
 /// The fast pos_only pose shape: constant wrappers over a Vel node
 /// (compiled or not — the pos_only Vel arm never evaluates its integrand,
 /// so the pose is pure integrator state pushed through the wrappers).
-/// Returns the Vel node's address for state-slot resolution.
+/// Returns the Vel node's spec-internal address for state-slot resolution;
+/// row hot paths memoize the resulting slot by generational SpecId.
 pub fn vel_chain_ptr(fig: &DynFigure) -> Option<usize> {
     if fig.curve().is_some() {
         return None;
@@ -2596,6 +2599,7 @@ pub(crate) fn clamp_integrator(
 ) {
     match &**d {
         DynNode::StockIntegrator { .. } => {
+            // State readers map nodes within the row's owning immutable spec.
             let key = Rc::as_ptr(d) as *const DynNode as usize;
             let dense_key = state_key_for_node(key, readers);
             if let Some([x, y]) = match state.get(&dense_key) {

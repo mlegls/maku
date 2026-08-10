@@ -239,6 +239,8 @@ fn cache_policy_eq(a: &EntityCachePolicy, b: &EntityCachePolicy) -> bool {
     }
 }
 
+// Component pointer checks below are confined to spec minting; live rows and
+// their caches use the minted generational SpecId.
 fn option_rc_ptr_eq<T: ?Sized>(a: Option<&Rc<T>>, b: Option<&Rc<T>>) -> bool {
     match (a, b) {
         (None, None) => true,
@@ -319,6 +321,8 @@ fn dyn_num_identity_eq(a: &DynNum, b: &DynNum) -> bool {
     }
 }
 
+// Pointer equality in these helpers is only a fast path while minting through
+// the Weak-guarded spec front-end; row caches consume the resulting SpecId.
 fn dyn_cols_identity_eq(a: &Rc<[(ColName, DynNum)]>, b: &Rc<[(ColName, DynNum)]>) -> bool {
     Rc::ptr_eq(a, b)
         || a.len() == b.len()
@@ -352,6 +356,8 @@ fn row_template_eq(a: &Rc<DynNode>, b: &Rc<DynNode>) -> bool {
     }
 }
 
+// Allocation identity is valid for this Weak-validated spec-mint hint; it is
+// never retained as row or cross-tick classification identity.
 fn spec_memo_key(node: &Rc<DynNode>) -> usize {
     match &**node {
         DynNode::RowFrame(child) => match &**child {
@@ -403,6 +409,15 @@ fn figure_identity_eq(a: &DynFigure, b: &DynFigure) -> bool {
 }
 
 impl SpecStore {
+    pub(crate) fn contains(&self, id: SpecId) -> bool {
+        self.get(id).is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
     fn get(&self, id: SpecId) -> Option<&SpecEntry> {
         let slot = self.slots.get(id.index as usize)?;
         if slot.gen != id.gen { return None; }
@@ -1687,6 +1702,10 @@ impl World {
 
     pub fn spec_id(&self, row: usize) -> Option<SpecId> {
         self.entities.spec_id(row)
+    }
+
+    pub(crate) fn contains_spec(&self, id: SpecId) -> bool {
+        self.specs.contains(id)
     }
 
     pub fn dyn_figure(&self, row: usize) -> Option<&DynFigure> {
