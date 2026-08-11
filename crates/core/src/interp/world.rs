@@ -1220,14 +1220,16 @@ pub struct CollisionIndex {
     benchmark_candidates: usize,
 }
 
+// Unconditionally one ULP outward: a data-dependent containment check
+// (`if rounded as f64 > v`) mispredicts ~50% per component and doubled
+// the capture wall on the scaled rig. One spare ULP of box is free —
+// the narrow phase decides membership.
 fn aabb_min_f32(v: f64) -> f32 {
-    let rounded = v as f32;
-    if rounded as f64 > v { rounded.next_down() } else { rounded }
+    (v as f32).next_down()
 }
 
 fn aabb_max_f32(v: f64) -> f32 {
-    let rounded = v as f32;
-    if (rounded as f64) < v { rounded.next_up() } else { rounded }
+    (v as f32).next_up()
 }
 
 impl CollisionIndex {
