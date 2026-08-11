@@ -183,3 +183,45 @@ Out of scope, unchanged: `DynNode` (≤96B pin untouched), host-visible
 `Rc::ptr_eq` contracts (RenderSchema, shared `EventLog`), the language,
 draw keying, F32 *program emission* (no production lowering emits F32
 ops this round).
+
+## Measured (round close, 2026-08-10)
+
+All gates green on every slice, first-hand: 349/350 core tests plain
+and under `MAKU_LOWER_ORACLE=1` (the count grew with the round's own
+tests), all 6 ignored release oracle card suites with scripted
+behavioral outcomes unchanged, workspace build, native bench smoke
+(4 tiers, 39 schema documents). Landed as four commits: 7d78120
+(motion state + captures + Pose32), 593bc76 (field cells + collision),
+637eb5e (render geometry + series fork), plus the AABB-rounding perf
+fix.
+
+Drift meter (11-case corpus, 600 ticks, old f64 `25fbe0a` vs new f32,
+expanded render rows compared pairwise): **structure identical on
+every card** — no spawn/cull/collision boundary flipped anywhere —
+with per-card max |Δ| ranging 0 (lasers-demo: all values f32-exact)
+through 4.5e-6 (bowap, the accumulating-integrator case) to 1.2e-4
+(aimed-demo), i.e. ≤ ~1e-5 relative on the ±12-unit playfield.
+
+Walls (5 interleaved observations, medians): representative suite
++0.94%, scaled fruit 12000t +0.18% — both inside ±5%.
+
+Deviations and findings vs the plan:
+
+- The oracle needed one mechanism beyond the brief: env-captured
+  lexical values live in the capture vector and round with it, so the
+  interpreted paths (oracle re-runs AND plain fallback) overlay the
+  rounded values onto the interpreter env (`capture_env`). Slice 1's
+  pi run identified and implemented this; review confirmed it is the
+  entry-rounding rule applied to env-capture slots.
+- Outward AABB rounding as briefed (containment check per component)
+  was semantically right and a perf disaster: the data-dependent
+  branch mispredicts ~50% and doubled `phase:collide-index` on the
+  scaled rig (+8.64% wall — outside threshold). Branch-free
+  unconditional one-ULP `next_down`/`next_up` kept the containment
+  invariant and removed the entire regression (+0.18% final).
+- `caps_for` on the interpreted/fallback walk and `trace_samples`
+  became allocating (widening copies). Invisible in the walls at
+  current scales (batched paths use the f32 storage slices directly);
+  candidates for slice-level cleanup if fallback rows ever profile.
+- No digest constants needed re-derivation: `benchmark_digest` was
+  already f32-canonical, so narrowing changed no digest in the suites.

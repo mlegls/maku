@@ -101,7 +101,40 @@ rows, interleaved runs):
 - Milestone-B remainder (ClosedPt group pose, AxisSel scatter) is now
   JIT prep more than wall win on this rig (input slots + interning
   landed round 22 at −8%) — see `compiled-dyn-milestone-b`.
-## Current walls (entity-representation-flip, 2026-08, bare)
+## Current walls (f32-hot-columns, 2026-08, bare)
+
+Five interleaved A/B observations per case against the pre-round
+`25fbe0a` baseline, same sitting, after the branch-free AABB rounding
+fix:
+
+| case | baseline median | f32 median | delta |
+|---|---:|---:|---:|
+| representative suite aggregate | 415.6ms | 419.5ms | +0.94% |
+| scaled fruit 12000t | 2923.2ms | 2928.5ms | +0.18% |
+
+Both within the ±5% threshold. An earlier candidate regressed the
+scaled case +8.64%: outward AABB rounding with a data-dependent
+containment branch mispredicted ~50% per component and doubled
+`phase:collide-index` (217.8→472.8ms profiled); unconditional one-ULP
+`next_down`/`next_up` removed the entire regression. The round's
+payoff is halved resident hot state and the dense f32 buffers the
+GPU/codegen backends consume, not wall time.
+
+The bench baseline series forked `maku-v1-f64` → `maku-v1-f32` at this
+round (hot numeric representation changed); prior f64 evidence under
+`bench/results/maku-v1-f64/` is preserved and the full controlled
+matrix re-run awaits an explicitly-invoked release benchmark.
+
+A current candidate suite run, for standing per-card attribution:
+
+| case | wall |
+|---|---:|
+| fruit (t03 ex3) 900t | 142.4ms |
+| reimu_vs_mima 1800t | 149.4ms |
+| spell-2 900t | 23.2ms |
+| cradle 300t | 54.7ms |
+
+## Prior walls (entity-representation-flip, 2026-08, bare)
 
 Five interleaved A/B observations per case against the pre-round
 `e568850` baseline, same sitting:

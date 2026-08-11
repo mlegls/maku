@@ -16,9 +16,9 @@
        touhou mesh push; digest pin re-derivation; bench series id →
        `maku-v1-f32`; native bench smoke verifies
 - [x] 7. Slice 3 gates first-hand; commit
-- [ ] 8. Drift meter: corpus max-|Δ| vs pre-round worktree recorded;
+- [x] 8. Drift meter: corpus max-|Δ| vs pre-round worktree recorded;
        scripted suites' behavioral outcomes unchanged (or investigated)
-- [ ] 9. Interleaved wall-only A/B (suite + scaled fruit) within ±5%;
+- [x] 9. Interleaved wall-only A/B (suite + scaled fruit) within ±5%;
        walls table updated
-- [ ] 10. Spec deltas synced (determinism, lowering, perf), Measured
+- [x] 10. Spec deltas synced (determinism, lowering, perf), Measured
        section written, change archived
