@@ -1,11 +1,11 @@
 # Tasks — f32-hot-columns
 
 - [x] 1. Design bound to surveyed seams (D1–D6, slices) committed
-- [ ] 2. Slice 1: `Pose32` + narrow `state_n2`/`sampled_pose`/
+- [x] 2. Slice 1: `Pose32` + narrow `state_n2`/`sampled_pose`/
        `trace_cache`/`root_frame`/`captures`; accessor round/widen;
        bail-path rounding; cull-pose oracle expected-side rounding;
        round-trip + bail-parity tests
-- [ ] 3. Slice 1 gates first-hand: core suite plain + oracle, release
+- [x] 3. Slice 1 gates first-hand: core suite plain + oracle, release
        ignored oracle suites; commit
 - [ ] 4. Slice 2: narrow `WorldFields::num_values`, `ColliderData`,
        `CollisionIndex::aabbs`; dyn-field + masked-update oracle
