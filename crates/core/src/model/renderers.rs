@@ -54,15 +54,15 @@ pub struct RenderSchema {
 /// slots materialize.
 #[derive(Debug, PartialEq)]
 pub enum NumColumn {
-    Const(f64),
-    Rows(Vec<f64>),
+    Const(f32),
+    Rows(Vec<f32>),
 }
 
 impl NumColumn {
     pub fn at(&self, i: usize) -> f64 {
         match self {
-            NumColumn::Const(v) => *v,
-            NumColumn::Rows(v) => v[i],
+            NumColumn::Const(v) => *v as f64,
+            NumColumn::Rows(v) => v[i] as f64,
         }
     }
 }
@@ -73,7 +73,7 @@ impl NumColumn {
 pub enum Column {
     Num(NumColumn),
     /// Per-row nums with presence: value at `i` is valid iff `mask[i]`.
-    NumOpt(Vec<f64>, Vec<bool>),
+    NumOpt(Vec<f32>, Vec<bool>),
     SymConst(Rc<str>),
     Syms(Vec<Option<Rc<str>>>),
 }
@@ -110,7 +110,7 @@ impl RenderBatch {
                 Column::Num(c) => row.nums.push((key.clone(), c.at(i))),
                 Column::NumOpt(v, mask) => {
                     if mask[i] {
-                        row.nums.push((key.clone(), v[i]));
+                        row.nums.push((key.clone(), v[i] as f64));
                     }
                 }
                 Column::SymConst(s) => row.syms.push((key.clone(), s.clone())),

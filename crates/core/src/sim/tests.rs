@@ -1259,7 +1259,8 @@
                     :theta (default e.facing (:th p))
                     :scale (default e.scale 1)
                     :alpha (default e.opacity 1)
-                    :hue (default e.hue 0)
+                    :hue 0.1
+                    :weight 0.1
                     :family e.family :color e.color :variant e.variant})))
        (entities-where (fn [e] (* (= e.render :sprite) (= e.kind :point))))))
 (defpattern p []
@@ -1274,11 +1275,15 @@
         let rows = sim.render();
         assert_eq!(rows.len(), 2);
         let RenderData::Point { x, y, theta, scale, alpha, hue } = rows[0].data else { panic!() };
-        assert_eq!((x, y, theta, scale, alpha, hue), (1.0, 2.0, 30.0, 2.0, 0.75, 120.0));
+        assert_eq!((x, y, theta, scale, alpha, hue),
+            (1.0, 2.0, 30.0, 2.0, 0.75, 0.1_f32 as f64));
+        assert_eq!(rows[0].num("weight"), Some(0.1_f32 as f64));
         assert_eq!((rows[0].sym("family"), rows[0].sym("color"), rows[0].sym("variant")),
             (Some("orb"), Some("red"), Some("large")));
         let RenderData::Point { x, y, theta, scale, alpha, hue } = rows[1].data else { panic!() };
-        assert_eq!((x, y, theta, scale, alpha, hue), (3.0, 4.0, 0.0, 1.0, 1.0, 0.0));
+        assert_eq!((x, y, theta, scale, alpha, hue),
+            (3.0, 4.0, 0.0, 1.0, 1.0, 0.1_f32 as f64));
+        assert_eq!(rows[1].num("weight"), Some(0.1_f32 as f64));
     }
 
     #[test]
@@ -1605,6 +1610,8 @@
                           :x (:x p)
                           :y (:y p)
                           :scale (default (:size e) 1)
+                          :alpha 0.1
+                          :bias 0.1
                           :color (:color e)
                           :tag (:tag e)})))
        (entities-where (fn [e] (= e.render :sprite)))))
@@ -1640,7 +1647,11 @@
                 .expect("compiled point rule should emit a column batch");
             assert_eq!(batch.len, 32);
             assert_eq!(batch.kind.as_ref(), "bullets");
-            assert_eq!(batch.expand_row(0).kind.as_ref(), "bullets");
+            let row = batch.expand_row(0);
+            assert_eq!(row.kind.as_ref(), "bullets");
+            let RenderData::Point { alpha, .. } = row.data else { panic!() };
+            assert_eq!(alpha, 0.1_f32 as f64);
+            assert_eq!(row.num("bias"), Some(0.1_f32 as f64));
             batch.schema.clone()
         });
         // expansion carries per-row syms, presence-masked nums, and
@@ -1649,6 +1660,7 @@
         assert_eq!(rows.len(), 32);
         assert_eq!(rows[0].sym("color"), Some("red"));
         assert_eq!(rows[0].num("tag"), Some(7.0));
+        assert_eq!(rows[0].num("bias"), Some(0.1_f32 as f64));
         assert_eq!(rows[16].sym("color"), Some("blue"));
         assert_eq!(rows[16].num("tag"), None);
         let RenderData::Point { x, y, scale, .. } = rows[16].data else { panic!() };

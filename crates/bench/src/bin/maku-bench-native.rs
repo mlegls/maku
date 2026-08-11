@@ -144,7 +144,7 @@ fn main() -> Result<(), String> {
     let headroom = (!args.minimal).then(|| Headroom { period_ms: period, byo_ms: summarize_headroom(period, &byo).unwrap(), bundled_draw_ms: summarize_headroom(period, &bundled).unwrap(), end_to_end_ms: summarize_headroom(period, &end).unwrap() });
     let rev = revision(); if rev.len() != 40 { return Err("source revision must be a full 40-character hash".into()); }
     let captured = captured_at();
-    let envelope = ResultEnvelope { schema_version: RESULT_SCHEMA_VERSION, series: "maku-v1-f64".into(), run_id: format!("{}-{}-{}", captured.replace([':', '-'], ""), workload.id, args.tier.name()), captured_at: captured,
+    let envelope = ResultEnvelope { schema_version: RESULT_SCHEMA_VERSION, series: "maku-v1-f32".into(), run_id: format!("{}-{}-{}", captured.replace([':', '-'], ""), workload.id, args.tier.name()), captured_at: captured,
         source: SourceIdentity { revision: rev, dirty: dirty(), workload_schema: WORKLOAD_SCHEMA_VERSION, result_schema: RESULT_SCHEMA_VERSION, generator: workload.generator_version.clone(), expanded_source_sha256: generated.source_sha256, input_tape_sha256: generated.input_tape_sha256 },
         fixture: FixtureIdentity { id: workload.id.clone(), family: format!("{:?}", workload.family).to_lowercase(), workload_sha256: generated.workload_sha256, seed: workload.seed, parameters: serde_json::to_value(&workload).unwrap() },
         stage: StageIdentity { executor: "interpreter-native".into(), tier: args.tier.name().into(), adapter: "none".into() }, environment: environment(&args.environment)?,

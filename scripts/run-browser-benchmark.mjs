@@ -100,7 +100,7 @@ try {
   const runtimeRevision = observed.identity.sourceRevision;
   if (!/^[0-9a-f]{40}$/.test(runtimeRevision)) throw new Error(`benchmark wasm lacks a release source revision: ${runtimeRevision}`);
   const baseHost = envRecord?.host ?? {};
-  const envelope = { schema_version:1, series:'maku-v1-f64', run_id:`${now.replace(/[-:.]/g,'')}-${workload.id}-${tierArg}`, captured_at:now,
+  const envelope = { schema_version:1, series:'maku-v1-f32', run_id:`${now.replace(/[-:.]/g,'')}-${workload.id}-${tierArg}`, captured_at:now,
     source:{revision:runtimeRevision,dirty,workload_schema:1,result_schema:1,generator:workload.generator_version,expanded_source_sha256:fixture.expanded_source_sha256,input_tape_sha256:fixture.input_tape_sha256},
     fixture:{id:workload.id,family:workload.family,workload_sha256:fixture.workload_sha256,seed:workload.seed,parameters:workload},
     stage:{executor:'interpreter-wasm',tier:tierArg==='web-canvas2d'?'host-draw':tierArg,adapter:tierArg==='web-canvas2d'?'web-canvas2d':'none'},

@@ -467,12 +467,12 @@ impl RenderRowFields {
         };
         let data = match &*shape {
             "point" | "dot" => RenderData::Point {
-                x: self.x.map(|v| v.num()).transpose()?.unwrap_or(0.0),
-                y: self.y.map(|v| v.num()).transpose()?.unwrap_or(0.0),
-                theta: self.theta.map(|v| v.num()).transpose()?.unwrap_or(0.0),
-                scale: self.scale.map(|v| v.num()).transpose()?.unwrap_or(1.0),
-                alpha: self.alpha.map(|v| v.num()).transpose()?.unwrap_or(1.0),
-                hue: self.hue.map(|v| v.num()).transpose()?.unwrap_or(0.0),
+                x: self.x.map(|v| v.num()).transpose()?.unwrap_or(0.0) as f32 as f64,
+                y: self.y.map(|v| v.num()).transpose()?.unwrap_or(0.0) as f32 as f64,
+                theta: self.theta.map(|v| v.num()).transpose()?.unwrap_or(0.0) as f32 as f64,
+                scale: self.scale.map(|v| v.num()).transpose()?.unwrap_or(1.0) as f32 as f64,
+                alpha: self.alpha.map(|v| v.num()).transpose()?.unwrap_or(1.0) as f32 as f64,
+                hue: self.hue.map(|v| v.num()).transpose()?.unwrap_or(0.0) as f32 as f64,
             },
             "polyline" => {
                 let points = match &shape_value {
@@ -521,7 +521,7 @@ impl RenderRowFields {
             match v {
                 Val::Num(n) => {
                     check(world, &key, RenderFieldKind::Num)?;
-                    row.nums.push((key, n));
+                    row.nums.push((key, n as f32 as f64));
                 }
                 Val::Kw(sym) => {
                     check(world, &key, RenderFieldKind::Sym)?;

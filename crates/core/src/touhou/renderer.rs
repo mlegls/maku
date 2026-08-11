@@ -230,19 +230,20 @@ impl TouhouMesh {
         let profile = &self.profile;
         let style = profile.sprite(style_id);
         let palette = profile.palette(palette_id);
+        let (x, y, theta, scale) = (x as f32, y as f32, theta as f32, scale as f32);
         for layer in &style.layers {
             let base_alpha = alpha.clamp(0.0, 1.0) * layer.alpha_mul as f64;
             let rotation = layer.angle_offset + match style.orientation {
                 OrientationPolicy::Radial => 0.0,
-                OrientationPolicy::Directional => theta as f32,
+                OrientationPolicy::Directional => theta,
             };
-            let radius = style.radius_world * scale as f32;
+            let radius = style.radius_world * scale;
             if !rotation.is_finite() || !radius.is_finite()
                 || !layer.size_mul.iter().all(|v| (radius * *v).is_finite()) {
                 return Err(RenderError::InvalidRow("sprite recipe transform overflows f32 output".into()));
             }
             let base = BasicSpriteInstance {
-                center: [x as f32, y as f32],
+                center: [x, y],
                 half_size: [radius * layer.size_mul[0], radius * layer.size_mul[1]],
                 rotation,
                 uv_rect: layer.region.uv,
@@ -291,9 +292,10 @@ impl TouhouMesh {
         let profile = &self.profile;
         let style = profile.beam(style_id);
         let palette = profile.palette(palette_id);
+        let width = width as f32;
         for layer in &style.layers {
             let appearance = if active { layer.active } else { layer.warning };
-            let half = appearance.width_px * layer.width_mul * width as f32
+            let half = appearance.width_px * layer.width_mul * width
                 / profile.pixels_per_unit() / 2.0;
             if !half.is_finite() {
                 return Err(RenderError::InvalidRow("beam width overflows f32 output".into()));

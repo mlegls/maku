@@ -1854,12 +1854,12 @@ impl Sim {
                     Rc::get_mut(&mut row).expect("pooled render row is uniquely owned");
                 rendered.kind = plan.kind.clone();
                 rendered.data = RenderData::Point {
-                    x: geometry[0],
-                    y: geometry[1],
-                    theta: geometry[2],
-                    scale: geometry[3],
-                    alpha: geometry[4],
-                    hue: geometry[5],
+                    x: geometry[0] as f32 as f64,
+                    y: geometry[1] as f32 as f64,
+                    theta: geometry[2] as f32 as f64,
+                    scale: geometry[3] as f32 as f64,
+                    alpha: geometry[4] as f32 as f64,
+                    hue: geometry[5] as f32 as f64,
                 };
                 for ((field, kind), source) in plan
                     .extras
@@ -1870,7 +1870,7 @@ impl Sim {
                     let value = source_value!(*source, lane);
                     match kind {
                         Some(RenderFieldKind::Num) if value.2 => {
-                            rendered.nums.push((field.key.clone(), value.0));
+                            rendered.nums.push((field.key.clone(), value.0 as f32 as f64));
                         }
                         Some(RenderFieldKind::Sym) if value.3 => {
                             let value = self
@@ -1951,7 +1951,7 @@ impl Sim {
                     columns.push((
                         field.key.clone(),
                         RenderFieldKind::Num,
-                        Column::Num(NumColumn::Const(value)),
+                        Column::Num(NumColumn::Const(value as f32)),
                     ));
                 }
                 RenderProjectionConstant::Symbol(symbol) => {
@@ -1979,7 +1979,7 @@ impl Sim {
                 RenderProjectionConstant::Dynamic => {
                     enum Fill {
                         Empty,
-                        Nums(Vec<f64>, Vec<bool>, bool),
+                        Nums(Vec<f32>, Vec<bool>, bool),
                         Symbols(Vec<Option<Rc<str>>>),
                     }
                     let mut fill = Fill::Empty;
@@ -1997,12 +1997,12 @@ impl Sim {
                             (true, false, Fill::Empty) => {
                                 let mut values = vec![0.0; lane];
                                 let mut masks = vec![false; lane];
-                                values.push(value.0);
+                                values.push(value.0 as f32);
                                 masks.push(true);
                                 fill = Fill::Nums(values, masks, lane == 0);
                             }
                             (true, false, Fill::Nums(values, masks, _)) => {
-                                values.push(value.0);
+                                values.push(value.0 as f32);
                                 masks.push(true);
                             }
                             (true, false, Fill::Symbols(_))
@@ -2556,16 +2556,16 @@ fn direct_num_column(
     use crate::model::NumColumn;
 
     if let RenderProjectionConstant::Num(value) = constant {
-        return Some(NumColumn::Const(value));
+        return Some(NumColumn::Const(value as f32));
     }
     let values = match source {
-        RenderProjectionSource::Num(value) => return Some(NumColumn::Const(value)),
+        RenderProjectionSource::Num(value) => return Some(NumColumn::Const(value as f32)),
         RenderProjectionSource::Symbol(_) => return None,
-        RenderProjectionSource::PoseX { .. } => poses.iter().map(|pose| pose.x).collect(),
-        RenderProjectionSource::PoseY { .. } => poses.iter().map(|pose| pose.y).collect(),
+        RenderProjectionSource::PoseX { .. } => poses.iter().map(|pose| pose.x as f32).collect(),
+        RenderProjectionSource::PoseY { .. } => poses.iter().map(|pose| pose.y as f32).collect(),
         RenderProjectionSource::PoseTheta { .. } => poses
             .iter()
-            .map(|pose| pose.theta.unwrap_or(0.0))
+            .map(|pose| pose.theta.unwrap_or(0.0) as f32)
             .collect(),
         RenderProjectionSource::Field(field) => {
             let mut values = Vec::with_capacity(rows.len());
@@ -2574,7 +2574,7 @@ fn direct_num_column(
                 if !value.2 || value.3 {
                     return None;
                 }
-                values.push(value.0);
+                values.push(value.0 as f32);
             }
             values
         }
@@ -2590,7 +2590,7 @@ fn direct_num_column(
                 if !value.2 || value.3 {
                     return None;
                 }
-                values.push(value.0);
+                values.push(value.0 as f32);
             }
             values
         }

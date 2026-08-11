@@ -1,6 +1,6 @@
 {
   "matrix_schema_version": 1,
-  "series": "maku-v1-f64",
+  "series": "maku-v1-f32",
   "workloads": {
     "bullet_sweep": [
       "bullets-continuity", "bullets-1k", "bullets-10k", "bullets-100k", "bullets-1m"
