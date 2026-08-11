@@ -7,10 +7,10 @@
        round-trip + bail-parity tests
 - [x] 3. Slice 1 gates first-hand: core suite plain + oracle, release
        ignored oracle suites; commit
-- [ ] 4. Slice 2: narrow `WorldFields::num_values`, `ColliderData`,
+- [x] 4. Slice 2: narrow `WorldFields::num_values`, `ColliderData`,
        `CollisionIndex::aabbs`; dyn-field + masked-update oracle
        expected-side rounding; narrow-phase widens to f64
-- [ ] 5. Slice 2 gates first-hand; commit
+- [x] 5. Slice 2 gates first-hand; commit
 - [ ] 6. Slice 3: narrow render batch geometry columns with
        entry-rounding on both fill paths; collapse redundant casts in
        touhou mesh push; digest pin re-derivation; bench series id →
