@@ -486,13 +486,14 @@ fn draw_rand_site(elem_key: u64, site: u64, spec: RandSite) -> f64 {
 
 /// One entity's full capture vector: keyed rand draws (slots 0..sites), then
 /// the node's fixed env-capture values.
-pub(crate) fn draw_caps(ex: &ExtractedSig, elem_key: u64) -> Rc<[f64]> {
+pub(crate) fn draw_caps(ex: &ExtractedSig, elem_key: u64) -> Rc<[f32]> {
     ex.sites
         .iter()
         .copied()
         .enumerate()
         .map(|(site, spec)| draw_rand_site(elem_key, site as u64, spec))
         .chain(ex.env_caps.iter().copied())
+        .map(|value| value as f32)
         .collect()
 }
 
@@ -535,7 +536,7 @@ pub(crate) fn subst_rand(f: &Form, elem_key: u64, site: &mut u64) -> Form {
                     _ => None,
                 };
                 if let Some(spec) = spec {
-                    let value = draw_rand_site(elem_key, *site, spec);
+                    let value = draw_rand_site(elem_key, *site, spec) as f32 as f64;
                     *site += 1;
                     return Form::Num(value);
                 }
@@ -564,7 +565,7 @@ fn walk_compiled_rand(
     elem_key: Option<u64>,
     node_n: &mut u64,
     layout: &mut CaptureLayout,
-    captures: &mut Vec<f64>,
+    captures: &mut Vec<f32>,
 ) -> bool {
     let mut leaf = |rand: &Option<Rc<RandCell>>, node: &DynNode| {
         let ordinal = *node_n;
@@ -613,7 +614,7 @@ pub(crate) fn capture_layout_geometry(d: &DynFigure) -> CaptureLayout {
     layout
 }
 
-pub(crate) fn draw_compiled_rand_geometry(d: &DynFigure, elem_key: u64) -> Option<Rc<[f64]>> {
+pub(crate) fn draw_compiled_rand_geometry(d: &DynFigure, elem_key: u64) -> Option<Rc<[f32]>> {
     let mut layout = CaptureLayout::default();
     let mut captures = Vec::new();
     let mut node_n = 0;
@@ -655,7 +656,9 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, elem_key: u64, node_n: &mut u64)
                         ex.programs[0].clone(),
                         ex.programs[1].clone(),
                     ))),
-                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, key)))),
+                    rand: Some(Rc::new(RandCell::Caps(Rc::new(CaptureData::new(
+                        draw_caps(ex, key), ex.env_names.clone(), ex.sites.len(),
+                    ))))),
                 }),
                 // Bail (markers didn't lower) or a construction path that
                 // skipped extraction: per-entity substitution, as ever.
@@ -686,7 +689,9 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, elem_key: u64, node_n: &mut u64)
                             ex.programs[0].clone(),
                             ex.programs[1].clone(),
                         ))),
-                        rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, key)))),
+                        rand: Some(Rc::new(RandCell::Caps(Rc::new(CaptureData::new(
+                            draw_caps(ex, key), ex.env_names.clone(), ex.sites.len(),
+                        ))))),
                         columns: data.columns,
                     }),
                 }),
@@ -714,7 +719,9 @@ pub(crate) fn instantiate_rand(d: &Rc<DynNode>, elem_key: u64, node_n: &mut u64)
                     form: ex.forms[0].clone(),
                     env: env.clone(),
                     program: std::cell::OnceCell::from(Some(ex.programs[0].clone())),
-                    rand: Some(Rc::new(RandCell::Caps(draw_caps(ex, key)))),
+                    rand: Some(Rc::new(RandCell::Caps(Rc::new(CaptureData::new(
+                        draw_caps(ex, key), ex.env_names.clone(), ex.sites.len(),
+                    ))))),
                 }),
                 Some(_) | None if form_has_rand(form) => {
                     let mut site = 0;

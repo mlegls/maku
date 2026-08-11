@@ -324,7 +324,7 @@ fn sample_curve_collider_frac(
     projection: &CapsuleChainSlot,
     frame: Pose,
     capture_layout: Option<&CaptureLayout>,
-    captures: &[f64],
+    captures: &[f32],
     tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
     sample_curve_projection(
@@ -350,7 +350,7 @@ fn sample_curve_projection(
     u_max: f64,
     frame: Pose,
     capture_layout: Option<&CaptureLayout>,
-    captures: &[f64],
+    captures: &[f32],
     tick_rate: f64,
 ) -> Option<Vec<(f64, f64)>> {
     let curve = dyn_figure.curve()?;
@@ -567,7 +567,7 @@ pub fn eval_collider_slot(
     trace: &[Pose],
     traced: bool,
     capture_layout: Option<&CaptureLayout>,
-    captures: &[f64],
+    captures: &[f32],
     tick_rate: f64,
 ) -> ColliderData {
     match slot.repr() {
@@ -632,7 +632,7 @@ pub(super) fn capsule_chain_collider_data(
     trace: &[Pose],
     traced: bool,
     capture_layout: Option<&CaptureLayout>,
-    captures: &[f64],
+    captures: &[f32],
     tick_rate: f64,
 ) -> ColliderData {
     match dyn_figure.repr() {

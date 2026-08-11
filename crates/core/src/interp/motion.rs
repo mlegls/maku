@@ -326,7 +326,7 @@ pub struct MotionEvalCtx<'a> {
     pub readers: &'a MotionReaders,
     pub tick_rate: f64,
     pub capture_layout: Option<&'a CaptureLayout>,
-    pub captures: &'a [f64],
+    pub captures: &'a [f32],
     pub row_frame: Option<Pose>,
     /// When false the caller provably discards theta, so nodes whose
     /// heading costs extra evaluation (ClosedPt's second sample, Vel's
@@ -361,7 +361,7 @@ impl<'a> MotionEvalCtx<'a> {
     pub fn with_row(
         mut self,
         capture_layout: &'a CaptureLayout,
-        captures: &'a [f64],
+        captures: &'a [f32],
         row_frame: Option<Pose>,
     ) -> Self {
         self.capture_layout = Some(capture_layout);
@@ -370,11 +370,13 @@ impl<'a> MotionEvalCtx<'a> {
         self
     }
 
-    pub fn caps_for(&self, node: &DynNode, rand: &'a Option<Rc<RandCell>>) -> &'a [f64] {
-        if let Some(range) = self.capture_layout.and_then(|layout| layout.range(node)) {
-            return &self.captures[range.offset..range.offset + range.len];
-        }
-        caps_of(rand)
+    pub fn caps_for(&self, node: &DynNode, rand: &'a Option<Rc<RandCell>>) -> Vec<f64> {
+        let stored = if let Some(range) = self.capture_layout.and_then(|layout| layout.range(node)) {
+            &self.captures[range.offset..range.offset + range.len]
+        } else {
+            stored_caps_of(rand)
+        };
+        stored.iter().map(|value| *value as f64).collect()
     }
 
     pub fn compiled_for(&self, node: &DynNode, rand: &'a Option<Rc<RandCell>>) -> Option<&'a ExtractedSig> {
@@ -405,7 +407,7 @@ pub struct MotionStepCtx<'a> {
     pub state: &'a mut MotionState,
     pub sig: &'a SigEnv,
     pub capture_layout: Option<&'a CaptureLayout>,
-    pub captures: &'a [f64],
+    pub captures: &'a [f32],
     pub world: Option<&'a mut World>,
     pub readers: &'a MotionReaders,
     pub tick_rate: f64,
@@ -426,11 +428,13 @@ impl<'a> MotionStepCtx<'a> {
         &'b self,
         node: &DynNode,
         rand: &'b Option<Rc<RandCell>>,
-    ) -> &'b [f64] {
-        if let Some(range) = self.capture_layout.and_then(|layout| layout.range(node)) {
-            return &self.captures[range.offset..range.offset + range.len];
-        }
-        caps_of(rand)
+    ) -> Vec<f64> {
+        let stored = if let Some(range) = self.capture_layout.and_then(|layout| layout.range(node)) {
+            &self.captures[range.offset..range.offset + range.len]
+        } else {
+            stored_caps_of(rand)
+        };
+        stored.iter().map(|value| *value as f64).collect()
     }
 
     pub fn compiled_for<'b>(
@@ -501,6 +505,19 @@ fn integrator_component_key(ptr: usize, readers: &MotionReaders) -> MotionStateK
 /// chases these enums, and inlining the slot data measurably regressed the
 /// wall (88 → 120 bytes cost ~60% on the scaled fruit rig).
 #[derive(Debug)]
+pub struct CaptureData {
+    values: Rc<[f32]>,
+    env_names: Rc<[Rc<str>]>,
+    env_offset: usize,
+}
+
+impl CaptureData {
+    pub(crate) fn new(values: Rc<[f32]>, env_names: Rc<[Rc<str>]>, env_offset: usize) -> CaptureData {
+        CaptureData { values, env_names, env_offset }
+    }
+}
+
+#[derive(Debug)]
 pub enum RandCell {
     /// Spec node: extraction + lowering, built at construction. The node's
     /// own forms stay untouched. Uncaptured rand in rowless signal contexts
@@ -511,7 +528,7 @@ pub enum RandCell {
     /// falls back to per-entity form substitution, the pre-slot path.
     Bail,
     /// Entity clone: the drawn capture values, slot-indexed.
-    Caps(Rc<[f64]>),
+    Caps(Rc<CaptureData>),
 }
 
 /// Canonical id for one fully compared typed motion program plus plan
@@ -664,6 +681,7 @@ pub struct ExtractedSig {
     /// Construction-time values of the env-capture slots (slot ids
     /// `sites.len()..`); the env is fixed per node, so these are too.
     pub env_caps: Vec<f64>,
+    pub env_names: Rc<[Rc<str>]>,
     /// One plan-backed program per form, structurally interned. Every
     /// specialized backend's `n_inputs` is bumped to the node's full
     /// capture width so all programs read one capture vector.
@@ -739,18 +757,32 @@ pub(crate) fn compile_sig(
         })
         .collect();
     if has_rand {
-        let cell = RandCell::Compiled(ExtractedSig { forms: marked, sites, env_caps, programs });
+        let cell = RandCell::Compiled(ExtractedSig {
+            forms: marked,
+            sites,
+            env_caps,
+            env_names: names.into(),
+            programs,
+        });
         (Some(Rc::new(cell)), None)
     } else {
-        let cell = (width > 0).then(|| Rc::new(RandCell::Caps(env_caps.into())));
+        let cell = (width > 0).then(|| Rc::new(RandCell::Caps(Rc::new(CaptureData::new(
+            env_caps.into_iter().map(|value| value as f32).collect(),
+            names.into(),
+            0,
+        )))));
         (cell, Some(programs))
     }
 }
 
-/// The entity's capture vector, if this node carries one.
-pub(crate) fn caps_of(rand: &Option<Rc<RandCell>>) -> &[f64] {
+/// The entity's capture vector, widened at the storage boundary.
+pub(crate) fn caps_of(rand: &Option<Rc<RandCell>>) -> Vec<f64> {
+    stored_caps_of(rand).iter().map(|value| *value as f64).collect()
+}
+
+fn stored_caps_of(rand: &Option<Rc<RandCell>>) -> &[f32] {
     match rand.as_deref() {
-        Some(RandCell::Caps(caps)) => caps,
+        Some(RandCell::Caps(caps)) => &caps.values,
         _ => &[],
     }
 }
@@ -1514,7 +1546,7 @@ pub struct VelStepPlanRef<'a> {
     pub bp: &'a Rc<MotionProgram>,
     pub polar: bool,
     pub columns: [ColName; 2],
-    pub caps: &'a [f64],
+    pub caps: &'a [f32],
 }
 
 impl VelStepPlanRef<'_> {
@@ -1533,7 +1565,7 @@ pub fn vel_step_plan<'a>(
     fig: &'a DynFigure,
     sig: &SigEnv,
     capture_layout: Option<&'a CaptureLayout>,
-    captures: &'a [f64],
+    captures: &'a [f32],
 ) -> Option<VelStepPlanRef<'a>> {
     if fig.curve().is_some() {
         return None;
@@ -1571,7 +1603,7 @@ pub fn vel_step_plan<'a>(
                     caps: capture_layout
                         .and_then(|layout| layout.range(node))
                         .map(|range| &captures[range.offset..range.offset + range.len])
-                        .unwrap_or_else(|| caps_of(&data.rand)),
+                        .unwrap_or_else(|| stored_caps_of(&data.rand)),
                 });
             }
             _ => return None,
@@ -1591,14 +1623,14 @@ pub struct ClosedChainRef<'a> {
     pub ap: &'a Rc<MotionProgram>,
     pub bp: &'a Rc<MotionProgram>,
     pub polar: bool,
-    pub caps: &'a [f64],
+    pub caps: &'a [f32],
 }
 
 pub fn closed_chain_plan<'a>(
     fig: &'a DynFigure,
     sig: &SigEnv,
     capture_layout: Option<&'a CaptureLayout>,
-    captures: &'a [f64],
+    captures: &'a [f32],
 ) -> Option<ClosedChainRef<'a>> {
     if fig.curve().is_some() {
         return None;
@@ -1625,7 +1657,7 @@ pub fn closed_chain_plan<'a>(
                 let caps = capture_layout
                     .and_then(|layout| layout.range(node))
                     .map(|range| &captures[range.offset..range.offset + range.len])
-                    .unwrap_or_else(|| caps_of(rand));
+                    .unwrap_or_else(|| stored_caps_of(rand));
                 return Some(ClosedChainRef { root, ap, bp, polar: *polar, caps });
             }
             _ => return None,
@@ -1693,16 +1725,26 @@ pub fn oracle_check_vel_step(
     let DynNode::StockIntegrator { data } = vel else {
         return Ok(());
     };
-    let (source_a, source_b) = match data.rand.as_deref() {
-        Some(RandCell::Compiled(ex)) if !captures.is_empty() => (&ex.forms[0], &ex.forms[1]),
-        _ => (&data.a, &data.b),
+    let extracted = match data.rand.as_deref() {
+        Some(RandCell::Compiled(ex)) if !captures.is_empty() => Some(ex),
+        _ => None,
     };
-    let caps = if captures.is_empty() { caps_of(&data.rand) } else { captures };
-    let (a, b) = &oracle_forms(source_a, source_b, caps);
+    let (source_a, source_b) = extracted
+        .map(|ex| (&ex.forms[0], &ex.forms[1]))
+        .unwrap_or((&data.a, &data.b));
+    let stored_caps;
+    let caps = if captures.is_empty() {
+        stored_caps = caps_of(&data.rand);
+        stored_caps.as_slice()
+    } else {
+        captures
+    };
+    let (a, b) = &oracle_forms(source_a, source_b, &caps);
+    let env = capture_env(&data.env, extracted, &data.rand, caps);
     let key = vel as *const DynNode as usize;
     let mut state = MotionState::default();
     let ((ivx, ivy), _) = advance_sites_with_writes(&mut state, key, dt, readers.clone(), false, |scan| {
-        eval_pt_at_rate(a, b, data.source_is_polar(), &data.env, sig, tau, 0.0, Some(scan), Some(pos), tick_rate)
+        eval_pt_at_rate(a, b, data.source_is_polar(), &env, sig, tau, 0.0, Some(scan), Some(pos), tick_rate)
     })?;
     assert_num_close("vel-batch/a", a, got.0, ivx);
     assert_num_close("vel-batch/b", b, got.1, ivy);
@@ -1717,6 +1759,24 @@ fn oracle_form(f: &Form, caps: &[f64]) -> Form {
 
 fn oracle_forms(a: &Form, b: &Form, caps: &[f64]) -> (Form, Form) {
     (oracle_form(a, caps), oracle_form(b, caps))
+}
+
+fn capture_env(
+    env: &Env,
+    extracted: Option<&ExtractedSig>,
+    rand: &Option<Rc<RandCell>>,
+    caps: &[f64],
+) -> Env {
+    let (names, offset) = match extracted {
+        Some(ex) => (ex.env_names.as_ref(), ex.sites.len()),
+        None => match rand.as_deref() {
+            Some(RandCell::Caps(data)) => (data.env_names.as_ref(), data.env_offset),
+            _ => return env.clone(),
+        },
+    };
+    names.iter().zip(caps.iter().skip(offset)).fold(env.clone(), |env, (name, value)| {
+        env.bind(name.clone(), Val::Num(*value))
+    })
 }
 
 fn assert_num_close(label: &str, form: &Form, got: f64, expected: f64) {
@@ -1924,6 +1984,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let key = d as *const DynNode as usize;
             let extracted = ctx.compiled_for(d, rand);
             let caps = ctx.caps_for(d, rand);
+            let captured_env = capture_env(env, extracted, rand, &caps);
             let source_a = extracted.map(|ex| &ex.forms[0]).unwrap_or(a);
             let source_b = extracted.map(|ex| &ex.forms[1]).unwrap_or(b);
             let lowered = extracted
@@ -1933,15 +1994,15 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     .as_ref()
                     .map(|(ap, bp)| (ap, bp)));
             if let Some((ap, bp)) = lowered {
-                let (x, y) = eval_motion_program_pair(ap, bp, *polar, tau, u, None, caps, &[], &[]);
+                let (x, y) = eval_motion_program_pair(ap, bp, *polar, tau, u, None, &caps, &[], &[]);
                 if !ctx.need_theta {
                     if oracle_enabled() {
-                        let (a, b) = &oracle_forms(source_a, source_b, caps);
+                        let (a, b) = &oracle_forms(source_a, source_b, &caps);
                         let (ix, iy) = eval_pt_at_rate(
                             a,
                             b,
                             *polar,
-                            env,
+                            &captured_env,
                             sig,
                             tau,
                             u,
@@ -1955,14 +2016,14 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                     return Ok(Pose::point(x, y));
                 }
                 let eps = 1.0 / tick_rate;
-                let (x2, y2) = eval_motion_program_pair(ap, bp, *polar, tau + eps, u, None, caps, &[], &[]);
+                let (x2, y2) = eval_motion_program_pair(ap, bp, *polar, tau + eps, u, None, &caps, &[], &[]);
                 if oracle_enabled() {
-                    let (a, b) = &oracle_forms(source_a, source_b, caps);
+                    let (a, b) = &oracle_forms(source_a, source_b, &caps);
                     let (ix, iy) = eval_pt_at_rate(
                         a,
                         b,
                         *polar,
-                        env,
+                        &captured_env,
                         sig,
                         tau,
                         u,
@@ -1974,7 +2035,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                         a,
                         b,
                         *polar,
-                        env,
+                        &captured_env,
                         sig,
                         tau + eps,
                         u,
@@ -1993,7 +2054,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 source_a,
                 source_b,
                 *polar,
-                env,
+                &captured_env,
                 sig,
                 tau,
                 u,
@@ -2009,7 +2070,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 source_a,
                 source_b,
                 *polar,
-                env,
+                &captured_env,
                 sig,
                 tau + eps,
                 u,
@@ -2064,6 +2125,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             let key = d as *const DynNode as usize;
             let extracted = ctx.compiled_for(d, rand);
             let caps = ctx.caps_for(d, rand);
+            let captured_env = capture_env(env, extracted, rand, &caps);
             let source_form = extracted.map(|ex| &ex.forms[0]).unwrap_or(form);
             let lowered = extracted
                 .map(|ex| Some(&ex.programs[0]))
@@ -2074,14 +2136,14 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
                 let fetched = AUX_A.with(|aa| {
                     let mut aa = aa.borrow_mut();
                     fetch_aux(prog, key, state, sig, readers, &mut aa)
-                        .then(|| run_num_program_caps(prog.backend(), tau, u, Some((0.0, 0.0)), caps, &aa))
+                        .then(|| run_num_program_caps(prog.backend(), tau, u, Some((0.0, 0.0)), &caps, &aa))
                 });
                 if let Some(th) = fetched {
                     if oracle_enabled() {
-                        let form = &oracle_form(source_form, caps);
+                        let form = &oracle_form(source_form, &caps);
                         let ith = eval_sig_at_rate(
                             form,
-                            env,
+                            &captured_env,
                             sig,
                             tau,
                             u,
@@ -2097,7 +2159,7 @@ fn dyn_node_pose_u_in_inner(d: &DynNode, tau: f64, u: f64, ctx: MotionEvalCtx<'_
             }
             let th = eval_sig_at_rate(
                 source_form,
-                env,
+                &captured_env,
                 sig,
                 tau,
                 u,
@@ -2264,13 +2326,12 @@ pub fn step_motion_in(
             let (a, b, env, programs, rand) = (&data.a, &data.b, &data.env, &data.programs, &data.rand);
             let polar = data.source_is_polar();
             let range = ctx.capture_layout.and_then(|layout| layout.range(d));
-            let caps = range
-                .map(|range| &ctx.captures[range.offset..range.offset + range.len])
-                .unwrap_or_else(|| caps_of(rand));
+            let caps = ctx.caps_for(d, rand);
             let extracted = range.and_then(|_| match rand.as_deref() {
                 Some(RandCell::Compiled(ex)) => Some(ex),
                 _ => None,
             });
+            let captured_env = capture_env(env, extracted, rand, &caps);
             let source_a = extracted.map(|ex| &ex.forms[0]).unwrap_or(a);
             let source_b = extracted.map(|ex| &ex.forms[1]).unwrap_or(b);
             let lowered = extracted
@@ -2304,20 +2365,20 @@ pub fn step_motion_in(
                 .filter(|(ap, bp)| ap.aux_free() && bp.aux_free())
             {
                 let (vx, vy) =
-                    eval_motion_program_pair(ap, bp, polar, tau, 0.0, Some((x, y)), caps, &[], &[]);
+                    eval_motion_program_pair(ap, bp, polar, tau, 0.0, Some((x, y)), &caps, &[], &[]);
                 if oracle_enabled() {
-                    let (a, b) = &oracle_forms(source_a, source_b, caps);
+                    let (a, b) = &oracle_forms(source_a, source_b, &caps);
                     let ((ivx, ivy), _) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                        eval_pt_at_rate(a, b, polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
+                        eval_pt_at_rate(a, b, polar, &captured_env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
                     })?;
                     assert_num_close("vel-step/a", a, vx, ivx);
                     assert_num_close("vel-step/b", b, vy, ivy);
                 }
                 (vx, vy)
             } else {
-                let (a, b) = &oracle_forms(source_a, source_b, caps);
+                let (a, b) = &oracle_forms(source_a, source_b, &caps);
                 let ((vx, vy), writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                    eval_pt_at_rate(a, b, polar, env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
+                    eval_pt_at_rate(a, b, polar, &captured_env, sig, tau, 0.0, Some(scan), Some((x, y)), tick_rate)
                 })?;
                 for (key, value) in writes.n2 {
                     write_n2(key, value);
@@ -2342,13 +2403,12 @@ pub fn step_motion_in(
         }
         DynNode::RotExpr { form, env, program, rand } => {
             let range = ctx.capture_layout.and_then(|layout| layout.range(d));
-            let caps = range
-                .map(|range| &ctx.captures[range.offset..range.offset + range.len])
-                .unwrap_or_else(|| caps_of(rand));
+            let caps = ctx.caps_for(d, rand);
             let extracted = range.and_then(|_| match rand.as_deref() {
                 Some(RandCell::Compiled(ex)) => Some(ex),
                 _ => None,
             });
+            let captured_env = capture_env(env, extracted, rand, &caps);
             let source_form = extracted.map(|ex| &ex.forms[0]).unwrap_or(form);
             // a lowered AUX-FREE program is scan-free: nothing to advance.
             // Aux programs still carry sited evolves that must advance.
@@ -2360,7 +2420,7 @@ pub fn step_motion_in(
             if lowered.is_some_and(|p| p.aux_free()) {
                 return Ok(());
             }
-            let source_form = oracle_form(source_form, caps);
+            let source_form = oracle_form(source_form, &caps);
             let state = &mut *ctx.state;
             let sig = ctx.sig;
             let readers = ctx.readers;
@@ -2370,7 +2430,7 @@ pub fn step_motion_in(
             let write_val = &mut *ctx.write_val;
             let key = d as *const DynNode as usize;
             let (_, writes) = advance_sites_with_writes(state, key, dt, readers.clone(), mirror_legacy, |scan| {
-                eval_sig_at_rate(&source_form, env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)), tick_rate)?.num()
+                eval_sig_at_rate(&source_form, &captured_env, sig, tau, 0.0, Some(scan), Some((0.0, 0.0)), tick_rate)?.num()
             })?;
             for (key, value) in writes.n2 {
                 write_n2(key, value);

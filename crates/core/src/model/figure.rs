@@ -11,6 +11,36 @@ pub struct Pose {
     pub theta: Option<f64>,
 }
 
+/// Storage-width pose. Computation always widens back to [`Pose`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose32 {
+    pub x: f32,
+    pub y: f32,
+    pub theta: Option<f32>,
+}
+
+impl From<&Pose> for Pose32 {
+    fn from(pose: &Pose) -> Pose32 {
+        Pose32 {
+            x: pose.x as f32,
+            y: pose.y as f32,
+            theta: pose.theta.map(|theta| theta as f32),
+        }
+    }
+}
+
+impl Pose32 {
+    pub const IDENTITY: Pose32 = Pose32 { x: 0.0, y: 0.0, theta: Some(0.0) };
+
+    pub fn to_pose(self) -> Pose {
+        Pose {
+            x: self.x as f64,
+            y: self.y as f64,
+            theta: self.theta.map(|theta| theta as f64),
+        }
+    }
+}
+
 impl Pose {
     pub const IDENTITY: Pose = Pose { x: 0.0, y: 0.0, theta: Some(0.0) };
 

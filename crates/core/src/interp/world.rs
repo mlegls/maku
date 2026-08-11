@@ -165,17 +165,17 @@ pub struct EntityStore {
     /// filled by the World install wrappers (the store cannot see fields).
     integrator_cols: Vec<Option<([ColName; 2], [usize; 2])>>,
     spec_id: Vec<SpecId>,
-    captures: Vec<Rc<[f64]>>,
-    root_frame: Vec<Option<Pose>>,
+    captures: Vec<Rc<[f32]>>,
+    root_frame: Vec<Option<Pose32>>,
     spawn_axis: Vec<Option<SpawnAxis>>,
-    sampled_pose: [Vec<Option<Pose>>; 2],
+    sampled_pose: [Vec<Option<Pose32>>; 2],
     /// The tick each sampled_pose slot was last written for. The ring is
     /// parity-indexed; without these tags a read at the wrong tick (the
     /// control layer runs after tick advances) silently returns the
     /// two-ticks-old sample and SIGN-FLIPS sample-derived velocity.
     sampled_pose_tick: [u64; 2],
     trace_cache: TraceCache,
-    state_n2: Vec<Vec<[f64; 2]>>,
+    state_n2: Vec<Vec<[f32; 2]>>,
     state_dyn: Vec<Vec<Option<DynPose>>>,
     state_val: Vec<Vec<Option<EvolveCell>>>,
     max: usize,
@@ -247,6 +247,14 @@ fn option_rc_ptr_eq<T: ?Sized>(a: Option<&Rc<T>>, b: Option<&Rc<T>>) -> bool {
         (Some(a), Some(b)) => Rc::ptr_eq(a, b),
         _ => false,
     }
+}
+
+fn narrow_n2([x, y]: [f64; 2]) -> [f32; 2] {
+    [x as f32, y as f32]
+}
+
+fn widen_n2([x, y]: [f32; 2]) -> [f64; 2] {
+    [x as f64, y as f64]
 }
 
 fn pose_identity_eq(a: &Pose, b: &Pose) -> bool {
@@ -587,7 +595,7 @@ impl SpecStore {
 #[derive(Clone)]
 struct TraceCache {
     stride: usize,
-    samples: Vec<Pose>,
+    samples: Vec<Pose32>,
     len: Vec<usize>,
 }
 
@@ -607,7 +615,7 @@ impl TraceCache {
     fn ensure_rows(&mut self, rows: usize) {
         if self.len.len() < rows {
             self.len.resize(rows, 0);
-            self.samples.resize(rows * self.stride, Pose::IDENTITY);
+            self.samples.resize(rows * self.stride, Pose32::IDENTITY);
         }
     }
 
@@ -629,7 +637,7 @@ impl TraceCache {
     fn push_row(&mut self) {
         self.len.push(0);
         if self.stride > 0 {
-            self.samples.resize(self.samples.len() + self.stride, Pose::IDENTITY);
+            self.samples.resize(self.samples.len() + self.stride, Pose32::IDENTITY);
         }
     }
 
@@ -638,7 +646,7 @@ impl TraceCache {
             return;
         }
         let rows = self.rows();
-        let mut next = vec![Pose::IDENTITY; rows * stride];
+        let mut next = vec![Pose32::IDENTITY; rows * stride];
         for row in 0..rows {
             let old_start = row * self.stride;
             let new_start = row * stride;
@@ -652,10 +660,10 @@ impl TraceCache {
         self.samples = next;
     }
 
-    fn samples(&self, row: usize) -> &[Pose] {
-        let Some(len) = self.len.get(row).copied() else { return &[] };
+    fn samples(&self, row: usize) -> Vec<Pose> {
+        let Some(len) = self.len.get(row).copied() else { return Vec::new() };
         let start = row * self.stride;
-        &self.samples[start..start + len]
+        self.samples[start..start + len].iter().map(|pose| pose.to_pose()).collect()
     }
 
     fn push(&mut self, row: usize, pose: Pose, cap: usize) {
@@ -676,7 +684,7 @@ impl TraceCache {
             }
             len = keep;
         }
-        self.samples[start + len] = pose;
+        self.samples[start + len] = Pose32::from(&pose);
         self.len[row] = len + 1;
     }
 
@@ -775,16 +783,24 @@ impl EntityStore {
         self.spec_id.get(row).copied()
     }
 
-    pub fn captures(&self, row: usize) -> &[f64] {
+    pub fn captures(&self, row: usize) -> Vec<f64> {
+        self.captures_storage(row).iter().map(|value| *value as f64).collect()
+    }
+
+    pub(crate) fn captures_storage(&self, row: usize) -> &[f32] {
         self.captures.get(row).map(|v| v.as_ref()).unwrap_or(&[])
     }
 
     pub fn captures_rc(&self, row: usize) -> Rc<[f64]> {
+        self.captures(row).into()
+    }
+
+    pub(crate) fn captures_storage_rc(&self, row: usize) -> Rc<[f32]> {
         self.captures.get(row).cloned().unwrap_or_else(|| Rc::from([]))
     }
 
     pub fn root_frame(&self, row: usize) -> Option<Pose> {
-        self.root_frame.get(row).copied().flatten()
+        self.root_frame.get(row).copied().flatten().map(Pose32::to_pose)
     }
 
     pub fn spawn_axis(&self, row: usize) -> Option<&SpawnAxis> {
@@ -812,7 +828,7 @@ impl EntityStore {
 
     pub fn state_n2(&self, row: usize, schema: &MotionStateSchema, key: MotionStateKey) -> Option<[f64; 2]> {
         let slot = schema.n2_slots.get(&key)?.0 as usize;
-        self.state_n2.get(slot)?.get(row).copied()
+        self.state_n2.get(slot)?.get(row).copied().map(widen_n2)
     }
 
     /// Readers over a snapshot of the row's state cells, in schema slot
@@ -828,7 +844,7 @@ impl EntityStore {
         // keys are visited in slot order, so each cell reads its column by
         // index directly — no per-cell hash through the schema's slot maps
         // (slot id == key index by intern order)
-        let n2_at = |slot: usize| self.state_n2.get(slot).and_then(|col| col.get(row)).copied();
+        let n2_at = |slot: usize| self.state_n2.get(slot).and_then(|col| col.get(row)).copied().map(widen_n2);
         if schema.dyn_keys.is_empty() && schema.val_keys.is_empty() && schema.n2_keys.len() <= 2 {
             let mut n2 = [None, None];
             for slot in 0..schema.n2_keys.len() {
@@ -855,12 +871,13 @@ impl EntityStore {
             .get(slot)
             .and_then(|col| col.get(row))
             .copied()
+            .map(widen_n2)
             .unwrap_or([0.0, 0.0])
     }
 
     pub fn set_state_n2_at_slot(&mut self, slot: usize, row: usize, value: [f64; 2]) {
         if let Some(cell) = self.state_n2.get_mut(slot).and_then(|col| col.get_mut(row)) {
-            *cell = value;
+            *cell = narrow_n2(value);
         }
     }
 
@@ -876,7 +893,7 @@ impl EntityStore {
         };
         let Some(col) = self.state_n2.get_mut(slot) else { return false };
         let Some(cell) = col.get_mut(row) else { return false };
-        *cell = value;
+        *cell = narrow_n2(value);
         true
     }
 
@@ -978,7 +995,7 @@ impl EntityStore {
         if self.sampled_pose_tick[slot] != tick {
             return None;
         }
-        self.sampled_pose[slot].get(row).copied().flatten()
+        self.sampled_pose[slot].get(row).copied().flatten().map(Pose32::to_pose)
     }
 
     pub fn sampled_pose(&self, row: usize, tick: u64) -> Option<Pose> {
@@ -1031,7 +1048,7 @@ impl EntityStore {
         if self.sampled_pose[slot].len() <= row {
             self.sampled_pose[slot].resize(row + 1, None);
         }
-        self.sampled_pose[slot][row] = pose;
+        self.sampled_pose[slot][row] = pose.as_ref().map(Pose32::from);
     }
 
     pub fn clear_sampled_poses(&mut self, row: usize) {
@@ -1042,7 +1059,7 @@ impl EntityStore {
         }
     }
 
-    pub fn trace_samples(&self, row: usize) -> &[Pose] {
+    pub fn trace_samples(&self, row: usize) -> Vec<Pose> {
         self.trace_cache.samples(row)
     }
 
@@ -1077,7 +1094,7 @@ impl EntityStore {
         spec_id: SpecId,
         birth: u64,
         rng_key: u64,
-        captures: Rc<[f64]>,
+        captures: Rc<[f32]>,
         root_frame: Option<Pose>,
         spawn_axis: Option<SpawnAxis>,
         dyn_cols_len: usize,
@@ -1092,7 +1109,7 @@ impl EntityStore {
         self.birth[i] = birth;
         self.rng_key[i] = rng_key;
         self.captures[i] = captures;
-        self.root_frame[i] = root_frame;
+        self.root_frame[i] = root_frame.as_ref().map(Pose32::from);
         self.spawn_axis[i] = spawn_axis;
         self.motion_birth[i] = birth;
         self.dyn_col_epochs[i] = vec![birth; dyn_cols_len];
@@ -1108,7 +1125,7 @@ impl EntityStore {
         spec_id: SpecId,
         birth: u64,
         rng_key: u64,
-        captures: Rc<[f64]>,
+        captures: Rc<[f32]>,
         root_frame: Option<Pose>,
         spawn_axis: Option<SpawnAxis>,
         dyn_cols_len: usize,
@@ -1125,7 +1142,7 @@ impl EntityStore {
         self.birth.push(birth);
         self.rng_key.push(rng_key);
         self.captures.push(captures);
-        self.root_frame.push(root_frame);
+        self.root_frame.push(root_frame.as_ref().map(Pose32::from));
         self.spawn_axis.push(spawn_axis);
         self.motion_birth.push(birth);
         self.dyn_col_epochs.push(vec![birth; dyn_cols_len]);
@@ -1720,12 +1737,20 @@ impl World {
         Some(self.spec_data(row)?.capture_layout.as_ref())
     }
 
-    pub fn captures(&self, row: usize) -> &[f64] {
+    pub fn captures(&self, row: usize) -> Vec<f64> {
         self.entities.captures(row)
+    }
+
+    pub(crate) fn captures_storage(&self, row: usize) -> &[f32] {
+        self.entities.captures_storage(row)
     }
 
     pub fn captures_rc(&self, row: usize) -> Rc<[f64]> {
         self.entities.captures_rc(row)
+    }
+
+    pub(crate) fn captures_storage_rc(&self, row: usize) -> Rc<[f32]> {
+        self.entities.captures_storage_rc(row)
     }
 
     pub fn capture_layout_rc(&self, row: usize) -> Rc<CaptureLayout> {
@@ -1751,7 +1776,7 @@ impl World {
     ) -> MotionEvalCtx<'a> {
         MotionEvalCtx::with_tick_rate(state, sig, readers, self.tick_rate()).with_row(
             self.capture_layout(row).expect("live row capture layout"),
-            self.captures(row),
+            self.captures_storage(row),
             self.root_frame(row),
         )
     }
@@ -1765,7 +1790,7 @@ impl World {
     ) -> MotionEvalCtx<'a> {
         MotionEvalCtx::with_tick_rate(state, sig, readers, self.tick_rate()).with_row(
             self.capture_layout(row).expect("live row capture layout"),
-            self.captures(row),
+            self.captures_storage(row),
             None,
         )
     }
@@ -1873,7 +1898,7 @@ impl World {
         &mut self,
         row: usize,
         dyn_figure: DynFigure,
-        captures: Rc<[f64]>,
+        captures: Rc<[f32]>,
         root_frame: Option<Pose>,
     ) {
         let Some(mut spec) = self.derived_spec(row) else { return };
@@ -1887,7 +1912,7 @@ impl World {
         let next = self.specs.mint_data(spec);
         self.replace_spec(row, next);
         self.entities.captures[row] = captures;
-        self.entities.root_frame[row] = root_frame;
+        self.entities.root_frame[row] = root_frame.as_ref().map(Pose32::from);
         self.entities.integrator_cols[row] = integrator.map(|names| (names, [usize::MAX; 2]));
         self.entities.reset_motion_state(row, &schema);
         self.resolve_integrator_slots(row);
@@ -1897,7 +1922,7 @@ impl World {
         &mut self,
         dyn_figure: DynFigure,
         rng_key: u64,
-        captures: Rc<[f64]>,
+        captures: Rc<[f32]>,
         root_frame: Option<Pose>,
         spawn_axis: Option<SpawnAxis>,
         cache_policy: EntityCachePolicy,

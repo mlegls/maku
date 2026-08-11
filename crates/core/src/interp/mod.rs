@@ -69,7 +69,7 @@ pub use lower::{
 pub(crate) use spawn::axis_select_val;
 pub use r#dyn::*;
 pub use crate::model::{
-    ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, RenderData, RenderFieldKind,
+    ColName, ColliderData, CurveDomain, EntityRef, FieldName, Pose, Pose32, RenderData, RenderFieldKind,
     RenderRow, SampleSet, Symbol,
 };
 pub use motion::*;
@@ -267,7 +267,7 @@ pub(crate) fn flatten_collider_projectors(
 pub struct SpawnElem {
     pub dyn_figure: DynFigure,
     pub rng_key: u64,
-    pub captures: Rc<[f64]>,
+    pub captures: Rc<[f32]>,
     pub collider_projector_spec: ColliderProjectorValue,
     pub cache_policy: EntityCachePolicy,
     pub path: Vec<(usize, usize)>,
@@ -382,7 +382,7 @@ pub enum FrameSpec {
 pub struct EntitySpec {
     pub dyn_figure: DynFigure,
     pub rng_key: u64,
-    pub captures: Rc<[f64]>,
+    pub captures: Rc<[f32]>,
     pub axis: Option<SpawnAxis>,
     pub cache_policy: EntityCachePolicy,
     pub sym_fields: Vec<(FieldName, Symbol)>,

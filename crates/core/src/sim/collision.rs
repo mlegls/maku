@@ -844,7 +844,7 @@ fn project_colliders(
     trace: &[Pose],
     traced: bool,
     capture_layout: Option<&CaptureLayout>,
-    captures: &[f64],
+    captures: &[f32],
     tick_rate: f64,
     mut emit: impl FnMut(ColliderData),
 ) {
@@ -970,10 +970,10 @@ fn materialize_colliders_into(
             sig,
             scale,
             pose,
-            trace,
+            &trace,
             traced,
             world.capture_layout(row),
-            world.captures(row),
+            world.captures_storage(row),
             tick_rate,
         )
     }));
@@ -1184,10 +1184,10 @@ impl Sim {
                         &sig,
                         scales[row],
                         pose,
-                        trace,
+                        &trace,
                         traced,
                         self.world.capture_layout(row),
-                        self.world.captures(row),
+                        self.world.captures_storage(row),
                         self.world.tick_rate(),
                         |collider| self.collider_scratch.rows.push(collider),
                     );
@@ -1224,10 +1224,10 @@ impl Sim {
                             &sig,
                             scales[row],
                             pose,
-                            trace,
+                            &trace,
                             traced,
                             self.world.capture_layout(row),
-                            self.world.captures(row),
+                            self.world.captures_storage(row),
                             tick_rate,
                             |collider| self.collider_scratch.rows.push(collider),
                         );

@@ -192,7 +192,7 @@ impl Sim {
             Sim::push_stock_dot_rows(
                 &dyn_figure,
                 pose,
-                trace,
+                &trace,
                 traced,
                 &mut scratch.rows,
             );

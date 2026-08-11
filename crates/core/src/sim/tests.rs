@@ -3002,7 +3002,8 @@
         inputs.set_num("move-x", 1.0);
         sim.step_with(&inputs).unwrap();
         let first_back = sim.world.state_n2(0, pos_key).unwrap();
-        assert_eq!(first_back[0].to_bits(), (-2.0 + 4.0 / DEFAULT_TICK_RATE).to_bits());
+        let expected = (-2.0 + 4.0 / DEFAULT_TICK_RATE) as f32 as f64;
+        assert_eq!(first_back[0].to_bits(), expected.to_bits());
         for _ in 1..60 {
             sim.step_with(&inputs).unwrap();
         }
@@ -3593,8 +3594,8 @@
         assert_eq!(caps0.len(), 2, "two rand sites -> two capture slots");
         for row in 1..8 {
             assert!(!Rc::ptr_eq(
-                &sim.world.captures_rc(0),
-                &sim.world.captures_rc(row),
+                &sim.world.captures_storage_rc(0),
+                &sim.world.captures_storage_rc(row),
             ));
         }
         assert!(caps0[0] >= 1.0 && caps0[0] < 2.0);
@@ -3641,7 +3642,7 @@
         let _guard = crate::interp::oracle_on_guard();
         const CARD: &str = r#"
 (defpattern p []
-  (let [s1 2 s2 3]
+  (let [s1 0.1 s2 0.3]
     (par
       (spawn (circle 4 (vel (polar s1 (* 10 t)))))
       (spawn (circle 4 (vel (polar s2 (* 10 t)))))
@@ -3682,9 +3683,9 @@
         let (ap0, bp0, caps0, polar0) = vel_parts(0); // polar s1
         let (ap1, bp1, caps1, polar1) = vel_parts(4); // polar s2
         let (ap2, bp2, caps2, polar2) = vel_parts(8); // cart s1
-        assert_eq!(caps0, vec![2.0]);
-        assert_eq!(caps1, vec![3.0]);
-        assert_eq!(caps2, vec![2.0]);
+        assert_eq!(caps0, vec![0.1f32 as f64]);
+        assert_eq!(caps1, vec![0.3f32 as f64]);
+        assert_eq!(caps2, vec![0.1f32 as f64]);
         assert_eq!((ap0, bp0), (ap1, bp1), "same shape, different captures: one program");
         assert_eq!((ap0, bp0), (ap2, bp2), "cart site interns to the same programs");
         assert!(polar0 && polar1 && !polar2);
@@ -3845,6 +3846,29 @@
         for (ra, rb) in rows_a.iter().zip(rows_b.iter()) {
             assert_render_rows_eq(ra, rb);
         }
+
+        // The fallback substitutes the same f32-rounded draw that compiled
+        // capture storage exposes after widening.
+        const F32_COMPILED: &str = r#"
+(defpattern p []
+  (spawn (vel c[(rand 0.1 0.2) 0])))
+"#;
+        const F32_FALLBACK: &str = r#"
+(defpattern p []
+  (spawn (vel c[(nth [(rand 0.1 0.2)] 0) 0])))
+"#;
+        let mut compiled = Sim::load(F32_COMPILED, Some("p")).unwrap();
+        let mut fallback = Sim::load(F32_FALLBACK, Some("p")).unwrap();
+        compiled.step().unwrap();
+        fallback.step().unwrap();
+        let capture = compiled.world.captures(0)[0];
+        assert_eq!(capture.to_bits(), (capture as f32 as f64).to_bits());
+        assert_eq!(
+            fallback.world.col_get_at(0, "vel-x").unwrap().to_bits(),
+            capture.to_bits(),
+            "bail substitution must bit-equal widened capture storage",
+        );
+        assert!(fallback.world.captures(0).is_empty());
 
         // unlowerable head around the rand site: marker lowering bails,
         // the per-entity substitution path runs
@@ -5660,8 +5684,8 @@ fn capture_time_expansion_respects_local_shadowing() {
         sim.step().unwrap();
     }
     let p = sim.world.entities.sampled_pose(0, sim.world.tick - 1).unwrap();
-    let expected = 2.0 * 6.0 / DEFAULT_TICK_RATE;
-    assert!((p.x - expected).abs() < 1e-9, "shadowed head evaluated as local fn: {}", p.x);
+    let expected = (2.0 * 6.0 / DEFAULT_TICK_RATE) as f32 as f64;
+    assert_eq!(p.x.to_bits(), expected.to_bits(), "shadowed head evaluated as local fn: {}", p.x);
 }
 
 #[test]
@@ -5722,6 +5746,31 @@ fn vel_motion_writes_dense_state_slot() {
 }
 
 #[test]
+fn motion_storage_round_trips_through_f32() {
+    const CARD: &str = r#"
+(defpattern p []
+  (spawn (vel c[1 0])))
+"#;
+    let mut sim = Sim::load(CARD, Some("p")).unwrap();
+    sim.step().unwrap();
+    let key = sim.world.motion_schema(0).unwrap().n2_keys[0];
+    let value = [0.1, -1.0 / 3.0];
+    assert!(sim.world.set_state_n2(0, key, value));
+    assert_eq!(
+        sim.world.state_n2(0, key).unwrap(),
+        [value[0] as f32 as f64, value[1] as f32 as f64],
+    );
+
+    let pose = Pose::oriented(0.1, -1.0 / 3.0, 0.2);
+    let tick = sim.world.tick;
+    sim.world.entities.set_sampled_pose(0, tick, Some(pose));
+    assert_eq!(
+        sim.world.entities.sampled_pose(0, tick).unwrap(),
+        Pose32::from(&pose).to_pose(),
+    );
+}
+
+#[test]
 fn vel_components_materialize_the_values_consumed_by_the_integrator() {
     const CARD: &str = r#"
 (defpattern p []
@@ -5735,8 +5784,10 @@ fn vel_components_materialize_the_values_consumed_by_the_integrator() {
         let vy = sim.world.col_get_at(0, "vel-y").unwrap();
         let key = sim.world.motion_schema(0).unwrap().n2_keys[0];
         let next = sim.world.state_n2(0, key).unwrap();
-        assert_eq!(next[0].to_bits(), (prior[0] + vx / DEFAULT_TICK_RATE).to_bits());
-        assert_eq!(next[1].to_bits(), (prior[1] + vy / DEFAULT_TICK_RATE).to_bits());
+        let expected_x = (prior[0] + vx / DEFAULT_TICK_RATE) as f32 as f64;
+        let expected_y = (prior[1] + vy / DEFAULT_TICK_RATE) as f32 as f64;
+        assert_eq!(next[0].to_bits(), expected_x.to_bits());
+        assert_eq!(next[1].to_bits(), expected_y.to_bits());
         prior = next;
     }
 }
@@ -5765,8 +5816,8 @@ fn sited_evolve_component_advances_once_and_materializes_its_settled_value() {
         .find(|key| matches!(key, MotionStateKey::Node(_)))
         .unwrap();
     let pos = sim.world.state_n2(0, pos_key).unwrap();
-    assert_eq!(pos[0].to_bits(), (vx / DEFAULT_TICK_RATE).to_bits());
-    assert_eq!(pos[1].to_bits(), (vy / DEFAULT_TICK_RATE).to_bits());
+    assert_eq!(pos[0].to_bits(), ((vx / DEFAULT_TICK_RATE) as f32 as f64).to_bits());
+    assert_eq!(pos[1].to_bits(), ((vy / DEFAULT_TICK_RATE) as f32 as f64).to_bits());
 }
 
 #[test]

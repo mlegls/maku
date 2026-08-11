@@ -198,7 +198,7 @@ impl VelBatchScratch {
         g.rows.push((row, slot));
         g.tau.push(tau);
         g.pos.push(pos);
-        g.caps.extend_from_slice(plan.caps);
+        g.caps.extend(plan.caps.iter().map(|value| *value as f64));
         if oracle_enabled() {
             g.nodes.push(plan.vel.clone());
         }
@@ -318,7 +318,7 @@ impl ClosedPoseScratch {
         debug_assert_eq!(plan.caps.len(), g.ap.n_inputs());
         g.rows.push(row);
         g.tau.push(tau);
-        g.caps.extend_from_slice(plan.caps);
+        g.caps.extend(plan.caps.iter().map(|value| *value as f64));
     }
 }
 
@@ -810,7 +810,7 @@ impl Sim {
                 fig,
                 sig,
                 self.world.capture_layout(i),
-                self.world.captures(i),
+                self.world.captures_storage(i),
             ) else {
                 continue;
             };
@@ -840,7 +840,7 @@ impl Sim {
                 fig,
                 sig,
                 self.world.capture_layout(i),
-                self.world.captures(i),
+                self.world.captures_storage(i),
             ) else {
                 continue;
             };
@@ -938,7 +938,7 @@ impl Sim {
         let (x, y) = self.world.entities.sampled_pos(row, tick.checked_sub(1)?)?;
         if oracle_enabled() {
             let tau = self.world.entity_motion_tau(row, tick);
-            let want = self.fast_pos_pose(row, tau, sig)?;
+            let want = Pose32::from(&self.fast_pos_pose(row, tau, sig)?).to_pose();
             assert_eq!((x, y), (want.x, want.y), "cull-reused pose diverged for row {row}");
         }
         Some((x, y))
@@ -1035,7 +1035,7 @@ impl Sim {
         row: usize,
         sig: &SigEnv,
         capture_layout: Option<&'a CaptureLayout>,
-        captures: &'a [f64],
+        captures: &'a [f32],
     ) -> Option<(VelStepPlanRef<'a>, usize)> {
         if self.world.overrides(row).is_some() { return None; }
         let plan = vel_step_plan(dyn_figure, sig, capture_layout, captures)?;
@@ -2195,7 +2195,7 @@ impl Sim {
                     continue;
                 };
                 let capture_layout = self.world.capture_layout_rc(i);
-                let captures = self.world.captures_rc(i);
+                let captures = self.world.captures_storage_rc(i);
                 if let Some((plan, slot)) = self.vel_batch_lane(
                     &dyn_figure,
                     i,
