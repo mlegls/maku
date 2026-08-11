@@ -866,8 +866,8 @@ fn project_colliders(
             };
             emit(ColliderData::Circle {
                 layer: *layer,
-                center: (pose.x, pose.y),
-                radius: value(*radius) * scale,
+                center: (pose.x as f32, pose.y as f32),
+                radius: (value(*radius) * scale) as f32,
             });
         }
         return;
@@ -1070,8 +1070,8 @@ impl Sim {
                 };
                 self.collider_scratch.rows.push(ColliderData::Circle {
                     layer: *layer,
-                    center: (pose.x, pose.y),
-                    radius: radius * scale,
+                    center: (pose.x as f32, pose.y as f32),
+                    radius: (radius * scale) as f32,
                 });
             }
             self.collider_scratch.finish_row(start);

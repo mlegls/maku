@@ -1580,7 +1580,7 @@ impl Sim {
                         .update_outputs
                         .f64s
                         .iter()
-                        .all(|actual| actual.to_bits() == value.to_bits())
+                        .all(|actual| (*actual as f32 as f64).to_bits() == (value as f32 as f64).to_bits())
             }
             CpuUpdateValue::Sym(value) => {
                 scratch.update_outputs.symbols.len() == rows.len()

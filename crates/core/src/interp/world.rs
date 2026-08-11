@@ -80,7 +80,7 @@ pub struct FieldSlots {
 pub struct WorldFields {
     pub num_slots: FxHashMap<FieldName, usize>,
     pub num_names: Vec<FieldName>,
-    pub num_values: Vec<Vec<Option<f64>>>,
+    pub num_values: Vec<Vec<Option<f32>>>,
     pub sym_slots: FxHashMap<FieldName, usize>,
     pub sym_names: Vec<FieldName>,
     pub sym_values: Vec<Vec<Option<Symbol>>>,
@@ -1212,12 +1212,22 @@ pub struct StandingRule {
 pub struct CollisionIndex {
     rows: Vec<ColliderData>,
     ranges: Vec<std::ops::Range<usize>>,
-    aabbs: Vec<Option<(f64, f64, f64, f64)>>,
+    aabbs: Vec<Option<(f32, f32, f32, f32)>>,
     layer_entities: FxHashMap<Symbol, Vec<usize>>,
     /// Alive-with-pos at capture time; kept for the oracle reference path.
     eligible: Vec<bool>,
     memo: FxHashMap<(Symbol, Symbol), Rc<[(usize, usize)]>>,
     benchmark_candidates: usize,
+}
+
+fn aabb_min_f32(v: f64) -> f32 {
+    let rounded = v as f32;
+    if rounded as f64 > v { rounded.next_down() } else { rounded }
+}
+
+fn aabb_max_f32(v: f64) -> f32 {
+    let rounded = v as f32;
+    if (rounded as f64) < v { rounded.next_up() } else { rounded }
 }
 
 impl CollisionIndex {
@@ -1243,21 +1253,31 @@ impl CollisionIndex {
                 if !layers.contains(&layer) { layers.push(layer); }
                 match collider {
                     ColliderData::Circle { center, radius, .. } => {
-                        bounds.0 = bounds.0.min(center.0 - radius);
-                        bounds.1 = bounds.1.max(center.0 + radius);
-                        bounds.2 = bounds.2.min(center.1 - radius);
-                        bounds.3 = bounds.3.max(center.1 + radius);
+                        let (x, y, radius) = (center.0 as f64, center.1 as f64, *radius as f64);
+                        bounds.0 = bounds.0.min(x - radius);
+                        bounds.1 = bounds.1.max(x + radius);
+                        bounds.2 = bounds.2.min(y - radius);
+                        bounds.3 = bounds.3.max(y + radius);
                     }
                     ColliderData::CapsuleChain { points, radius, .. } => for point in points {
-                        bounds.0 = bounds.0.min(point.0 - radius);
-                        bounds.1 = bounds.1.max(point.0 + radius);
-                        bounds.2 = bounds.2.min(point.1 - radius);
-                        bounds.3 = bounds.3.max(point.1 + radius);
+                        let (x, y, radius) = (point.0 as f64, point.1 as f64, *radius as f64);
+                        bounds.0 = bounds.0.min(x - radius);
+                        bounds.1 = bounds.1.max(x + radius);
+                        bounds.2 = bounds.2.min(y - radius);
+                        bounds.3 = bounds.3.max(y + radius);
                     },
                     ColliderData::None => {}
                 }
             }
-            let aabb = (!bounds.0.is_nan() && !bounds.1.is_nan() && !bounds.2.is_nan() && !bounds.3.is_nan()).then_some(bounds);
+            // The broad-phase box must contain the f64 box exactly: nearest
+            // rounding could shrink it and prune a true narrow-phase hit.
+            let aabb = (!bounds.0.is_nan() && !bounds.1.is_nan() && !bounds.2.is_nan() && !bounds.3.is_nan())
+                .then_some((
+                    aabb_min_f32(bounds.0),
+                    aabb_max_f32(bounds.1),
+                    aabb_min_f32(bounds.2),
+                    aabb_max_f32(bounds.3),
+                ));
             self.aabbs.push(aabb);
             if self.eligible.get(i) == Some(&true) && aabb.is_some() {
                 for &layer in &layers { self.layer_entities.entry(layer).or_default().push(i); }
@@ -2074,7 +2094,7 @@ impl World {
     pub fn col_get_sym_at(&self, bullet_idx: usize, name: ColName) -> Option<f64> {
         let slot = self.col_slot(name)?;
         self.entities.get(bullet_idx)?;
-        self.fields.num_values.get(slot)?.get(bullet_idx).copied().flatten()
+        self.fields.num_values.get(slot)?.get(bullet_idx).copied().flatten().map(|v| v as f64)
     }
 
     pub fn col_get_at(&self, bullet_idx: usize, name: &str) -> Option<f64> {
@@ -2089,7 +2109,7 @@ impl World {
 
     /// Slot-resolved read for hot loops with pre-resolved column slots.
     pub fn col_get_slot_at(&self, slot: usize, bullet_idx: usize) -> Option<f64> {
-        self.fields.num_values.get(slot)?.get(bullet_idx).copied().flatten()
+        self.fields.num_values.get(slot)?.get(bullet_idx).copied().flatten().map(|v| v as f64)
     }
 
     /// Slot-resolved write for hot loops that intern once per batch.
@@ -2101,7 +2121,7 @@ impl World {
         if values.len() <= bullet_idx {
             values.resize(bullet_idx + 1, None);
         }
-        values[bullet_idx] = Some(v);
+        values[bullet_idx] = Some(v as f32);
     }
 
     pub fn col_clear_sym_at(&mut self, bullet_idx: usize, name: ColName) {
@@ -2124,7 +2144,7 @@ impl World {
             .filter_map(|(slot, values)| {
                 let v = values.get(row).copied().flatten()?;
                 let name = self.symbols.resolve(*self.fields.num_names.get(slot)?)?;
-                Some((name.into(), v))
+                Some((name.into(), v as f64))
             })
             .collect()
     }
@@ -2286,7 +2306,7 @@ impl World {
 
     pub fn col_at_slot(&self, i: usize, slot: Option<usize>) -> Option<f64> {
         self.entities.get(i)?;
-        self.fields.num_values.get(slot?)?.get(i).copied().flatten()
+        self.fields.num_values.get(slot?)?.get(i).copied().flatten().map(|v| v as f64)
     }
 
     pub fn sym_field_set_at(&mut self, i: usize, field: FieldName, value: Symbol) {
@@ -2380,6 +2400,16 @@ mod tests {
             collider_projector: ColliderProjector { projectors: Rc::from([]) },
             overrides: None,
         }
+    }
+
+    #[test]
+    fn collision_aabb_rounding_is_outward() {
+        let above_one = 1.0 + 2.0_f64.powi(-25);
+        let below_one = 1.0 - 2.0_f64.powi(-26);
+        assert!((aabb_min_f32(above_one) as f64) <= above_one);
+        assert!((aabb_max_f32(above_one) as f64) >= above_one);
+        assert!((aabb_min_f32(below_one) as f64) <= below_one);
+        assert!((aabb_max_f32(below_one) as f64) >= below_one);
     }
 
     #[test]

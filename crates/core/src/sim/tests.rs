@@ -2081,7 +2081,8 @@
         let RenderData::Point { scale, .. } = &row.data else {
             panic!("rule render should emit one point row");
         };
-        assert!((*scale - (1.0 + 1.0 / DEFAULT_TICK_RATE)).abs() < 1e-9, "scale: {scale}");
+        let expected = (1.0 + 1.0 / DEFAULT_TICK_RATE) as f32 as f64;
+        assert_eq!(scale.to_bits(), expected.to_bits(), "scale: {scale}");
     }
 
     #[test]
@@ -2150,9 +2151,9 @@
         let mut finite_alive = false;
         let mut default_alive = false;
         for i in 0..sim.world.entities.len() {
-            if sim.world.col_get_at(i, "active") == Some(0.2) {
+            if sim.world.col_get_at(i, "active") == Some(0.2_f32 as f64) {
                 finite_alive |= sim.world.entities.is_alive(i);
-            } else if sim.world.col_get_at(i, "warn") == Some(0.1) {
+            } else if sim.world.col_get_at(i, "warn") == Some(0.1_f32 as f64) {
                 default_alive |= sim.world.entities.is_alive(i);
             }
         }
@@ -4049,7 +4050,7 @@
             sim.step().unwrap();
             let epoch = dyn_field_epoch(&sim, 0, "opacity");
             assert_eq!(epoch, sim.world.entities.birth(0).unwrap());
-            let expected = 1.0 + sim.world.entity_tau(0, sim.world.tick);
+            let expected = (1.0 + sim.world.entity_tau(0, sim.world.tick)) as f32 as f64;
             assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
         }
     }
@@ -4072,7 +4073,8 @@
             .iter().position(|(col, _)| *col == sim.world.symbols.lookup("opacity").unwrap()).unwrap();
         assert_eq!(sim.world.entities.dyn_col_tau(0, index, epoch, sim.world.tick_rate()), 0.0);
         let tau = sim.world.entities.dyn_col_tau(0, index, sim.world.tick, sim.world.tick_rate());
-        assert!((sim.world.col_get_at(0, "opacity").unwrap() - (1.0 - tau)).abs() < 1e-12);
+        let expected = (1.0 - tau) as f32 as f64;
+        assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
     }
 
     #[test]
@@ -4104,7 +4106,7 @@
             sim.step().unwrap();
         }
         assert_eq!(dyn_field_epoch(&sim, 0, "opacity"), epoch);
-        let expected = 1.0 - 0.5 * sim.world.entity_tau(0, sim.world.tick);
+        let expected = (1.0 - 0.5 * sim.world.entity_tau(0, sim.world.tick)) as f32 as f64;
         assert_eq!(sim.world.col_get_at(0, "opacity").unwrap().to_bits(), expected.to_bits());
     }
 
@@ -4176,10 +4178,8 @@
         let tau = (sim.world.tick - epoch) as f64 / sim.world.tick_rate();
         let expected = 0.8 * (1.0 - (tau / 0.05).clamp(0.0, 1.0));
         let actual = sim.world.col_get_at(0, "opacity").unwrap();
-        assert!(
-            (actual - expected).abs() < 1e-12,
-            "tau={tau} expected={expected} actual={actual}"
-        );
+        let expected = expected as f32 as f64;
+        assert_eq!(actual.to_bits(), expected.to_bits(), "tau={tau} expected={expected} actual={actual}");
         let deadline = sim.world.col_get_at(0, "cull-at").unwrap() as u64;
         while sim.world.tick < deadline {
             assert!(sim.world.entities.is_alive(0));
@@ -4346,8 +4346,8 @@
         assert!((tau1 - tau2 - 3.0 * dt).abs() < 1e-9, "distinct births: {tau1} vs {tau2}");
         for (i, tau) in [(0, tau1), (1, tau1), (2, tau2), (3, tau2)] {
             let hue = sim.world.col_get_at(i, "hue").unwrap();
-            let want = 100.0 * (i % 2) as f64 + tau;
-            assert!((hue - want).abs() < 1e-9, "entity {i}: hue {hue}, want {want}");
+            let want = (100.0 * (i % 2) as f64 + tau) as f32 as f64;
+            assert_eq!(hue.to_bits(), want.to_bits(), "entity {i}: hue {hue}, want {want}");
         }
     }
 
@@ -4365,8 +4365,8 @@
         let tau = 1.0 / DEFAULT_TICK_RATE;
         for i in 0..3 {
             let hue = sim.world.col_get_at(i, "hue").unwrap();
-            let want = 100.0 * i as f64 + tau;
-            assert!((hue - want).abs() < 1e-9, "entity {i}: hue {hue}, want {want}");
+            let want = (100.0 * i as f64 + tau) as f32 as f64;
+            assert_eq!(hue.to_bits(), want.to_bits(), "entity {i}: hue {hue}, want {want}");
             let axis = sim.world.spawn_axis(i).expect("group row has axis input");
             assert_eq!(axis.path.as_ref(), &[(3, i)]);
             assert_eq!(axis.flat, i);
@@ -5505,7 +5505,7 @@ fn structured_meta_is_not_retained_as_entity_fields() {
 "#;
     let mut sim = Sim::load(CARD, Some("p")).unwrap();
     sim.step().unwrap();
-    assert_eq!(sim.world.col_get_at(0, "radius"), Some(0.2));
+    assert_eq!(sim.world.col_get_at(0, "radius"), Some(0.2_f32 as f64));
     assert_eq!(sim.world.col_get_at(0, "collision"), None);
     assert_eq!(sim.world.col_get_at(0, "tags"), None);
     let collision = sim.world.symbols.lookup("collision");
@@ -5810,8 +5810,8 @@ fn sited_evolve_component_advances_once_and_materializes_its_settled_value() {
     let (s, c) = angle.to_radians().sin_cos();
     let vx = 3.0 * c;
     let vy = 3.0 * s;
-    assert_eq!(sim.world.col_get_at(0, "vel-x").unwrap().to_bits(), vx.to_bits());
-    assert_eq!(sim.world.col_get_at(0, "vel-y").unwrap().to_bits(), vy.to_bits());
+    assert_eq!(sim.world.col_get_at(0, "vel-x").unwrap().to_bits(), (vx as f32 as f64).to_bits());
+    assert_eq!(sim.world.col_get_at(0, "vel-y").unwrap().to_bits(), (vy as f32 as f64).to_bits());
     let pos_key = schema.n2_keys.iter().copied()
         .find(|key| matches!(key, MotionStateKey::Node(_)))
         .unwrap();

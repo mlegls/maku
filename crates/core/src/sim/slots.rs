@@ -289,8 +289,8 @@ pub(super) fn refresh_dyn_field_columns(
                     .find_map(|(column, value)| (*column == group.plan.output).then_some(value))
                     .ok_or("dyn meta field: missing oracle column")?;
                 let expected =
-                    semantic_dyn_field(world, sig, row, dyn_num, tau, &mut shared)?;
-                let actual = scratch.outputs.f64s[lane];
+                    semantic_dyn_field(world, sig, row, dyn_num, tau, &mut shared)? as f32 as f64;
+                let actual = scratch.outputs.f64s[lane] as f32 as f64;
                 assert_eq!(
                     actual.to_bits(),
                     expected.to_bits(),
@@ -600,21 +600,21 @@ pub(super) fn circle_collider_data(
 ) -> ColliderData {
     match dyn_figure.repr() {
         FigureDynRepr::Pose(_) if traced => {
-            let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
+            let points: Vec<(f32, f32)> = trace.iter().map(|p| (p.x as f32, p.y as f32)).collect();
             if points.len() < 2 {
                 ColliderData::None
             } else {
                 ColliderData::CapsuleChain {
                     layer,
                     points,
-                    radius: CURVE_R + radius * scale,
+                    radius: (CURVE_R + radius * scale) as f32,
                 }
             }
         }
         FigureDynRepr::Pose(_) => ColliderData::Circle {
             layer,
-            center: (pose.x, pose.y),
-            radius: radius * scale,
+            center: (pose.x as f32, pose.y as f32),
+            radius: (radius * scale) as f32,
         },
         FigureDynRepr::Curve { .. } => ColliderData::None,
     }
@@ -637,14 +637,14 @@ pub(super) fn capsule_chain_collider_data(
 ) -> ColliderData {
     match dyn_figure.repr() {
         FigureDynRepr::Pose(_) if traced => {
-            let points: Vec<(f64, f64)> = trace.iter().map(|p| (p.x, p.y)).collect();
+            let points: Vec<(f32, f32)> = trace.iter().map(|p| (p.x as f32, p.y as f32)).collect();
             if points.len() < 2 {
                 ColliderData::None
             } else {
                 ColliderData::CapsuleChain {
                     layer,
                     points,
-                    radius: CURVE_R * curve_slot.width + radius * scale,
+                    radius: (CURVE_R * curve_slot.width + radius * scale) as f32,
                 }
             }
         }
@@ -657,8 +657,8 @@ pub(super) fn capsule_chain_collider_data(
             };
             ColliderData::CapsuleChain {
                 layer,
-                points,
-                radius: CURVE_R * curve_slot.width + radius * scale,
+                points: points.into_iter().map(|(x, y)| (x as f32, y as f32)).collect(),
+                radius: (CURVE_R * curve_slot.width + radius * scale) as f32,
             }
         }
         FigureDynRepr::Pose(_) => ColliderData::None,
